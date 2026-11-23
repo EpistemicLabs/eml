@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import { taskSystemOn, type BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
+import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -25,6 +26,10 @@ export interface BoardTask {
   spaceName: string
   project: string | null
   title: string
+  /** The name a person reads (display_title); the cockpit falls back to the title as words. */
+  displayTitle?: string
+  /** Where it stands: the first sentence of its newest handoff's Result, else of its newest note. */
+  statusLine?: StatusLine
   status: string
   owner?: string
   delegate?: string
@@ -59,6 +64,7 @@ export interface LineageTask {
   spaceId: string
   project: string | null
   title: string
+  displayTitle?: string
   status: string
   parentId: string | null
   originId: string | null
@@ -114,7 +120,9 @@ interface Row {
   parent_id?: string | null
   origin_task_id?: string | null
   updated_at?: string
+  latest_note?: { text: string; at: string } | null
   properties?: {
+    display_title?: string
     assignee_ids?: string[]
     delegate?: string
     checkpoint?: string
@@ -134,14 +142,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   const listeners = new Set<(events: BoardEvent[]) => void>()
 
   const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) => {
-    const query = { type: 'task', status, with_parent: 'true', limit: OPEN_LIMIT, ...extra }
+    const query: Record<string, string | number> = { type: 'task', status, with_parent: 'true', with_latest_note: 'true', limit: OPEN_LIMIT, ...extra }
     try {
       return ((await brain.get('/list', query)) as { engrams?: Row[] }).engrams ?? []
     } catch (err) {
-      // A brain server from before with_origin refuses the parameter: the tasks still count, without origins.
-      if (!('with_origin' in query)) return []
-      deps.log(`[board] /list with_origin failed (${(err as Error).message}); listing without origins`)
-      const { with_origin: _origin, ...plain } = query
+      // A brain server from before with_origin / with_latest_note refuses the parameter: the tasks still
+      // count, without origins and status lines.
+      deps.log(`[board] /list with_origin/with_latest_note failed (${(err as Error).message}); listing without them`)
+      const { with_origin: _origin, with_latest_note: _note, ...plain } = query
       return ((await brain.get('/list', plain).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
     }
   }
@@ -160,6 +168,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       spaceId,
       project: projectOf(row.scope),
       title: row.title ?? id,
+      ...(row.properties?.display_title ? { displayTitle: row.properties.display_title } : {}),
       status: row.status,
       parentId: outgoing.find((r) => r.relation === 'part_of')?.target_id ?? null,
       originId: outgoing.find((r) => r.relation === 'derived_from' && r.target_engram?.type === 'task')?.target_id ?? null,
@@ -255,6 +264,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           spaceName: space.name,
           project: projectOf(row.scope),
           title: row.title ?? row.id,
+          ...(props.display_title ? { displayTitle: props.display_title } : {}),
+          ...(() => { const line = statusLine(row.latest_note); return line ? { statusLine: line } : {} })(),
           status: row.status,
           parentId,
           originId,
@@ -278,7 +289,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           nextRunAt: live.nextRunAt,
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
         })
-        if (onBoard && row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: row.title ?? row.id, waitingOn: props.waiting_on })
+        if (onBoard && row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
       }
       board.tasks.push(...spaceTasks)
       if (onBoard) board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))

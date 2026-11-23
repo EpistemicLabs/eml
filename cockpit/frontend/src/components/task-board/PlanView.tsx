@@ -2,10 +2,7 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import {
-  COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, TURN_META, visibleInPlan,
-  type Board, type BoardTask, type PlanFilter,
-} from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, type PlanFilter, projectRows, quietProjects, readable, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
@@ -156,7 +153,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
 function FocusItem({ task, onOpen, chip, side }: { task: BoardTask; onOpen: (task: BoardTask) => void; chip: React.ReactNode; side?: string }) {
   return (
     <button type="button" onClick={() => onOpen(task)} className={cn('-mx-1.5 flex min-w-0 flex-wrap items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-body hover:bg-muted sm:flex-nowrap', FOCUS)}>
-      <span className="min-w-0 flex-1 basis-full truncate sm:basis-auto">{readable(task.title)}</span>
+      <span className="min-w-0 flex-1 basis-full truncate sm:basis-auto">{taskName(task)}</span>
       <span className="whitespace-nowrap text-caption text-muted-foreground">{side ?? (task.project ? readable(task.project) : task.spaceName)}</span>
       {chip}
     </button>
@@ -172,13 +169,14 @@ function PlanTask({ task, step, viewer, now, onOpen, onClose }: { task: BoardTas
       <button type="button" onClick={() => onOpen(task)} className={cn('grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-body max-md:basis-full max-md:grid-cols-[auto_minmax(0,1fr)] max-md:items-start max-md:gap-y-1', FOCUS)}>
         {/* On a phone the dot stays on the title's first line. */}
         <span className="contents max-md:flex max-md:h-lh max-md:items-center"><Dot hue={hue} /></span>
-        <span className="min-w-0 truncate max-md:whitespace-normal">{step && <span className="text-ui text-muted-foreground">↳ </span>}{readable(task.title)}</span>
+        <span className="min-w-0 truncate max-md:whitespace-normal">{step && <span className="text-ui text-muted-foreground">↳ </span>}{taskName(task)}</span>
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground max-md:col-start-2">
           <Chip hue={hue}>{state}</Chip>
           {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
           {task.due && <Chip hue="mark">{dueLabel(task.due, now)}</Chip>}
           <Who task={task} viewer={viewer} />
         </span>
+        {task.statusLine && <span className="col-start-2 col-end-4 min-w-0 truncate text-ui text-muted-foreground max-md:col-end-3 max-md:whitespace-normal">{task.statusLine.now}</span>}
       </button>
       {task.status !== 'resolved' && <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
     </div>

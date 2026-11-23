@@ -372,6 +372,7 @@ const ALLOWED_LIST_PARAMS = new Set([
   'delegate', // v0.22: tasks an agent works on (task system)
   'with_parent', // v0.22: each task with its parent's id (part_of), for the cockpit's Tasks view
   'with_origin', // each task with the task it was spun off from (derived_from), for the cockpit's task trees
+  'with_latest_note', // v0.22: each task with its newest journal note (text, at), for the cockpit's status line
 ])
 
 const ALLOWED_PROJECT_ENGRAMS_PARAMS = new Set([
@@ -860,14 +861,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       // with_parent=true: a task names its parent task (parent_id), so a list shows plans without a call per task.
       // with_origin=true: a task names the task it was spun off from (origin_task_id, a derived_from link to a task),
       // so the cockpit draws task trees without a call per task.
-      if (q.with_parent === 'true' || q.with_origin === 'true') {
+      // with_latest_note=true: a task carries its newest journal note (latest_note {text, at}, or null), so the
+      // cockpit shows where each task stands without a call per task.
+      if (q.with_parent === 'true' || q.with_origin === 'true' || q.with_latest_note === 'true') {
         const linked = results.map((e) => {
           if (e.type !== 'task') return e
-          const relations = eml.engrams.relationsOf(e.id).filter((r) => r.source_id === e.id)
+          const relations = q.with_parent === 'true' || q.with_origin === 'true' ? eml.engrams.relationsOf(e.id).filter((r) => r.source_id === e.id) : []
+          const note = q.with_latest_note === 'true' ? eml.engrams.entries(e.id, ['note']).at(-1) : undefined
           return {
             ...e,
             ...(q.with_parent === 'true' ? { parent_id: relations.find((r) => r.relation === 'part_of')?.target_id ?? null } : {}),
             ...(q.with_origin === 'true' ? { origin_task_id: relations.find((r) => r.relation === 'derived_from' && r.target_engram?.type === 'task')?.target_id ?? null } : {}),
+            ...(q.with_latest_note === 'true' ? { latest_note: note ? { text: note.text, at: note.at } : null } : {}),
           }
         })
         return json(res, 200, { count: linked.length, engrams: linked })

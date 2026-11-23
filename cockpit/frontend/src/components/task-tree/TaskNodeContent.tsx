@@ -17,7 +17,7 @@ export function relWord(rel: 'sub' | 'spun' | null | undefined): string {
   return rel === 'spun' ? 'spun off' : rel === 'sub' ? 'sub-task' : '';
 }
 
-export function TaskNodeContent({ state, title, muted = false, aside, titleData }: {
+export function TaskNodeContent({ state, title, muted = false, aside, titleData, wrap = false }: {
   state: NodeState;
   title: ReactNode;
   /** The title in the muted colour (not on the desk, or done); the row's name says why. */
@@ -26,11 +26,14 @@ export function TaskNodeContent({ state, title, muted = false, aside, titleData 
   aside?: ReactNode;
   /** Marks the title element (tests and styles find it by this attribute). */
   titleData?: Record<`data-${string}`, string | boolean>;
+  /** The title wraps to two lines instead of being cut (the tasks card: a display title is about 60 characters). */
+  wrap?: boolean;
 }) {
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-2">
-      <Dot hue={state.hue} hollow={state.hollow} />
-      <span {...titleData} className={cn('min-w-0 flex-1 truncate font-medium', muted ? 'text-muted-foreground' : 'text-foreground')}>{title}</span>
+    <span className={cn('flex min-w-0 flex-1 gap-2', wrap ? 'items-start py-1' : 'items-center')}>
+      {/* Wrapped, the dot stays on the title's first line. */}
+      <span className={cn('flex shrink-0', wrap && 'h-lh items-center')}><Dot hue={state.hue} hollow={state.hollow} /></span>
+      <span {...titleData} className={cn('min-w-0 flex-1 font-medium', wrap ? 'line-clamp-2 break-words' : 'truncate', muted ? 'text-muted-foreground' : 'text-foreground')}>{title}</span>
       {aside && <span className="flex-shrink-0 truncate text-caption font-normal text-muted-foreground">{aside}</span>}
     </span>
   );

@@ -36,7 +36,7 @@ describe('applying a sort', () => {
     expect(answer.ok && answer.command.sort).toEqual({ linked: 1, created: 1, closed: 1 })
     expect(posts.map(([p]) => p)).toEqual(['/task/t-board/track', '/engram/task', '/relate', '/task/t-new-1/track', '/task/t-top/track', '/task/t-root/track'])
     expect(posts[0][1]).toMatchObject({ parent_id: 't-root' })
-    expect(posts[1][1]).toEqual({ title: 'media-viewer', content: 'Media viewer\n\nGoal: open files.', scope: 'project.ui', status: 'planned' })
+    expect(posts[1][1]).toEqual({ title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files.', scope: 'project.ui', status: 'planned' })
     expect(posts[4][1]).toMatchObject({ status: 'invalidated', outcome: 'Dropped when its session was sorted' })
     expect(posts[5][1]).toEqual({ text: 'This session was sorted: 1 linked, 1 created, 1 closed.' })
   })

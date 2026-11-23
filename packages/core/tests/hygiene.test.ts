@@ -24,6 +24,18 @@ describe('hygieneCheck()', () => {
   const rule = (scope: string, title: string, properties: Record<string, unknown> = { applies: 'always', why: 'w', agreed: 'yes' }) =>
     scope === 'global' ? legacyGlobalRule(eml, { title, content: 'do Y', properties }) : writes(eml).store({ type: 'rule', scope, title, content: 'do Y', properties })
 
+  it('task-without-display-title: finds open tasks without a display title, not closed or named ones (schema 22)', () => {
+    const open = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'build-the-thing', content: 'Build the thing.' })
+    writes(eml).store({ type: 'task', scope: 'project.demo', title: 'named-task', content: 'Ship it.', properties: { display_title: 'Ship the demo build' } })
+    const closed = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'old-task', content: 'Old.' })
+    writes(eml).trackTask(closed.id, { status: 'resolved', outcome: 'done', text: 'closed' })
+    const c = check('task-without-display-title')
+    expect(c).toMatchObject({ kind: 'migration', decides: 'user', since_schema: 22 })
+    expect(c.findings.map(f => f.id)).toEqual([open.id])
+    writes(eml).trackTask(open.id, { display_title: 'Build the thing for the demo' })
+    expect(check('task-without-display-title').findings).toEqual([])
+  })
+
   it('lists every check with what and how, also without findings; migration checks name their schema', () => {
     const r = hygieneCheck(eml)
     expect(r.total).toBe(0)

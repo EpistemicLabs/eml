@@ -74,7 +74,13 @@ describe('brain schema baseline', () => {
     new EML({ namespace: 'test', dbPath: migrated }).close()
 
     expect(schemaOf(migrated)).toEqual(schemaOf(fresh))
-    expect(seedOf(migrated)).toEqual(seedOf(fresh))
+    // the log differs by design: a migrated brain's log starts at schema 21 and
+    // carries one checkpoint per later step; a fresh brain's starts at the current schema
+    const { log: migratedLog, snapshots: migratedSnaps, ...migratedSeed } = seedOf(migrated)
+    const { log: _freshLog, snapshots: _freshSnaps, ...freshSeed } = seedOf(fresh)
+    expect(migratedSeed).toEqual(freshSeed)
+    expect(migratedLog).toEqual([{ seq: 1, call: 'brain.genesis' }, ...Array.from({ length: CURRENT_BRAIN_SCHEMA_VERSION - 21 }, (_, i) => ({ seq: i + 2, call: 'brain.checkpoint' }))])
+    expect(migratedSnaps).toEqual([{ seq: 1, schema: 21 }, ...Array.from({ length: CURRENT_BRAIN_SCHEMA_VERSION - 21 }, (_, i) => ({ seq: i + 2, schema: 22 + i }))])
     expect(seedOf(fresh).version).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
     expect(seedOf(fresh).log).toEqual([{ seq: 1, call: 'brain.genesis' }])
     expect(seedOf(fresh).snapshots).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION }])

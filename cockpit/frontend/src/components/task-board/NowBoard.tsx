@@ -1,9 +1,9 @@
 // Now: every moving task by whose turn it is, starting with what needs the viewer.
-import { cardLine, columns, dueLabel, GROUP_META, readable, TURN_META, type Board, type BoardTask } from '@/lib/task-board';
+import { type Board, type BoardTask, columns, dueLabel, GROUP_META, originName, readable, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Chip, Dot, Empty, FOCUS, HUE, LABEL } from '@/shared/view/ui';
 
-import { CardTime, Who } from './parts';
+import { CardTime, FromOrigin, Who } from './parts';
 
 export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: number; onOpen: (task: BoardTask) => void; movedId: string | null }) {
   const cols = columns(board.tasks);
@@ -28,10 +28,10 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
                   ? col.groups.map((g) => (
                     <div key={g.group} className="flex flex-col gap-2">
                       <div className={cn(LABEL, 'mx-0.5 mt-2', HUE[GROUP_META[g.group].hue].ink)}>{GROUP_META[g.group].name} · {g.tasks.length}</div>
-                      {g.tasks.map((t) => <Card key={t.id} task={t} now={now} viewer={board.viewer} onOpen={onOpen} moved={movedId === t.id} />)}
+                      {g.tasks.map((t) => <Card key={t.id} task={t} now={now} viewer={board.viewer} from={originName(t, board)} onOpen={onOpen} moved={movedId === t.id} />)}
                     </div>
                   ))
-                  : col.tasks.map((t) => <Card key={t.id} task={t} now={now} viewer={board.viewer} onOpen={onOpen} moved={movedId === t.id} />)}
+                  : col.tasks.map((t) => <Card key={t.id} task={t} now={now} viewer={board.viewer} from={originName(t, board)} onOpen={onOpen} moved={movedId === t.id} />)}
               </section>
             );
           })}
@@ -41,7 +41,7 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
   );
 }
 
-function Card({ task, now, viewer, onOpen, moved }: { task: BoardTask; now: number; viewer: string; onOpen: (task: BoardTask) => void; moved: boolean }) {
+function Card({ task, now, viewer, from, onOpen, moved }: { task: BoardTask; now: number; viewer: string; from: string | null; onOpen: (task: BoardTask) => void; moved: boolean }) {
   // Content first, metadata last; at most two badges (due and high): the column and group already say the rest.
   const done = task.turn === 'done';
   return (
@@ -51,8 +51,8 @@ function Card({ task, now, viewer, onOpen, moved }: { task: BoardTask; now: numb
       onClick={() => onOpen(task)}
       className={cn('relative flex w-full flex-col gap-1.5 rounded-xl border border-border bg-card px-3 py-3 text-left shadow-card hover:border-border-strong', FOCUS, moved && 'animate-arrive')}
     >
-      <span className="text-heading font-semibold text-pretty">{readable(task.title)}</span>
-      <span className="line-clamp-2 text-ui text-muted-foreground">{cardLine(task, now)}</span>
+      <span className="text-heading font-semibold text-pretty">{taskName(task)}</span>
+      <span className="line-clamp-2 text-ui text-muted-foreground">{statusOrTurn(task, now)}</span>
       {task.turn === 'agent_working' && (
         <span aria-hidden className="block h-1 overflow-hidden rounded-full bg-muted"><span className="block h-full w-2/5 bg-status-agent" /></span>
       )}
@@ -62,6 +62,7 @@ function Card({ task, now, viewer, onOpen, moved }: { task: BoardTask; now: numb
           {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
         </span>
       )}
+      {from && <FromOrigin name={from} />}
       <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 pt-2 text-caption text-muted-foreground">
         <span className="min-w-0 truncate">{task.project ? readable(task.project) : task.spaceName}</span>
         <Who task={task} viewer={viewer} />

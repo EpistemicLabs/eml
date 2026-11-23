@@ -91,7 +91,8 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
     inputSchema: z.object({
       content: content('What needs doing, 1-3 sentences, action verb first, specific enough that "done" is clear.'),
       scope: scope('Narrowest true scope: project.<id> for project work, entity.<id> for person/customer follow-ups. global is rare.'),
-      title: title('Kebab-case anchor, unique enough to find the task again.'),
+      title: title('Kebab-case anchor, unique enough to find the task again; not shown to people (display_title is).'),
+      display_title: z.string().max(80).optional().describe('The task\'s name as a person reads it in a list: verb + object + scope, about 60 characters (at most 80), the customer or product named, the distinguishing words first; sentence case, no ending period, no ids or dates unless they are the point. Good: \"Fix missing stock answers in Acme\'s chat assistant\". Bad: \"acme-stock\", \"Stock issue\", \"Session 23 Nov\". The kebab title stays the recall anchor and is not shown.'),
       intent: z.string().optional().describe('What will be different, for whom, once it\'s done, and how we\'ll notice. Settle it with the user; leave out for small tasks.'),
       context: z.string().optional().describe('Why it exists and how to pick it up cold.'),
       status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started or parked · active = started. Done things are not tasks.'),

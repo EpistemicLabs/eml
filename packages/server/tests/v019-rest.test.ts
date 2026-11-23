@@ -430,6 +430,18 @@ describe('v0.19 REST', () => {
       expect(plain.find((r) => r.id === spun.id)).not.toHaveProperty('origin_task_id')
     })
 
+    it('v0.22: with_latest_note carries each task\'s newest journal note, and only when asked', async () => {
+      const task = (await create(validTask({ title: 'status-line-task' }))).body as { id: string }
+      const quiet = (await create(validTask({ title: 'quiet-task' }))).body as { id: string }
+      expect((await post(`/task/${task.id}/track`, { text: 'first note' })).status).toBeLessThan(300)
+      expect((await post(`/task/${task.id}/track`, { text: '### Handoff\nResult: the newest one.' })).status).toBeLessThan(300)
+      const rows = ((await get('/list?type=task&with_latest_note=true&limit=500')).body as { engrams: Array<{ id: string; latest_note?: { text: string; at: string } | null }> }).engrams
+      expect(rows.find((r) => r.id === task.id)?.latest_note).toMatchObject({ text: '### Handoff\nResult: the newest one.' })
+      expect(rows.find((r) => r.id === quiet.id)?.latest_note).toBeNull()
+      const plain = ((await get('/list?type=task&limit=500')).body as { engrams: Array<{ id: string; latest_note?: unknown }> }).engrams
+      expect(plain.find((r) => r.id === task.id)).not.toHaveProperty('latest_note')
+    })
+
     it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {
       const stale = await create(validDecision({ title: 'rest-stale', properties: { review_due_at: '2020-01-01T00:00:00.000Z' } }))
       const fresh = await create(validDecision({ title: 'rest-fresh' }))

@@ -7,10 +7,7 @@ import type { ProjectActions } from '@/components/projects/useProjectActions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
-import {
-  agentName, closeTask, handOver, readable, reviewDone, snooze, snoozeTimes, undo, useTaskBoard,
-  type Board, type BoardTask, type CommandAnswer, type HandOverInput, type HandOverMode,
-} from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, closeTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Sheet } from '@/shared/view/ui/Sheet';
@@ -90,11 +87,11 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       return;
     }
     // Work on it now: the session opens in the chosen desk, with the brief the host answered with.
-    const deskId = desk && 'id' in desk ? desk.id : ensureDeskBySlug(`task-${t.title}`, { name: desk?.name ?? readable(t.title) });
+    const deskId = desk && 'id' in desk ? desk.id : ensureDeskBySlug(`task-${t.title}`, { name: desk?.name ?? taskName(t) });
     const space = spaces.find((s) => s.id === t.spaceId);
     const paneId = t.project ? addWorkerPane({
-      fromSessionId: null, projectId: projectIdOfBrain(t.project), title: readable(t.title), deskId, taskId: t.id,
-      prompt: [answer.brief, `Work on task ${t.id} ("${readable(t.title)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`].filter(Boolean).join('\n\n'),
+      fromSessionId: null, projectId: projectIdOfBrain(t.project), title: taskName(t), deskId, taskId: t.id,
+      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`].filter(Boolean).join('\n\n'),
       ...(space ? { spaceId: paneSpaceKey(space) } : {}),
     }) : null;
     answered(answer, `Opened in desk ${input.desk}.`, () => { if (paneId) removePane(paneId); });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-board.js'
 
-type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; properties?: Record<string, unknown> }
+type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; latest_note?: { text: string; at: string } | null; properties?: Record<string, unknown> }
 
 /** A brain with listed tasks and, by id only, tasks the lists leave out (closed long ago). */
 function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true) {
@@ -155,6 +155,23 @@ describe('the task board', () => {
       { id: 'oldest', spaceId: 'main', project: 'other', title: 'oldest', status: 'invalidated', parentId: null, originId: null },
     ])
     expect(brains.get('main')!.fetched).not.toContain('gone')
+  })
+
+  it('carries the display title and the status line from the newest handoff; the Inbox reads the display title', async () => {
+    const at = '2026-11-19T09:30:00Z'
+    const { board, brains } = setup({
+      main: [
+        { ...mine('named', { display_title: 'Ship the Acme widget release', waiting_on: { who: 'lasse', kind: 'review', why: 'Review: done', since: at } }), latest_note: { text: '### Handoff\nResult: Release published. Deploy runs.\nNext: check the live file.', at } },
+        { ...mine('plain'), latest_note: null },
+      ],
+    })
+    const model = await board.refresh()
+    expect(brains.get('main')!.queries.every((q) => q.with_latest_note === 'true')).toBe(true)
+    expect(model.tasks.find((t) => t.id === 'named')).toMatchObject({ displayTitle: 'Ship the Acme widget release', statusLine: { now: 'Release published', next: 'check the live file', at } })
+    const plain = model.tasks.find((t) => t.id === 'plain')!
+    expect(plain).not.toHaveProperty('displayTitle')
+    expect(plain).not.toHaveProperty('statusLine')
+    expect(model.inbox.find((i) => i.taskId === 'named')?.title).toBe('Ship the Acme widget release')
   })
 
   it('still lists the tasks when the brain server does not know with_origin yet', async () => {

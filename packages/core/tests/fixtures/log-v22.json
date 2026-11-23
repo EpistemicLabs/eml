@@ -1,0 +1,981 @@
+{
+ "schema": 22,
+ "state_hash": "599ec63460abe6aaa64cd6a9212da49d65019c004bca25656f6c3d4b0ca9b143",
+ "genesis": {
+  "state_hash": "65b8faa78375f60ddaf9b2a61a2b4b141ff3b0e73550cc85468bf96b4057fe9f",
+  "data": "H4sIAAAAAAAAA6tWSkxPzSspVrKKjtVRSs1LL0rMjS8uTcpKTUYTLElMRxFA5cSnIZSXZJZkpiJ4RXBOQVE+krlFqTmJJZn5eVAuqqUI20qLU4vAzFoAGZB1M6wAAAA="
+ },
+ "entries": [
+  {
+   "seq": 1,
+   "at": "2026-11-19T08:00:00.000Z",
+   "op_id": "5b9066d0-c51d-5da9-afd6-9c8bbadaf747",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "payload_hash": "b468051439608f650ffee29b740366f8acc4fdad1b39e296f59bfdfcba08893d",
+   "hash": "bf8e98172764502f0137ecb42dc3d9d6c24a3b4e4bc47904b2bc1910dc9ca965",
+   "payload": "{\"op_id\":\"5b9066d0-c51d-5da9-afd6-9c8bbadaf747\",\"schema\":22,\"call\":\"brain.genesis\",\"args\":{\"brain\":\"6f1d2c3b-4a59-4e68-9b7a-0c1d2e3f4a5b\",\"state_hash\":\"65b8faa78375f60ddaf9b2a61a2b4b141ff3b0e73550cc85468bf96b4057fe9f\"},\"provenance\":{\"handle\":null,\"agent\":null,\"ingestion_method\":\"other\",\"session_id\":null,\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 2,
+   "at": "2026-11-19T08:00:00.001Z",
+   "op_id": "00000000-0000-4000-8000-000000000000",
+   "prev_hash": "bf8e98172764502f0137ecb42dc3d9d6c24a3b4e4bc47904b2bc1910dc9ca965",
+   "payload_hash": "fe14973722ae35785a5f19fb67a529e44fc59fc4e8e2443264d558796b47b95f",
+   "hash": "3c840a91a7822cb71c67dc12696be250f84b1159c4a495244b3e93fb939ba360",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000000\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"agent\",\"fields\":{\"id\":\"juno\",\"name\":\"Juno\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 3,
+   "at": "2026-11-19T08:00:00.002Z",
+   "op_id": "00000000-0000-4000-8000-000000000001",
+   "prev_hash": "3c840a91a7822cb71c67dc12696be250f84b1159c4a495244b3e93fb939ba360",
+   "payload_hash": "8f0ac079b40eec45823a933939308d7873cf7f3e4c4181aa4fbadc725c20fc39",
+   "hash": "0ecc6f259800dd4df88ea098a92509a1807f9ff36ebca58c8620d196dcc89667",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000001\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"agent\",\"id\":\"juno\",\"patch\":{\"description\":\"the agent\"}},\"provenance\":{\"handle\":null,\"agent\":null,\"ingestion_method\":null,\"session_id\":null,\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 4,
+   "at": "2026-11-19T08:00:00.003Z",
+   "op_id": "00000000-0000-4000-8000-000000000002",
+   "prev_hash": "0ecc6f259800dd4df88ea098a92509a1807f9ff36ebca58c8620d196dcc89667",
+   "payload_hash": "c7ab5de2e6bbb9c582ef72c0843886141c582b29a3e64b87d84ca58d8c751982",
+   "hash": "a9e521ae7a2e9ca476e30867a169216d3f2cc7d20774010bb8202846e8394bd3",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000002\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"user\",\"fields\":{\"id\":\"ada\",\"name\":\"Ada\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 5,
+   "at": "2026-11-19T08:00:00.004Z",
+   "op_id": "00000000-0000-4000-8000-000000000003",
+   "prev_hash": "a9e521ae7a2e9ca476e30867a169216d3f2cc7d20774010bb8202846e8394bd3",
+   "payload_hash": "4343a8c9152d14921a4e2e76cf5e77e97a5263cd8551edafe5bc0fbcdb4ecee8",
+   "hash": "dd6ceef23dd11d2484c2ed0ddbe6eca9dbd7d7cfd329710e2d11e0c99fd52779",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000003\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"user\",\"id\":\"ada\",\"patch\":{\"email\":\"ada@example.com\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 6,
+   "at": "2026-11-19T08:00:00.005Z",
+   "op_id": "00000000-0000-4000-8000-000000000004",
+   "prev_hash": "dd6ceef23dd11d2484c2ed0ddbe6eca9dbd7d7cfd329710e2d11e0c99fd52779",
+   "payload_hash": "0694cf9989819474fb60922b8299cd27fdf7069ad85a68950898b77833007c12",
+   "hash": "eb831f975ec13c43c6177f7dd60c6abaafb9d4e4868a11f984f64eaf959baf29",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000004\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"project\",\"fields\":{\"id\":\"p\",\"name\":\"P\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 7,
+   "at": "2026-11-19T08:00:00.006Z",
+   "op_id": "00000000-0000-4000-8000-000000000005",
+   "prev_hash": "eb831f975ec13c43c6177f7dd60c6abaafb9d4e4868a11f984f64eaf959baf29",
+   "payload_hash": "4b5f31dbea30c73e38700d91b63472ec71bd4d4145713f08671f2c4e085d6819",
+   "hash": "b101a9de36c45b9e128ec2b7241565fe233eb5607a3782069de38081bb1dae22",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000005\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"project\",\"fields\":{\"id\":\"q\",\"name\":\"Q\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 8,
+   "at": "2026-11-19T08:00:00.007Z",
+   "op_id": "00000000-0000-4000-8000-000000000006",
+   "prev_hash": "b101a9de36c45b9e128ec2b7241565fe233eb5607a3782069de38081bb1dae22",
+   "payload_hash": "71ce3b4b49154b2ba6627ce38f11733d29ec9414cf3afbd70dab5050e274ff19",
+   "hash": "e68cc1da3139877e710ac948e196acc2ce59b2c1ce080f1735e2077a016c644b",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000006\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"entity\",\"fields\":{\"id\":\"acme\",\"name\":\"Acme\",\"kind\":\"org\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 9,
+   "at": "2026-11-19T08:00:00.008Z",
+   "op_id": "00000000-0000-4000-8000-000000000007",
+   "prev_hash": "e68cc1da3139877e710ac948e196acc2ce59b2c1ce080f1735e2077a016c644b",
+   "payload_hash": "2c24dce825f4a725a3642cb20f0762796836e6c846f047ed6ab20c31e4cfd3a2",
+   "hash": "3dd2dc28da6dfe6088d1ffaf0a86ba63d170a04385432a111e53e1936696fb92",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000007\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"tag\",\"fields\":{\"name\":\"ops\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 10,
+   "at": "2026-11-19T08:00:00.009Z",
+   "op_id": "00000000-0000-4000-8000-000000000008",
+   "prev_hash": "3dd2dc28da6dfe6088d1ffaf0a86ba63d170a04385432a111e53e1936696fb92",
+   "payload_hash": "02b26525dac2a77f6b954a5f9c3c29ff4bd5df2c4d4888aa0661fba8e541a922",
+   "hash": "ab6b9717dc122effd22fc77501a7f1406a72dd86c9fa22bb183f2fe89874aca4",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000008\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"tag\",\"fields\":{\"name\":\"old\",\"status\":\"archived\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 11,
+   "at": "2026-11-19T08:00:00.010Z",
+   "op_id": "00000000-0000-4000-8000-000000000009",
+   "prev_hash": "ab6b9717dc122effd22fc77501a7f1406a72dd86c9fa22bb183f2fe89874aca4",
+   "payload_hash": "61f025dac818d4845f36de926713a1eb4dcf6675f6f639f1c9c57fb21bc0d5ab",
+   "hash": "30d99d3eb87d2b790a6a872cf5c43a5ee6132c5734b91e68f7dc2594e9908e7c",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000009\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"subject\",\"fields\":{\"name\":\"launch\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 12,
+   "at": "2026-11-19T08:00:00.011Z",
+   "op_id": "00000000-0000-4000-8000-00000000000a",
+   "prev_hash": "30d99d3eb87d2b790a6a872cf5c43a5ee6132c5734b91e68f7dc2594e9908e7c",
+   "payload_hash": "e60db0778ea37ce80bdee454538ae20b1c5fd01035b836efc0437158074980cb",
+   "hash": "4d196242be3e0ba828162b61bc8834d8a6131079b9449c85a7e5bdf2b40c0b4a",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000a\",\"schema\":22,\"call\":\"object.create\",\"args\":{\"object\":\"subject\",\"fields\":{\"name\":\"done-strand\",\"status\":\"closed\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 13,
+   "at": "2026-11-19T08:00:00.012Z",
+   "op_id": "00000000-0000-4000-8000-00000000000b",
+   "prev_hash": "4d196242be3e0ba828162b61bc8834d8a6131079b9449c85a7e5bdf2b40c0b4a",
+   "payload_hash": "637ab21a17e9cdb2eee4f26fa026af9a61a10061ca4d8eda4e24ca9e8bcc325b",
+   "hash": "8a330e7e9d4411062091c7617498a431e12f6d2b8e08702a67a8e572c0b707ae",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000b\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"entity\",\"id\":\"acme\",\"patch\":{\"description\":\"a customer\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 14,
+   "at": "2026-11-19T08:00:00.013Z",
+   "op_id": "00000000-0000-4000-8000-00000000000c",
+   "prev_hash": "8a330e7e9d4411062091c7617498a431e12f6d2b8e08702a67a8e572c0b707ae",
+   "payload_hash": "dc5fd0395028745915a9c16ddb349a27ce04b84ad8f4b0783c7d70bbefe62e59",
+   "hash": "1f233d20f1cf6574115d0fa09f6e75a68f01ddebf2001a3640703d0736ed8e3d",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000c\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"tag\",\"id\":\"ops\",\"patch\":{\"description\":\"operations\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 15,
+   "at": "2026-11-19T08:00:00.014Z",
+   "op_id": "00000000-0000-4000-8000-00000000000d",
+   "prev_hash": "1f233d20f1cf6574115d0fa09f6e75a68f01ddebf2001a3640703d0736ed8e3d",
+   "payload_hash": "b22f1ffe74c7f8a5715420cd0da3f9dd6022a81ca0c87f635a7905ffc0f521ed",
+   "hash": "fb9dc3f016fb56cece4748e0701616769ecd412ebcb43dd7013d8133d1135eba",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000d\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"subject\",\"id\":\"launch\",\"patch\":{\"description\":\"the launch\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 16,
+   "at": "2026-11-19T08:00:00.015Z",
+   "op_id": "00000000-0000-4000-8000-00000000000e",
+   "prev_hash": "fb9dc3f016fb56cece4748e0701616769ecd412ebcb43dd7013d8133d1135eba",
+   "payload_hash": "fd41c22e5b79121e560223dcf904a3336c1e334c716281959c9b51117ddc7952",
+   "hash": "187724b9814a9067fd06cbdd43d5053f38082234ee77a2932eb0dd57a10a2864",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000e\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test task\",\"scope\":\"project.p\",\"title\":\"parent\",\"status\":\"active\",\"type\":\"task\",\"properties\":{}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 17,
+   "at": "2026-11-19T08:00:00.016Z",
+   "op_id": "00000000-0000-4000-8000-00000000000f",
+   "prev_hash": "187724b9814a9067fd06cbdd43d5053f38082234ee77a2932eb0dd57a10a2864",
+   "payload_hash": "2cf4edeb984a762a0031cb50466529e169aa9191f00c3ca54ef942b639a4e668",
+   "hash": "20fb19d16b96b0d0639917f1f76b843a00fc7825719dc01e1a3c16b6f19d2261",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000000f\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test task\",\"scope\":\"project.p\",\"title\":\"child\",\"parent_id\":\"ae437a96-694c-5df9-a521-225179c67c92\",\"properties\":{\"display_title\":\"Build the child step of the parent\",\"goal\":\"the child step is built\",\"delegate\":\"assistant\",\"checkpoint\":\"after\",\"depends_on\":[\"ae437a96-694c-5df9-a521-225179c67c92\"]},\"type\":\"task\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 18,
+   "at": "2026-11-19T08:00:00.017Z",
+   "op_id": "00000000-0000-4000-8000-000000000010",
+   "prev_hash": "20fb19d16b96b0d0639917f1f76b843a00fc7825719dc01e1a3c16b6f19d2261",
+   "payload_hash": "e5e034360876947c66af24f265fd37647ab4c4072082c3284dc42c78be4e06ac",
+   "hash": "6471becbebd7d3fb0c196c538853714cf873613672a0780af5f5ef9a05bfa426",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000010\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"chose the test option\",\"scope\":\"project.p\",\"title\":\"bound\",\"task_id\":\"ae437a96-694c-5df9-a521-225179c67c92\",\"properties\":{\"rationale\":\"test rationale\",\"alternatives\":[\"test alternative\"],\"binding\":\"task\"},\"type\":\"decision\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 19,
+   "at": "2026-11-19T08:00:00.018Z",
+   "op_id": "00000000-0000-4000-8000-000000000011",
+   "prev_hash": "6471becbebd7d3fb0c196c538853714cf873613672a0780af5f5ef9a05bfa426",
+   "payload_hash": "d4c38071efbf37332641ff5a4a574488e09aed550a1012c460c59717f97724c2",
+   "hash": "ac4be9d8f77be9aaa08e5d48139452daabe45dd2dad96ce06cd7e7bc8fd22249",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000011\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test note\",\"scope\":\"project.p\",\"title\":\"kept\",\"task_id\":\"ae437a96-694c-5df9-a521-225179c67c92\",\"properties\":{\"binding\":\"task\"},\"type\":\"note\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 20,
+   "at": "2026-11-19T08:00:00.019Z",
+   "op_id": "00000000-0000-4000-8000-000000000012",
+   "prev_hash": "ac4be9d8f77be9aaa08e5d48139452daabe45dd2dad96ce06cd7e7bc8fd22249",
+   "payload_hash": "8fd9f521fb004fc68a5534d0718043113166d5a692dd644c7aef944a68ffecad",
+   "hash": "106a61c701c3a8bda0a34a0daab49d34da4a22ea91c0bbdc15a8ad12c9e5aaf3",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000012\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"see [[bound]] and [[nowhere]]\",\"scope\":\"project.p\",\"title\":\"note\",\"tags\":[\"ops\"],\"subjects\":[\"launch\"],\"type\":\"note\",\"properties\":{}},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 21,
+   "at": "2026-11-19T08:00:00.020Z",
+   "op_id": "00000000-0000-4000-8000-000000000013",
+   "prev_hash": "106a61c701c3a8bda0a34a0daab49d34da4a22ea91c0bbdc15a8ad12c9e5aaf3",
+   "payload_hash": "760c56319e332016a89e6d581a02fab3e43774a835dfd3a6dbabad4ee562bfd5",
+   "hash": "c02b6b545c7e1e96de70f6f421ee8c4c55020b445880985b5c85d4d243195b19",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000013\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test status\",\"scope\":\"project.p\",\"type\":\"status\",\"properties\":{\"state\":\"test state\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 22,
+   "at": "2026-11-19T08:00:00.021Z",
+   "op_id": "00000000-0000-4000-8000-000000000014",
+   "prev_hash": "c02b6b545c7e1e96de70f6f421ee8c4c55020b445880985b5c85d4d243195b19",
+   "payload_hash": "b8638c07ca1f33013d0c6345a9571ddca9e9e8f093f7e377d09d7aad522e7130",
+   "hash": "a11b2b524e9c6152a468ce9b0c23b077e6e114d815dd356e673ffb964bdbcfd6",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000014\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"next state\",\"scope\":\"project.p\",\"properties\":{\"state\":\"next\"},\"type\":\"status\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 23,
+   "at": "2026-11-19T08:00:00.022Z",
+   "op_id": "00000000-0000-4000-8000-000000000015",
+   "prev_hash": "a11b2b524e9c6152a468ce9b0c23b077e6e114d815dd356e673ffb964bdbcfd6",
+   "payload_hash": "506d0103ee2acf602e1ab2d2333265c3ce483e1798140de802975734d4fcaa5a",
+   "hash": "eef763950e6186d2186b965b5ec523ec20e09054bfa70e384d1a378910a9a6b0",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000015\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"Do the test thing.\",\"scope\":\"project.p\",\"title\":\"rule-one\",\"type\":\"rule\",\"properties\":{\"applies\":\"always\",\"why\":\"test why\",\"agreed\":\"yes\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 24,
+   "at": "2026-11-19T08:00:00.023Z",
+   "op_id": "00000000-0000-4000-8000-000000000016",
+   "prev_hash": "eef763950e6186d2186b965b5ec523ec20e09054bfa70e384d1a378910a9a6b0",
+   "payload_hash": "50507631bfd7f3eae24e59df5031ad875d7f6c5810d9f61977bb834aafef76ff",
+   "hash": "33964bc2e186156c4776c317bf176b273e6693207aa5c32903d0ff3a9321d605",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000016\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test profile\",\"scope\":\"user.ada\",\"title\":\"ada\",\"properties\":{\"core\":true},\"type\":\"profile\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 25,
+   "at": "2026-11-19T08:00:00.024Z",
+   "op_id": "00000000-0000-4000-8000-000000000017",
+   "prev_hash": "33964bc2e186156c4776c317bf176b273e6693207aa5c32903d0ff3a9321d605",
+   "payload_hash": "6dbdb5ad2903f8ab5edf335829f7f48123051561802552e3022da178dd3b0c66",
+   "hash": "b91020d31f0ef8b245243908555a5919052778c15e25b6fad6b03325b21d0a3b",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000017\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test profile\",\"scope\":\"user.ada\",\"title\":\"ada-2\",\"properties\":{\"core\":true},\"type\":\"profile\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 26,
+   "at": "2026-11-19T08:00:00.025Z",
+   "op_id": "00000000-0000-4000-8000-000000000018",
+   "prev_hash": "b91020d31f0ef8b245243908555a5919052778c15e25b6fad6b03325b21d0a3b",
+   "payload_hash": "479e330d2f9078615b388f347d6a575ce06c322e5ff40856265aa2038c355987",
+   "hash": "7d2e729cd56ba7aa81ec4a9ab177497b849109167a6464d6574690828eec9195",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000018\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test event\",\"scope\":\"project.p\",\"title\":\"shipped\",\"type\":\"event\",\"properties\":{\"occurred_at\":\"2026-10-01T10:00:00Z\",\"change_type\":\"completed\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 27,
+   "at": "2026-11-19T08:00:00.026Z",
+   "op_id": "00000000-0000-4000-8000-000000000019",
+   "prev_hash": "7d2e729cd56ba7aa81ec4a9ab177497b849109167a6464d6574690828eec9195",
+   "payload_hash": "8cbddbfe4d3129466e8261092ae9925c3475e5a1ad8527e389b9d98d33aec2c5",
+   "hash": "5783d925922ba029fbe1654ea68b24ef28970e032e72841b474ea2eb25089486",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000019\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test log\",\"scope\":\"project.p\",\"title\":\"session\",\"type\":\"log\",\"properties\":{\"what\":\"test what\",\"landed\":\"test landed\",\"next\":\"test next\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 28,
+   "at": "2026-11-19T08:00:00.027Z",
+   "op_id": "00000000-0000-4000-8000-00000000001a",
+   "prev_hash": "5783d925922ba029fbe1654ea68b24ef28970e032e72841b474ea2eb25089486",
+   "payload_hash": "a6239017c1ba45a8b9c32d71faa4257c2e02f5e1892c87fc22408c091d2c54bc",
+   "hash": "32aa9476f41e302b15c29383dbf88abc0cd1ceda7804a1c8f57ab289d8f0ab67",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001a\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test reference\",\"scope\":\"project.p\",\"title\":\"ref\",\"type\":\"reference\",\"properties\":{\"source\":\"https://example.org/doc\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 29,
+   "at": "2026-11-19T08:00:00.028Z",
+   "op_id": "00000000-0000-4000-8000-00000000001b",
+   "prev_hash": "32aa9476f41e302b15c29383dbf88abc0cd1ceda7804a1c8f57ab289d8f0ab67",
+   "payload_hash": "4582726764474f3a75409928c71afba6cb7a73aceeda30fea981829e8eccd5df",
+   "hash": "830db54ef5a5ac881d12f79e2dd165b576bb7c497fd611830c39436fa186124a",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001b\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"text\":\"started\",\"status\":\"active\",\"stage\":\"implementation\",\"tags\":[\"ops\"],\"id\":\"d8c04d31-dd31-5d94-b838-3272d7abfe92\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 30,
+   "at": "2026-11-19T08:00:00.029Z",
+   "op_id": "00000000-0000-4000-8000-00000000001c",
+   "prev_hash": "830db54ef5a5ac881d12f79e2dd165b576bb7c497fd611830c39436fa186124a",
+   "payload_hash": "1140d20342ff511a08724d3c66d0346ba41a52be9389d1115c2be49a6c7d62de",
+   "hash": "998629bfc43aa3a5548581045f796b2fa7ae8a3ac059ac2bd39882b6fe1bf7b8",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001c\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"status\":\"resolved\",\"outcome\":\"done\",\"text\":\"finished\",\"id\":\"d8c04d31-dd31-5d94-b838-3272d7abfe92\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 31,
+   "at": "2026-11-19T08:00:00.030Z",
+   "op_id": "00000000-0000-4000-8000-00000000001d",
+   "prev_hash": "998629bfc43aa3a5548581045f796b2fa7ae8a3ac059ac2bd39882b6fe1bf7b8",
+   "payload_hash": "632d0241d0b7ded7cae14f6386de199f9b578a87c490c2c41b3fcca1e89e4665",
+   "hash": "e0b801f4b0f56ee1110114467a72e337a141b1100c6fab8255ae4891deee74b8",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001d\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"status\":\"resolved\",\"outcome\":\"done\",\"text\":\"closed\",\"keep\":[\"ee824dc8-7bca-57f4-825f-6d781967b61e\"],\"id\":\"ae437a96-694c-5df9-a521-225179c67c92\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 32,
+   "at": "2026-11-19T08:00:00.031Z",
+   "op_id": "00000000-0000-4000-8000-00000000001e",
+   "prev_hash": "e0b801f4b0f56ee1110114467a72e337a141b1100c6fab8255ae4891deee74b8",
+   "payload_hash": "bead6815ad8f5adbd9a50f85b798837d3a1c84d3cacb218a72c66a858a39e52c",
+   "hash": "7a1e33e22da83ac7acd5b659b974e5bc1da0926a7695271ba74d3e0791355a2e",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001e\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"status\":\"active\",\"text\":\"reopened\",\"id\":\"ae437a96-694c-5df9-a521-225179c67c92\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 33,
+   "at": "2026-11-19T08:00:00.032Z",
+   "op_id": "00000000-0000-4000-8000-00000000001f",
+   "prev_hash": "7a1e33e22da83ac7acd5b659b974e5bc1da0926a7695271ba74d3e0791355a2e",
+   "payload_hash": "c2e6ff52733a14a5f237143269f15a86b0c0086eb8b5b6e937c92a74cbfe21ac",
+   "hash": "8feaf8e9da7d82dfa37f27231739364b2d367a6cdcfc0ff551fd9da84e45e1ba",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000001f\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test task\",\"scope\":\"project.p\",\"title\":\"successor\",\"supersedes\":[\"ae437a96-694c-5df9-a521-225179c67c92\"],\"type\":\"task\",\"properties\":{}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 34,
+   "at": "2026-11-19T08:00:00.033Z",
+   "op_id": "00000000-0000-4000-8000-000000000020",
+   "prev_hash": "8feaf8e9da7d82dfa37f27231739364b2d367a6cdcfc0ff551fd9da84e45e1ba",
+   "payload_hash": "5bb3da3bbc79d1ef43dff214fc28a01df802f9c46d7fcd634a7032b1e559c7e5",
+   "hash": "4a3e38326cb34ecf844af395831eb258141d2244ec1ea5a5c580a5eda86a724d",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000020\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"subjects\":[\"launch\"],\"priority\":\"high\",\"id\":\"00735275-5898-576b-ba0c-f09ec43e6cc1\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 35,
+   "at": "2026-11-19T08:00:00.034Z",
+   "op_id": "00000000-0000-4000-8000-000000000021",
+   "prev_hash": "4a3e38326cb34ecf844af395831eb258141d2244ec1ea5a5c580a5eda86a724d",
+   "payload_hash": "397915a656355295bd170ca35bddf17e2dc4e6896ecbd10b987efa2d2f26acc1",
+   "hash": "29eced69be300582eb345f89a101dd4f33801f9c13206e62d1e521920cb51151",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000021\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"display_title\":\"Launch the successor\",\"text\":\"named for the list\",\"id\":\"00735275-5898-576b-ba0c-f09ec43e6cc1\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 36,
+   "at": "2026-11-19T08:00:00.035Z",
+   "op_id": "00000000-0000-4000-8000-000000000022",
+   "prev_hash": "29eced69be300582eb345f89a101dd4f33801f9c13206e62d1e521920cb51151",
+   "payload_hash": "bdf97b284cdd012312991f46bf3e6a081c97a9b2cf1fc50d5b5f01a1c99598e2",
+   "hash": "c4c07f5830fbdf2e97c5896f35354248427e3ffda5eb219078a6e82673d2c2e3",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000022\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"5127a839-d710-57d3-a9d6-9ba2edcae240\",\"patch\":{\"content\":\"see [[kept]] again\",\"tags\":[],\"subjects\":[\"launch\"]}},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 37,
+   "at": "2026-11-19T08:00:00.036Z",
+   "op_id": "00000000-0000-4000-8000-000000000023",
+   "prev_hash": "c4c07f5830fbdf2e97c5896f35354248427e3ffda5eb219078a6e82673d2c2e3",
+   "payload_hash": "df39d08be753dcd0892cbe113cebdd3d06e62daae718c03f9be957a1fb9c6dc6",
+   "hash": "173f3f5d828a5e05f91e88d2f227cd0fcd4ee6cc36a055c1b22b9120bbfbfb1e",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000023\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"1de5939b-e06d-53ac-bc42-2366f9ebae6b\",\"patch\":{\"properties\":{\"next\":\"go on\"}}},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 38,
+   "at": "2026-11-19T08:00:00.037Z",
+   "op_id": "00000000-0000-4000-8000-000000000024",
+   "prev_hash": "173f3f5d828a5e05f91e88d2f227cd0fcd4ee6cc36a055c1b22b9120bbfbfb1e",
+   "payload_hash": "9fb9d95587c29663d7174ca108d6c0484b0e08559f971f37db3feaf8146fe390",
+   "hash": "e06101059e26f323b5eba619ad62609e2bb46c3fa9c953ce3ed218544644cae9",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000024\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"chose the test option\",\"scope\":\"project.p\",\"title\":\"standing-one\",\"type\":\"decision\",\"properties\":{\"rationale\":\"test rationale\",\"alternatives\":[\"test alternative\"]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 39,
+   "at": "2026-11-19T08:00:00.038Z",
+   "op_id": "00000000-0000-4000-8000-000000000025",
+   "prev_hash": "e06101059e26f323b5eba619ad62609e2bb46c3fa9c953ce3ed218544644cae9",
+   "payload_hash": "c5b75b44b6ee129f35afd50d1238cd4d998d6aa22102e42b9194e9e09ab443b1",
+   "hash": "e736ded13cc3d415c919bd57f59d9def4d4998585257f3ee64b2f9c5597cef50",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000025\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"3f59f0e8-b29f-546f-a566-ca0bad9d169a\",\"patch\":{\"review_note\":\"still holds\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 40,
+   "at": "2026-11-19T08:00:00.039Z",
+   "op_id": "00000000-0000-4000-8000-000000000026",
+   "prev_hash": "e736ded13cc3d415c919bd57f59d9def4d4998585257f3ee64b2f9c5597cef50",
+   "payload_hash": "223eab88c92ad62e96e0bf45736a56661710543a4df6de190265a546c67f661a",
+   "hash": "4497c002097d102096e7e9ae1f592a78d1a8e534f692499c292355295dffbed0",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000026\",\"schema\":22,\"call\":\"engram.confirm_review\",\"args\":{\"id\":\"3f59f0e8-b29f-546f-a566-ca0bad9d169a\",\"text\":\"confirmed again\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 41,
+   "at": "2026-11-19T08:00:00.040Z",
+   "op_id": "00000000-0000-4000-8000-000000000027",
+   "prev_hash": "4497c002097d102096e7e9ae1f592a78d1a8e534f692499c292355295dffbed0",
+   "payload_hash": "5cd4f8a7510107891ffc8955e2c81d2f8034bdd821bafab6e78bf25f4c1b159a",
+   "hash": "562fbb916f228b7976ea4232154003acfcc0da231ac81bb1b1ccaa565b97be82",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000027\",\"schema\":22,\"call\":\"engram.confirm_review\",\"args\":{\"id\":\"00735275-5898-576b-ba0c-f09ec43e6cc1\",\"text\":\"still relevant\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 42,
+   "at": "2026-11-19T08:00:00.041Z",
+   "op_id": "00000000-0000-4000-8000-000000000028",
+   "prev_hash": "562fbb916f228b7976ea4232154003acfcc0da231ac81bb1b1ccaa565b97be82",
+   "payload_hash": "df1527fabf18e5760bc1a3c41281ac91925ff8aedf9496f4d626d9bafd36594b",
+   "hash": "1ebb2cfe3196a25ec9bc7f892cd3bfbbf83a84a97cb7c9e2cb43514ad58c00dd",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000028\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"chose the test option\",\"scope\":\"project.p\",\"title\":\"replacement\",\"type\":\"decision\",\"properties\":{\"rationale\":\"test rationale\",\"alternatives\":[\"test alternative\"]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 43,
+   "at": "2026-11-19T08:00:00.042Z",
+   "op_id": "00000000-0000-4000-8000-000000000029",
+   "prev_hash": "1ebb2cfe3196a25ec9bc7f892cd3bfbbf83a84a97cb7c9e2cb43514ad58c00dd",
+   "payload_hash": "048cf6de4f84e927b94fd03753136b2af0046e89d0f74b8f4c6b7b4badafb0d3",
+   "hash": "2702d849965313d869bc894a70b09812d04df7367bf3eb24249d7e7b1a66c790",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000029\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"7879d94a-17c5-58be-a8b6-3cbea81c2c17\",\"patch\":{\"supersedes\":[\"3f59f0e8-b29f-546f-a566-ca0bad9d169a\"]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 44,
+   "at": "2026-11-19T08:00:00.043Z",
+   "op_id": "00000000-0000-4000-8000-00000000002a",
+   "prev_hash": "2702d849965313d869bc894a70b09812d04df7367bf3eb24249d7e7b1a66c790",
+   "payload_hash": "c5cda5b1f7ff8d6959cc9f936c153a22e72673ad7e13d413a4aa4bab8848acb2",
+   "hash": "53d28cc8a83825b7db8f99bb66fc202d25c7b0cc86d726e86780dfc1691591a0",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002a\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"3328a2c9-4369-5edb-b130-3ed1b5b75d03\",\"patch\":{\"status\":\"invalidated\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 45,
+   "at": "2026-11-19T08:00:00.044Z",
+   "op_id": "00000000-0000-4000-8000-00000000002b",
+   "prev_hash": "53d28cc8a83825b7db8f99bb66fc202d25c7b0cc86d726e86780dfc1691591a0",
+   "payload_hash": "e3cac9ea06ab57691b869a1df48e77af19a616ee71249558e4d7aaad06c88eb3",
+   "hash": "f27411a2525d2c5b2dec97b902dade2e425262427892470bc5f820ac02cb3765",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002b\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"ask-first\",\"content\":\"Ask before acting.\",\"type\":\"learning\",\"evidence\":{\"source\":\"user\",\"happened\":\"once\",\"quote\":\"ask me\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 46,
+   "at": "2026-11-19T08:00:00.045Z",
+   "op_id": "00000000-0000-4000-8000-00000000002c",
+   "prev_hash": "f27411a2525d2c5b2dec97b902dade2e425262427892470bc5f820ac02cb3765",
+   "payload_hash": "9c99f1324f33484ef13ab2a985c0ee295ccf0fcdb77ff567242b9b071ef83064",
+   "hash": "1b1d1c9c7e60f2c2d1ae171ba7884f6cc79f780b74579212065d8d449741101f",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002c\",\"schema\":22,\"call\":\"learning.add_evidence\",\"args\":{\"id\":\"102401dd-4fb1-513f-ac58-0e63701e11e5\",\"source\":\"observed\",\"happened\":\"twice\",\"content\":\"Ask before acting, always.\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 47,
+   "at": "2026-11-19T08:00:00.046Z",
+   "op_id": "00000000-0000-4000-8000-00000000002d",
+   "prev_hash": "1b1d1c9c7e60f2c2d1ae171ba7884f6cc79f780b74579212065d8d449741101f",
+   "payload_hash": "5189de40314c249a71107a8b7ae12b623a61d8038d04db026952659d3d350610",
+   "hash": "deb31f49ecd50da450992c1169ef0f682070b1c77def8f32c9b27357b79139e7",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002d\",\"schema\":22,\"call\":\"relation.create\",\"args\":{\"source_id\":\"5127a839-d710-57d3-a9d6-9ba2edcae240\",\"target_id\":\"3f59f0e8-b29f-546f-a566-ca0bad9d169a\",\"relation\":\"supports\",\"detection_method\":\"manual\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 48,
+   "at": "2026-11-19T08:00:00.047Z",
+   "op_id": "00000000-0000-4000-8000-00000000002e",
+   "prev_hash": "deb31f49ecd50da450992c1169ef0f682070b1c77def8f32c9b27357b79139e7",
+   "payload_hash": "62dc7c3186a1ff2dfc9092e116265ae8282135c7c8bedb954d9b8cb01162a432",
+   "hash": "16ba5e7622e414d952dc4d5141e1d79ec71abfd68d7f6c0245d493a0cedc643f",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002e\",\"schema\":22,\"call\":\"engram.rescope\",\"args\":{\"ids\":[\"1de5939b-e06d-53ac-bc42-2366f9ebae6b\",\"ee824dc8-7bca-57f4-825f-6d781967b61e\"],\"scope\":\"project.q\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 49,
+   "at": "2026-11-19T08:00:00.048Z",
+   "op_id": "00000000-0000-4000-8000-00000000002f",
+   "prev_hash": "16ba5e7622e414d952dc4d5141e1d79ec71abfd68d7f6c0245d493a0cedc643f",
+   "payload_hash": "a4c5ecb1ac55184863c4847ee9f235d44f08ab705766f9fd92f1b7ed461db9a0",
+   "hash": "d2047bbd2a4c97b3a92c0d363561b8f269d5daa416ed37f6408bff6f5a735a76",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000002f\",\"schema\":22,\"call\":\"engram.retag\",\"args\":{\"ids\":[\"ee824dc8-7bca-57f4-825f-6d781967b61e\",\"5127a839-d710-57d3-a9d6-9ba2edcae240\"],\"add\":[\"ops\"],\"remove\":[\"old\"]},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 50,
+   "at": "2026-11-19T08:00:00.049Z",
+   "op_id": "00000000-0000-4000-8000-000000000030",
+   "prev_hash": "d2047bbd2a4c97b3a92c0d363561b8f269d5daa416ed37f6408bff6f5a735a76",
+   "payload_hash": "20409a2d47c36efaf3cf633460516514af0b0cc5c7a9099c0e71ee1ea709bde5",
+   "hash": "58fab8d1595d4bc62e0327fb9c74577cdfd586c482b7f626f8dca7e16c9357a5",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000030\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test task\",\"scope\":\"project.p\",\"title\":\"leaving\",\"parent_id\":\"00735275-5898-576b-ba0c-f09ec43e6cc1\",\"type\":\"task\",\"properties\":{}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 51,
+   "at": "2026-11-19T08:00:00.050Z",
+   "op_id": "00000000-0000-4000-8000-000000000031",
+   "prev_hash": "58fab8d1595d4bc62e0327fb9c74577cdfd586c482b7f626f8dca7e16c9357a5",
+   "payload_hash": "02f117c79978145735e9fa6616a8526750aa0c65aa1b4991c795d46d03e13a74",
+   "hash": "2eb5f18b766c3304fe20b8a1d99edfd8b4acc1c3594f8debf6f5da93ef1166de",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000031\",\"schema\":22,\"call\":\"task.track\",\"args\":{\"text\":\"handed over\",\"id\":\"5018abba-b53e-5fcd-9b78-baabd33bb1a7\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 52,
+   "at": "2026-11-19T08:00:00.051Z",
+   "op_id": "00000000-0000-4000-8000-000000000032",
+   "prev_hash": "2eb5f18b766c3304fe20b8a1d99edfd8b4acc1c3594f8debf6f5da93ef1166de",
+   "payload_hash": "babdfa81ad2ec8fbf019754de122d7b52ab0199ca6fca33ee5c8864e31fd2192",
+   "hash": "da90f3fa8e3a6c50f2be85b172e4d7c282c7ad3cae3c1bbf1bee30252b35fe35",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000032\",\"schema\":22,\"call\":\"engram.move_out\",\"args\":{\"ids\":[\"5018abba-b53e-5fcd-9b78-baabd33bb1a7\"],\"set_hash\":\"6a4c471874d8f44f7e4a0636e1db3bb60767f1a444a2032e1ca77b3462e2cc49\",\"drop_relations\":[\"14e77792-4f21-53e0-8ed7-5d659e53f4e4\"],\"target\":{\"brain\":\"d03d2b9e-da18-4ba9-9625-4be5beab9f71\",\"op_id\":\"20000000-0000-4000-8000-000000000000\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 53,
+   "at": "2026-11-19T08:00:00.052Z",
+   "op_id": "00000000-0000-4000-8000-000000000033",
+   "prev_hash": "da90f3fa8e3a6c50f2be85b172e4d7c282c7ad3cae3c1bbf1bee30252b35fe35",
+   "payload_hash": "8dc27a40758b72798f553b15e5c7698b9789803beb6cc58262ee17b34a27281d",
+   "hash": "01bba953b6f00334274eb450f5976c327948337e3a4418b66598f3a03edee0fc",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000033\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"project\",\"id\":\"p\",\"patch\":{\"status\":\"archived\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 54,
+   "at": "2026-11-19T08:00:00.053Z",
+   "op_id": "00000000-0000-4000-8000-000000000034",
+   "prev_hash": "01bba953b6f00334274eb450f5976c327948337e3a4418b66598f3a03edee0fc",
+   "payload_hash": "c18b6f81fe777d1de246e29c63e920342d77628403e785ea9040fce2656eb049",
+   "hash": "ea4178430316c81cd7596e1db7b6c06acdbc16827b0f548125d25e77ed099080",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000034\",\"schema\":22,\"call\":\"provenance.restamp\",\"args\":{\"from_handle\":\"juno\",\"to_handle\":\"ada\",\"agent\":\"juno\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
+  },
+  {
+   "seq": 55,
+   "at": "2026-11-19T08:00:00.054Z",
+   "op_id": "00000000-0000-4000-8000-000000000035",
+   "prev_hash": "ea4178430316c81cd7596e1db7b6c06acdbc16827b0f548125d25e77ed099080",
+   "payload_hash": "adc14d82d3fc14874995624d8015132c8a35117865b3494843c951c530a607d4",
+   "hash": "75e2ff2c974caeb65a9e20e174770e3c54a48e7c76ca9915f62c9bdae02d3752",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000035\",\"schema\":22,\"call\":\"relation.create\",\"args\":{\"source_id\":\"102401dd-4fb1-513f-ac58-0e63701e11e5\",\"target_id\":\"2f8fad5b-d9cb-469f-a165-70867728950e\",\"relation\":\"refines\",\"detection_method\":\"manual\",\"target_brain\":\"0f8fad5b-d9cb-469f-a165-70867728950e\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 56,
+   "at": "2026-11-19T08:00:00.055Z",
+   "op_id": "00000000-0000-4000-8000-000000000036",
+   "prev_hash": "75e2ff2c974caeb65a9e20e174770e3c54a48e7c76ca9915f62c9bdae02d3752",
+   "payload_hash": "0f021022730fbc4bdd0a8bc1f9b6b086d2387a1816b0a452deadbd1ab66476d9",
+   "hash": "f9993fefbfa4bb876648ee1b230183499081faf02a966b0faeac4378cc96dd57",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000036\",\"schema\":22,\"call\":\"relation.move_end\",\"args\":{\"from_brain\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"to_brain\":\"1f8fad5b-d9cb-469f-a165-70867728950e\",\"relations\":[\"d90b49da-0e58-55ec-bc7f-621dfd34aa1a\"]},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 57,
+   "at": "2026-11-19T08:00:00.056Z",
+   "op_id": "00000000-0000-4000-8000-000000000037",
+   "prev_hash": "f9993fefbfa4bb876648ee1b230183499081faf02a966b0faeac4378cc96dd57",
+   "payload_hash": "07cf97111689c602b2eb1ff7ad6e26be0cdeecfb938ed8339ae895f607e87923",
+   "hash": "7ef333bd8e8f659bcb984c8af9c7db4fb44be6617ae5a0fc607c5439c91361cb",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000037\",\"schema\":22,\"call\":\"engram.import\",\"args\":{\"source\":{\"brain\":\"df19ff7f-bf9b-4190-ab09-d5410c558a87\",\"head_seq\":7},\"set_hash\":\"6f2a051abaea92fc0a319af08e584fe1ce3f9f157fae841716aa620f2acec073\",\"rows\":{\"projects\":[{\"id\":\"moved\",\"name\":\"Moved\",\"status\":\"active\",\"goal\":null,\"description\":null,\"owner\":null,\"parent_project\":null,\"started_at\":null,\"ended_at\":null,\"metadata\":null,\"status_tracks\":null,\"created_at\":\"2026-10-20T08:00:00.001Z\",\"updated_at\":\"2026-10-20T08:00:00.001Z\"}],\"entities\":[],\"users\":[],\"agents\":[],\"tags\":[{\"id\":\"carried\",\"name\":\"carried\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.003Z\"},{\"id\":\"ops\",\"name\":\"ops\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.002Z\"}],\"subjects\":[],\"engrams\":[{\"id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"type\":\"task\",\"scope\":\"project.moved\",\"title\":\"moved-task\",\"content\":\"a test task\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.004Z\",\"updated_at\":\"2026-10-20T08:00:00.005Z\",\"rev\":3},{\"id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"type\":\"decision\",\"scope\":\"project.moved\",\"title\":\"moved-decision\",\"content\":\"chose the test option\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{\\\"rationale\\\":\\\"test rationale\\\",\\\"alternatives\\\":[\\\"test alternative\\\"],\\\"binding\\\":\\\"task\\\",\\\"review_due_at\\\":\\\"2026-12-19T08:00:00.006Z\\\"}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"updated_at\":\"2026-10-20T08:00:00.006Z\",\"rev\":1}],\"entries\":[{\"id\":\"7d4c50d4-5e54-5aca-aa36-3351021067b8\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.004Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"created (active)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"05b5314a-763d-55ec-9504-7ad8fced806f\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"note\",\"at\":\"2026-10-20T08:00:00.005Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"progress\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"b401e1cc-60e0-550c-9b2f-9cc38c8dfabe\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.006Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"decision taken: moved-decision (11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null}],\"relations\":[{\"id\":\"6ba2cbc3-4803-5a9f-b3c1-655f001ac9b8\",\"source_id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"target_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"relation\":\"derived_from\",\"detection_method\":\"agent_declared\",\"strength\":1,\"explanation\":null,\"metadata\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"source_brain\":null,\"target_brain\":null}],\"engram_tags\":[{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"carried\",\"created_at\":\"2026-10-20T08:00:00.004Z\"},{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"ops\",\"created_at\":\"2026-10-20T08:00:00.004Z\"}],\"engram_subjects\":[]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 58,
+   "at": "2026-11-19T08:00:00.057Z",
+   "op_id": "00000000-0000-4000-8000-000000000038",
+   "prev_hash": "7ef333bd8e8f659bcb984c8af9c7db4fb44be6617ae5a0fc607c5439c91361cb",
+   "payload_hash": "a4445c125982759a0938f9ea260d9bb554ac258519b63ce662666ca081e21c1d",
+   "hash": "b907c8088c33ba64ef8985f47d3eb7088005ae7d3795f5f2c38919f843801b8a",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000038\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"chose the test option\",\"scope\":\"project.q\",\"title\":\"rev-checked\",\"type\":\"decision\",\"properties\":{\"rationale\":\"test rationale\",\"alternatives\":[\"test alternative\"]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 59,
+   "at": "2026-11-19T08:00:00.058Z",
+   "op_id": "00000000-0000-4000-8000-000000000039",
+   "prev_hash": "b907c8088c33ba64ef8985f47d3eb7088005ae7d3795f5f2c38919f843801b8a",
+   "payload_hash": "128514e382304ae4d47bf22ce911db51161de1d51732d7bf27f902716c93e958",
+   "hash": "6ca7fd4aaf343beb14bebead2a6a418a476a9e1dbeb5abc6c5468b2c144123ef",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000039\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"8137e6ed-fbb6-576b-9055-8ad07b6e8499\",\"patch\":{\"content\":\"at rev 1\"},\"base_rev\":1},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 60,
+   "at": "2026-11-19T08:00:00.059Z",
+   "op_id": "00000000-0000-4000-8000-00000000003a",
+   "prev_hash": "6ca7fd4aaf343beb14bebead2a6a418a476a9e1dbeb5abc6c5468b2c144123ef",
+   "payload_hash": "01745a1a7a24ca680946023e1cb5692573619ba286199210aa5d5416e14ccd83",
+   "hash": "7773327cd6ef34335481af8fab482293bf9a5cc2c23f2e9f40b9b1ba83eee90f",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003a\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"check-deploy-logs\",\"content\":\"Check the deploy logs after every rollout.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 61,
+   "at": "2026-11-19T08:00:00.060Z",
+   "op_id": "00000000-0000-4000-8000-00000000003b",
+   "prev_hash": "7773327cd6ef34335481af8fab482293bf9a5cc2c23f2e9f40b9b1ba83eee90f",
+   "payload_hash": "7097eaa7cb11560c3ddb03128c6689f95c94a62faf87bde03a12c105bf0c49ac",
+   "hash": "96d68d4ea455b7b466ca053fa14f8694b0d134dfbb726ea0802568f768c05de3",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003b\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"write-release-notes\",\"content\":\"Write the release notes, then check them twice.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 62,
+   "at": "2026-11-19T08:00:00.061Z",
+   "op_id": "00000000-0000-4000-8000-00000000003c",
+   "prev_hash": "96d68d4ea455b7b466ca053fa14f8694b0d134dfbb726ea0802568f768c05de3",
+   "payload_hash": "2b738b45be551c4713e254615d5d195fb43f3dfca7ace27e23537125085920d9",
+   "hash": "2dfd4a18ff4788b5cbc6b84101f0bf2c429f5baf0e2f683a32b9469a7802670e",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003c\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"keep-deploy-notes\",\"content\":\"Keep deploy notes next to the release logs.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 63,
+   "at": "2026-11-19T08:00:00.062Z",
+   "op_id": "00000000-0000-4000-8000-00000000003d",
+   "prev_hash": "2dfd4a18ff4788b5cbc6b84101f0bf2c429f5baf0e2f683a32b9469a7802670e",
+   "payload_hash": "fbbb0639af63613bbb8addd317ef21f864776120925cb2a326596ac6f9553e6c",
+   "hash": "86d19d029a3d529655155dd47cbffb6048970bafb83607448f221aa373f7cafb",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003d\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"read-server-output\",\"content\":\"Read the server output first when a request fails.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  }
+ ],
+ "refused": [
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "scope": "agent.juno",
+    "title": "too-long",
+    "type": "rule",
+    "properties": {
+     "applies": "always",
+     "why": "test why",
+     "agreed": "yes"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: a rule's content is at most 200 characters (got 201) — state only what to do. Put the rationale in why and playbook or examples in detail.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "chose the test option",
+    "scope": "project.q",
+    "title": "no-alternative",
+    "type": "decision",
+    "properties": {
+     "rationale": "because"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: a decision needs alternatives.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test note",
+    "scope": "project.nowhere",
+    "title": "no-such-project",
+    "type": "note",
+    "properties": {}
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Scope \"project.nowhere\" references unknown project \"nowhere\". Create it first with eml_create_object(object=project, name=…, id=nowhere).",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test note",
+    "scope": "Project Q",
+    "title": "no-such-scope",
+    "type": "note",
+    "properties": {}
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid scope \"Project Q\". Must match one of: global, project.<id>, agent.<id>, user.<id>, entity.<id>.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test note",
+    "scope": "project.q",
+    "title": "no-such-tag",
+    "tags": [
+     "unregistered"
+    ],
+    "type": "note",
+    "properties": {}
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "tag \"unregistered\" not found — create it via the tag registry first",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "type": "memo",
+    "scope": "project.q",
+    "title": "no-such-type",
+    "content": "a memo"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: unknown type \"memo\". Valid types: decision, rule, profile, status, task, event, log, reference, note, learning.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test task",
+    "scope": "project.q",
+    "title": "born-closed",
+    "status": "resolved",
+    "type": "task",
+    "properties": {}
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: a task is created planned or active — done things are not tasks (record them as an event or in the log).",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "type": "learning",
+    "scope": "agent.juno",
+    "title": "check-deploy-release",
+    "content": "Check deploy logs and release notes.",
+    "evidence": {
+     "source": "observed",
+     "happened": "seen again"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "TOPIC_EXISTS",
+    "message": "Invalid engram: an active learning on this topic exists — add the incident to it (learning.add_evidence with its id), or pass new_topic for a different topic.",
+    "data": {
+     "matches": [
+      {
+       "id": "d571c6a3-5703-51b2-b2c2-5b3ab0f27a9a",
+       "scope": "agent.juno",
+       "title": "keep-deploy-notes",
+       "content": "Keep deploy notes next to the release logs.",
+       "coverage": 0.8
+      },
+      {
+       "id": "850d9f35-97c8-5512-bf6a-6a606ca6f488",
+       "scope": "agent.juno",
+       "title": "check-deploy-logs",
+       "content": "Check the deploy logs after every rollout.",
+       "coverage": 0.6
+      },
+      {
+       "id": "555e6223-5345-5c5b-9c1d-dfb4a7ff2516",
+       "scope": "agent.juno",
+       "title": "write-release-notes",
+       "content": "Write the release notes, then check them twice.",
+       "coverage": 0.6
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "engram.update",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "patch": {
+     "content": "stale"
+    },
+    "base_rev": 1
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "CONFLICT",
+    "message": "engram 8137e6ed-fbb6-576b-9055-8ad07b6e8499 changed since rev 1: it is at rev 2.",
+    "data": {
+     "current_rev": 2
+    }
+   }
+  },
+  {
+   "name": "engram.update",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "patch": {
+     "status": "pending"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: status can be set to invalidated or active (a reactivation). Superseded comes from supersedes on the new engram.",
+    "data": null
+   }
+  },
+  {
+   "name": "task.track",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "text": "not a task"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: 8137e6ed-fbb6-576b-9055-8ad07b6e8499 is a decision, not a task — use eml_update.",
+    "data": null
+   }
+  },
+  {
+   "name": "relation.create",
+   "input": {
+    "source_id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "target_id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "relation": "likes",
+    "detection_method": "manual"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "invalid relation \"likes\" — one of supports, contradicts, supersedes, derived_from, refines, related_to, blocks, part_of",
+    "data": null
+   }
+  },
+  {
+   "name": "object.create",
+   "input": {
+    "object": "project",
+    "fields": {
+     "id": "Not A Slug",
+     "name": "X"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid object: a project id is letters, digits, - and _ (it becomes the scope project.<id>).",
+    "data": null
+   }
+  },
+  {
+   "name": "object.update",
+   "input": {
+    "object": "tag",
+    "id": "unregistered",
+    "patch": {
+     "description": "none"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "NOT_FOUND",
+    "message": "tag \"unregistered\" not found",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.retag",
+   "input": {
+    "ids": [
+     "8137e6ed-fbb6-576b-9055-8ad07b6e8499"
+    ],
+    "add": [
+     "unregistered"
+    ],
+    "remove": []
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "tag \"unregistered\" not found — create it via the tag registry first",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.rescope",
+   "input": {
+    "ids": [
+     "8137e6ed-fbb6-576b-9055-8ad07b6e8499"
+    ],
+    "scope": "project.nowhere"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Scope \"project.nowhere\" references unknown project \"nowhere\". Create it first with eml_create_object(object=project, name=…, id=nowhere).",
+    "data": null
+   }
+  }
+ ]
+}

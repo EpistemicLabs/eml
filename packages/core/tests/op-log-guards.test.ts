@@ -43,15 +43,3 @@ describe('no brain write outside the op log', () => {
     })
   }
 })
-
-describe('a schema step is an op in the log', () => {
-  it('the schema stays at 21 until the runner logs a migration', () => {
-    expect(CURRENT_BRAIN_SCHEMA_VERSION, [
-      `Brain schema ${CURRENT_BRAIN_SCHEMA_VERSION} > 21, but the migration runner cannot log a schema step yet.`,
-      'Before this bump, build the schema migration as an op (local-op-log-spec §6): the runner applies',
-      'v0.N_migrate.sql and appends schema.migrate {from, to, state_hash} plus a snapshot at that seq;',
-      'a rebuild starts from the newest snapshot at or after the last schema.migrate, refuses an op whose',
-      'schema is not its segment\'s and a snapshot newer than the code. Then replace this guard with tests of that path.',
-    ].join('\n')).toBe(21)
-  })
-})

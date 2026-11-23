@@ -11,7 +11,7 @@ describe('splitting off a topic', () => {
     expect(plan).toEqual({
       ok: true,
       plan: {
-        task: { title: 'media-viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' },
+        task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' },
         originLink: true,
         journal: { created: 'Spun off from session-review-ui (session Session review).', source: 'Media viewer was spun off here as its own task.' },
         spawn: true,
@@ -40,7 +40,7 @@ describe('splitting off a topic', () => {
   it('without the task system, parking makes one ordinary task that says where it came up', () => {
     const plan = planSplit(noTask, { ...request, relation: 'unrelated', when: 'park' })
     expect(plan.ok && plan.plan).toEqual({
-      task: { title: 'media-viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.\n\nCame up in session Session review.', scope: 'project.ui', status: 'planned' },
+      task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.\n\nCame up in session Session review.', scope: 'project.ui', status: 'planned' },
       originLink: false, journal: {}, spawn: false,
     })
   })

@@ -41,7 +41,7 @@ import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
-import { createSessionTask, kebabTitle } from './application/session-task.js'
+import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
@@ -447,7 +447,8 @@ async function main() {
   }, 15_000).unref?.()
   // The spawn API's newTask: written into the brain at once (decision no-task-triage).
   const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
-    const fields = { title: kebabTitle(input.title) ?? input.title, content: input.content, scope: input.scope, status: 'active' }
+    const display = displayTitleOf(input.title)
+    const fields = { title: kebabTitle(input.title) ?? input.title, ...(display ? { display_title: display } : {}), content: input.content, scope: input.scope, status: 'active' }
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
     const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 
 import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, PRIMARY, RadioCard } from '@/shared/view/ui';
-import { agentName, readable, snoozeTimes, type BoardTask, type HandOverInput, type HandOverMode } from '@/lib/task-board';
+import { agentName, type BoardTask, type HandOverInput, type HandOverMode, snoozeTimes, taskName } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
 type When = 'tomorrow' | 'monday' | 'pick';
@@ -44,7 +44,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const [picked, setPicked] = useState(localStamp(times.tomorrow));
   const [repeat, setRepeat] = useState<Repeat>('once');
   const [desk, setDesk] = useState(desks[0]?.id ?? NEW_DESK);
-  const [deskName, setDeskName] = useState(readable(task.title));
+  const [deskName, setDeskName] = useState(taskName(task));
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -58,7 +58,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const submit = () => {
     if (!agent) return;
     const input: HandOverInput = { mode, delegate: agent, checkpoint, ...(mode === 'schedule' ? { schedule: schedule() } : {}) };
-    const chosen = mode !== 'together' ? null : desk === NEW_DESK ? { name: deskName.trim() || readable(task.title) } : { id: desk };
+    const chosen = mode !== 'together' ? null : desk === NEW_DESK ? { name: deskName.trim() || taskName(task) } : { id: desk };
     if (mode === 'together') input.desk = chosen && 'name' in chosen ? chosen.name : desks.find((d) => d.id === desk)?.name ?? 'Main';
     onSubmit(input, chosen);
   };
@@ -73,7 +73,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
           <h3 id="hand-over-title" className="m-0 flex-1 text-title font-semibold">Hand over</h3>
           <button type="button" onClick={onClose} aria-label="Close" className={cn(BUTTON, 'min-h-(--target-min) px-2')}>×</button>
         </header>
-        <div className="px-5 pb-3 pt-0.5 text-ui text-muted-foreground">{readable(task.title)} · owner stays <b className="text-foreground">{task.owner ? 'you' : 'nobody'}</b></div>
+        <div className="px-5 pb-3 pt-0.5 text-ui text-muted-foreground">{taskName(task)} · owner stays <b className="text-foreground">{task.owner ? 'you' : 'nobody'}</b></div>
         <div className="grid grid-cols-3 border-y border-border">
           {MODES.map(([m, label, small]) => (
             <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}

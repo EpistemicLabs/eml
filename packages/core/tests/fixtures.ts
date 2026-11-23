@@ -188,7 +188,7 @@ export function writeEverything(eml: EML): void {
 
   const scope = 'project.p'
   const parent = writes(eml).store(validTask({ scope, title: 'parent', status: 'active' }), juno)
-  const child = writes(eml).store(validTask({ scope, title: 'child', parent_id: parent.id }), juno)
+  const child = writes(eml).store(validTask({ scope, title: 'child', parent_id: parent.id, properties: { display_title: 'Build the child step of the parent', goal: 'the child step is built', delegate: 'assistant', checkpoint: 'after', depends_on: [parent.id] } }), juno)
   const bound = writes(eml).store(validDecision({ scope, title: 'bound', task_id: parent.id, properties: { binding: 'task' } }), juno)
   const kept = writes(eml).store(validNote({ scope, title: 'kept', task_id: parent.id, properties: { binding: 'task' } }), juno)
   const note = writes(eml).store(validNote({ scope, title: 'note', content: 'see [[bound]] and [[nowhere]]', tags: ['ops'], subjects: ['launch'] }), ada)
@@ -207,6 +207,7 @@ export function writeEverything(eml: EML): void {
   writes(eml).trackTask(parent.id, { status: 'active', text: 'reopened' }, ada)
   const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
   writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
+  writes(eml).trackTask(successor.id, { display_title: 'Launch the successor', text: 'named for the list' }, juno)
 
   writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
   writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)

@@ -51,7 +51,7 @@ describe('splitting off from a session', () => {
     const answer = await split.submit(input())
     expect(answer.ok && answer.command).toMatchObject({ kind: 'split', state: 'applied', split: { createdTaskId: 't-new', spawnedSessionId: 's-new', sourceTaskId: 't-root' } })
     expect(posts).toEqual([
-      ['/engram/task', { title: 'media-viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' }],
+      ['/engram/task', { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' }],
       ['/relate', { source_id: 't-new', target_id: 't-root', relation: 'derived_from', detection_method: 'manual', explanation: 'spun off from' }],
       ['/task/t-new/track', { text: 'Spun off from session-review-ui (session Session review).' }],
       ['/task/t-root/track', { text: 'Media viewer was spun off here as its own task.' }],

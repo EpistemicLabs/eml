@@ -1,7 +1,7 @@
 // A task's Related block: where it came from (its parent, or the task it was spun off from, and further up)
 // and what came out of it (its sub-tasks and the tasks spun off from it). Pure, so the rules are tested
 // without a browser. Same links as the tasks card's trees (taskTree.ts): parentId first, else originId.
-import { OPEN_STATUSES, type Board, type BoardTask } from '@/lib/task-board';
+import { OPEN_STATUSES, taskName, type Board, type BoardTask } from '@/lib/task-board';
 import { taskState, type NodeState, type TaskLike } from '@/components/tasks-card/taskTree';
 
 export interface RelatedTask {
@@ -36,7 +36,7 @@ export function relatedOf(task: TaskLike, board: Pick<Board, 'tasks' | 'lineage'
   const all = new Map<string, { like: TaskLike; task?: BoardTask }>();
   for (const t of board.lineage ?? []) if (t.spaceId === task.spaceId) all.set(t.id, { like: { ...t } });
   for (const t of board.tasks) if (t.spaceId === task.spaceId) all.set(t.id, { like: t, task: t });
-  const item = (like: TaskLike, task?: BoardTask): RelatedTask => ({ id: like.id, title: like.title, state: taskState(like), rel: relOf(like), ...(task ? { task } : {}) });
+  const item = (like: TaskLike, task?: BoardTask): RelatedTask => ({ id: like.id, title: taskName(like), state: taskState(like), rel: relOf(like), ...(task ? { task } : {}) });
 
   const origins: RelatedTask[] = [];
   const seen = new Set([task.id]);

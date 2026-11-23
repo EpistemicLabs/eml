@@ -1,7 +1,7 @@
 // Opening an existing task from the desk (⌘K, the nav's Search tasks, the tasks card's Open task): where the task
 // is now and what Enter does with it. Pure, so the rules are tested without a browser; the opening itself is in
 // components/command-palette/openTask.ts. A task already open on another desk is gone to, never moved there.
-import { OPEN_STATUSES, readable, type Board, type BoardTask } from '@/lib/task-board';
+import { type Board, type BoardTask, OPEN_STATUSES, readable, taskName } from '@/lib/task-board';
 
 export interface LocateContext {
   activeDeskId: string;
@@ -78,7 +78,7 @@ export function searchTasks(board: Pick<Board, 'tasks' | 'projects'>, query: str
     .filter((t) => OPEN_STATUSES.has(t.status) && (!opts.project || t.project === opts.project))
     .filter((t) => {
       if (words.length === 0) return true;
-      const hay = [readable(t.title), t.title, projectNameOf(board, t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
+      const hay = [taskName(t), t.title, projectNameOf(board, t), t.project ?? '', t.spaceName].join(' ').toLowerCase();
       return words.every((w) => hay.includes(w));
     })
     .sort(order);

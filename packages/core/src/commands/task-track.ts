@@ -82,7 +82,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome

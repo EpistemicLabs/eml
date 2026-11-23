@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react';
 
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { archiveSession, stopSession } from '@/lib/session-actions';
-import { readable, startTaskSession, type BoardTask, type StartOutcome } from '@/lib/task-board';
+import { type BoardTask, type StartOutcome, startTaskSession, taskName } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import type { TaskLocation } from '@/lib/open-task';
 import type { ToastMessage } from '@/shared/view/ui/Toast';
@@ -50,7 +50,7 @@ async function endSession(sessionId: string): Promise<string | null> {
 const starting = new Set<string>();
 
 export async function openTask(task: BoardTask, where: TaskLocation, opts: { newDesk: boolean }): Promise<void> {
-  const title = readable(task.title);
+  const title = taskName(task);
   const before = { paneId: getActivePaneId(), deskId: getActiveDeskId(), spaceKey: getActiveSpaceId() };
   const back = () => {
     activateSpace(before.spaceKey);

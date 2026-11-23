@@ -213,11 +213,12 @@ export interface TrackTaskInput {
   goal?: string | null
   /** v0.22 task system: the one agent that works on the task (the owner stays in assignee_ids); null clears. */
   delegate?: string | null
+  display_title?: string | null
 }
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
   'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
   'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
-  'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate',
+  'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title',
 ])
 
 /** eml_learning: a new lesson, or an incident added to one (id). */

@@ -94,7 +94,7 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
       throw new Error('Invalid engram: a status has no title — a scope has one status, its history is the supersedes chain.')
     }
   } else if (isBlank(input.title) && !(type === 'note' && input.origin)) {
-    throw new Error(`Invalid engram: ${type === 'event' || type === 'log' ? 'an' : 'a'} ${type} needs a title (kebab-case recall anchor).`)
+    throw new Error(`Invalid engram: ${type === 'event' || type === 'log' ? 'an' : 'a'} ${type} needs a title (kebab-case recall anchor)${type === 'task' ? '; the name a person reads in a list goes in display_title' : ''}.`)
   }
   let status: EngramStatus = TYPE_DEFAULT_STATUS[type]
   if (input.status !== undefined) {

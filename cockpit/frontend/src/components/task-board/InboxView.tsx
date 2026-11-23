@@ -2,12 +2,13 @@
 // An item clears itself when its session is answered, the result reviewed or the task closed.
 import { useState } from 'react';
 
-import { fyi, readable, when, type Board, type BoardTask, type InboxItem } from '@/lib/task-board';
+import { projectNameOf } from '@/lib/open-task';
+import { type Board, type BoardTask, fyi, type InboxItem, originName, readable, taskName, when } from '@/lib/task-board';
 import { DAY_MS } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 
-import { Who } from './parts';
+import { FromOrigin, Who } from './parts';
 
 export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }
@@ -51,7 +52,7 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
           return (
             <div key={item.key}>
               {showHead && <div className={cn(LABEL, 'bg-muted px-3 py-2')}>{head}</div>}
-              <Item item={item} task={task} viewer={board.viewer} now={now} compact={compact} current={!!item.taskId && item.taskId === currentTaskId} onOpen={onOpen} onAction={onAction} />
+              <Item item={item} task={task} project={task ? projectNameOf(board, task) : ''} from={task ? originName(task, board) : null} viewer={board.viewer} now={now} compact={compact} current={!!item.taskId && item.taskId === currentTaskId} onOpen={onOpen} onAction={onAction} />
             </div>
           );
         })}
@@ -59,7 +60,7 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
         {showFyi && results.map((t) => (
           <div key={t.id} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
             <time className="w-16 shrink-0 tabular-nums text-caption">{when(t.updatedAt, now)}</time>
-            <span><b className="font-medium text-foreground">{readable(t.title)}</b> · done by {t.delegate}</span>
+            <span><b className="font-medium text-foreground">{taskName(t)}</b> · done by {t.delegate}</span>
           </div>
         ))}
         {board.snoozed.length > 0 && <Fold label={`Snoozed · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setShowSnoozed(!showSnoozed)} />}
@@ -85,8 +86,8 @@ function Fold({ label, open, onToggle }: { label: string; open: boolean; onToggl
   );
 }
 
-function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
-  item: InboxItem; task: BoardTask | undefined; viewer: string; now: number; compact: boolean; current: boolean;
+function Item({ item, task, project, from, viewer, now, compact, current, onOpen, onAction }: {
+  item: InboxItem; task: BoardTask | undefined; project: string; from: string | null; viewer: string; now: number; compact: boolean; current: boolean;
   onOpen: (item: InboxItem) => void; onAction: (action: InboxAction) => void;
 }) {
   const kind = KIND[item.kind];
@@ -99,6 +100,8 @@ function Item({ item, task, viewer, now, compact, current, onOpen, onAction }: {
         <span className={cn('text-body text-muted-foreground', compact && 'line-clamp-2')}>{item.text}</span>
         <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-ui text-muted-foreground">
           <Chip hue={kind.hue}>{kind.label}</Chip>
+          {project && <Chip>{project}</Chip>}
+          {from && <FromOrigin name={from} />}
           {task ? <Who task={task} viewer={viewer} /> : <span>no task</span>}
           <time className="tabular-nums text-caption">{when(item.since, now)}</time>
         </span>
