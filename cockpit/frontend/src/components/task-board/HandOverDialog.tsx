@@ -37,7 +37,8 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
 }) {
   const times = snoozeTimes(now);
   const [mode, setMode] = useState<HandOverMode>(initialMode);
-  const [agent, setAgent] = useState(task.delegate && agents.includes(task.delegate) ? task.delegate : agents[0] ?? '');
+  const preferred = task.delegate ?? task.handTo;
+  const [agent, setAgent] = useState(preferred && agents.includes(preferred) ? preferred : agents[0] ?? '');
   const [checkpoint, setCheckpoint] = useState<Checkpoint>((task.checkpoint as Checkpoint | undefined) ?? 'after');
   const [choosing, setChoosing] = useState(false);
   const [when, setWhen] = useState<When>('tomorrow');

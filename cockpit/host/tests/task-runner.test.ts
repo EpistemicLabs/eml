@@ -173,3 +173,55 @@ describe('task runner', () => {
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
   })
 })
+
+describe('the owner\'s own session and Delegate now (B3)', () => {
+  type Busy = typeof import('../src/domain/runner-busy.js')
+  let busy: Busy
+  beforeAll(async () => { busy = await import('../src/domain/runner-busy.js') })
+
+  const at = (iso: string, more: Partial<{ archived: boolean; working: boolean }> = {}) => ({ createdAt: iso, archived: false, working: false, ...more })
+
+  it('an idle session from before Delegate now does not block; a later, a working or an un-delegated one does', () => {
+    const delegated = '2026-11-23T10:00:00.000Z'
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], delegated)).toBe(false)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z', { working: true })], delegated)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z')], delegated)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], null)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z', { archived: true })], null)).toBe(false)
+  })
+
+  it('reproduced: Delegate now on an active task while the owner\'s idle session on it is open starts the delegate', async () => {
+    const { createTaskCommands, TaskCommandStore, UNDO_WINDOW_MS } = await import('../src/application/task-commands.js')
+    const { SessionLedger } = await import('../src/session-ledger.js')
+    const list: T[] = [{ id: 'own-task', status: 'active', assignee_ids: ['lasse'] }]
+    const brain = brainOf(list)
+    // The owner's own session on the task, open and idle, from before the hand-over.
+    const ledger = new SessionLedger()
+    ledger.recordSpawn('own', null, 'bp-eml', 'claude', false, 'own-task')
+    let now = Date.now() + 60_000
+    const commands = createTaskCommands({
+      store: new TaskCommandStore(join(home, 'b3-commands.json')), space: () => ({ id: 'main', name: 'Main', shared: false }) as never,
+      brain: () => ({ get: brain.get, post: async (path: string, body: Record<string, unknown>) => {
+        const t = list[0]; for (const [k, v] of Object.entries(body)) if (k === 'delegate') t.delegate = v as string; else if (k === 'checkpoint') t.checkpoint = v as string
+        return brain.post(path, body)
+      } }),
+      agentsOf: async () => ['atlas'], createJob: async () => ({ jobId: 'j' }), changed: () => {}, now: () => now, log: () => {},
+    })
+    await commands.submit({ opId: 'op-b3', kind: 'hand_over', spaceId: 'main', taskId: 'own-task', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    now += UNDO_WINDOW_MS + 1
+    await commands.tick()
+    expect(list[0]).toMatchObject({ status: 'planned', delegate: 'atlas', checkpoint: 'after' })
+
+    const started: string[] = []
+    const { createTaskRunner } = await import('../src/application/task-runner.js')
+    const runner = createTaskRunner({
+      spaces: { list: () => [{ shared: false, name: 'Main' } as never] }, brain: () => brain, me: 'lasse', log: () => {},
+      // As index.ts wires it.
+      busy: (id) => busy.sessionsBlockRunner(ledger.list().filter((e) => e.taskId === id).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: false })), commands.delegatedAt(id)),
+      held: (id) => commands.held(id) || commands.together(id),
+      start: (_space, step) => { started.push(step.id); return null },
+    })
+    await runner.tick()
+    expect(started).toEqual(['own-task'])
+  })
+})

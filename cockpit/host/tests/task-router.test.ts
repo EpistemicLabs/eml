@@ -189,6 +189,54 @@ describe('task router', () => {
     expect(brain.posts.at(-1)!.body).toEqual({ waiting_on: null })
   })
 
+  it('keeps another session\'s wait and holds its own question behind it until that one is answered (B4)', async () => {
+    const SECOND = HANDOFF.replace('Ship the shorter headline?', 'Use the blue variant?')
+    const { ledger, brain, r, logs } = setup({ id: 't30', status: 'active', properties: {} })
+    ledger.recordSpawn('s30', null, 'bp-eml', 'claude', false, 't30')
+    ledger.recordSpawn('s31', null, 'bp-eml', 'claude', false, 't30')
+    await r.turnEnded('s30', HANDOFF)
+    await r.turnEnded('s31', SECOND)
+    expect(brain.task.properties).toMatchObject({ waiting_on: { session_id: 's30', why: 'Ship the shorter headline?' } })
+    expect(brain.posts.at(-1)!.body).toEqual({ text: expect.stringContaining('Use the blue variant?') })
+    expect(logs.at(-1)).toContain('held behind s30')
+    // The first is answered: the second question comes up instead of nothing.
+    await r.answered('s30')
+    expect(brain.task.properties).toMatchObject({ waiting_on: { session_id: 's31', why: 'Use the blue variant?' } })
+    await r.answered('s31')
+    expect(brain.task.properties).not.toHaveProperty('waiting_on')
+  })
+
+  it('a held question comes up when the first session moves on by itself, and is dropped when its session moved on first (B4)', async () => {
+    const SECOND = HANDOFF.replace('Ship the shorter headline?', 'Use the blue variant?')
+    const { ledger, brain, r } = setup({ id: 't31', status: 'active', properties: {} })
+    ledger.recordSpawn('s32', null, 'bp-eml', 'claude', false, 't31')
+    ledger.recordSpawn('s33', null, 'bp-eml', 'claude', false, 't31')
+    ledger.recordSpawn('s34', null, 'bp-eml', 'claude', false, 't31')
+    await r.turnEnded('s32', HANDOFF)
+    await r.turnEnded('s33', SECOND)
+    await r.turnEnded('s34', HANDOFF.replace('Ship the shorter headline?', 'Third?'))
+    // s33 went on without an answer: its held question is over.
+    await r.turnEnded('s33', '### Handoff\nResult: settled it myself')
+    await r.turnEnded('s32', '### Handoff\nResult: answered, going on')
+    expect(brain.task.properties).toMatchObject({ waiting_on: { session_id: 's34', why: 'Third?' } })
+    // One put away drops out too.
+    await r.answered('s34')
+    await r.turnEnded('s32', HANDOFF.replace('Ship the shorter headline?', 'Again?'))
+    await r.turnEnded('s33', SECOND.replace('blue', 'red'))
+    ledger.archive('s33')
+    await r.answered('s32')
+    expect(brain.task.properties).not.toHaveProperty('waiting_on')
+  })
+
+  it('takes over the wait of a session that was put away (B4)', async () => {
+    const { ledger, brain, r } = setup({ id: 't32', status: 'active', properties: { waiting_on: { who: 'lasse', kind: 'question', why: 'old', since: 'x', session_id: 's35' } } })
+    ledger.recordSpawn('s35', null, 'bp-eml', 'claude', false, 't32')
+    ledger.recordSpawn('s36', null, 'bp-eml', 'claude', false, 't32')
+    ledger.archive('s35')
+    await r.turnEnded('s36', HANDOFF)
+    expect(brain.task.properties).toMatchObject({ waiting_on: { session_id: 's36' } })
+  })
+
   it('clears the wait of a task that was closed', async () => {
     const { ledger, brain, r } = setup({ id: 't21', status: 'resolved', properties: { waiting_on: { who: 'lasse', why: 'x', since: 's', session_id: 'other' } } })
     ledger.recordSpawn('s22', null, 'bp-eml', 'claude', false, 't21')

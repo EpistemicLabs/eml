@@ -24,6 +24,7 @@ import { writeCodexPluginServers } from './infrastructure/providers/codex/index.
 import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
+import { sessionsBlockRunner } from './domain/runner-busy.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -386,9 +387,14 @@ async function main() {
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
-    busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
+    // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
+    busy: (taskId) => sessionsBlockRunner(
+      ledger.list().filter((e) => e.taskId === taskId).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
+      taskCommands?.delegatedAt(taskId) ?? null,
+    ),
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
-    held: (taskId) => taskCommands?.held(taskId) ?? false,
+    // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.
+    held: (taskId) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false,
     brief: (taskId) => taskCommands?.briefOf(taskId),
     start: (space, step) => {
       const problem = ensureTaskProject(space, step.projectId)
@@ -697,6 +703,7 @@ async function main() {
       .map((job) => job.nextRunAt!).sort()[0] ?? null,
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
+    releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
     now: () => Date.now(),
     log,
   })
@@ -720,6 +727,10 @@ async function main() {
         { action: 'create', name: task.title ?? task.id, prompt, ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, task_id: task.id },
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
+    },
+    sessionsSince: (taskId, since) => {
+      const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
+      return { total: on.length, open: on.filter((e) => !e.archivedAt).length }
     },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
