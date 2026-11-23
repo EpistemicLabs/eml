@@ -331,6 +331,15 @@ export class SessionLedger {
     this.persist()
   }
 
+  /** Undo of a mark read: the read state it had before, as markRead's caller saw it. */
+  restoreRead(sessionId: string, before: { readAt: string | null; resultAt: string | null }): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.readAt = before.readAt
+    entry.resultAt = before.resultAt
+    this.persist()
+  }
+
   /** A turn ended, or a new one started and whatever it left no longer waits. */
   setResult(sessionId: string, waiting: boolean): void {
     const entry = this.data.sessions[sessionId]

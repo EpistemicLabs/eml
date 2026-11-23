@@ -250,11 +250,16 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   }
 
   const entry = ledger.get(id)
-  if (!action || !['read', 'clear', 'archive', 'stop', 'answer', 'desk-main'].includes(action)) return false
+  if (!action || !['read', 'unread', 'clear', 'archive', 'stop', 'answer', 'desk-main'].includes(action)) return false
   if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
 
   if (action === 'read') {
     ledger.markRead(id)
+  } else if (action === 'unread') {
+    // Undo of Mark all read: the read state the page saw before it marked the session read.
+    const body = await readJson(req)
+    const stamp = (value: unknown) => (typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null)
+    ledger.restoreRead(id, { readAt: stamp(body.readAt), resultAt: stamp(body.resultAt) })
   } else if (action === 'desk-main') {
     const body = await readJson(req)
     ledger.setDeskMain(id, body.main === true)
