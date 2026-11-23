@@ -27,7 +27,7 @@ import { projectIdForBrain } from '../project-registry.js'
  * Ticks every interval and when a turn ended.
  */
 
-export const MAX_RUNNING = 3
+export const MAX_RUNNING = 5
 /** The cap group of the standalone tasks with a checkpoint (steps count per parent). */
 const STANDALONE = '(standalone)'
 
