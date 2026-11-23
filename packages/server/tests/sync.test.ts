@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
 import { inviteLink, inviteNotice, joinAccept, newInvite, openJoin, openRecord, ready, type Invite } from '@engramprotocol/protocol'
-import { EML, CommandError, initDatabase } from '@engramprotocol/core'
+import { EML, CommandError, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase } from '@engramprotocol/core'
 import { validNote } from '../../core/tests/fixtures'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -618,6 +618,19 @@ describe('checkpoints', () => {
     checkpoint(team, relay.log[3], 3)
     expect(relay.log).toHaveLength(4)
     expect(CHECKPOINT_EVERY).toBe(200)
+  })
+
+  it('after a schema bump, a live device writes the checkpoint of the new schema by itself, once', async () => {
+    const { team, relay, sync, eml } = await connected()
+    // the brain file is migrated; its log began at the schema before and has no checkpoint of this one yet
+    team.db.prepare('UPDATE op_snapshots SET schema = ? WHERE seq = 1').run(CURRENT_BRAIN_SCHEMA_VERSION - 1)
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-first-after-bump' }) }, env(eml))
+    await until(() => team.head === 3)
+    checkpoint(team, relay.log[2], 2)
+    expect(opened(team, relay.log[2]).schema).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
+    expect(team.db.prepare('SELECT seq, schema FROM op_snapshots ORDER BY seq').all()).toEqual([{ seq: 1, schema: CURRENT_BRAIN_SCHEMA_VERSION - 1 }, { seq: 3, schema: CURRENT_BRAIN_SCHEMA_VERSION }])
+    await sync.write({ name: 'engram.create', input: validNote({ title: 't-second' }) }, env(eml))
+    expect(relay.log).toHaveLength(4)
   })
 
   it('tries again when another write came in between — three times, then CHECKPOINT_NOT_ADJACENT', async () => {

@@ -5,7 +5,7 @@ import {
   memberHandles, memberOfDevice, openRecord, unwrapInviteKey, unwrapKey, wrapKey,
   type BrainKey, type DeviceCert, type MemberSet, type OpenedOp, type RotationAhead, type TeamOp, type WrappedKey,
 } from '@engramprotocol/protocol'
-import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, type CommandError } from '@engramprotocol/core'
+import { CURRENT_BRAIN_SCHEMA_VERSION, EML, RelayOrderError, snapshotSchemaOf, type CommandError } from '@engramprotocol/core'
 import type { TeamFile } from './team-file'
 
 // --- The replica (v0.21, spec team-brain-sync-client-spec §4) ---------------------
@@ -143,6 +143,21 @@ export class Replica {
     if (op.schema > CURRENT_BRAIN_SCHEMA_VERSION) {
       return this.halted({ kind: 'update_needed', why: `entry ${seq} is brain schema ${op.schema}; this cockpit knows ${CURRENT_BRAIN_SCHEMA_VERSION}` })
     }
+    // an op replays with the behaviour of its schema only. In a log that began
+    // at an older schema than this code replays, an op of an older schema came
+    // too late once the log has the checkpoint of this schema: every replica
+    // refuses it. Before that checkpoint this code cannot reach the state the
+    // entry leads to — the brain file was migrated ahead of entries it had
+    // not taken, or past a schema whose entries are in the log — and a device
+    // cannot replay from seq 1 a log that began at an older schema. A log
+    // that began at this schema keeps what v0.21.4 does with such an op (it
+    // is applied): within a schema, what a replica decides does not change.
+    if (op.schema < CURRENT_BRAIN_SCHEMA_VERSION) {
+      const older = `entry ${seq} is brain schema ${op.schema}, and this cockpit replays ${CURRENT_BRAIN_SCHEMA_VERSION}`
+      if (seq === 1) return this.stop(`${older}: a log that began at an older schema cannot be replayed from its start`)
+      if (this.behindSchema()) return this.stop(`${older}: the brain file was migrated before it had every entry of the older schemas. Restore it from its pre-migration backup with a version of schema ${op.schema}, let it catch up, then update one schema at a time`)
+      if (this.beganOlder()) return this.reject(seq, at, op.op_id, opened.payload, opened.sig, `REFUSED: the op is brain schema ${op.schema}, the brain is at ${CURRENT_BRAIN_SCHEMA_VERSION}`)
+    }
 
     if (seq === 1) {
       let founded: MemberSet
@@ -218,6 +233,22 @@ export class Replica {
 
   private entry(seq: number, at: string, opened: OpenedOp) {
     return { seq, at, op_id: opened.envelope.op_id, payload: opened.payload, signature: Buffer.from(opened.sig, 'base64url'), rejected: null }
+  }
+
+  /**
+   * True while the log has no checkpoint of the schema this cockpit replays:
+   * the brain file was migrated, and the checkpoint that states its state at
+   * the new schema is not in the log yet (the first live device writes it).
+   */
+  behindSchema(): boolean {
+    const schema = snapshotSchemaOf(this.db)
+    return schema !== null && schema < CURRENT_BRAIN_SCHEMA_VERSION
+  }
+
+  /** True for a log that began at an older schema than this cockpit replays: its genesis snapshot says so. */
+  private beganOlder(): boolean {
+    const genesis = this.db.prepare('SELECT schema FROM op_snapshots WHERE seq = 1').get() as { schema: number } | undefined
+    return genesis !== undefined && genesis.schema < CURRENT_BRAIN_SCHEMA_VERSION
   }
 
   /** The hash of the brain's state as it is now — what a checkpoint at the head states. */

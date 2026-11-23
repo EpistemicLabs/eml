@@ -6,7 +6,7 @@ import { runCommand, type CommandMap, type CommandName } from '../commands'
 import { CommandError, asCommandError, type CommandContext } from '../commands/types'
 import type { Actor, Env } from '../env'
 import { INGESTION_METHODS } from '../types'
-import { RelayOrderError, appendOp, appendRelayed, hasGenesis, teamBrainOf, type RelayedEntry } from './log'
+import { RelayOrderError, appendOp, appendRelayed, hasGenesis, storeCheckpointSnapshot, teamBrainOf, type RelayedEntry } from './log'
 import { stateDump, stateHash, encodeSnapshot } from './snapshot'
 import { opIds } from './op'
 
@@ -84,7 +84,9 @@ export function applyOp(stores: Stores, op: OpEnvelope, at: string, teamBrain: s
  * it (entry.rejected), `op` applied — in one transaction. An op the brain
  * refuses is kept as rejected ("INVALID: …", with its CommandError). Returns
  * what the entry came to: the command's result, or why it was rejected. The genesis at seq 1 founds the log: the brain must be
- * in the state it names, which becomes the snapshot at seq 1. Throws
+ * in the state it names, which becomes the snapshot at seq 1. A checkpoint
+ * that states this replica's state at a newer schema than its latest
+ * snapshot's leaves the next one (log.ts storeCheckpointSnapshot). Throws
  * RelayOrderError for an entry out of order and Error for a genesis whose
  * state is not this brain's: the replica stops.
  */
@@ -106,7 +108,13 @@ export function takeRelayed(stores: Stores, entry: RelayedEntry, op: OpEnvelope 
     return { rejected: null, result: undefined }
   }
   try {
-    const result = db.transaction(() => { appendRelayed(db, entry); return applyOp(stores, op, entry.at, teamBrainOf(db)) })()
+    const result = db.transaction(() => {
+      appendRelayed(db, entry)
+      const result = applyOp(stores, op, entry.at, teamBrainOf(db))
+      // the first checkpoint of a new schema that names this replica's state is where its rebuilds start from
+      if (op.call === 'brain.checkpoint') storeCheckpointSnapshot(db, entry.seq, op)
+      return result
+    })()
     return { rejected: null, result }
   } catch (err) {
     if (err instanceof RelayOrderError) throw err

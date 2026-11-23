@@ -43,15 +43,15 @@ export class Team {
     return (this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS n FROM op_log').get() as { n: number }).n
   }
 
-  /** The genesis: juno founds the brain as its root, epoch 0, at the empty state. */
-  genesis(): Record<string, unknown> {
+  /** The genesis: juno founds the brain as its root, epoch 0, at the empty state (`schema`: a log that began at another brain schema). */
+  genesis(schema = CURRENT_BRAIN_SCHEMA_VERSION): Record<string, unknown> {
     const op_id = crypto.randomUUID()
     const member = this.owner.identity.publicKey
-    const record = json(clearOp(this.envelope(this.owner, 'brain.genesis', {
+    const record = json(clearOp({ ...this.envelope(this.owner, 'brain.genesis', {
       brain: this.brain,
       state_hash: EML.fromConnection(this.db, 'test').stateHash(),
       root: { member, device_cert: cert(this.owner, this.brain), handle: sealHandle(this.owner.handle, { brain: this.brain, op_id, member }, this.keys[0]), key_id: keyId(this.keys[0].key) },
-    }, op_id), this.owner.device.sign).record)
+    }, op_id), schema }, this.owner.device.sign).record)
     this.set = genesisMembers(openRecord(record, this.brain, () => undefined))
     return record
   }

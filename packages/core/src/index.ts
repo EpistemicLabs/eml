@@ -200,7 +200,7 @@ export {
   validateFields, splitFields, unknownFieldsError, type FieldSpec, type FieldKind, type Binding,
 } from './fields'
 export { listEntries, ENTRY_KINDS, EVIDENCE_SOURCES, EVIDENCE_STANCES, type EntryInput, type EvidenceSource, type EvidenceStance } from './entries'
-export { RelayOrderError, type RelayedEntry } from './log/log'
+export { RelayOrderError, snapshotSchemaOf, type RelayedEntry } from './log/log'
 export type { Taken } from './log/apply-op'
 export { systemClock, randomId, NO_ACTOR, DEFAULT_ENV, beginWrite, addDays, type Actor, type Env, type Clock, type IdSource, type Stamp } from './env'
 export { learningState, LEARNING_RIPE_SESSIONS, type LearningState, type LearningStateName } from './learning'

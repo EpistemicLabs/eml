@@ -474,6 +474,11 @@ export async function checkForUpdate(): Promise<AppUpdateStatus> {
   return readAppUpdateStatus()
 }
 
+/** True when v<version> is another schema minor than the running one: installing it migrates the brains (brain schema N ↔ release v0.N). */
+export function changesBrainSchema(version: unknown): boolean {
+  return typeof version === 'string' && VERSION_RE.test(version) && minorOf(version) !== minorOf(ownVersion())
+}
+
 /** Install release v<version> and restart into it. */
 export async function applyUpdate(version: unknown): Promise<{ restarting: boolean; status: AppUpdateStatus }> {
   if (!isManaged()) throw new Error('This cockpit runs from source — update it with git, not the updater.')

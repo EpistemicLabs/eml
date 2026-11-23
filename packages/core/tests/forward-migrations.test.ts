@@ -77,6 +77,11 @@ describe('runForwardMigrations', () => {
           "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('test_n1', 'test_n2')"
         ).all().map((r: any) => r.name).sort()
         expect(tables).toEqual(['test_n1', 'test_n2'])
+        // each step continued the brain's log with the checkpoint a rebuild at its schema starts from
+        const log = brainDb.prepare(`SELECT seq, json_extract(payload, '$.call') AS call, json_extract(payload, '$.schema') AS schema FROM op_log ORDER BY seq`).all() as Array<{ seq: number, call: string, schema: number }>
+        const head = log.length
+        expect(log.slice(-2)).toEqual([{ seq: head - 1, call: 'brain.checkpoint', schema: N1 }, { seq: head, call: 'brain.checkpoint', schema: N2 }])
+        expect(brainDb.prepare('SELECT seq, schema FROM op_snapshots ORDER BY seq').all()).toEqual([{ seq: 1, schema: V }, { seq: head - 1, schema: N1 }, { seq: head, schema: N2 }])
       } finally { brainDb.close() }
 
       // Control plane: brains.schema_version + brain_migrations both updated
