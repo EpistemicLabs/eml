@@ -18,7 +18,13 @@ permissions:
   contents: read
 
 jobs:
+  # Every job a pull request passes (ci.yml: Linux and Windows tests, the smoke
+  # and install tests on three OSes) before anything ships.
+  gates:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: gates
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release and its tag
@@ -32,11 +38,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # The gates of a pull request (ci.yml, build-test) before anything ships.
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm test
-      - run: node packages/bench/dist/cli.js check --eml .
       - name: Version
         id: version
         run: echo "version=$(node scripts/alpha-release.mjs version)" >> "$GITHUB_OUTPUT"

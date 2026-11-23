@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # alpha-release.yml runs these jobs as the gates before it publishes.
+  workflow_call:
 
 permissions:
   contents: read
