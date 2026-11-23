@@ -36,6 +36,8 @@ describe('hook paths', () => {
     expect(paths.stableAppPath('/somewhere/eml/packages/mcp-server/dist/cli.js')).toBe('/somewhere/eml/packages/mcp-server/dist/cli.js')
     expect(paths.stableAppPath(join(versions, 'not-a-version', 'x.js'))).toBe(join(versions, 'not-a-version', 'x.js'))
     expect(paths.stableAppPath(join(versions, '0.17.6'))).toBe(join(versions, '0.17.6'))
+    // A pre-release folder of the alpha line is an installed version too.
+    expect(paths.stableAppPath(join(versions, '0.22.0-alpha.1', 'node_modules', 'x.js'))).toBe(join(home, 'app', 'current', 'node_modules', 'x.js'))
   })
 
   it.skipIf(process.platform === 'win32')('keeps <home>/bin/node pointing at this host\'s node, and names it in the hook command', () => {

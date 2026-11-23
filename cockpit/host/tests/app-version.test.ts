@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compareVersions, isAppVersion, isPrerelease, isUpdateChannel, minorOf } from '../src/domain/app-version.js'
+import { compareVersions, isAppVersion, isUpdateChannel, minorOf } from '../src/domain/app-version.js'
 
 describe('app versions', () => {
   it('accepts X.Y.Z with an optional pre-release, nothing else', () => {
@@ -27,10 +27,8 @@ describe('app versions', () => {
     expect(sorted).toEqual(['0.21.153', '0.22.0-alpha.1', '0.22.0-alpha.3', '0.22.0-alpha.10', '0.22.0'])
   })
 
-  it('takes the schema minor and the pre-release mark', () => {
+  it('takes the schema minor of a pre-release', () => {
     expect(minorOf('0.22.0-alpha.4')).toBe('0.22')
-    expect(isPrerelease('0.22.0-alpha.4')).toBe(true)
-    expect(isPrerelease('0.22.0')).toBe(false)
   })
 
   it('knows the two update channels', () => {

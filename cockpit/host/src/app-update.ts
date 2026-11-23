@@ -8,7 +8,7 @@ import { APP_DIR, COCKPIT_HOME, HOST_ROOT } from './paths.js'
 import { platform } from './infrastructure/platform/index.js'
 import { SERVICE_ENV } from './domain/autostart.js'
 import { FS_RETRY, renameWithRetry } from './fs-retry.js'
-import { compareVersions, isAppVersion, isUpdateChannel, minorOf, type UpdateChannel } from './domain/app-version.js'
+import { compareVersions, isAppVersion, isPrerelease, isUpdateChannel, minorOf, type UpdateChannel } from './domain/app-version.js'
 
 /**
  * The cockpit's own updater (decisions app-update-flow, cockpit-update-source).
@@ -222,7 +222,7 @@ async function githubJson(pathname: string, token: string | null): Promise<unkno
 function parseRelease(raw: unknown): Release {
   const r = raw as { tag_name?: string; html_url?: string; published_at?: string | null; assets?: Array<{ name: string; url: string; size: number }>; body?: string | null }
   const version = (r.tag_name ?? '').replace(/^v/, '')
-  if (!isAppVersion(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z`)
+  if (!isAppVersion(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z or vX.Y.Z-pre`)
   return {
     version,
     url: r.html_url ?? '',
@@ -262,7 +262,7 @@ export function extractReleaseHighlights(body: string): string[] {
  * stop at the first one at or below `from`.
  */
 export async function releaseNotesBetween(from: string, to: string): Promise<ReleaseNotes[]> {
-  if (!isAppVersion(from) || !isAppVersion(to)) throw new Error('from and to must be X.Y.Z')
+  if (!isAppVersion(from) || !isAppVersion(to)) throw new Error('from and to must be X.Y.Z or X.Y.Z-pre')
   const withPrereleases = readState().channel === 'alpha'
   const { token } = await githubToken()
   const notes: ReleaseNotes[] = []
@@ -445,7 +445,8 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   const state = readState()
   const current = ownVersion()
   const managed = isManaged()
-  const latest = state.latest
+  // A check that was still running when the user switched to stable may have stored an alpha build.
+  const latest = state.channel === 'stable' && state.latest && isPrerelease(state.latest.version) ? null : state.latest
   const previousInstalled = !!state.previous && fs.existsSync(path.join(VERSIONS_DIR, state.previous, 'node_modules', 'eml-cockpit'))
   let rollbackBlocked: string | null = null
   if (previousInstalled && state.previous && minorOf(state.previous) !== minorOf(current) && compareVersions(state.previous, current) < 0) {
@@ -505,7 +506,7 @@ export function changesBrainSchema(version: unknown): boolean {
 /** Install release v<version> and restart into it. */
 export async function applyUpdate(version: unknown): Promise<{ restarting: boolean; status: AppUpdateStatus }> {
   if (!isManaged()) throw new Error('This cockpit runs from source — update it with git, not the updater.')
-  if (!isAppVersion(version)) throw new Error('version must be X.Y.Z')
+  if (!isAppVersion(version)) throw new Error('version must be X.Y.Z or X.Y.Z-pre')
   const current = ownVersion()
   if (compareVersions(version, current) <= 0) throw new Error(`v${version} is not newer than the running v${current}`)
   await withLock(async () => {

@@ -44,6 +44,22 @@ describe('update channels', () => {
     expect(mod.readAppUpdateStatus().channel).toBe('stable')
   })
 
+  it('reads a channel it does not know from the update state as stable', () => {
+    mkdirSync(join(home, 'app'), { recursive: true })
+    for (const channel of ['next', 42, null]) {
+      writeFileSync(stateFile, JSON.stringify({ channel }))
+      expect(mod.readAppUpdateStatus().channel).toBe('stable')
+    }
+  })
+
+  it('on stable, never offers a pre-release a check still running during the switch stored', () => {
+    mkdirSync(join(home, 'app'), { recursive: true })
+    writeFileSync(stateFile, JSON.stringify({ channel: 'stable', latest: { version: '0.22.0-alpha.2', url: 'u', publishedAt: null } }))
+    expect(mod.readAppUpdateStatus()).toMatchObject({ channel: 'stable', latest: null, available: false })
+    writeFileSync(stateFile, JSON.stringify({ channel: 'alpha', latest: { version: '0.22.0-alpha.2', url: 'u', publishedAt: null } }))
+    expect(mod.readAppUpdateStatus().latest?.version).toBe('0.22.0-alpha.2')
+  })
+
   it('refuses a channel it does not know and keeps the current one', () => {
     expect(mod.setUpdateChannel('next')).toMatch(/stable or alpha/)
     expect(mod.setUpdateChannel(undefined)).toMatch(/stable or alpha/)

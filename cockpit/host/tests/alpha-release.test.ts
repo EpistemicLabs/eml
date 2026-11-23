@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest'
-// @ts-expect-error -- a plain node script without types (scripts/alpha-release.mjs)
 import { keepCommittedNotes, nextAlphaVersion, noteLines, renderNotes } from '../../../scripts/alpha-release.mjs'
 import { extractReleaseHighlights } from '../src/app-update.js'
 
