@@ -121,7 +121,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     const space = spaces.find((s) => s.id === t.spaceId);
     const paneId = t.project ? addWorkerPane({
       fromSessionId: null, projectId: projectIdOfBrain(t.project), title: taskName(t), deskId, taskId: t.id,
-      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+      prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next. When the work is done, hand it over for review; close the task only when the user tells you to.`,
         // Reopened on the board: what closed with it comes back only on the owner's yes.
         t.reopenedWith?.length ? `The task was reopened. These closed with it and are not back yet: ${t.reopenedWith.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')}. Ask the user which still hold, and bring those back with eml_update status active.` : null,
       ].filter(Boolean).join('\n\n'),

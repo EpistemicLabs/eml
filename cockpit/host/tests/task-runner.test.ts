@@ -168,7 +168,11 @@ describe('task runner', () => {
     const step = { id: 't', title: 'Deploy', content: 'Deploy the page.' }
     expect(mod.stepPrompt(step, 'before')).toContain('do not act yet')
     expect(mod.stepPrompt(step, 'after')).toContain('for review')
-    expect(mod.stepPrompt(step, 'after')).toContain('Do NOT close the task yourself')
+    expect(mod.stepPrompt(step, 'after')).toContain('Never close the task yourself')
+    expect(mod.stepPrompt(step, 'before')).toContain('hand the result over for review')
+    expect(mod.stepPrompt(step, 'before')).not.toContain('close the task.')
+    for (const c of ['before', 'after']) expect(mod.stepPrompt(step, c)).toContain('runs in the user\'s cockpit')
+    expect(mod.stepPrompt(step, 'none')).not.toContain('Never close the task yourself')
     expect(mod.stepPrompt(step, 'none')).toContain('close it')
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
   })

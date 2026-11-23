@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, handOverBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
+import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, handOverBanner, goalBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
 
 // v0.10.9 write-time conflict guardrail — rendering layer. conflictBanner turns the
 // store response's advisory `potential_conflicts` into the banner prepended to the
@@ -222,5 +222,21 @@ describe('handOverBanner', () => {
     expect(handOverBanner({ delegate: 'atlas' })).toContain('no checkpoint')
     expect(handOverBanner({ delegate: 'atlas', checkpoint: 'after' })).toBeNull()
     expect(handOverBanner({})).toBeNull()
+  })
+})
+
+describe('goalBanner', () => {
+  it('warns when a checkpointed task\'s goal ends at an open or merged PR', () => {
+    expect(goalBanner({ goal: 'Tests green; PR open against alpha.', checkpoint: 'before' })).toContain('ends at "PR open against alpha"')
+    expect(goalBanner({ goal: 'The fix is merged to alpha', checkpoint: 'after' })).toContain('runs in the owner\'s cockpit')
+    expect(goalBanner({ goal: 'Pull request opened', checkpoint: 'after' })).not.toBeNull()
+    expect(goalBanner({ goal: 'PR merged', checkpoint: 'before' })).not.toBeNull()
+  })
+
+  it('stays quiet when the goal goes past the PR, or the task has no review checkpoint', () => {
+    expect(goalBanner({ goal: 'Merged to alpha, released and running in the cockpit, and reviewed there', checkpoint: 'before' })).toBeNull()
+    expect(goalBanner({ goal: 'PR open against alpha', checkpoint: 'none' })).toBeNull()
+    expect(goalBanner({ goal: 'PR open against alpha' })).toBeNull()
+    expect(goalBanner({ checkpoint: 'after' })).toBeNull()
   })
 })

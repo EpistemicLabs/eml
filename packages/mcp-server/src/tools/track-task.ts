@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EmlApi } from '../http-client'
-import { callTool, writeBanner } from './_helpers'
+import { callTool, goalBanner, writeBanner } from './_helpers'
 import { CHECKPOINTS, PRIORITIES, STAGES, subjects, tags } from './_shared'
 
 /**
@@ -56,6 +56,13 @@ export function registerTrackTaskTool(server: McpServer, http: EmlApi): void {
     }).strict(),
   }, async ({ task_id, ...rest }) => callTool(
     () => http.post(`/task/${encodeURIComponent(task_id)}/track`, Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined))),
-    { prefix: writeBanner },
+    {
+      // A goal or checkpoint set now is checked against the task as it stands after the call.
+      prefix: (result) => {
+        const props = (result as { properties?: { goal?: string; checkpoint?: string } } | null)?.properties
+        const lint = rest.goal !== undefined || rest.checkpoint !== undefined ? goalBanner({ goal: props?.goal, checkpoint: props?.checkpoint }) : null
+        return [lint, writeBanner(result)].filter(Boolean).join('\n\n') || null
+      },
+    },
   ))
 }
