@@ -40,6 +40,14 @@ export const mcpPartSchema = z.discriminatedUnion('transport', [
   z.strictObject({
     transport: z.literal('stdio'),
     serverName: serverNameSchema.optional(),
+    /**
+     * Run once for every session of the machine instead of once per session: the cockpit starts one
+     * process per sign-in and sessions reach it over HTTP through its relay. The server must offer the
+     * shared mode: with EML_MCP_HTTP_KEY set it serves Streamable HTTP on 127.0.0.1, requires that key as
+     * a bearer token, writes `EML_MCP_LISTENING <port>` to stdout, and ends when its stdin closes.
+     * Only for a part with secrets (one process per sign-in); without, it runs per session as before.
+     */
+    shared: z.boolean().optional(),
     command: z.string().min(1),
     args: z.array(configValueSchema).default([]),
     env: z.record(envNameSchema, configValueSchema).default({}),

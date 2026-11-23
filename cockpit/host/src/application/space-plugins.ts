@@ -47,6 +47,8 @@ export class SpacePluginService {
     private readonly store: PluginStore,
     /** What a manifest's ${NAME} placeholders stand for: the node binary, the cockpit's bundles. */
     private readonly vars: Record<string, string> = {},
+    /** The relay key of a shared server's sign-in; without it, shared parts run per session. */
+    private readonly sharedKey?: (connectionId: string) => string,
   ) {}
 
   onRewrite(rewrite: (spaceId: string, files: SpacePluginFiles) => boolean): void {
@@ -79,7 +81,7 @@ export class SpacePluginService {
       manifests,
       state,
       filesFor: (spaceId) => {
-        const { servers, problems } = mcpServersFor(spaceId, state, manifests, connections, this.vars)
+        const { servers, problems } = mcpServersFor(spaceId, state, manifests, connections, this.vars, this.sharedKey)
         return { mcpServers: servers, problems, denied: deniedFor(spaceId, state) }
       },
     }

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { secretsOf, serverNameOf, type ConfigValue, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
+import { secretsOf, serverNameOf, type ConfigValue, type McpPart, type PluginManifest, type PluginPartKind } from './plugin-manifest.js'
 
 /**
  * Which plugins each space has. A plugin is all or
@@ -126,6 +126,8 @@ export function mcpServersFor(
   connections: Connection[],
   /** Placeholders a manifest may use in its command and arguments (${NODE}, ${COCKPIT_DIST}). */
   vars: Record<string, string> = {},
+  /** The relay key of a shared server's sign-in (infrastructure/plugins/shared-mcp.ts); without it, shared parts run per session. */
+  sharedKey?: (connectionId: string) => string,
 ): ResolvedServers {
   const servers: Record<string, McpServerConfig> = {}
   /** Which plugin a server name belongs to: an official plugin, listed first, keeps its names. */
@@ -173,9 +175,18 @@ export function mcpServersFor(
         if (filled === undefined && !value.optional) missing.push(value.secret)
         return filled ?? ''
       }
-      const config: McpServerConfig = part.transport === 'stdio'
-        ? { type: 'stdio', command: expand(part.command), args: part.args.map(fill), env: mapValues(part.env, fill) }
-        : { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
+      let config: McpServerConfig
+      if (part.transport === 'stdio') {
+        const { missing: lacking, ...launch } = stdioLaunch(part, connection, vars)
+        missing.push(...lacking)
+        config = { type: 'stdio', ...launch }
+      } else {
+        config = { type: part.transport, url: fill(part.url), headers: mapValues(part.headers, fill) }
+      }
+      // A shared server: the session reaches the one process of this sign-in through the relay.
+      if (part.transport === 'stdio' && part.shared && connection && vars.RELAY && sharedKey) {
+        config = { type: 'http', url: `${vars.RELAY}/${connection.id}`, headers: { 'x-eml-relay-key': sharedKey(connection.id) } }
+      }
       if (missing.length > 0) {
         problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.id} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)
         continue
@@ -194,6 +205,23 @@ export function mcpServersFor(
     }
   }
   return { servers, problems }
+}
+
+/** How the cockpit starts a stdio part's process for one sign-in; `missing` names the secrets it lacks. */
+export function stdioLaunch(
+  part: Extract<McpPart, { transport: 'stdio' }>,
+  connection: Connection | null,
+  vars: Record<string, string> = {},
+): { command: string; args: string[]; env: Record<string, string>; missing: string[] } {
+  const missing: string[] = []
+  const expand = (text: string) => text.replace(/\$\{([A-Z_]+)\}/g, (whole, name: string) => vars[name] ?? whole)
+  const fill = (value: ConfigValue): string => {
+    if (typeof value === 'string') return expand(value)
+    const filled = connection?.values[value.secret]
+    if (filled === undefined && !value.optional) missing.push(value.secret)
+    return filled ?? ''
+  }
+  return { command: expand(part.command), args: part.args.map(fill), env: mapValues(part.env, fill), missing }
 }
 
 /** The claude.ai connectors and Claude Code plugin servers a space's sessions must not load. */

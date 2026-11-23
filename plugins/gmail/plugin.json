@@ -7,6 +7,7 @@
   "parts": {
     "mcp": {
       "transport": "stdio",
+      "shared": true,
       "command": "${NODE}",
       "args": [
         "${COCKPIT_DIST}/gmail-mcp.cjs"
