@@ -2,7 +2,7 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, type PlanFilter, projectRows, quietProjects, readable, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, taskName, type TaskFilter, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
@@ -10,9 +10,9 @@ import { cn } from '@/lib/utils';
 import { Chip, Dot, FOCUS, HUE, LABEL, MINI } from '@/shared/view/ui';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 
+import { FilterBar } from './FilterBar';
 import { Who } from './parts';
 
-const SEGMENT = cn('min-h-(--target-min) px-2.5 text-ui text-muted-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2 max-md:grid-cols-(--grid-plan-row-phone) max-md:gap-y-1';
 /** A row's space and counts: the table's own cells on a wide screen, a wrapping line under the name on a phone. */
 const PLAN_CELLS = 'contents max-md:col-start-2 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1';
@@ -27,7 +27,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
   projectActions?: ProjectActions;
 }) {
   const knownSpaces = useSpaces();
-  const [filter, setFilter] = useState<PlanFilter>({ everyone: false, spaceId: null });
+  const [filter, setFilter] = useState<TaskFilter>({ everyone: false, spaceId: null });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showQuiet, setShowQuiet] = useState(false);
   const open = board.tasks.filter((t) => visibleInPlan(t, board.viewer, filter));
@@ -36,9 +36,6 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
   const rows = projectRows(open, board.projects);
   const quiet = quietProjects(rows, board.projects, filter);
   const toggle = (key: string) => setExpanded((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
-  const segment = (label: string, pressed: boolean, onClick: () => void) => (
-    <button key={label} type="button" aria-pressed={pressed} onClick={onClick} className={SEGMENT}>{label}</button>
-  );
   // On a phone the table header is hidden: each count carries its label, and a zero is left out.
   const num = (n: number, label: string, ink?: string) => (n
     ? <span className={cn('text-ui tabular-nums', ink)}>{n}<span className="md:hidden"> {label}</span></span>
@@ -46,20 +43,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-ui text-muted-foreground">
-        <span className="flex items-center gap-2">Owner
-          <span className="inline-flex overflow-hidden rounded-lg border border-border bg-card">
-            {segment('Me', !filter.everyone, () => setFilter({ ...filter, everyone: false }))}
-            {segment('Everyone', filter.everyone, () => setFilter({ ...filter, everyone: true }))}
-          </span>
-        </span>
-        <span className="flex items-center gap-2">Space
-          <span className="inline-flex flex-wrap overflow-hidden rounded-lg border border-border bg-card">
-            {segment('All', !filter.spaceId, () => setFilter({ ...filter, spaceId: null }))}
-            {board.spaces.map((s) => segment(s.name, filter.spaceId === s.id, () => setFilter({ ...filter, spaceId: s.id })))}
-          </span>
-        </span>
-      </div>
+      <FilterBar filter={filter} spaces={board.spaces} onChange={(patch) => setFilter({ ...filter, ...patch })} />
 
       <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2">
         <section className="flex min-w-0 flex-col gap-1 rounded-xl border border-border bg-card p-3">
