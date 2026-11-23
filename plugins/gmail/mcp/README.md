@@ -15,9 +15,21 @@ the channel bridge's outbox.
 | `calendar_events`, `calendar_freebusy` | events in a window; when calendars are busy |
 
 The mail tools keep the names, arguments and answers of the Gmail MCP server they replace, so skills
-built on it keep working. The cockpit bundles the server as `dist/gmail-mcp.cjs` and starts one per
-Google sign-in a space uses, named `gmail` or `gmail-<short name>`, with `GMAIL_ADDRESS`,
-`GOOGLE_CREDENTIALS_FILE` (the user's own OAuth Desktop client) and `GOOGLE_TOKEN_FILE` (its refresh
-token) from the sign-in. Scopes: gmail.modify, gmail.send, calendar.readonly.
+built on it keep working. The cockpit bundles the server as `dist/gmail-mcp.cjs` and runs one per
+Google sign-in for all sessions of the machine (the manifest's mcp part is `shared`), with
+`GMAIL_ADDRESS`, `GOOGLE_CREDENTIALS_FILE` (the user's own OAuth Desktop client or a service-account
+key) and `GOOGLE_TOKEN_FILE` (its refresh token) from the sign-in. Sessions reach it as `gmail` or
+`gmail-<short name>` through the cockpit's relay (`/mcp-relay/<sign-in id>`), so a session no longer
+starts processes of its own. Scopes: gmail.modify, gmail.send, calendar.readonly.
+
+Two modes (`src/main.ts`):
+
+- **stdio** (no `EML_MCP_HTTP_KEY`): one session's own server, as any stdio MCP server.
+- **shared** (`EML_MCP_HTTP_KEY` set, `src/http.ts`): Streamable HTTP on 127.0.0.1 with a random port,
+  every request with that key as bearer token, one MCP session per Claude session on one Google
+  sign-in; it writes `EML_MCP_LISTENING <port>` to stdout and ends when its stdin closes. The cockpit
+  (`cockpit/host/src/infrastructure/plugins/shared-mcp.ts`) starts it on the first call, starts it
+  again when it ended or the sign-in changed, and ends it with the sign-in; a session whose server was
+  restarted gets a 404 for its old MCP session and opens a new one.
 
 Tests: `pnpm -F @engramprotocol/plugin-gmail-mcp test`, against a local fake of the Google APIs.

@@ -10,9 +10,10 @@ import { PluginStore } from './infrastructure/plugins/plugin-store.js'
 import { GoogleSignIn } from './infrastructure/plugins/google-sign-in.js'
 import { McpOAuth } from './infrastructure/plugins/mcp-oauth.js'
 import { McpRelay, RELAY_PATH, stringValues } from './infrastructure/plugins/mcp-relay.js'
+import { SharedMcpHost } from './infrastructure/plugins/shared-mcp.js'
 import type { OutsideServer } from './infrastructure/plugins/outside-servers.js'
 import { SpacePluginService } from './application/space-plugins.js'
-import { connectionSchema, PART_KINDS, spacesOf, type SpacePlugins } from './domain/space-plugins.js'
+import { connectionSchema, PART_KINDS, spacesOf, stdioLaunch, type SpacePlugins } from './domain/space-plugins.js'
 import { CUSTOM_PLUGINS_FILE, HOST_ROOT, OFFICIAL_PLUGINS_DIR, PLUGINS_HOME } from './paths.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
@@ -75,12 +76,28 @@ export const pluginRegistry = new PluginRegistry({
 
 /** Which plugin is on in which space, and the user's connections (owner-only, <home>/plugins/). */
 export const pluginStore = new PluginStore(PLUGINS_HOME)
-export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore, {
+
+/** What a manifest's ${NAME} placeholders stand for. */
+const pluginVars: Record<string, string> = {
   NODE: process.execPath,
   COCKPIT_DIST: path.join(HOST_ROOT, 'dist'),
-  // Sessions reach a server the user signed in to here through the cockpit's relay.
+  // Sessions reach a server the user signed in to here, and a shared server, through the cockpit's relay.
   RELAY: `http://127.0.0.1:${Number(process.env.COCKPIT_PORT) || 4317}${RELAY_PATH}`,
+}
+
+/** The MCP servers the cockpit runs once for every session (a stdio part with `shared`, e.g. Gmail). */
+export const sharedMcp = new SharedMcpHost({
+  keyFile: path.join(PLUGINS_HOME, 'shared-mcp.key'),
+  launch: async (connection) => {
+    const part = (await pluginRegistry.get(connection.plugin))?.parts.mcp
+    if (part?.transport !== 'stdio' || !part.shared) return null
+    const { missing, ...launch } = stdioLaunch(part, connection, pluginVars)
+    return missing.length > 0 ? null : launch
+  },
+  log: (line) => console.log(line),
 })
+
+export const spacePlugins = new SpacePluginService(pluginRegistry, pluginStore, pluginVars, (id) => sharedMcp.keyFor(id))
 
 /** OAuth sign-ins to remote MCP servers; the tokens live in the connections. */
 export const mcpOAuth = new McpOAuth()
@@ -95,6 +112,7 @@ export const mcpRelay = new McpRelay({
   },
   oauth: mcpOAuth,
   isLocal: isLocalRequest,
+  shared: sharedMcp,
   log: (line) => console.log(line),
 })
 
@@ -108,8 +126,10 @@ export interface PluginsContext {
   store: PluginStore
   google?: GoogleSignIn
   oauth?: McpOAuth
+  /** The shared servers, ended with the sign-in or plugin they serve. */
+  shared?: Pick<SharedMcpHost, 'retain'>
 }
-const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn, oauth: mcpOAuth }
+const defaultContext: PluginsContext = { registry: pluginRegistry, service: spacePlugins, store: pluginStore, google: googleSignIn, oauth: mcpOAuth, shared: sharedMcp }
 
 /** What an OAuth sign-in started from the page becomes once its callback comes: a new sign-in or one signed in again. */
 const oauthStarted = new Map<string, { plugin: string; label: string; slug?: string; connection?: string }>()
@@ -510,6 +530,7 @@ export async function handlePluginsApi(
     if (connectionId && method === 'DELETE') {
       const gone = (await service.connections()).find((c) => c.id === connectionId)
       const removed = await service.removeConnection(connectionId)
+      if (removed) ctx.shared?.retain((await service.connections()).map((c) => c.id))
       // A token file the cockpit wrote for the sign-in goes with it; one another program keeps stays.
       const tokenFile = gone?.values.tokenFile
       if (removed && tokenFile && ctx.google && path.dirname(path.resolve(tokenFile)) === path.resolve(path.dirname(ctx.google.clientFile))) {
@@ -540,7 +561,10 @@ export async function handlePluginsApi(
     const customId = /^\/api\/plugins\/custom\/([a-z][a-z0-9-]{0,39})$/.exec(pathname)?.[1]
     if (customId && method === 'DELETE') {
       const removed = await registry.removeCustom(customId)
-      if (removed) await service.forget(customId)
+      if (removed) {
+        await service.forget(customId)
+        ctx.shared?.retain((await service.connections()).map((c) => c.id))
+      }
       json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No custom plugin with this id' } })
       return true
     }
