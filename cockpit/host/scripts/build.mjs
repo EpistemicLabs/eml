@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Build the eml-cockpit package: bundle the private building blocks (server, core)
-// into dist/, copy the built frontend and the migrations next to it, compile the host.
+// into dist/, copy the built frontend, the migrations and the contracts next to it, compile the host.
 //
 // Layout produced (everything the published package needs):
 //   dist/index.js     host entry (bin)          — tsc, ESM
@@ -9,9 +9,11 @@
 //   dist/core-log.cjs core's op-log tools (move, verify) for the agent upgrade — esbuild, CJS
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
+//   contracts/        contract + frozen log     — copied from packages/core/contracts
 //   THIRD_PARTY_LICENSES.md                     — notices for the code bundled into dist/ and ui/
-// The SQL files sit next to dist/ so core's `__dirname/../migrations` resolves the
-// same way inside the bundle as it does in the workspace checkout.
+// The SQL files and the contracts sit next to dist/ so core's `__dirname/../migrations`
+// and `__dirname/../contracts` resolve the same way inside the bundle as they do in
+// the workspace checkout.
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs'
@@ -28,7 +30,7 @@ const server = pkgRoot('@engramprotocol/server')
 const core = pkgRoot('@engramprotocol/core')
 const frontend = pkgRoot('@engramprotocol/cockpit-frontend')
 
-for (const p of ['dist', 'ui', 'migrations', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
+for (const p of ['dist', 'ui', 'migrations', 'contracts', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
 
 const common = {
   bundle: true, platform: 'node', format: 'cjs', target: 'node20',
@@ -62,6 +64,7 @@ bundledFiles.push(...JSON.parse(readFileSync(UI_MODULES, 'utf8')))
 cpSync(uiDist, path.join(HOST, 'ui'), { recursive: true, filter: (src) => src !== UI_MODULES })
 const licensed = writeThirdPartyLicenses(bundledFiles, path.join(HOST, 'THIRD_PARTY_LICENSES.md'))
 cpSync(path.join(core, 'migrations'), path.join(HOST, 'migrations'), { recursive: true })
+cpSync(path.join(core, 'contracts'), path.join(HOST, 'contracts'), { recursive: true })
 
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
-console.log(`eml-cockpit: dist/ ui/ migrations/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)
+console.log(`eml-cockpit: dist/ ui/ migrations/ contracts/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)

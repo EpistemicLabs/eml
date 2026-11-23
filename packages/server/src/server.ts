@@ -118,6 +118,7 @@ import { InviteError, Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
 import { MoveRouteError, moveRoute, moving, planMoveRoute } from './move'
+import { BUILD_CHECK, buildCheckLine } from './self-test'
 import { joinTeamBrain } from './sync/join'
 import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parseInviteLink, ready } from '@engramprotocol/protocol'
 
@@ -484,6 +485,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       status: 'ok',
       version: SERVER_VERSION,
       uptime_sec: Math.floor((Date.now() - STARTED_AT_MS) / 1000),
+      // what this build is (self-test.ts): its brain schema, its contract id, and whether it replays the schema's frozen log
+      schema: BUILD_CHECK.self_test.schema,
+      contract: BUILD_CHECK.contract,
+      self_test: BUILD_CHECK.self_test.ok ? 'passed' : 'failed',
     })
   }
 
@@ -1198,6 +1203,8 @@ ready().then(() => {
   server.listen(PORT, HOST, () => {
     console.log(`EML API v${SERVER_VERSION} running on http://${HOST}:${PORT}`)
     console.log(`Data dir: ${DATA_DIR}  |  Pool cap=${POOL_CAP}, idle=${POOL_IDLE_MIN}min`)
+    if (BUILD_CHECK.self_test.ok) console.log(buildCheckLine())
+    else console.error(buildCheckLine())
   })
 })
 
