@@ -4,30 +4,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ProjectActions } from '@/components/projects/useProjectActions';
+import type { AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
+import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
 import { agentName, type Board, type BoardTask, closeTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
+import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
-import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
+import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, openSessionInSpace, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
 import { setTaskView, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
+import { useTurnStore } from '@/stores/useTurnStateStore';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 
-import { InboxView, type InboxAction } from './InboxView';
+import { InboxView, type InboxAction, type UnreadProps } from './InboxView';
 import { HandOverDialog } from './HandOverDialog';
 import { NowBoard } from './NowBoard';
 import { PlanView } from './PlanView';
+import { UnreadDot } from './parts';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
 type View = TaskView;
 const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan', 'Plan']];
 /** Relative times ("asked 10:27", "in 3 days") are worked out again this often. */
 const NOW_TICK_MS = 30_000;
+/** How long Mark all read can be undone: as long as the host's commands (8 s). */
+const UNREAD_UNDO_MS = 8_000;
+/** A row read here is hidden by its answer: a newer answer of the same session shows again. */
+const readKey = (session: AllSession) => `${session.id}@${answerTime(session)}`;
 
 /** `projects` and `projectActions`: Plan's project list and its actions (both live in AppContent, so the launcher's add-project works anywhere). */
 export function TaskBoard({ projects, projectActions }: { projects?: ProjectsBySpace; projectActions?: ProjectActions } = {}) {
@@ -42,6 +51,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const [dialog, setDialog] = useState<{ taskId: string; mode: HandOverMode } | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const { turns } = useTurnStore();
+  // The Unread fold: a toggle by hand holds for the visit; rows read here leave at once, before the list refetches.
+  const [unreadPicked, setUnreadPicked] = useState<boolean | null>(null);
+  const [readHere, setReadHere] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), NOW_TICK_MS); return () => window.clearInterval(t); }, []);
   useEffect(() => { if (board) setNow(Date.now()); }, [board]);
 
@@ -107,6 +120,39 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     }
   }, [answered, byId]);
 
+  const unreadSessions = useMemo(
+    () => (board && sessions ? unreadAnswers(sessions, board, turns, now).filter((s) => !readHere.has(readKey(s))) : []),
+    [board, sessions, turns, now, readHere],
+  );
+
+  /** Opening an unread answer reads it: a session of a task opens as the Inbox opens its items, any other on its desk. */
+  const openUnread = useCallback((session: AllSession) => {
+    setReadHere((prev) => new Set(prev).add(readKey(session)));
+    void markSessionRead(session.id);
+    const t = session.taskId ? byId.get(session.taskId) : undefined;
+    if (t?.sessionIds.includes(session.id)) { openTask(t, session.id); return; }
+    const space = spaces.find((s) => s.id === session.spaceId);
+    const projectId = session.__projectId ?? session.projectId ?? null;
+    openSessionInSpace(space ? paneSpaceKey(space) : null, { surface: 'terminal', projectId, sessionId: session.id, chat: session.runtime === 'sdk' });
+  }, [byId, openTask, spaces]);
+
+  const markAllRead = useCallback(() => {
+    const before = readBefore(unreadSessions);
+    const keys = unreadSessions.map(readKey);
+    setReadHere((prev) => new Set([...prev, ...keys]));
+    void Promise.all(before.map((b) => markSessionRead(b.id)));
+    say(`${before.length} marked read.`, {
+      label: 'Undo',
+      run: () => {
+        setReadHere((prev) => { const next = new Set(prev); for (const k of keys) next.delete(k); return next; });
+        void Promise.all(before.map((b) => restoreSessionRead(b.id, b))).then((errors) => {
+          const error = errors.find(Boolean);
+          say(error ?? 'Undone. They are unread again.');
+        });
+      },
+    }, new Date(Date.now() + UNREAD_UNDO_MS).toISOString());
+  }, [unreadSessions, say]);
+
   if (!board) {
     return (
       <div className="flex flex-1 items-center justify-center bg-background p-6 text-body text-muted-foreground">
@@ -116,6 +162,14 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   }
 
   const split = view === 'inbox' && task;
+  const unread: UnreadProps = {
+    sessions: unreadSessions,
+    spaces,
+    open: unreadFoldOpen(unreadPicked, board.inbox.length),
+    onToggle: () => setUnreadPicked(!unreadFoldOpen(unreadPicked, board.inbox.length)),
+    onOpen: openUnread,
+    onMarkAllRead: markAllRead,
+  };
   const panel = task && (
     <TaskPanel
       key={task.id}
@@ -141,18 +195,18 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       {/* An open task in the Inbox fills the height, with the same gap below as above; the list beside it scrolls on its own. */}
       <div className={cn('mx-auto flex w-full max-w-content flex-col gap-4 px-4 pt-3', split ? 'min-h-0 flex-1 pb-3' : 'pb-10')}>
-        {compact && <ControlBar board={board} view={open && !split ? null : view} onView={setTaskView} />}
+        {compact && <ControlBar board={board} unread={unreadSessions.length} view={open && !split ? null : view} onView={setTaskView} />}
         {split ? (
           <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-split)">
             <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">
-              <InboxView board={board} now={now} compact currentTaskId={task.id} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
+              <InboxView board={board} now={now} compact currentTaskId={task.id} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
             </div>
             <section aria-labelledby={TASK_TITLE_ID} className="flex min-h-(--size-split-panel-min) min-w-0 flex-col gap-2.5">
               {panel}
             </section>
           </div>
         ) : view === 'inbox' ? (
-          <InboxView board={board} now={now} compact={false} currentTaskId={null} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
+          <InboxView board={board} now={now} compact={false} currentTaskId={null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
         ) : view === 'now' ? (
           <NowBoard board={board} now={now} onOpen={(t) => openTask(t)} movedId={board.events[0]?.taskId ?? null} />
         ) : (
@@ -180,7 +234,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
 }
 
 /** On a phone the top bar is not there: the board switches its views itself. */
-function ControlBar({ board, view, onView }: { board: Board; view: View | null; onView: (v: View) => void }) {
+function ControlBar({ board, unread, view, onView }: { board: Board; unread: number; view: View | null; onView: (v: View) => void }) {
   return (
     <header className="glass sticky top-2 z-(--z-sticky) flex flex-wrap items-center gap-x-5 gap-y-2.5 rounded-2xl py-2 pl-4 pr-2.5 max-lg:static">
       <span className="text-title font-bold tracking-title">Tasks</span>
@@ -190,6 +244,7 @@ function ControlBar({ board, view, onView }: { board: Board; view: View | null; 
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
             {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions and results to review`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
+            {v === 'inbox' && unread > 0 && <UnreadDot count={unread} />}
           </button>
         ))}
       </div>

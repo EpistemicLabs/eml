@@ -2,13 +2,26 @@
 // An item clears itself when its session is answered, the result reviewed or the task closed.
 import { useState } from 'react';
 
+import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
 import { type Board, type BoardTask, fyi, type InboxItem, originName, readable, taskName, when } from '@/lib/task-board';
 import { DAY_MS } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
+import type { SpaceInfo } from '@/stores/useSpaceStore';
 
-import { FromOrigin, Who } from './parts';
+import { Fold, FromOrigin, Who } from './parts';
+import { UnreadFold } from './UnreadFold';
+
+/** The Unread fold's sessions and what the page does with them. */
+export interface UnreadProps {
+  sessions: AllSession[];
+  spaces: SpaceInfo[];
+  open: boolean;
+  onToggle: () => void;
+  onOpen: (session: AllSession) => void;
+  onMarkAllRead: () => void;
+}
 
 export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }
@@ -24,12 +37,13 @@ const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' }> 
   review: { label: 'review', hue: 'review' },
 };
 
-export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction }: {
+export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, onAction }: {
   board: Board;
   now: number;
   /** The list sits next to an open task (split): actions wrap under the text, as they do whenever the list is narrow. */
   compact: boolean;
   currentTaskId: string | null;
+  unread: UnreadProps;
   onOpen: (item: InboxItem) => void;
   onAction: (action: InboxAction) => void;
 }) {
@@ -43,7 +57,14 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
     <div className="flex min-w-0 flex-col gap-4">
       {/* A container: a row's actions sit beside its text only where the list itself is wide enough. */}
       <div className="@container flex flex-col overflow-hidden rounded-xl border border-border bg-card">
-        {board.inbox.length === 0 && <div className="m-3 rounded-xl border border-dashed border-border p-3 text-ui text-muted-foreground">Inbox zero. New questions and results land here.</div>}
+        {board.inbox.length === 0 && (
+          <div className="m-3 rounded-xl border border-dashed border-border p-3 text-ui text-muted-foreground">
+            <b className="block text-heading font-semibold text-foreground">Nothing needs you</b>
+            {unread.sessions.length > 0
+              ? `${unread.sessions.length} session${unread.sessions.length === 1 ? '' : 's'} answered since you last looked.`
+              : 'New questions and results land here.'}
+          </div>
+        )}
         {board.inbox.map((item) => {
           const head = dayOf(item.since, now);
           const showHead = head !== day;
@@ -70,18 +91,8 @@ export function InboxView({ board, now, compact, currentTaskId, onOpen, onAction
             <span><b className="font-medium text-foreground">{readable(item.title)}</b> · back then</span>
           </div>
         ))}
+        <UnreadFold sessions={unread.sessions} board={board} spaces={unread.spaces} now={now} open={unread.open} compact={compact} onToggle={unread.onToggle} onOpen={unread.onOpen} onMarkAllRead={unread.onMarkAllRead} />
       </div>
-    </div>
-  );
-}
-
-function Fold({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
-  return (
-    <div className={cn(LABEL, 'flex items-center justify-between border-t border-border bg-muted px-3 py-2')}>
-      <span>{label}</span>
-      <button type="button" onClick={onToggle} aria-expanded={open} className={cn('min-h-(--target-min) text-ui normal-case tracking-normal text-mark-ink underline underline-offset-2', FOCUS)}>
-        {open ? 'Hide' : 'Show'}
-      </button>
     </div>
   );
 }

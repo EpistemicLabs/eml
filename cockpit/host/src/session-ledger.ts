@@ -331,6 +331,22 @@ export class SessionLedger {
     this.persist()
   }
 
+  /**
+   * Undo of a mark read: the read state it had before, as markRead's caller saw it. Only while
+   * nothing happened since: a turn that ended or reported after the read is newer than the
+   * snapshot and stays. Answers whether it put the state back.
+   */
+  restoreRead(sessionId: string, before: { readAt: string | null; resultAt: string | null }): boolean {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return false
+    const newer = entry.resultAt !== null || Boolean(entry.attention && (!entry.readAt || entry.attention.at > entry.readAt))
+    if (newer) return false
+    entry.readAt = before.readAt
+    entry.resultAt = before.resultAt
+    this.persist()
+    return true
+  }
+
   /** A turn ended, or a new one started and whatever it left no longer waits. */
   setResult(sessionId: string, waiting: boolean): void {
     const entry = this.data.sessions[sessionId]

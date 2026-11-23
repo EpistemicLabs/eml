@@ -223,3 +223,89 @@ describe('the task board', () => {
     await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
   });
 });
+
+describe('the Unread fold', () => {
+  const answer = (id: string, minutesAgo: number, fields: Record<string, unknown> = {}) => ({
+    id, spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: `Session ${id}`, createdAt: iso(90), lastActivity: iso(minutesAgo),
+    attention: { kind: 'done', reason: `Answer of ${id}`, at: iso(minutesAgo) }, readAt: null, resultAt: null, ...fields,
+  });
+  const withBoard = (patch: Partial<Board>) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), ...patch }), { status: 200 });
+      if (init?.method === 'POST') { posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : {} }); return new Response('{}', { status: 200 }); }
+      return new Response('{}', { status: 404 });
+    }));
+  };
+  const navDot = () => screen.queryByRole('img', { name: /unread answers?, nothing to do/ });
+
+  it('is folded while the Inbox has items, and the Inbox count stays the actionable ones', async () => {
+    live.sessions = [answer('s2', 3), answer('s3', 10)];
+    withBoard({});
+    setTaskView('inbox');
+    mount();
+    const toggle = await screen.findByRole('button', { name: 'Show unread answers', expanded: false });
+    expect(screen.getByText(/Unread · 2/)).toBeTruthy();
+    expect(screen.queryByText('Answer of s2')).toBeNull();
+    expect(screen.getByLabelText('1 waiting for you').textContent).toBe('1');
+    expect(navDot()).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.getByText('Answer of s2')).toBeTruthy();
+  });
+
+  it('opens by itself when nothing needs you, and leaves out a session the Inbox lists', async () => {
+    live.sessions = [answer('s2', 3), answer('listed', 4, { taskId: 'asked' })];
+    withBoard({ inbox: [], snoozed: [{ key: 'task:asked@x', kind: 'question', space: 'main', title: 'acme-cancellation-rescue', text: '', since: iso(5), taskId: 'asked', until: iso(-600) }], counts: { needsYou: 0, inbox: 0 } });
+    setTaskView('inbox');
+    mount();
+    expect(await screen.findByText('Nothing needs you')).toBeTruthy();
+    expect(screen.getByText(/1 session answered since you last looked\./)).toBeTruthy();
+    expect(screen.getByText('Answer of s2')).toBeTruthy();
+    expect(screen.queryByText('Answer of listed')).toBeNull();
+    expect(screen.getByText('no task')).toBeTruthy();
+  });
+
+  it('opening a row reads it: the row leaves and the host is told', async () => {
+    live.sessions = [answer('s2', 3), answer('s3', 10)];
+    withBoard({ inbox: [], counts: { needsYou: 0, inbox: 0 } });
+    setTaskView('inbox');
+    mount();
+    fireEvent.click(await screen.findByText('Answer of s2'));
+    await waitFor(() => expect(posts.map((p) => p.url)).toContain('/api/sessions/s2/read'));
+    expect(screen.queryByText('Answer of s2')).toBeNull();
+    expect(screen.getByText(/Unread · 1/)).toBeTruthy();
+  });
+
+  it('Mark all read empties it, and Undo puts back what each session had', async () => {
+    const result = iso(10);
+    live.sessions = [answer('s2', 3), answer('s3', 10, { attention: null, resultAt: result })];
+    withBoard({ inbox: [], counts: { needsYou: 0, inbox: 0 } });
+    setTaskView('inbox');
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
+    await waitFor(() => expect(posts.map((p) => p.url).sort()).toEqual(['/api/sessions/s2/read', '/api/sessions/s3/read']));
+    expect(screen.queryByText(/Unread ·/)).toBeNull();
+    const status = await screen.findByRole('status');
+    await waitFor(() => expect(status.textContent).toContain('2 marked read.'));
+    await act(async () => { fireEvent.click(within(status).getByRole('button', { name: 'Undo' })); });
+    await waitFor(() => expect(posts.filter((p) => p.url.endsWith('/unread'))).toHaveLength(2));
+    expect(posts.find((p) => p.url === '/api/sessions/s3/unread')?.body).toEqual({ id: 's3', readAt: null, resultAt: result });
+    expect(await screen.findByText(/Unread · 2/)).toBeTruthy();
+  });
+
+  it('on a phone the Inbox tab shows the grey dot, not a number, for unread answers', async () => {
+    const media = (query: string) => ({ matches: !query.includes('pointer'), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} });
+    vi.stubGlobal('matchMedia', media);
+    window.matchMedia = media as never;
+    try {
+      live.sessions = [answer('s2', 3)];
+      withBoard({ inbox: [], counts: { needsYou: 0, inbox: 0 } });
+      setTaskView('inbox');
+      mount();
+      const tab = await screen.findByRole('tab', { name: /Inbox/ });
+      expect(within(tab).getByRole('img', { name: '1 unread answer, nothing to do' })).toBeTruthy();
+      expect(tab.textContent).toBe('Inbox');
+    } finally {
+      delete (window as { matchMedia?: unknown }).matchMedia;
+    }
+  });
+});

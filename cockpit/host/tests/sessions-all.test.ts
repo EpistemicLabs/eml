@@ -31,13 +31,14 @@ describe('sessions across spaces', () => {
   let server: Server
   let base: string
   const deleteTranscript = vi.fn()
+  let ledger: import('../src/session-ledger.js').SessionLedger
 
   beforeAll(async () => {
     const { SessionLedger } = await import('../src/session-ledger.js')
     const { BrainSpaces } = await import('../src/brain-space.js')
     const { TurnTracker } = await import('../src/turn-state.js')
     const { createHostServer } = await import('../src/http.js')
-    const ledger = new SessionLedger()
+    ledger = new SessionLedger()
     ledger.recordSpawn('in-main', null, 'p1', 'claude')
     ledger.recordSpawn('in-other', null, 'p2', 'claude', false, null, OTHER)
     const turns = new TurnTracker()
@@ -126,5 +127,31 @@ describe('sessions across spaces', () => {
     const res = await write('DELETE', '/api/sessions/in-other')
     expect(res.status).toBe(200)
     expect(deleteTranscript).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'in-other', projectPath: '/other/p2' }))
+  })
+
+  it('undoes a mark read with the state the page saw, and refuses a body it cannot store', async () => {
+    ledger.recordSpawn('answered', null, 'p1', 'claude')
+    ledger.setResult('answered', true)
+    const resultAt = ledger.get('answered')!.resultAt
+    expect((await write('POST', '/api/sessions/answered/read')).status).toBe(200)
+    expect(ledger.get('answered')!.resultAt).toBeNull()
+
+    for (const bad of [undefined, {}, { readAt: null }, { readAt: 'soon', resultAt: null }, { readAt: 5, resultAt: null }]) {
+      expect((await write('POST', '/api/sessions/answered/unread', bad)).status).toBe(400)
+    }
+    expect(ledger.get('answered')!.readAt).not.toBeNull()
+
+    expect((await write('POST', '/api/sessions/answered/unread', { readAt: null, resultAt })).status).toBe(200)
+    expect(ledger.get('answered')).toMatchObject({ readAt: null, resultAt })
+    expect((await write('POST', '/api/sessions/nobody/unread', { readAt: null, resultAt: null })).status).toBe(404)
+  })
+
+  it('leaves a session that answered again after the read', async () => {
+    ledger.recordSpawn('again', null, 'p1', 'claude')
+    await write('POST', '/api/sessions/again/read')
+    ledger.setResult('again', true)
+    const res = await write('POST', '/api/sessions/again/unread', { readAt: null, resultAt: null })
+    expect(res.status).toBe(409)
+    expect(ledger.get('again')!.resultAt).not.toBeNull()
   })
 })
