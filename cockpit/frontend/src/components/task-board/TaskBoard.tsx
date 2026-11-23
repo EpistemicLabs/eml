@@ -18,7 +18,7 @@ import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
 import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
 import { openItemIn, type OpenItem, setFold, setOpenItem, useTaskBoardPage } from '@/stores/useTaskBoardPageStore';
-import { clearTaskPanelRequest, getTaskView, setTaskView, useTaskPanelRequest, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
+import { clearTaskPanelRequest, getTaskView, setTaskView, taskPanelRequestTask, useTaskPanelRequest, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { BUTTON, FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
@@ -67,8 +67,14 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const seenPicks = useRef(picks);
   useEffect(() => { if (picks !== seenPicks.current) { seenPicks.current = picks; setOpen(null); } }, [picks]);
 
+  // A closed task older than the board's lists that someone asked for (the tasks card's Show done): the panel shows it.
+  const [requested, setRequested] = useState<BoardTask | null>(null);
   // A closed task opens in the panel too (Reopen lives there); an open one wins while a reopen is in its undo window.
-  const byId = useMemo(() => new Map([...(board?.closed ?? []).map((c) => [c.id, closedAsTask(c)] as const), ...(board?.tasks ?? []).map((t) => [t.id, t] as const)]), [board]);
+  const byId = useMemo(() => new Map([
+    ...(requested ? [[requested.id, requested] as const] : []),
+    ...(board?.closed ?? []).map((c) => [c.id, closedAsTask(c)] as const),
+    ...(board?.tasks ?? []).map((t) => [t.id, t] as const),
+  ]), [board, requested]);
   const task = open?.taskId ? byId.get(open.taskId) : undefined;
   // A session with no task on the board: it opens on its own where a task would.
   const sessionOnly = open && !task ? open.sessionId : undefined;
@@ -86,8 +92,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const panelRequest = useTaskPanelRequest();
   useEffect(() => {
     if (!panelRequest || !board) return;
-    const t = byId.get(panelRequest);
+    const extra = taskPanelRequestTask();
+    const t = byId.get(panelRequest) ?? extra ?? undefined;
     clearTaskPanelRequest();
+    if (t && t === extra) setRequested(extra);
     if (t) openTask(t);
   }, [panelRequest, board, byId, openTask]);
 

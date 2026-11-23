@@ -3,6 +3,8 @@
 // remembered per viewer.
 import { useSyncExternalStore } from 'react';
 
+import type { BoardTask } from '@/lib/task-board';
+
 export type TaskView = 'inbox' | 'now' | 'plan';
 
 const STORAGE_KEY = 'cockpit-task-board-view';
@@ -40,13 +42,16 @@ export function useTaskView(): { view: TaskView; picks: number } {
   return useSyncExternalStore(subscribe, () => state);
 }
 
-// A task to open in the board's panel from elsewhere (⌘K on a closed task): the board takes it once it has loaded.
+// A task to open in the board's panel from elsewhere (⌘K on a closed task, the tasks card's Show done): the board
+// takes it once it has loaded. `task`: the task itself, for a closed one older than the board's own lists.
 let panelRequest: string | null = null;
+let panelTask: BoardTask | null = null;
 const panelListeners = new Set<() => void>();
 
 /** Show the Tasks screen with this task open in its panel. */
-export function requestTaskPanel(taskId: string): void {
+export function requestTaskPanel(taskId: string, task?: BoardTask): void {
   panelRequest = taskId;
+  panelTask = task?.id === taskId ? task : null;
   for (const listener of panelListeners) listener();
 }
 
@@ -54,7 +59,13 @@ export function requestTaskPanel(taskId: string): void {
 export function clearTaskPanelRequest(): void {
   if (panelRequest === null) return;
   panelRequest = null;
+  panelTask = null;
   for (const listener of panelListeners) listener();
+}
+
+/** The task that came with the request, if any: the board opens it when its own lists don't hold the id. */
+export function taskPanelRequestTask(): BoardTask | null {
+  return panelTask;
 }
 
 export function useTaskPanelRequest(): string | null {

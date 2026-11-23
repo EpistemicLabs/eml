@@ -10,6 +10,12 @@ const deps = {
   board: {
     get: async () => ({ at: 'now', counts: { needsYou: 1, inbox: 0 } }),
     refresh: async () => { refreshed++; return {} },
+    closed: async (spaceId: string, project: string, limit: number) => {
+      if (spaceId === 'main') return { ok: true, page: { tasks: [{ id: 'old', spaceId, project, limit }], more: true } }
+      if (spaceId === 'offline') return { ok: false, refusal: 'brain_unavailable' }
+      if (spaceId === 'unbound') return { ok: false, refusal: 'no_brain' }
+      return { ok: false, refusal: 'unknown_space' }
+    },
   },
   commands: {
     submit: async (input: CommandInput) => {
@@ -76,6 +82,17 @@ describe('task board routes', () => {
   it('serves the board', async () => {
     const r = await fetch(`${base}/api/v1/tasks/board`)
     expect(await r.json()).toEqual({ at: 'now', counts: { needsYou: 1, inbox: 0 } })
+  })
+
+  it('serves a project\'s closed tasks, up to the limit the page asks for', async () => {
+    const get = async (query: string) => { const r = await fetch(`${base}/api/v1/tasks/closed?${query}`); return { status: r.status, body: await r.json() } }
+    expect(await get('spaceId=main&project=acme&limit=40')).toEqual({ status: 200, body: { tasks: [{ id: 'old', spaceId: 'main', project: 'acme', limit: 40 }], more: true } })
+    expect((await get('spaceId=nowhere&project=acme&limit=20')).status).toBe(404)
+    expect((await get('spaceId=main&project=acme')).status).toBe(400)
+    expect(await get('spaceId=unbound&project=acme&limit=20')).toMatchObject({ status: 503, body: { error: { code: 'no_brain', retry: true } } })
+    expect(await get('spaceId=offline&project=acme&limit=20')).toMatchObject({ status: 502, body: { error: { code: 'brain_unavailable', retry: true } } })
+    expect((await get('spaceId=main&limit=20')).status).toBe(400)
+    expect((await get('spaceId=main&project=acme&limit=0')).status).toBe(400)
   })
 
   it('hands a task over and answers with the undo deadline and a carried question', async () => {

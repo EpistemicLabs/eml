@@ -7,20 +7,27 @@ import { allSessionState, MARK_WORD, sessionMark, type AllSession } from '@/comp
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
-import { startTaskSession, taskName, useTaskBoard } from '@/lib/task-board';
+import { closedAsTask, startTaskSession, taskName, useClosedTasks, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
 import { lineOf, TaskNodeContent } from '@/components/task-tree/TaskNodeContent';
 import { Search } from 'lucide-react';
-import { openTaskSearch, tellStartProblem } from '@/components/command-palette/openTask';
+import { openTaskSearch, tellOnDesk, tellStartProblem } from '@/components/command-palette/openTask';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { addWorkerPane, getSessionView, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
+import { requestTaskPanel } from '@/stores/useTaskViewStore';
+import { setTopView } from '@/stores/useTopViewStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 
-import { moreOpenTasks, buildTaskTree, type DeskSession, type NodeState, type ProjectName, type SessionLeaf, type TreeNode } from './taskTree';
+import {
+  moreOpenTasks, buildTaskTree, deskTaskProjects, DONE_PAGE, type ClosedTasks, type DeskSession, type NodeState, type ProjectName, type SessionLeaf, type TreeNode,
+} from './taskTree';
 
 const FOLDS_KEY = 'cockpit-tasks-card-folds';
+
+/** A closed (done, dropped or replaced) task's row: it opens the task's panel, where Reopen is. */
+const isClosedTask = (node: TreeNode) => node.kind === 'task' && node.state.hue === 'done';
 
 function readFolds(deskId: string): string[] {
   try {
@@ -90,6 +97,28 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
   const deskSessions = useMemo<DeskSession[]>(() => desk.panes.flatMap((p) =>
     p.sessionId && (p.paneView === 'chat' || p.paneView === 'terminal') ? [{ sessionId: p.sessionId, paneId: p.id, view: p.paneView }] : []), [desk.panes]);
 
+  // Show done: how many pages of closed work each section shows ("Show older" adds one); for this visit only.
+  const [older, setOlder] = useState<Record<string, number>>({});
+  const doneLimit = useCallback((sectionKey: string) => DONE_PAGE * (1 + (older[sectionKey] ?? 0)), [older]);
+  const closedProjects = useMemo(() => (showDone
+    ? deskTaskProjects({ board: board ?? null, sessions: sessions ?? [], desk: deskSessions, projects: projectNames })
+      .map((p) => ({ ...p, limit: doneLimit(`t:${p.spaceId}/${p.project}`) }))
+    : []), [showDone, board, sessions, deskSessions, projectNames, doneLimit]);
+  const closedPages = useClosedTasks(closedProjects, showDone);
+  // useQueries answers a new array on every render: the tree is built again only when a page's data changed.
+  const pagesAt = closedPages.map((p) => p.dataUpdatedAt).join();
+  const closed = useMemo<ClosedTasks>(() => {
+    const tasks: ClosedTasks['tasks'] = [];
+    const more = new Set<string>();
+    closedPages.forEach((page, i) => {
+      const p = closedProjects[i];
+      if (!page.data || !p) return;
+      tasks.push(...page.data.tasks);
+      if (page.data.more) more.add(`${p.spaceId}/${p.project}`);
+    });
+    return { tasks, more };
+  }, [closedProjects, pagesAt]); // eslint-disable-line react-hooks/exhaustive-deps -- closedPages is read through pagesAt
+
   const stateOfSession = useCallback((s: AllSession): NodeState => {
     const turn = turns[s.id];
     if (allSessionState(s, turn) === 'working') return { hue: 'agent', hollow: false, label: 'Working' };
@@ -107,10 +136,12 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     projects: projectNames,
     activeSessionId: activePane?.sessionId ?? null,
     showDone,
+    closed,
+    doneLimit,
     allTasks,
     viewOf: (id) => (getSessionView(id) === 'chat' ? 'chat' : 'terminal'),
     stateOfSession,
-  }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, allTasks, stateOfSession]);
+  }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, closed, doneLimit, allTasks, stateOfSession]);
 
   const spaceKeyOf = (spaceId: string) => {
     const space = spaces.find((s) => s.id === spaceId);
@@ -119,7 +150,15 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
   const openSession = (leaf: SessionLeaf) => {
     openSessionInSpace(spaceKeyOf(leaf.spaceId), { surface: 'terminal', projectId: leaf.projectId, sessionId: leaf.id, chat: leaf.view === 'chat' });
   };
+  /** A closed task row: the task's panel on the Tasks screen, where Reopen is (as ⌘K opens a closed task). */
+  const openClosedTask = (node: TreeNode) => {
+    const found = closedPages.flatMap((p) => p.data?.tasks ?? []).find((c) => c.id === node.id) ?? board?.closed?.find((c) => c.id === node.id);
+    if (!found) { tellOnDesk(`${node.title} is closed and older than what the board holds: find it with ${MOD}K Open task.`); return; }
+    requestTaskPanel(found.id, closedAsTask(found));
+    setTopView('tasks');
+  };
   const selectNode = (node: TreeNode) => {
+    if (isClosedTask(node)) { openClosedTask(node); return; }
     const leaf = node.sessions.find((s) => s.current) ?? node.sessions.find((s) => s.open) ?? node.sessions[0];
     if (leaf) { openSession(leaf); return; }
     const task = node.kind === 'task' ? board?.tasks.find((t) => t.id === node.id) : undefined;
@@ -140,7 +179,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
   const sessionWords = (leaf: SessionLeaf) => (leaf.open ? 'session open on this desk' : 'session');
 
   const renderNode = (node: TreeNode) => {
-    const one = node.sessions.length === 1 ? node.sessions[0] : null;
+    // A closed task's row opens its panel, so its sessions are rows of their own, even a single one.
+    const one = node.sessions.length === 1 && !isClosedTask(node) ? node.sessions[0] : null;
     const leaves = one ? [] : node.sessions;
     const hasChildren = leaves.length > 0 || node.children.length > 0;
     const title = node.title;
@@ -194,6 +234,11 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
                 </button>
               ) : null;
             })()}
+            {showDone && section.doneMore && (
+              <button type="button" onClick={() => setOlder((prev) => ({ ...prev, [section.key]: (prev[section.key] ?? 0) + 1 }))} className={cn('min-h-(--target-min) self-start rounded-md px-2 text-caption text-muted-foreground hover:text-foreground', FOCUS)}>
+                Show older in {section.title}
+              </button>
+            )}
           </section>
         ))}
         {!isPending && (

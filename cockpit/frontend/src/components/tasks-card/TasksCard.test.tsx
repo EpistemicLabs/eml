@@ -11,6 +11,9 @@ const live = vi.hoisted(() => ({
   posts: [] as Array<{ url: string; body: Record<string, unknown> }>,
   startStatus: 202,
   started: [] as unknown[],
+  closedAsks: [] as string[],
+  told: [] as string[],
+  panels: [] as unknown[],
   desk: { id: 'desk-1', name: 'Desk 1', spaceId: null, panes: [] as unknown[], activePaneId: 'p1' },
 }));
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: live.sessions, queued: [], refresh: () => {} }) }));
@@ -26,6 +29,18 @@ vi.mock('@/stores/usePaneStore', async (importOriginal) => ({
   getSessionView: () => undefined,
   openSessionInSpace: (key: unknown, target: unknown) => { live.opened.push([key, target]); return 'pane'; },
   addWorkerPane: (opts: unknown) => { live.started.push(opts); return 'pane'; },
+}));
+vi.mock('@/stores/useTaskViewStore', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  requestTaskPanel: (id: string, task: unknown) => { live.panels.push(['panel', id, task]); },
+}));
+vi.mock('@/stores/useTopViewStore', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  setTopView: (view: string) => { live.panels.push(['view', view]); },
+}));
+vi.mock('@/components/command-palette/openTask', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  tellOnDesk: (text: string) => { live.told.push(text); },
 }));
 
 import { TasksCard } from './TasksCard';
@@ -56,6 +71,9 @@ beforeEach(() => {
   live.opened = [];
   live.started = [];
   live.posts = [];
+  live.closedAsks = [];
+  live.told = [];
+  live.panels = [];
   live.startStatus = 202;
   live.sessions = [
     { id: 's-root', spaceId: 'main', projectId: 'p-ui', summary: 'Session review', taskId: 'session-review-ui' },
@@ -65,6 +83,12 @@ beforeEach(() => {
   live.desk = { id: 'desk-1', name: 'Desk 1', spaceId: null, activePaneId: 'p1', panes: [{ id: 'p1', projectId: 'p-ui', sessionId: 's-root', paneView: 'chat' }] };
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
+    if (url.startsWith('/api/v1/tasks/closed?')) {
+      live.closedAsks.push(url);
+      const limit = Number(new URL(url, 'http://x').searchParams.get('limit'));
+      const tasks = [{ id: 'old-research', spaceId: 'main', spaceName: 'Main', project: 'ui', title: 'old-research', status: 'resolved', closedAt: '2026-11-20T00:00:00Z', parentId: null, originId: null, sessionIds: [] }];
+      return new Response(JSON.stringify({ tasks, more: limit < 40 }), { status: 200 });
+    }
     if (url.endsWith('/start')) { live.posts.push({ url, body: JSON.parse(String(init?.body)) }); return new Response(JSON.stringify({ sessionId: 's-x' }), { status: live.startStatus }); }
     return new Response('{}', { status: 404 });
   }));
@@ -148,6 +172,22 @@ describe('the tasks card', () => {
     await screen.findByRole('tree', { name: 'EML UI/UX' });
     expect(screen.getByRole('switch', { name: 'All tasks' }).getAttribute('aria-checked')).toBe('false');
     expect(screen.getByRole('switch', { name: 'Show done' }).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('with Show done, loads the project\'s closed tasks, opens a closed one\'s panel to reopen it, and asks for older ones', async () => {
+    renderCard();
+    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    expect(live.closedAsks).toEqual([]);
+    fireEvent.click(screen.getByRole('switch', { name: 'Show done' }));
+    await waitFor(() => expect(row(/^Old research, Done/)).toBeTruthy());
+    expect(live.closedAsks).toEqual(['/api/v1/tasks/closed?spaceId=main&project=ui&limit=20']);
+    fireEvent.click(row(/^Old research/).querySelector('[data-tree-row]')!);
+    expect(live.panels).toEqual([['panel', 'old-research', expect.objectContaining({ id: 'old-research', status: 'resolved', turn: null })], ['view', 'tasks']]);
+    expect(live.posts).toEqual([]);
+    expect(live.told).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show older in EML UI/UX' }));
+    await waitFor(() => expect(live.closedAsks.at(-1)).toBe('/api/v1/tasks/closed?spaceId=main&project=ui&limit=40'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Show older in EML UI/UX' })).toBeNull());
   });
 
   it('opens the task search from Open task…', async () => {

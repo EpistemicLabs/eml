@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, statusOrTurn, dueLabel, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, coverageText, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -142,6 +142,19 @@ describe('Plan', () => {
     ];
     expect(quietProjects(rows, projects, { everyone: false, spaceId: null }).map((p) => p.name)).toEqual(['brightline', 'Pawsome', 'Portfolio']);
     expect(quietProjects(rows, projects, { everyone: false, spaceId: 'ebisu' }).map((p) => p.name)).toEqual(['Portfolio']);
+  });
+});
+
+describe('loading a project\'s closed tasks', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('asks for the space, project and limit, and throws on an error', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ tasks: [], more: false }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await fetchClosedTasks('main', 'eml-ui-ux', 40)).toEqual({ tasks: [], more: false });
+    expect(fetchMock.mock.calls[0]).toEqual(['/api/v1/tasks/closed?spaceId=main&project=eml-ui-ux&limit=40', expect.anything()]);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 502 })));
+    await expect(fetchClosedTasks('main', 'eml-ui-ux', 20)).rejects.toThrow('HTTP 502');
   });
 });
 
