@@ -49,9 +49,9 @@ export interface TaskFacts {
 export interface LiveFacts {
   /** A session on the task is working. */
   working: boolean
-  /** Sessions on the task that are not put away, working or not. */
+  /** Sessions on the task that are not put away, working or not: this host's, and other members' live runs. */
   sessions: number
-  /** The next run of one of its jobs, if any. */
+  /** The next run of one of its jobs, if any: here, or mirrored into its delegation by another member. */
   nextRunAt: string | null
 }
 
@@ -89,8 +89,9 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: 'at_time' }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
     // The runner starts planned tasks only. One in progress is the open session's, between its turns,
-    // or nobody's once its session is gone. Sessions are only known on this machine: in a shared space
-    // the delegate may work on the owner's machine, so for anyone else it is the owner's.
+    // or nobody's once its session is gone. Sessions are this machine's plus the synced runs with a live
+    // lease (domain/run-liveness.ts); a member on older logic writes no runs, so for anyone but the owner
+    // a task without a known session is still the owner's.
     if (task.status === 'active') {
       if (live.sessions > 0) return { turn: 'agent_working' }
       if (task.owner && task.owner !== viewer) return { turn: 'waiting_on_others' }
