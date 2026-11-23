@@ -92,6 +92,23 @@ function write(): Frozen {
     ['object.update', { object: 'project', id: 'q', patch: { goal: 'none' }, note: 'x' }],
     ['engram.import', { source: { brain: 'b', head_seq: 1, note: 'x' }, set_hash: '', rows: {} }],
     ['engram.move_out', { ids: [decision.id], set_hash: '0'.repeat(64), drop_relations: [], target: { brain: 'b', op_id: 'o', note: 'x' } }],
+    // schema 23: the shapes of delegation and waits, one shape per call, and who writes a run
+    ['task.track', { id: task.id, delegation: { agent: 'juno', mode: 'alone' }, delegate: 'juno' }],
+    ['task.track', { id: task.id, waits: [], waiting_on: { who: 'ada' } }],
+    ['task.track', { id: task.id, delegation: { agent: 'juno' } }],
+    ['task.track', { id: task.id, delegation: { agent: 'juno', mode: 'alone', checkpoint: null } }],
+    ['task.track', { id: task.id, delegation: { agent: 'juno', mode: 'later' } }],
+    ['task.track', { id: task.id, delegation: { agent: 'juno', mode: 'alone', owner: 'ada' } }],
+    ['task.track', { id: task.id, waits: [{ id: 'w', who: 'ada' }, { id: 'w', who: 'juno' }] }],
+    ['task.track', { id: task.id, waits: [{ id: 'w', who: 'ada', kind: 'someday' }] }],
+    ['task.track', { id: task.id, waits: { id: 'w', who: 'ada' } }],
+    ['object.create', { object: 'run', fields: { id: 'for-ada', task_id: task.id, member: 'ada', origin: 'user', driver: 'human' } }],
+    ['object.create', { object: 'run', fields: { id: 'on-a-decision', task_id: decision.id, member: 'juno', origin: 'user', driver: 'human' } }],
+    ['object.create', { object: 'run', fields: { id: 'session-1', task_id: task.id, member: 'juno', origin: 'user', driver: 'human' } }],
+    ['object.create', { object: 'run', fields: { id: 'no-origin', task_id: task.id, member: 'juno', driver: 'human' } }],
+    ['object.update', { object: 'run', id: 'session-2', patch: { state: 'ended' } }],
+    ['object.update', { object: 'run', id: 'session-1', patch: { task_id: task.id } }],
+    ['object.update', { object: 'run', id: 'session-1', patch: { state: null } }],
   ]
   const refused = tries.map(([name, input]) => ({ name, input, actor, error: refusalOf(eml, name, input, actor) }))
 

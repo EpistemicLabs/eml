@@ -44,9 +44,12 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  *   shared brain — one document per schema (contract/document.ts); every command
  *   refuses a key its call does not take. op_log.verdicts, local to the replica.
  *   No state table changes.
+ * v0.23: task state — the runs table (one session on a task, written only by
+ *   the member it names) and the task fields delegation and waits, mirrored
+ *   with delegate/checkpoint and waiting_on (task-state.ts). Additive only.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 22
+export const CURRENT_BRAIN_SCHEMA_VERSION = 23
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or

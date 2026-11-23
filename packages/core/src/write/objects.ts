@@ -6,6 +6,7 @@ import { slugifyTag } from '../tags'
 import { slugifySubject } from '../subjects'
 import type Database from 'better-sqlite3'
 import type { WriteContext } from './context'
+import type { Run, RunRow } from '../runs'
 
 // The rows of the object stores (project, entity, user, agent, tag, subject):
 // the object commands write them, with the write's one timestamp. The stores
@@ -320,4 +321,24 @@ export function updateSubject(ctx: WriteContext, id: string, patch: SubjectUpdat
     ctx.db.prepare(`UPDATE subjects SET ${fields.join(', ')} WHERE id = ?`).run(...params, at, slug)
   }
   return ctx.subjects.get(slug)!
+}
+
+/** v0.23: the one INSERT of the runs table. */
+export function insertRunRow(db: Database.Database, row: RunRow): void {
+  db.prepare(`
+    INSERT INTO runs (id, task_id, member, agent, origin, driver, state, started_at, heartbeat_at, lease_until, created_at, updated_at)
+    VALUES (@id, @task_id, @member, @agent, @origin, @driver, @state, @started_at, @heartbeat_at, @lease_until, @created_at, @updated_at)
+  `).run(row)
+}
+
+/** v0.23: a run's changeable columns (agent, driver, state, heartbeat_at, lease_until); null clears one. */
+export function updateRunRow(ctx: WriteContext, id: string, patch: Partial<Pick<Run, 'agent' | 'driver' | 'state' | 'heartbeat_at' | 'lease_until'>>): void {
+  const fields: string[] = []
+  const params: unknown[] = []
+  for (const k of ['agent', 'driver', 'state', 'heartbeat_at', 'lease_until'] as const) {
+    if (patch[k] !== undefined) { fields.push(`${k} = ?`); params.push(patch[k]) }
+  }
+  if (fields.length === 0) return
+  fields.push('updated_at = ?')
+  ctx.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE id = ?`).run(...params, ctx.stamp.at, id)
 }

@@ -208,6 +208,22 @@ export function writeEverything(eml: EML): void {
   const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
   writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
   writes(eml).trackTask(successor.id, { display_title: 'Launch the successor', text: 'named for the list' }, juno)
+  // v0.23: the hand-over as one value and the flat fields that mirror it, the waits and waiting_on, a run on the task
+  writes(eml).trackTask(successor.id, { delegation: { mode: 'together', agent: 'juno', checkpoint: 'after', requested_at: '2026-11-19T09:00:00Z' }, text: 'handed over' }, ada)
+  writes(eml).trackTask(successor.id, { checkpoint: 'before' }, ada)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', mode: 'alone', requested_at: '2026-11-19T09:00:00.000Z', next_run_at: '2026-11-20' } }, ada)
+  writes(eml).trackTask(successor.id, { waits: [
+    { id: 's1', who: 'ada', kind: 'question', why: 'which one?', since: '2026-11-19T09:05:00.000Z', session_id: 's1' },
+    { id: 's2', who: 'ada', kind: 'review', why: 'please look', since: '2026-11-19T09:06:00Z', session_id: 's2' },
+  ] }, juno)
+  writes(eml).trackTask(successor.id, { waiting_on: { who: 'ada', kind: 'go', why: 'go ahead?', since: '2026-11-19T09:07:00.000Z', session_id: 's3' } }, juno)
+  writes(eml).trackTask(successor.id, { waits: [] }, juno)
+  writes(eml).trackTask(successor.id, { delegate: 'assistant' }, ada)
+  writes(eml).trackTask(child.id, { delegation: null, text: 'taken back' }, ada)
+  createObject(eml, 'run', { id: 'session-1', task_id: successor.id, member: 'juno', agent: 'juno', origin: 'runner', driver: 'agent' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'awaiting_input', heartbeat_at: '2026-11-19T09:10:00Z', lease_until: '2026-11-19T09:25:00.000Z' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'ended', lease_until: null }, juno)
+  createObject(eml, 'run', { id: 'session-2', task_id: successor.id, member: 'ada', origin: 'user', driver: 'human', state: 'idle', started_at: '2026-11-19T09:30:00.000Z' }, ada)
 
   writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
   writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)
