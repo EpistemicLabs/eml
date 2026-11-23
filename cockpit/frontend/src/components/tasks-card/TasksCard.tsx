@@ -151,7 +151,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
         <h2 className="truncate text-body font-semibold text-foreground">Tasks · {desk.name}</h2>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2">
-        {/* Until the board is in, a task-system session would show as a bare session and then jump. */}
+        {/* Until the board is in, a session with a task would show as a bare session and then jump. */}
         {isPending && <Empty>Loading tasks…</Empty>}
         {!isPending && sections.length === 0 && <Empty>No sessions on this desk yet.</Empty>}
         {!isPending && sections.map((section) => (

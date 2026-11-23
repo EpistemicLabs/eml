@@ -6,7 +6,7 @@ import { locateTask, locationWords, searchTasks, type LocateContext } from './op
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'eml', spaceName: 'EML', project: 'ui', title: id, status: 'active', parentId: null, updatedAt: '2026-11-20T10:00:00Z',
-  turn: 'waiting_on_others', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, onBoard: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
+  turn: 'waiting_on_others', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
 });
 
 const ctx = (patch: Partial<LocateContext> = {}): LocateContext => ({

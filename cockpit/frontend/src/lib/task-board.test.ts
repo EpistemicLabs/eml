@@ -6,7 +6,7 @@ const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'acme-cancellation-rescue', status: 'active', parentId: null, updatedAt: local(19, 9),
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
 });
 
 describe('times', () => {
@@ -60,12 +60,11 @@ describe('what a card says', () => {
 });
 
 describe('Now', () => {
-  it('sorts the board by turn, with groups inside Needs you and Agent scheduled; other spaces stay off it', () => {
+  it('sorts the board by turn, with groups inside Needs you and Agent scheduled', () => {
     const cols = columns([
       task({ id: 'a', group: 'asked', waitingOn: { who: 'lasse', since: local(19, 10) } }),
       task({ id: 'b', group: 'own' }),
       task({ id: 'c', turn: 'agent_scheduled', group: 'runner' }),
-      task({ id: 'd', onBoard: false }),
     ]);
     expect(cols.map((c) => [c.turn, c.tasks.map((t) => t.id)])).toEqual([
       ['needs_you', ['a', 'b']], ['review', []], ['agent_working', []], ['agent_scheduled', ['c']], ['waiting_on_others', []], ['done', []],

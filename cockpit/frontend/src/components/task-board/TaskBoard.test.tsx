@@ -26,11 +26,11 @@ const NOW = new Date();
 const iso = (minutesAgo: number) => new Date(NOW.getTime() - minutesAgo * 60_000).toISOString();
 const task = (patch: Partial<BoardTask>): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: iso(30),
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
 });
 const board = (): Board => ({
   at: NOW.toISOString(), viewer: 'lasse',
-  spaces: [{ id: 'main', name: 'Main', taskSystem: true, agents: ['atlas'] }],
+  spaces: [{ id: 'main', name: 'Main', agents: ['atlas'] }],
   projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
   tasks: [
     task({ id: 'asked', title: 'acme-cancellation-rescue', group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),

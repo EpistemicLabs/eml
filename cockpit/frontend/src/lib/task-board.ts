@@ -8,7 +8,7 @@ import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
 export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner';
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_runner' | 'no_owner';
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
@@ -45,7 +45,6 @@ export interface BoardTask {
   coverage: Coverage;
   urgency: number;
   important: boolean;
-  onBoard: boolean;
   sessionIds: string[];
   working: boolean;
   nextRunAt: string | null;
@@ -84,7 +83,7 @@ export interface BoardEvent { at: string; taskId: string; spaceId: string; from:
 export interface Board {
   at: string;
   viewer: string;
-  spaces: Array<{ id: string; name: string; taskSystem: boolean; agents: string[] }>;
+  spaces: Array<{ id: string; name: string; agents: string[] }>;
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>;
   tasks: BoardTask[];
   /** Missing from an older host. */
@@ -250,7 +249,6 @@ export function dueLabel(due: string, now: number): string {
 const NOBODY: Record<NobodyReason, string> = {
   stopped: 'Agent stopped without a next step: continue or close.',
   no_checkpoint: 'Delegated without a checkpoint, so nothing will start it.',
-  no_runner: 'Delegated, but this space has no runner.',
   no_owner: 'Nobody owns it: claim it or drop it.',
 };
 
@@ -309,9 +307,8 @@ const latest = (t: BoardTask) => t.waitingOn?.since ?? t.updatedAt ?? '';
 
 /** The board's tasks by whose turn it is, newest first, with the groups inside Needs you and Agent scheduled. */
 export function columns(tasks: BoardTask[]): Column[] {
-  const onBoard = tasks.filter((t) => t.onBoard && t.turn);
   return TURN_ORDER.map((turn) => {
-    const list = onBoard.filter((t) => t.turn === turn).sort((a, b) => latest(b).localeCompare(latest(a)));
+    const list = tasks.filter((t) => t.turn === turn).sort((a, b) => latest(b).localeCompare(latest(a)));
     const order = turn === 'needs_you' ? NEEDS_YOU_GROUPS : turn === 'agent_scheduled' ? SCHEDULED_GROUPS : [];
     const groups = order.map((group) => ({ group, tasks: list.filter((t) => t.group === group) })).filter((g) => g.tasks.length > 0);
     return { turn, tasks: list, groups };
@@ -348,7 +345,7 @@ export function coverageText(task: BoardTask, now: number): string {
   if (c.group === 'review') return 'review the result';
   if (c.group === 'stopped') return 'agent stopped: continue or close';
   if (c.group === 'blocked') return c.reason === 'steps_wait' ? `start it: ${c.steps} steps wait for it` : 'waits for its parent: start the parent';
-  if (c.group === 'idle') return c.reason === 'no_runner' ? 'delegated, but this space has no runner' : 'delegated without a checkpoint: set one';
+  if (c.group === 'idle') return 'delegated without a checkpoint: set one';
   if (c.group === 'nofollow') return `waiting on ${task.waitingOn?.who ?? 'someone'} · nobody checks back`;
   if (c.group === 'owner') return 'no owner: claim it or drop it';
   if (c.group === 'due') return `due ${task.due ? dueLabel(task.due, now) : ''}`.trim();

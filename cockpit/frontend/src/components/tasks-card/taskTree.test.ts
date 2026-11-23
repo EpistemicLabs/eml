@@ -7,7 +7,7 @@ import { buildTaskTree, moreOpenTasks, taskState, type TreeInput, type TreeNode 
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null,
-  updatedAt: null, turn: 'needs_you', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true,
+  updatedAt: null, turn: 'needs_you', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false,
   sessionIds: [], working: false, nextRunAt: null, ...patch,
 });
 const session = (id: string, patch: Partial<AllSession> = {}): AllSession => ({ id, spaceId: 'main', projectId: 'p-ui', summary: id, ...patch });
@@ -15,7 +15,6 @@ const session = (id: string, patch: Partial<AllSession> = {}): AllSession => ({ 
 const board = (tasks: BoardTask[], lineage: Board['lineage'] = []): TreeInput['board'] => ({
   tasks,
   lineage,
-  spaces: [{ id: 'main', name: 'Main', taskSystem: true, agents: [] }, { id: 'eml', name: 'EML', taskSystem: false, agents: [] }],
   projects: [{ spaceId: 'main', id: 'ui', name: 'EML UI/UX', goal: null }, { spaceId: 'main', id: 'code', name: 'EML Code', goal: null }],
 });
 
@@ -98,9 +97,9 @@ describe('the tasks card tree', () => {
     expect(ui.nodes[0].state).toEqual({ hue: 'done', hollow: false, label: 'Done' });
   });
 
-  it('builds a session tree where the task system is off: each session under the one that started it', () => {
+  it('builds a session tree for sessions without a task: each session under the one that started it', () => {
     const s = [
-      session('lead', { spaceId: 'eml', projectId: 'p-eml', taskId: 'ignored' }),
+      session('lead', { spaceId: 'eml', projectId: 'p-eml' }),
       session('worker', { spaceId: 'eml', projectId: 'p-eml', parentSessionId: 'lead' }),
       session('archived', { spaceId: 'eml', projectId: 'p-eml', parentSessionId: 'lead', archivedAt: '2026-11-20T00:00:00Z' }),
     ];

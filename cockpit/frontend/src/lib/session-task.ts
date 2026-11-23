@@ -1,4 +1,4 @@
-// The brain task a session works on, in a space with the task system on: what
+// The brain task a session works on: what
 // the Your turn list and the review bar show next to the session. Read through
 // the host's brain proxy in the session's own space, which may not be the
 // active one; kept for a short while, so a list of rows asks once per task.
@@ -52,16 +52,15 @@ function load(taskId: string, space: SpaceInfo): Promise<SessionTask | null> {
   return task;
 }
 
-/** The session's task; null while loading, without a task, or where the task system is off. */
+/** The session's task; null while loading or without a task. */
 export function useSessionTask(taskId: string | null | undefined, space: SpaceInfo | undefined): SessionTask | null {
   const [task, setTask] = useState<SessionTask | null>(null);
-  const on = Boolean(taskId && space?.taskSystem);
   useEffect(() => {
     setTask(null);
-    if (!on || !taskId || !space) return;
+    if (!taskId || !space) return;
     let live = true;
     void load(taskId, space).then((loaded) => { if (live) setTask(loaded); });
     return () => { live = false; };
-  }, [on, taskId, space]);
+  }, [taskId, space]);
   return task;
 }

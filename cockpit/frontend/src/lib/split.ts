@@ -11,7 +11,6 @@ export interface SplitContext {
   openTasks?: OpenTask[];
   /** The open task the topic most likely already has. */
   matchTaskId?: string | null;
-  taskSystem: boolean;
   hasTask: boolean;
 }
 
