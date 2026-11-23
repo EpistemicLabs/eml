@@ -15,6 +15,8 @@ describe('whose turn a task is', () => {
     ['a session works on it', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress with its session open between turns', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
+    ['someone else\'s delegated task in progress with no session here (B1)', { delegate: 'atlas', checkpoint: 'after', owner: 'dominik' }, {}, { turn: 'waiting_on_others' }],
+    ['an unowned delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after', owner: undefined }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
     ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'kim@acme', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
     ['a job starts the delegate at a time', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z' }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'agent_scheduled', group: 'runner' }],
@@ -96,5 +98,14 @@ describe('Plan: importance and urgency', () => {
     expect(asked).toBeGreaterThan(dueSoon)
     expect(dueSoon).toBeGreaterThan(high)
     expect(high).toBeGreaterThan(plain)
+  })
+})
+
+describe('a shared space (B1)', () => {
+  it('a delegated task in progress on the owner\'s machine is the owner\'s for everyone else, and stopped only for the owner', () => {
+    const t = task({ delegate: 'atlas', checkpoint: 'after', owner: 'lasse' })
+    expect(turnOf(t, live(), 'dominik', NOW)).toEqual({ turn: 'waiting_on_others' })
+    expect(isImportant(t, live(), 'dominik', NOW)).toBe(false)
+    expect(turnOf(t, live(), 'lasse', NOW)).toEqual({ turn: 'needs_you', group: 'nobody', reason: 'stopped' })
   })
 })
