@@ -1,4 +1,6 @@
-import type { EngramType } from './types'
+import { TASK_STAGES, type EngramType } from './types'
+import { RULE_TRIGGER_MAX_CHARS } from './validate'
+import { unknownKeys } from './contract/calls'
 
 // --- The engram field model (v0.19) ----------------------------------------------
 //
@@ -33,7 +35,7 @@ export type Binding = typeof BINDINGS[number]
 export const RULE_TYPES = ['constraint', 'process', 'convention', 'behavior', 'security'] as const
 export const APPLIES = ['always', 'situational'] as const
 export const TASK_PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const
-export const STAGES = ['ideation', 'planning', 'ready', 'implementation'] as const
+export const STAGES = TASK_STAGES
 /** v0.22 task system: where a step stops for its person (before it acts, after it acted, not at all). */
 export const CHECKPOINTS = ['before', 'after', 'none'] as const
 /** v0.19: the checked list (launched → released; incident and other for what the list does not cover). */
@@ -61,7 +63,7 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
   },
   rule: {
     applies: oneOf(APPLIES, { required: true }),
-    trigger: text({ max: 80 }),
+    trigger: text({ max: RULE_TRIGGER_MAX_CHARS }),
     why: text({ required: true }),
     agreed: text({ required: true }),
     rule_type: oneOf(RULE_TYPES),
@@ -155,8 +157,11 @@ export function unknownFieldsError(type: string, unknown: string[], allowed: rea
   )
 }
 
+/** A date field's text: a date, or a timestamp with an optional zone (it must also parse). */
+export const ISO_DATE_FIELD = /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/
+
 function isIsoDate(v: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}([T ][0-9:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(v) && !Number.isNaN(Date.parse(v.replace(' ', 'T')))
+  return ISO_DATE_FIELD.test(v) && !Number.isNaN(Date.parse(v.replace(' ', 'T')))
 }
 
 /**
@@ -229,7 +234,7 @@ export function isBlank(value: unknown): boolean {
  */
 export function validateFields(type: EngramType, fields: Record<string, unknown>, mode: 'create' | 'update', notRequired: readonly string[] = []): void {
   const specs = TYPE_FIELDS[type]
-  const unknown = Object.keys(fields).filter(k => !(k in specs))
+  const unknown = unknownKeys(fields, specs)
   if (unknown.length > 0) throw unknownFieldsError(type, unknown, Object.keys(specs))
   const problems: string[] = []
   for (const [name, spec] of Object.entries(specs)) {
@@ -257,7 +262,7 @@ export function splitFields(type: EngramType, body: Record<string, unknown>): { 
   const rest: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(body)) {
     if (v === undefined) continue
-    if (k in specs) fields[k] = v
+    if (Object.hasOwn(specs, k)) fields[k] = v
     else rest[k] = v
   }
   return { fields, rest }

@@ -28,7 +28,7 @@ engrams, graph relations, provenance, lifecycle. This repo is the local product 
   wikilinks; a new field or value counts too. Every replica and every rebuild must derive the same
   state from the same log, so within one schema that behaviour is fixed;
   `packages/core/tests/frozen-log.test.ts` replays the schema's frozen log
-  (`tests/fixtures/log-v<N>.json`) and fails when it moves. A schema bump freezes a new log
+  (`contracts/log-v<N>.json`) and fails when it moves. A schema bump freezes a new log
   (`EML_FREEZE_LOG=1`, see the test's header). A rebuild starts from the checkpoint of the
   migration: a private brain's migrate step writes it, a shared brain's first live device does.
   What changes only how a brain is read or shown ships in a patch.

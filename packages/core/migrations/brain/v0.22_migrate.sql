@@ -1,17 +1,32 @@
 -- ============================================================
 -- EML v0.21 → v0.22 Migration
 --
--- Schema 22 goes with the cockpit's task system: a task may carry depends_on,
--- checkpoint, waiting_on, goal and delegate, and display_title — the name a
--- person reads in a list, next to the kebab title that stays the recall anchor.
--- They live in properties (fields.ts), so no table changes. The step exists
--- because what a logged op may carry changed: a replica on schema 21 refuses
--- these fields, so a shared brain crosses to 22 on every member before such an
--- op is written. Right after this file, in the same transaction, the runner
--- writes the checkpoint a rebuild at schema 22 starts from (database.ts
--- applyMigration).
+-- Schema 22 brings two changes of what a logged op may carry, so the log
+-- continues at a new schema and a shared brain crosses to 22 on every member
+-- before such an op is written:
 --
--- No BEGIN/COMMIT: the runner owns the transaction.
+-- - The cockpit's task system: a task may carry depends_on, checkpoint,
+--   waiting_on, goal and delegate, and display_title — the name a person reads
+--   in a list, next to the kebab title that stays the recall anchor. They live
+--   in properties (fields.ts), so no table changes; a replica on schema 21
+--   refuses them.
+-- - The contract of a shared brain: what an entry must look like is stated
+--   once per schema (contracts/v22.json, generated from core's tables), and
+--   the commands refuse every key their call does not take.
+--
+-- Right after this file, in the same transaction, the runner writes the
+-- checkpoint a rebuild at schema 22 starts from (database.ts applyMigration;
+-- a shared brain's comes through its relay).
+--
+-- No row of the brain's state changes. The one table change is local to the
+-- replica: op_log.verdicts, the chain over this replica's applied / rejected
+-- verdicts in a shared brain — one sha256 value (64 lowercase hex digits) per
+-- entry, the value after that entry. It stays NULL for every entry taken
+-- before a build fills it. Like rejected it is outside the entry's hash and
+-- outside the state (op_log is not a state table).
+--
+-- No BEGIN/COMMIT: the runner runs a migrate file, its ledger row and the
+-- checkpoint in one transaction.
 -- ============================================================
 
-SELECT 1;
+ALTER TABLE op_log ADD COLUMN verdicts TEXT;

@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { initControlDatabase } from '@engramprotocol/core'
+import { CURRENT_BRAIN_SCHEMA_VERSION, contractId, initControlDatabase } from '@engramprotocol/core'
 
 /**
  * Smoke test for GET /health (v0.9-PROPOSAL §5.10).
@@ -93,6 +93,11 @@ describe('/health endpoint', () => {
     expect(health.version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/)
     expect(typeof health.uptime_sec).toBe('number')
     expect(health.uptime_sec).toBeGreaterThanOrEqual(0)
+  })
+
+  it('GET /health names the build: its brain schema, its contract id and the self-test it ran at start', async () => {
+    const { body } = await getJson(`http://127.0.0.1:${port}/health`)
+    expect(body).toMatchObject({ schema: CURRENT_BRAIN_SCHEMA_VERSION, contract: contractId(), self_test: 'passed' })
   })
 
   it('GET /health works WITHOUT Authorization header', async () => {

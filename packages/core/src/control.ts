@@ -40,7 +40,10 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  * v0.20: the sync-ready write path — engrams.rev (revision counter).
  * v0.21: the local op log — op_log and op_snapshots, with the genesis.
  * v0.22: the task system's task fields (depends_on, checkpoint, waiting_on, goal,
- *   delegate) and display_title, the name a person reads; no table changes.
+ *   delegate) and display_title, the name a person reads; and the contract of a
+ *   shared brain — one document per schema (contract/document.ts); every command
+ *   refuses a key its call does not take. op_log.verdicts, local to the replica.
+ *   No state table changes.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
 export const CURRENT_BRAIN_SCHEMA_VERSION = 22

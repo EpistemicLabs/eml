@@ -1,6 +1,6 @@
 {
  "schema": 22,
- "state_hash": "599ec63460abe6aaa64cd6a9212da49d65019c004bca25656f6c3d4b0ca9b143",
+ "state_hash": "0de5af37ba1b9cf35d7ce4ef02a44875f78add7f7cfc11c7fe664378f2eb9295",
  "genesis": {
   "state_hash": "65b8faa78375f60ddaf9b2a61a2b4b141ff3b0e73550cc85468bf96b4057fe9f",
   "data": "H4sIAAAAAAAAA6tWSkxPzSspVrKKjtVRSs1LL0rMjS8uTcpKTUYTLElMRxFA5cSnIZSXZJZkpiJ4RXBOQVE+krlFqTmJJZn5eVAuqqUI20qLU4vAzFoAGZB1M6wAAAA="
@@ -470,108 +470,117 @@
    "at": "2026-11-19T08:00:00.051Z",
    "op_id": "00000000-0000-4000-8000-000000000032",
    "prev_hash": "2eb5f18b766c3304fe20b8a1d99edfd8b4acc1c3594f8debf6f5da93ef1166de",
-   "payload_hash": "babdfa81ad2ec8fbf019754de122d7b52ab0199ca6fca33ee5c8864e31fd2192",
-   "hash": "da90f3fa8e3a6c50f2be85b172e4d7c282c7ad3cae3c1bbf1bee30252b35fe35",
-   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000032\",\"schema\":22,\"call\":\"engram.move_out\",\"args\":{\"ids\":[\"5018abba-b53e-5fcd-9b78-baabd33bb1a7\"],\"set_hash\":\"6a4c471874d8f44f7e4a0636e1db3bb60767f1a444a2032e1ca77b3462e2cc49\",\"drop_relations\":[\"14e77792-4f21-53e0-8ed7-5d659e53f4e4\"],\"target\":{\"brain\":\"d03d2b9e-da18-4ba9-9625-4be5beab9f71\",\"op_id\":\"20000000-0000-4000-8000-000000000000\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+   "payload_hash": "767865acd4a962209c793093e868eecc0bcceedc3774f6ea43858c6a111e01bf",
+   "hash": "0b1c92cd8a452dba5a52b5a2c01fd267e7fef098bf379743106eb0b06a467024",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000032\",\"schema\":22,\"call\":\"engram.move_out\",\"args\":{\"ids\":[\"5018abba-b53e-5fcd-9b78-baabd33bb1a7\"],\"set_hash\":\"6a4c471874d8f44f7e4a0636e1db3bb60767f1a444a2032e1ca77b3462e2cc49\",\"drop_relations\":[\"14e77792-4f21-53e0-8ed7-5d659e53f4e4\"],\"target\":{\"brain\":\"2a5c6b72-da40-45e4-bb20-d3bf5499281e\",\"op_id\":\"20000000-0000-4000-8000-000000000000\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 53,
    "at": "2026-11-19T08:00:00.052Z",
    "op_id": "00000000-0000-4000-8000-000000000033",
-   "prev_hash": "da90f3fa8e3a6c50f2be85b172e4d7c282c7ad3cae3c1bbf1bee30252b35fe35",
+   "prev_hash": "0b1c92cd8a452dba5a52b5a2c01fd267e7fef098bf379743106eb0b06a467024",
    "payload_hash": "8dc27a40758b72798f553b15e5c7698b9789803beb6cc58262ee17b34a27281d",
-   "hash": "01bba953b6f00334274eb450f5976c327948337e3a4418b66598f3a03edee0fc",
+   "hash": "aa92bc34abc9486869b5f7066f0082ef90791e0f7adaea15a573aa51faaa254f",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000033\",\"schema\":22,\"call\":\"object.update\",\"args\":{\"object\":\"project\",\"id\":\"p\",\"patch\":{\"status\":\"archived\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 54,
    "at": "2026-11-19T08:00:00.053Z",
    "op_id": "00000000-0000-4000-8000-000000000034",
-   "prev_hash": "01bba953b6f00334274eb450f5976c327948337e3a4418b66598f3a03edee0fc",
+   "prev_hash": "aa92bc34abc9486869b5f7066f0082ef90791e0f7adaea15a573aa51faaa254f",
    "payload_hash": "c18b6f81fe777d1de246e29c63e920342d77628403e785ea9040fce2656eb049",
-   "hash": "ea4178430316c81cd7596e1db7b6c06acdbc16827b0f548125d25e77ed099080",
+   "hash": "6e9f6685613b86ba4dfbdae3c162b3c071f6c30ca88bfcb93081b27209efd4e4",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000034\",\"schema\":22,\"call\":\"provenance.restamp\",\"args\":{\"from_handle\":\"juno\",\"to_handle\":\"ada\",\"agent\":\"juno\"},\"provenance\":{\"handle\":\"ada\",\"agent\":null,\"ingestion_method\":\"direct\",\"session_id\":\"s2\",\"model\":null,\"harness\":null}}"
   },
   {
    "seq": 55,
    "at": "2026-11-19T08:00:00.054Z",
    "op_id": "00000000-0000-4000-8000-000000000035",
-   "prev_hash": "ea4178430316c81cd7596e1db7b6c06acdbc16827b0f548125d25e77ed099080",
+   "prev_hash": "6e9f6685613b86ba4dfbdae3c162b3c071f6c30ca88bfcb93081b27209efd4e4",
    "payload_hash": "adc14d82d3fc14874995624d8015132c8a35117865b3494843c951c530a607d4",
-   "hash": "75e2ff2c974caeb65a9e20e174770e3c54a48e7c76ca9915f62c9bdae02d3752",
+   "hash": "ca327fa6adfc758b9c0af5cb4c8588840fe342e3bfd2cd40dffd41a8ef27a7b9",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000035\",\"schema\":22,\"call\":\"relation.create\",\"args\":{\"source_id\":\"102401dd-4fb1-513f-ac58-0e63701e11e5\",\"target_id\":\"2f8fad5b-d9cb-469f-a165-70867728950e\",\"relation\":\"refines\",\"detection_method\":\"manual\",\"target_brain\":\"0f8fad5b-d9cb-469f-a165-70867728950e\"},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 56,
    "at": "2026-11-19T08:00:00.055Z",
    "op_id": "00000000-0000-4000-8000-000000000036",
-   "prev_hash": "75e2ff2c974caeb65a9e20e174770e3c54a48e7c76ca9915f62c9bdae02d3752",
+   "prev_hash": "ca327fa6adfc758b9c0af5cb4c8588840fe342e3bfd2cd40dffd41a8ef27a7b9",
    "payload_hash": "0f021022730fbc4bdd0a8bc1f9b6b086d2387a1816b0a452deadbd1ab66476d9",
-   "hash": "f9993fefbfa4bb876648ee1b230183499081faf02a966b0faeac4378cc96dd57",
+   "hash": "25e2f94ed381cc4bb764eab4be4870d324141913b0dd83890b8b36d8d431013e",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000036\",\"schema\":22,\"call\":\"relation.move_end\",\"args\":{\"from_brain\":\"0f8fad5b-d9cb-469f-a165-70867728950e\",\"to_brain\":\"1f8fad5b-d9cb-469f-a165-70867728950e\",\"relations\":[\"d90b49da-0e58-55ec-bc7f-621dfd34aa1a\"]},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 57,
    "at": "2026-11-19T08:00:00.056Z",
    "op_id": "00000000-0000-4000-8000-000000000037",
-   "prev_hash": "f9993fefbfa4bb876648ee1b230183499081faf02a966b0faeac4378cc96dd57",
-   "payload_hash": "07cf97111689c602b2eb1ff7ad6e26be0cdeecfb938ed8339ae895f607e87923",
-   "hash": "7ef333bd8e8f659bcb984c8af9c7db4fb44be6617ae5a0fc607c5439c91361cb",
-   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000037\",\"schema\":22,\"call\":\"engram.import\",\"args\":{\"source\":{\"brain\":\"df19ff7f-bf9b-4190-ab09-d5410c558a87\",\"head_seq\":7},\"set_hash\":\"6f2a051abaea92fc0a319af08e584fe1ce3f9f157fae841716aa620f2acec073\",\"rows\":{\"projects\":[{\"id\":\"moved\",\"name\":\"Moved\",\"status\":\"active\",\"goal\":null,\"description\":null,\"owner\":null,\"parent_project\":null,\"started_at\":null,\"ended_at\":null,\"metadata\":null,\"status_tracks\":null,\"created_at\":\"2026-10-20T08:00:00.001Z\",\"updated_at\":\"2026-10-20T08:00:00.001Z\"}],\"entities\":[],\"users\":[],\"agents\":[],\"tags\":[{\"id\":\"carried\",\"name\":\"carried\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.003Z\"},{\"id\":\"ops\",\"name\":\"ops\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.002Z\"}],\"subjects\":[],\"engrams\":[{\"id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"type\":\"task\",\"scope\":\"project.moved\",\"title\":\"moved-task\",\"content\":\"a test task\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.004Z\",\"updated_at\":\"2026-10-20T08:00:00.005Z\",\"rev\":3},{\"id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"type\":\"decision\",\"scope\":\"project.moved\",\"title\":\"moved-decision\",\"content\":\"chose the test option\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{\\\"rationale\\\":\\\"test rationale\\\",\\\"alternatives\\\":[\\\"test alternative\\\"],\\\"binding\\\":\\\"task\\\",\\\"review_due_at\\\":\\\"2026-12-19T08:00:00.006Z\\\"}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"updated_at\":\"2026-10-20T08:00:00.006Z\",\"rev\":1}],\"entries\":[{\"id\":\"7d4c50d4-5e54-5aca-aa36-3351021067b8\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.004Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"created (active)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"05b5314a-763d-55ec-9504-7ad8fced806f\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"note\",\"at\":\"2026-10-20T08:00:00.005Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"progress\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"b401e1cc-60e0-550c-9b2f-9cc38c8dfabe\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.006Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"decision taken: moved-decision (11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null}],\"relations\":[{\"id\":\"6ba2cbc3-4803-5a9f-b3c1-655f001ac9b8\",\"source_id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"target_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"relation\":\"derived_from\",\"detection_method\":\"agent_declared\",\"strength\":1,\"explanation\":null,\"metadata\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"source_brain\":null,\"target_brain\":null}],\"engram_tags\":[{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"carried\",\"created_at\":\"2026-10-20T08:00:00.004Z\"},{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"ops\",\"created_at\":\"2026-10-20T08:00:00.004Z\"}],\"engram_subjects\":[]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+   "prev_hash": "25e2f94ed381cc4bb764eab4be4870d324141913b0dd83890b8b36d8d431013e",
+   "payload_hash": "b9376a15483fa0a79103db6cf9e8704bc4f11914c8046a7ff938310efd8de8a4",
+   "hash": "db5c30720837e641221667c9546c6a979e768a767b0a980248f57504cfbcc718",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000037\",\"schema\":22,\"call\":\"engram.import\",\"args\":{\"source\":{\"brain\":\"6116694e-6cdc-4ec2-b673-c661397f8c7a\",\"head_seq\":7},\"set_hash\":\"6f2a051abaea92fc0a319af08e584fe1ce3f9f157fae841716aa620f2acec073\",\"rows\":{\"projects\":[{\"id\":\"moved\",\"name\":\"Moved\",\"status\":\"active\",\"goal\":null,\"description\":null,\"owner\":null,\"parent_project\":null,\"started_at\":null,\"ended_at\":null,\"metadata\":null,\"status_tracks\":null,\"created_at\":\"2026-10-20T08:00:00.001Z\",\"updated_at\":\"2026-10-20T08:00:00.001Z\"}],\"entities\":[],\"users\":[],\"agents\":[],\"tags\":[{\"id\":\"carried\",\"name\":\"carried\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.003Z\"},{\"id\":\"ops\",\"name\":\"ops\",\"description\":null,\"status\":\"active\",\"created_at\":\"2026-10-20T08:00:00.002Z\"}],\"subjects\":[],\"engrams\":[{\"id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"type\":\"task\",\"scope\":\"project.moved\",\"title\":\"moved-task\",\"content\":\"a test task\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.004Z\",\"updated_at\":\"2026-10-20T08:00:00.005Z\",\"rev\":3},{\"id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"type\":\"decision\",\"scope\":\"project.moved\",\"title\":\"moved-decision\",\"content\":\"chose the test option\",\"status\":\"active\",\"significance\":\"normal\",\"properties\":\"{\\\"rationale\\\":\\\"test rationale\\\",\\\"alternatives\\\":[\\\"test alternative\\\"],\\\"binding\\\":\\\"task\\\",\\\"review_due_at\\\":\\\"2026-12-19T08:00:00.006Z\\\"}\",\"origin\":null,\"ingested_by\":\"kai\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s9\",\"model\":null,\"harness\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"updated_at\":\"2026-10-20T08:00:00.006Z\",\"rev\":1}],\"entries\":[{\"id\":\"7d4c50d4-5e54-5aca-aa36-3351021067b8\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.004Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"created (active)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"05b5314a-763d-55ec-9504-7ad8fced806f\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"note\",\"at\":\"2026-10-20T08:00:00.005Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"progress\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null},{\"id\":\"b401e1cc-60e0-550c-9b2f-9cc38c8dfabe\",\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"kind\":\"change\",\"at\":\"2026-10-20T08:00:00.006Z\",\"author\":\"kai\",\"agent\":null,\"session_id\":\"s9\",\"model\":null,\"stage\":null,\"text\":\"decision taken: moved-decision (11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53)\",\"source\":null,\"stance\":null,\"quote\":null,\"rule_id\":null}],\"relations\":[{\"id\":\"6ba2cbc3-4803-5a9f-b3c1-655f001ac9b8\",\"source_id\":\"11f3ecd4-bfc4-5b5b-ab7d-7a8551a48c53\",\"target_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"relation\":\"derived_from\",\"detection_method\":\"agent_declared\",\"strength\":1,\"explanation\":null,\"metadata\":null,\"created_at\":\"2026-10-20T08:00:00.006Z\",\"source_brain\":null,\"target_brain\":null}],\"engram_tags\":[{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"carried\",\"created_at\":\"2026-10-20T08:00:00.004Z\"},{\"engram_id\":\"e3b6f7b9-3837-5eda-b926-44b4fcc58141\",\"tag_id\":\"ops\",\"created_at\":\"2026-10-20T08:00:00.004Z\"}],\"engram_subjects\":[]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 58,
    "at": "2026-11-19T08:00:00.057Z",
    "op_id": "00000000-0000-4000-8000-000000000038",
-   "prev_hash": "7ef333bd8e8f659bcb984c8af9c7db4fb44be6617ae5a0fc607c5439c91361cb",
+   "prev_hash": "db5c30720837e641221667c9546c6a979e768a767b0a980248f57504cfbcc718",
    "payload_hash": "a4445c125982759a0938f9ea260d9bb554ac258519b63ce662666ca081e21c1d",
-   "hash": "b907c8088c33ba64ef8985f47d3eb7088005ae7d3795f5f2c38919f843801b8a",
+   "hash": "29d9969fc8b29d5adbb2659d7ba81276a8370ad72c187a34acc6f91d95070c83",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000038\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"chose the test option\",\"scope\":\"project.q\",\"title\":\"rev-checked\",\"type\":\"decision\",\"properties\":{\"rationale\":\"test rationale\",\"alternatives\":[\"test alternative\"]}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 59,
    "at": "2026-11-19T08:00:00.058Z",
    "op_id": "00000000-0000-4000-8000-000000000039",
-   "prev_hash": "b907c8088c33ba64ef8985f47d3eb7088005ae7d3795f5f2c38919f843801b8a",
+   "prev_hash": "29d9969fc8b29d5adbb2659d7ba81276a8370ad72c187a34acc6f91d95070c83",
    "payload_hash": "128514e382304ae4d47bf22ce911db51161de1d51732d7bf27f902716c93e958",
-   "hash": "6ca7fd4aaf343beb14bebead2a6a418a476a9e1dbeb5abc6c5468b2c144123ef",
+   "hash": "79e738335d548173ea13e9aea07e2f3ac83f6a22edcf168676985a6f6bd51433",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-000000000039\",\"schema\":22,\"call\":\"engram.update\",\"args\":{\"id\":\"8137e6ed-fbb6-576b-9055-8ad07b6e8499\",\"patch\":{\"content\":\"at rev 1\"},\"base_rev\":1},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 60,
    "at": "2026-11-19T08:00:00.059Z",
    "op_id": "00000000-0000-4000-8000-00000000003a",
-   "prev_hash": "6ca7fd4aaf343beb14bebead2a6a418a476a9e1dbeb5abc6c5468b2c144123ef",
+   "prev_hash": "79e738335d548173ea13e9aea07e2f3ac83f6a22edcf168676985a6f6bd51433",
    "payload_hash": "01745a1a7a24ca680946023e1cb5692573619ba286199210aa5d5416e14ccd83",
-   "hash": "7773327cd6ef34335481af8fab482293bf9a5cc2c23f2e9f40b9b1ba83eee90f",
+   "hash": "aef2023780b59098eeddbca5afe5ce47866c641880eb28ad0dd97afeb1c7f1d5",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003a\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"check-deploy-logs\",\"content\":\"Check the deploy logs after every rollout.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 61,
    "at": "2026-11-19T08:00:00.060Z",
    "op_id": "00000000-0000-4000-8000-00000000003b",
-   "prev_hash": "7773327cd6ef34335481af8fab482293bf9a5cc2c23f2e9f40b9b1ba83eee90f",
+   "prev_hash": "aef2023780b59098eeddbca5afe5ce47866c641880eb28ad0dd97afeb1c7f1d5",
    "payload_hash": "7097eaa7cb11560c3ddb03128c6689f95c94a62faf87bde03a12c105bf0c49ac",
-   "hash": "96d68d4ea455b7b466ca053fa14f8694b0d134dfbb726ea0802568f768c05de3",
+   "hash": "f400554884daf6fbec7133abc9e04d0f901eb70fbfaa484016180dbb9c01c5bd",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003b\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"write-release-notes\",\"content\":\"Write the release notes, then check them twice.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 62,
    "at": "2026-11-19T08:00:00.061Z",
    "op_id": "00000000-0000-4000-8000-00000000003c",
-   "prev_hash": "96d68d4ea455b7b466ca053fa14f8694b0d134dfbb726ea0802568f768c05de3",
+   "prev_hash": "f400554884daf6fbec7133abc9e04d0f901eb70fbfaa484016180dbb9c01c5bd",
    "payload_hash": "2b738b45be551c4713e254615d5d195fb43f3dfca7ace27e23537125085920d9",
-   "hash": "2dfd4a18ff4788b5cbc6b84101f0bf2c429f5baf0e2f683a32b9469a7802670e",
+   "hash": "a5bb5483d8495684986be2d78c0ed288411250bcc15e9648fea182b61d605ef3",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003c\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"keep-deploy-notes\",\"content\":\"Keep deploy notes next to the release logs.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   },
   {
    "seq": 63,
    "at": "2026-11-19T08:00:00.062Z",
    "op_id": "00000000-0000-4000-8000-00000000003d",
-   "prev_hash": "2dfd4a18ff4788b5cbc6b84101f0bf2c429f5baf0e2f683a32b9469a7802670e",
+   "prev_hash": "a5bb5483d8495684986be2d78c0ed288411250bcc15e9648fea182b61d605ef3",
    "payload_hash": "fbbb0639af63613bbb8addd317ef21f864776120925cb2a326596ac6f9553e6c",
-   "hash": "86d19d029a3d529655155dd47cbffb6048970bafb83607448f221aa373f7cafb",
+   "hash": "86b93b71d9f8f6e7390c016cdd792fa04bae02cc51a65781a869f705235baa71",
    "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003d\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"scope\":\"agent.juno\",\"title\":\"read-server-output\",\"content\":\"Read the server output first when a request fails.\",\"type\":\"learning\",\"evidence\":{\"source\":\"observed\",\"happened\":\"seen once\"}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
+  },
+  {
+   "seq": 64,
+   "at": "2026-11-19T08:00:00.063Z",
+   "op_id": "00000000-0000-4000-8000-00000000003e",
+   "prev_hash": "86b93b71d9f8f6e7390c016cdd792fa04bae02cc51a65781a869f705235baa71",
+   "payload_hash": "ed1b7fea59422d93ba2a6c0031febf2292f71b7038e0d20cc67bf5e3297b22f3",
+   "hash": "8f1dc7c673cfee0a89501d18b74a97503bdbce0282c64e736954cc5f2b928426",
+   "payload": "{\"op_id\":\"00000000-0000-4000-8000-00000000003e\",\"schema\":22,\"call\":\"engram.create\",\"args\":{\"content\":\"a test task\",\"scope\":\"project.q\",\"title\":\"tracked\",\"type\":\"task\",\"properties\":{}},\"provenance\":{\"handle\":\"juno\",\"agent\":null,\"ingestion_method\":\"mcp\",\"session_id\":\"s1\",\"model\":\"m\",\"harness\":\"h\"}}"
   }
  ],
  "refused": [
@@ -974,6 +983,296 @@
    "error": {
     "code": "INVALID",
     "message": "Scope \"project.nowhere\" references unknown project \"nowhere\". Create it first with eml_create_object(object=project, name=…, id=nowhere).",
+    "data": null
+   }
+  },
+  {
+   "name": "task.track",
+   "input": {
+    "id": "a56e74fc-1717-52cf-abbe-43451c37e536",
+    "text": "progress",
+    "done_when": "it ships"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: unknown field done_when for a task. Allowed: text, status, outcome, keep, stage, content, title, intent, context, priority, assignee_ids, due_date, blockers, parent_id, scope, supersedes, tags, subjects, depends_on, checkpoint, waiting_on, goal, delegate, display_title.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.update",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "patch": {
+     "content": "changed"
+    },
+    "note": "x"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: unknown field note — engram.update takes id, patch and base_rev.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.update",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "patch": {
+     "properties": {
+      "toString": "x"
+     }
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: unknown field toString for a decision. Allowed: rationale, alternatives, binding, review_due_at, detail.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test note",
+    "scope": "project.q",
+    "title": "null-field",
+    "type": "note",
+    "properties": {
+     "verdict": null
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: unknown field verdict for a note. Allowed: binding, detail.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "content": "a test note",
+    "scope": "project.q",
+    "title": "inherited-name",
+    "type": "note",
+    "properties": {
+     "constructor": "x"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid engram: unknown field constructor for a note. Allowed: binding, detail.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.create",
+   "input": {
+    "type": "learning",
+    "scope": "agent.juno",
+    "title": "lesson-in-evidence",
+    "content": "Keep the lesson out of the evidence.",
+    "new_topic": true,
+    "evidence": {
+     "source": "observed",
+     "happened": "once",
+     "title": "another-title"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: unknown field title in evidence — it takes source, happened, quote, stance and rule_id.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.confirm_review",
+   "input": {
+    "id": "8137e6ed-fbb6-576b-9055-8ad07b6e8499",
+    "text": "still holds",
+    "note": "x"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: unknown field note — engram.confirm_review takes id and text.",
+    "data": null
+   }
+  },
+  {
+   "name": "object.create",
+   "input": {
+    "object": "tag",
+    "fields": {
+     "name": "extra"
+    },
+    "note": "x"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: unknown field note — object.create takes object and fields.",
+    "data": null
+   }
+  },
+  {
+   "name": "object.create",
+   "input": {
+    "object": "tag",
+    "fields": {
+     "name": "extra",
+     "valueOf": "x"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid object: unknown field valueOf for a tag. Allowed: name, description, status.",
+    "data": null
+   }
+  },
+  {
+   "name": "object.update",
+   "input": {
+    "object": "project",
+    "id": "q",
+    "patch": {
+     "goal": "none"
+    },
+    "note": "x"
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: unknown field note — object.update takes object, id and patch.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.import",
+   "input": {
+    "source": {
+     "brain": "b",
+     "head_seq": 1,
+     "note": "x"
+    },
+    "set_hash": "",
+    "rows": {}
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: engram.import: unknown field note in source — it takes brain and head_seq.",
+    "data": null
+   }
+  },
+  {
+   "name": "engram.move_out",
+   "input": {
+    "ids": [
+     "8137e6ed-fbb6-576b-9055-8ad07b6e8499"
+    ],
+    "set_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "drop_relations": [],
+    "target": {
+     "brain": "b",
+     "op_id": "o",
+     "note": "x"
+    }
+   },
+   "actor": {
+    "handle": "juno",
+    "agent": null,
+    "ingestion_method": "mcp",
+    "session_id": "s1",
+    "model": "m",
+    "harness": "h"
+   },
+   "error": {
+    "code": "INVALID",
+    "message": "Invalid command: engram.move_out: unknown field note in target — it takes brain and op_id.",
     "data": null
    }
   }

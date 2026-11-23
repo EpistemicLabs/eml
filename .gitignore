@@ -5,6 +5,7 @@ dist/
 cockpit/host/ui/
 cockpit/host/migrations/
 cockpit/host/plugins/
+cockpit/host/contracts/
 cockpit/host/THIRD_PARTY_LICENSES.md
 # packed tarballs (pnpm pack)
 *.tgz

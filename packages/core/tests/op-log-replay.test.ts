@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import { EML } from '../src'
+import { EML, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
 import { rebuild, verify } from '../src/log/rebuild'
 import { stateDump, stateHash } from '../src/log/snapshot'
 import { createV20Brain, validDecision, validNote, validTask, writes, writeEverything } from './fixtures'
@@ -56,12 +56,13 @@ describe('rebuild from the log equals the live brain', () => {
     beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'eml-replay-')) })
     afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-    it('replays its writes on top of the genesis snapshot of its old rows', () => {
+    it('replays its writes on top of the snapshot of its old rows', () => {
       const file = join(dir, 'v20.db')
       createV20Brain(file)
       const eml = brain(file)
-      // the genesis at schema 21, then the checkpoint of the step to 22
-      expect(verify(raw(eml))).toMatchObject({ ok: true, entries: 2 })
+      // the genesis of schema 21, then the checkpoint of each later schema step: the replay starts from the latest
+      const migrated = 1 + (CURRENT_BRAIN_SCHEMA_VERSION - 21)
+      expect(verify(raw(eml))).toMatchObject({ ok: true, entries: migrated })
       // writes on the rows from before the log (the fixture's agent, project, tag, subject, decision and task)
       const env = eml.env({ handle: 'juno' })
       writes(eml).trackTask('t-1', { status: 'active', text: 'picked up again', subjects: ['launch'] }, env)
@@ -72,7 +73,7 @@ describe('rebuild from the log equals the live brain', () => {
       writes(eml).trackTask('t-1', { status: 'resolved', outcome: 'done', text: 'closed', keep: [plan.id] }, env)
       writes(eml).confirmReview(next.id, 'still holds', env)
       writes(eml).projects.update('p', { goal: 'ship' }, env)
-      expect(verify(raw(eml))).toMatchObject({ ok: true, entries: 10 })
+      expect(verify(raw(eml))).toMatchObject({ ok: true, entries: migrated + 8 })
       eml.close()
     })
   })

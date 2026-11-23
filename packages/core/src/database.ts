@@ -9,6 +9,13 @@ import { needsGenesis, writeCheckpoint, writeGenesis } from './log/log'
 // location from a workspace checkout and from a bundled build (dist/server.cjs).
 const SCHEMA_DIR = join(__dirname, '..', 'migrations', 'brain')
 
+/**
+ * What a release states about its brain schema, shipped like the SQL files
+ * (`contracts/` next to src/ and dist/): the contract document `v<N>.json`
+ * and the frozen log `log-v<N>.json` (contract/document.ts, log/self-test.ts).
+ */
+export const CONTRACTS_DIR = join(__dirname, '..', 'contracts')
+
 function readSchema(file: string): string {
   return readFileSync(join(SCHEMA_DIR, file), 'utf-8')
 }

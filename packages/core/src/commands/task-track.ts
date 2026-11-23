@@ -9,6 +9,8 @@ import { planSupersedes, applySupersedes, liveSuccessorOf, assertNoLiveSuccessor
 import { normalizeAndValidateTags, normalizeAndValidateSubjects, tagsOf, subjectsOf, replaceEngramTags, replaceEngramSubjects, sameSet } from '../write/tags-subjects'
 import { materializeWikilinks } from '../write/wikilinks'
 import { assertPartOf, linkPartOf, parentOf, openSubtasksOf, appendTaskChange, closeBoundItems } from '../write/task-binding'
+import { CALL_KEYS, unknownKeys } from '../contract/calls'
+import { TASK_TRACK_STATUSES } from '../contract/values'
 import { CommandError, assertBaseRev, checkBaseRev, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
 /** task.track — the /task/:id/track body plus the task's id; base_rev is an optional precondition (cockpit, sync; not MCP). */
@@ -50,14 +52,14 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   if (!existing) return null
   if (existing.type !== 'task') throw new Error(`Invalid engram: ${id} is a ${existing.type}, not a task — use eml_update.`)
 
-  const unknown = Object.keys(input).filter(k => !TRACK_TASK_KEYS.has(k) && (input as unknown as Record<string, unknown>)[k] !== undefined)
+  const unknown = unknownKeys(input, CALL_KEYS['task.track'])
   if (unknown.length > 0) throw unknownFieldsError('task', unknown, [...TRACK_TASK_KEYS])
 
   const old = existing.properties ? JSON.parse(existing.properties) : {}
   const text = typeof input.text === 'string' && input.text.trim() !== '' ? input.text : undefined
   const wasOpen = (TASK_OPEN_STATUSES as readonly string[]).includes(existing.status)
   const newStatus: EngramStatus = input.status ?? existing.status
-  if (input.status !== undefined && !(['planned', 'active', 'resolved', 'invalidated'] as string[]).includes(input.status)) {
+  if (input.status !== undefined && !(TASK_TRACK_STATUSES as readonly string[]).includes(input.status)) {
     throw new Error('Invalid engram: a task\'s status is planned, active, resolved or invalidated (superseded comes from eml_create_task supersedes).')
   }
   const statusChanged = newStatus !== existing.status

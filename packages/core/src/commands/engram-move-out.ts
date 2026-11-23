@@ -1,4 +1,6 @@
 import { exportSet, namesCrossing } from '../log/move'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { SET_HASH } from '../contract/values'
 import { CommandError, inputObject, type CommandModule } from './types'
 
 /** What a move_out names: the set, its hash as imported, the crossing relations it drops, and the import in the target. */
@@ -14,7 +16,7 @@ export interface EngramMoveOutResult {
   dropped_relations: string[]
 }
 
-const MOVE_OUT_KEYS = ['ids', 'set_hash', 'drop_relations', 'target']
+const MOVE_OUT_KEYS = Object.keys(CALL_KEYS['engram.move_out'])
 
 /**
  * engram.move_out — the set leaves this brain for another (spec
@@ -29,16 +31,18 @@ export const engramMoveOut: CommandModule<EngramMoveOutInput, EngramMoveOutResul
   name: 'engram.move_out',
   validate(input) {
     const o = inputObject('engram.move_out', input)
-    const extra = Object.keys(o).filter(k => !MOVE_OUT_KEYS.includes(k))
-    if (extra.length > 0) invalid(`unknown field${extra.length > 1 ? 's' : ''} ${extra.join(', ')} — it takes ${MOVE_OUT_KEYS.join(', ')}`)
+    const extra = unknownKeys(o, CALL_KEYS['engram.move_out'])
+    if (extra.length > 0) invalid(`${unknownFieldsText(extra)} — it takes ${MOVE_OUT_KEYS.join(', ')}`)
     if (!isTextList(o.ids) || o.ids.length === 0) invalid('ids is a list of engram ids')
     if (new Set(o.ids).size !== o.ids.length) invalid('an id appears twice in ids')
-    if (typeof o.set_hash !== 'string' || !/^[0-9a-f]{64}$/.test(o.set_hash)) invalid('set_hash is the set\'s hash as imported')
+    if (typeof o.set_hash !== 'string' || !SET_HASH.test(o.set_hash)) invalid('set_hash is the set\'s hash as imported')
     if (!isTextList(o.drop_relations)) invalid('drop_relations is a list of relation ids (empty when none cross)')
     const target = o.target as Record<string, unknown> | undefined
     if (!target || typeof target.brain !== 'string' || typeof target.op_id !== 'string') {
       invalid('target is { brain: the target\'s genesis op_id, op_id: the import op there }')
     }
+    const extraTarget = unknownKeys(target!, CALL_KEYS['engram.move_out'].target)
+    if (extraTarget.length > 0) invalid(`${unknownFieldsText(extraTarget)} in target — it takes ${keyList(CALL_KEYS['engram.move_out'].target)}`)
     return {
       ids: o.ids, set_hash: o.set_hash, drop_relations: o.drop_relations,
       target: { brain: target!.brain as string, op_id: target!.op_id as string },

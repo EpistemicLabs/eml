@@ -1,18 +1,15 @@
 import type { RelationInput } from '../types'
 import { dropWikilinkEcho } from '../write/wikilinks'
 import { boundTaskOf } from '../write/task-binding'
+import { CALL_KEYS, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { BRAIN_ID, DETECTION_METHODS as DETECTION_LIST, RELATION_VERBS as VERB_LIST } from '../contract/values'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 import { insertRelation } from '../write/insert'
 
-/** The relation verbs the DB accepts; supersedes and part_of come from writes, not from here (core says so). */
-const RELATION_VERBS: ReadonlySet<string> = new Set([
-  'supports', 'contradicts', 'supersedes', 'derived_from', 'refines', 'related_to', 'blocks', 'part_of',
-])
-
+const RELATION_VERBS: ReadonlySet<string> = new Set(VERB_LIST)
 /** What a relation.create payload takes; any other key is INVALID. */
-const RELATION_KEYS = ['source_id', 'target_id', 'relation', 'detection_method', 'strength', 'explanation', 'metadata', 'source_brain', 'target_brain'] as const
-const DETECTION_METHODS: ReadonlySet<string> = new Set(['manual', 'agent_declared', 'auto_temporal', 'auto_semantic'])
-const BRAIN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const RELATION_KEYS = Object.keys(CALL_KEYS['relation.create'])
+const DETECTION_METHODS: ReadonlySet<string> = new Set(DETECTION_LIST)
 
 // --- Cross-brain references (v0.21, decision cockpit-identity-agent-brain) ---
 //
@@ -35,9 +32,9 @@ export const relationCreate: CommandModule<RelationInput, { created: boolean }> 
       throw new CommandError('INVALID', `invalid relation "${o.relation}" — one of ${[...RELATION_VERBS].join(', ')}`)
     }
     if (o.source_id === o.target_id) throw new CommandError('INVALID', 'source_id and target_id must differ')
-    const unknown = Object.keys(o).filter(k => !(RELATION_KEYS as readonly string[]).includes(k) && o[k] !== undefined)
+    const unknown = unknownKeys(o, CALL_KEYS['relation.create'])
     if (unknown.length > 0) {
-      throw new CommandError('INVALID', `unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} — a relation takes ${RELATION_KEYS.join(', ')}`)
+      throw new CommandError('INVALID', `${unknownFieldsText(unknown)} — a relation takes ${RELATION_KEYS.join(', ')}`)
     }
     const detection = o.detection_method ?? 'manual'
     if (!DETECTION_METHODS.has(detection as string)) {

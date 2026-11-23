@@ -13,6 +13,7 @@
     "ui",
     "migrations",
     "plugins",
+    "contracts",
     "skills",
     "README.md",
     "LICENSE",

@@ -3,6 +3,7 @@ import { validateScope } from '../write/scope'
 import { reindexEngram } from '../write/insert'
 import { activeCoreProfileIn } from '../write/supersede'
 import { LEARNING_SCOPE, LEARNING_SCOPE_MESSAGE, PROFILE_SCOPE, PROFILE_SCOPE_MESSAGE, RULE_SCOPE, RULE_SCOPE_MESSAGE } from '../validate'
+import { CALL_KEYS, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
 /** engram.rescope — the /rescope body: the engrams, one or many, and where they go. */
@@ -22,8 +23,8 @@ export const engramRescope: CommandModule<EngramRescopeInput, EngramRescopeResul
   name: 'engram.rescope',
   validate(input) {
     const o = inputObject('engram.rescope', input)
-    const unknown = Object.keys(o).filter(k => !['ids', 'scope'].includes(k) && o[k] !== undefined)
-    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} — engram.rescope takes ids and scope.`)
+    const unknown = unknownKeys(o, CALL_KEYS['engram.rescope'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — engram.rescope takes ids and scope.`)
     const scope = requireText(o, 'scope', 'Invalid command: engram.rescope needs scope.')
     const ids = o.ids
     if (!Array.isArray(ids) || ids.length === 0 || ids.some(id => typeof id !== 'string' || id.length === 0)) {

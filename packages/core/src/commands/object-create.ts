@@ -2,6 +2,8 @@ import { assertObject, checkFields } from '../objects'
 import { slugifyTag } from '../tags'
 import { slugifySubject } from '../subjects'
 import { createProject, createEntity, createTag, updateTag, createSubject, updateSubject, createUser, createAgent } from '../write/objects'
+import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { OBJECT_ID } from '../contract/values'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 
 /** object.create — `object` names the kind (an entity has a field called kind). */
@@ -15,6 +17,8 @@ export const objectCreate: CommandModule<ObjectCreateInput, { object: unknown, c
   name: 'object.create',
   validate(input) {
     const o = inputObject('object.create', input)
+    const unknown = unknownKeys(o, CALL_KEYS['object.create'])
+    if (unknown.length > 0) throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — object.create takes ${keyList(CALL_KEYS['object.create'])}.`)
     if (!o.fields || typeof o.fields !== 'object' || Array.isArray(o.fields)) throw new CommandError('INVALID', 'Invalid object: fields must be an object.')
     return o as unknown as ObjectCreateInput
   },
@@ -35,7 +39,7 @@ function createObject(ctx: CommandContext, object: unknown, input: Record<string
   const name = input.name.trim()
   const idOf = (what: string) => {
     const id = (input.id as string | undefined) ?? slugifyTag(name)
-    if (!/^[a-z0-9_-]+$/i.test(id)) throw new Error(`Invalid object: ${what} id is letters, digits, - and _ (it becomes the scope ${object}.<id>).`)
+    if (!OBJECT_ID.test(id)) throw new Error(`Invalid object: ${what} id is letters, digits, - and _ (it becomes the scope ${object}.<id>).`)
     return id
   }
   switch (object) {

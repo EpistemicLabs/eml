@@ -177,6 +177,7 @@ export {
   type DefaultBrainNames,
 } from './default-brain'
 export { initDatabase } from './database'
+export { contractDocument, contractJson, contractId } from './contract/document'
 export {
   provisionUser,
   provisionBrain,

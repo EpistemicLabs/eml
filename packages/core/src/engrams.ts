@@ -6,6 +6,7 @@ import {
 } from './types'
 import { significanceWeight, recencyBoost } from './decay'
 import { TYPE_FIELDS } from './fields'
+import { CALL_KEYS } from './contract/calls'
 import { listEntries, type Entry, type EntryKind } from './entries'
 import { learningState, type LearningState } from './learning'
 import { ProjectStore } from './projects'
@@ -159,10 +160,7 @@ export function termCoverage(salient: string[], candidateText: string): number {
 // --- v0.19 write inputs -------------------------------------------------------------
 
 /** What store() takes besides the type's fields (EngramInput). */
-export const STORE_INPUT_KEYS: ReadonlySet<string> = new Set([
-  'type', 'content', 'scope', 'title', 'status', 'properties', 'tags', 'subjects',
-  'parent_id', 'task_id', 'supersedes', 'from_learning', 'origin', 'app',
-])
+export const STORE_INPUT_KEYS: ReadonlySet<string> = new Set(Object.keys(CALL_KEYS['engram.create']))
 
 /** eml_update's patch: the universal fields; the type's fields go in properties. */
 export interface EngramPatch {
@@ -178,9 +176,7 @@ export interface EngramPatch {
   /** The software's own state, replaced as a whole; only on an engram with an origin. */
   app?: Record<string, string>
 }
-export const UPDATE_PATCH_KEYS: ReadonlySet<string> = new Set([
-  'content', 'title', 'scope', 'status', 'properties', 'tags', 'subjects', 'supersedes', 'review_note', 'app',
-])
+export const UPDATE_PATCH_KEYS: ReadonlySet<string> = new Set(Object.keys(CALL_KEYS['engram.update'].patch))
 
 /** eml_track_task: everything that happens to an existing task. */
 export interface TrackTaskInput {
@@ -215,11 +211,8 @@ export interface TrackTaskInput {
   delegate?: string | null
   display_title?: string | null
 }
-export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set([
-  'text', 'status', 'outcome', 'keep', 'stage', 'content', 'title', 'intent', 'context', 'priority',
-  'assignee_ids', 'due_date', 'blockers', 'parent_id', 'scope', 'supersedes', 'tags', 'subjects',
-  'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title',
-])
+/** What a track takes besides the task's id and base_rev. */
+export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set(Object.keys(CALL_KEYS['task.track']).filter(k => k !== 'id' && k !== 'base_rev'))
 
 /** eml_learning: a new lesson, or an incident added to one (id). */
 export interface LearnInput {
@@ -236,6 +229,7 @@ export interface LearnInput {
   tags?: string[]
   subjects?: string[]
 }
+/** The flat keys of eml_learning, as its unknown-field answer lists them; what each call takes is in contract/calls.ts. */
 export const LEARN_KEYS: ReadonlySet<string> = new Set([
   'id', 'content', 'scope', 'title', 'source', 'happened', 'quote', 'stance', 'new_topic',
   'rule_id', 'tags', 'subjects',

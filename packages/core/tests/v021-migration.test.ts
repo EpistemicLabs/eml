@@ -33,17 +33,19 @@ function read<T>(file: string, fn: (db: Database.Database) => T): T {
   try { return fn(db) } finally { db.close() }
 }
 
-/** The genesis is the log's only entry, its chain link is valid, and it and its snapshot hold the brain's state. */
-function expectGenesis(file: string, brain?: string): void {
+/**
+ * The genesis starts the log, its chain link is valid, and it and its snapshot
+ * hold the brain's state. In a fresh brain it is the only entry, at the current
+ * schema. A brain migrated from schema 20 got it at schema 21, and each later
+ * step added its checkpoint (schema 22 changes no state row, so it names the
+ * same state).
+ */
+function expectGenesis(file: string, brain?: string, schema = 21): void {
   read(file, db => {
-    const log = db.prepare('SELECT * FROM op_log').all() as Array<Record<string, any>>
-    // the genesis at the schema that brought the log (or the current one for a fresh brain),
-    // then one checkpoint per later migrate step (database.ts applyMigration)
+    const log = db.prepare('SELECT * FROM op_log ORDER BY seq').all() as Array<Record<string, any>>
+    const steps = Array.from({ length: CURRENT_BRAIN_SCHEMA_VERSION - schema }, (_, i) => schema + 1 + i)
+    expect(log).toHaveLength(1 + steps.length)
     const g = log[0]
-    const genesisSchema = JSON.parse(g.payload).schema as number
-    expect([21, CURRENT_BRAIN_SCHEMA_VERSION]).toContain(genesisSchema)
-    expect(log).toHaveLength(1 + CURRENT_BRAIN_SCHEMA_VERSION - genesisSchema)
-    expect(log.slice(1).map(e => JSON.parse(e.payload).call)).toEqual(log.slice(1).map(() => 'brain.checkpoint'))
     expect(g.seq).toBe(1)
     expect(g.prev_hash).toBe(GENESIS_PREV_HASH)
     expect(g.payload_hash).toBe(sha256Hex(g.payload))
@@ -51,14 +53,18 @@ function expectGenesis(file: string, brain?: string): void {
     expect(g.signature).toBeNull()
     const state = stateHash(stateDump(db))
     const payload = JSON.parse(g.payload)
-    expect(payload).toMatchObject({ schema: genesisSchema, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
+    expect(payload).toMatchObject({ schema, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
     expect(payload.args.brain).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     if (brain !== undefined) expect(payload.args.brain).toBe(brain)
     expect(payload.provenance).toEqual({ handle: null, agent: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
 
-    const snaps = db.prepare('SELECT * FROM op_snapshots').all() as Array<Record<string, any>>
-    expect(snaps).toHaveLength(log.length)
-    expect(snaps[0]).toMatchObject({ seq: 1, schema: genesisSchema, state_hash: state })
+    steps.forEach((step, i) => {
+      expect(JSON.parse(log[1 + i].payload)).toMatchObject({ schema: step, call: 'brain.checkpoint', args: { seq: 1 + i, state_hash: state } })
+    })
+
+    const snaps = db.prepare('SELECT * FROM op_snapshots ORDER BY seq').all() as Array<Record<string, any>>
+    expect(snaps.map(({ seq, schema, state_hash }) => ({ seq, schema, state_hash })))
+      .toEqual([schema, ...steps].map((schema, i) => ({ seq: 1 + i, schema, state_hash: state })))
     const snapshot = decodeSnapshot(snaps[0].data)
     expect(stateHash(snapshot)).toBe(state)
     expect(snapshot).toEqual(JSON.parse(JSON.stringify(stateDump(db))))
@@ -73,10 +79,10 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
   it('a fresh brain starts its log with the genesis of the empty brain', () => {
     const file = join(dir, 'fresh.db')
     new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()
-    expectGenesis(file)
+    expectGenesis(file, undefined, CURRENT_BRAIN_SCHEMA_VERSION)
     read(file, db => {
       expect(Object.values(stateDump(db)).every(rows => rows.length === 0)).toBe(true)
-      expect((db.prepare('SELECT at FROM op_log').get() as { at: string }).at).toBe(NOW)
+      expect((db.prepare('SELECT at FROM op_log WHERE seq = 1').get() as { at: string }).at).toBe(NOW)
     })
   })
 
@@ -139,7 +145,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     new EML({ namespace: 'test', dbPath: a, clock: () => NOW, brainId: ID }).close()
     new EML({ namespace: 'test', dbPath: b, clock: () => NOW, brainId: ID }).close()
     new EML({ namespace: 'test', dbPath: c, clock: () => NOW }).close()
-    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log').get() as { op_id: string })
+    const entry = (file: string) => read(file, db => db.prepare('SELECT * FROM op_log WHERE seq = 1').get() as { op_id: string })
     expect(entry(b)).toEqual(entry(a))
     expect(entry(c).op_id).not.toBe(entry(a).op_id)
   }, process.platform === 'win32' ? 15_000 : 5_000)
@@ -153,7 +159,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
     a.close(); b.close()
   })
 
-  it('a brain already at 21 keeps its one genesis on the next open', () => {
+  it('a migrated brain keeps its one genesis on the next open', () => {
     const file = join(dir, 'v20.db')
     createV20Brain(file)
     new EML({ namespace: 'test', dbPath: file, clock: () => NOW }).close()

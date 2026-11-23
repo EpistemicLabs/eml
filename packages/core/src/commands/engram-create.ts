@@ -4,10 +4,12 @@ import {
 } from '../types'
 import type { LearningState } from '../learning'
 import { validateEngramType, validateFormat, validateNoTemplateLeak } from '../validate'
-import { ORIGINS, SEED_ORIGIN, validateFields, normalizeTimestampFields, normalizeAssignees, fieldProblem, unknownFieldsError, isBlank } from '../fields'
+import { ORIGINS, SEED_ORIGIN, TYPE_FIELDS, validateFields, normalizeTimestampFields, normalizeAssignees, fieldProblem, unknownFieldsError, isBlank } from '../fields'
+import { CALL_KEYS, LEARNING_CREATE_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
+import { TASK_CREATE_STATUSES } from '../contract/values'
 import { appendEntry } from '../entries'
 import { addDays } from '../env'
-import { renderLogContent, CONFLICT_TYPES, STORE_INPUT_KEYS, createInputKeys } from '../engrams'
+import { renderLogContent, CONFLICT_TYPES, LEARN_KEYS, createInputKeys } from '../engrams'
 import { validateScope } from '../write/scope'
 import { PROFILE_SCOPE, PROFILE_SCOPE_MESSAGE, RULE_SCOPE, RULE_SCOPE_MESSAGE } from '../validate'
 import { planSupersedes, applySupersedes, supersede, activeStatusState, autoSupersedeCoreProfile, autoSupersedeStatusEngrams } from '../write/supersede'
@@ -45,6 +47,17 @@ export const engramCreate: CommandModule<EngramCreateInput, EngramCreateResult> 
       if (!e || typeof e !== 'object' || Array.isArray(e)) {
         throw new CommandError('INVALID', 'Invalid engram: a learning is written with eml_learning, which checks the topic first.')
       }
+      // a key eml_learning does not have answers as it always did; one of its keys in the wrong place is a malformed command
+      const unknown = unknownKeys(o, LEARNING_CREATE_KEYS)
+      const foreign = unknown.filter(k => !LEARN_KEYS.has(k))
+      if (foreign.length > 0) throw new CommandError('INVALID', unknownFieldsError('learning', foreign, [...LEARN_KEYS]).message)
+      if (unknown.length > 0) {
+        throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknown)} — engram.create of a learning takes ${keyList(LEARNING_CREATE_KEYS)}.`)
+      }
+      const unknownEvidence = unknownKeys(e, LEARNING_CREATE_KEYS.evidence)
+      if (unknownEvidence.length > 0) {
+        throw new CommandError('INVALID', `Invalid command: ${unknownFieldsText(unknownEvidence)} in evidence — it takes ${keyList(LEARNING_CREATE_KEYS.evidence)}.`)
+      }
     }
     return o as unknown as EngramCreateInput
   },
@@ -76,8 +89,11 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   if (type === 'learning') {
     throw new Error('Invalid engram: a learning is written with eml_learning, which checks the topic first.')
   }
-  const unknownInput = Object.keys(input).filter(k => !STORE_INPUT_KEYS.has(k) && (input as unknown as Record<string, unknown>)[k] !== undefined)
+  const unknownInput = unknownKeys(input, CALL_KEYS['engram.create'])
   if (unknownInput.length > 0) throw unknownFieldsError(type, unknownInput, createInputKeys(type))
+  // an unknown field is refused whatever its value; a field of the type with null is one that is not set
+  const unknownProps = unknownKeys(input.properties ?? {}, TYPE_FIELDS[type])
+  if (unknownProps.length > 0) throw unknownFieldsError(type, unknownProps, Object.keys(TYPE_FIELDS[type]))
   const props: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(input.properties ?? {})) if (v !== null && v !== undefined) props[k] = v
   // A default-brain seed rule has no agreement yet: getting-started asks the
@@ -99,7 +115,7 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   let status: EngramStatus = TYPE_DEFAULT_STATUS[type]
   if (input.status !== undefined) {
     if (type !== 'task') throw new Error(`Invalid engram: status is not set on create — a new ${type} is active.`)
-    if (input.status !== 'planned' && input.status !== 'active') {
+    if (!(TASK_CREATE_STATUSES as readonly string[]).includes(input.status)) {
       throw new Error('Invalid engram: a task is created planned or active — done things are not tasks (record them as an event or in the log).')
     }
     status = input.status

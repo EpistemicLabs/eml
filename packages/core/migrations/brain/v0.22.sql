@@ -5,8 +5,11 @@
 -- reach the same schema through the vX.Y_migrate.sql chain; a test checks that
 -- both paths end in an identical schema.
 --
--- Schema 22 changes no table: it is the task system's task fields and
--- display_title (packages/core/src/fields.ts), checked in the application.
+-- Schema 22 changes no state table. It is the task system's task fields and
+-- display_title (packages/core/src/fields.ts), checked in the application, and
+-- the contract of a shared brain: what an entry must look like is one contract
+-- per schema (contracts/v22.json). op_log gains verdicts, a column of the
+-- replica like rejected.
 --
 -- Schema 20 (sync-ready write path): every timestamp is written by the
 -- application, ISO-8601 UTC with milliseconds — no column defaults the clock
@@ -261,6 +264,7 @@ CREATE TABLE op_log (
   signature     BLOB,                         -- the author device's signature over payload_hash (shared brains); NULL in a private brain
   rejected      TEXT,                         -- NULL = applied; else why the replica refused it (shared brains): outside the hash and the state
   payload       TEXT NOT NULL,
+  verdicts      TEXT,                         -- shared brains: sha256 chain (64 hex) over this replica's applied / rejected verdicts up to this entry; NULL for entries taken before a build fills it; outside the hash and the state
   CHECK (op_id IS NOT NULL OR rejected IS NOT NULL)
 );
 -- An op_id occurs once in a log (decision shared-log-rejected-entries): the

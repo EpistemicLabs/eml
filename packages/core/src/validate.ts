@@ -122,7 +122,7 @@ export function validateFormat(
 
 // v0.8 C2: entity scope rename — external.<x> is gone, everything external
 // now goes through entity.<x> (with a hard existence check against the entities table).
-const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
+export const VALID_SCOPE_PATTERNS: ReadonlyArray<RegExp> = [
   /^global$/,
   /^project\.[a-z0-9_-]+$/i,
   /^agent\.[a-z0-9_-]+$/i,

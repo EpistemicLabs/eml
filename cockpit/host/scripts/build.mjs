@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Build the eml-cockpit package: bundle the private building blocks (server, core)
-// into dist/, copy the built frontend and the migrations next to it, compile the host.
+// into dist/, copy the built frontend, the migrations and the contracts next to it, compile the host.
 //
 // Layout produced (everything the published package needs):
 //   dist/index.js     host entry (bin)          — tsc, ESM
@@ -13,9 +13,11 @@
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
 //   plugins/<id>/plugin.json  official plugins' manifests — copied from the repo's plugins/
+//   contracts/        contract + frozen log     — copied from packages/core/contracts
 //   THIRD_PARTY_LICENSES.md                     — notices for the code bundled into dist/ and ui/
-// The SQL files sit next to dist/ so core's `__dirname/../migrations` resolves the
-// same way inside the bundle as it does in the workspace checkout.
+// The SQL files and the contracts sit next to dist/ so core's `__dirname/../migrations`
+// and `__dirname/../contracts` resolve the same way inside the bundle as they do in
+// the workspace checkout.
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
@@ -34,7 +36,7 @@ const frontend = pkgRoot('@engramprotocol/cockpit-frontend')
 const channelBridge = pkgRoot('@engramprotocol/channel-bridge')
 const gmailMcp = pkgRoot('@engramprotocol/plugin-gmail-mcp')
 
-for (const p of ['dist', 'ui', 'migrations', 'plugins', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
+for (const p of ['dist', 'ui', 'migrations', 'plugins', 'contracts', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
 
 const common = {
   bundle: true, platform: 'node', format: 'cjs', target: 'node20',
@@ -77,6 +79,7 @@ for (const id of readdirSync(PLUGINS)) {
   const manifest = path.join(PLUGINS, id, 'plugin.json')
   if (existsSync(manifest)) cpSync(manifest, path.join(HOST, 'plugins', id, 'plugin.json'))
 }
+cpSync(path.join(core, 'contracts'), path.join(HOST, 'contracts'), { recursive: true })
 
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
-console.log(`eml-cockpit: dist/ ui/ migrations/ plugins/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)
+console.log(`eml-cockpit: dist/ ui/ migrations/ plugins/ contracts/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)
