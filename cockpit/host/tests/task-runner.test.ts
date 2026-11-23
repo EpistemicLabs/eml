@@ -9,14 +9,14 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; mode?: 'alone' | 'together'; waiting_on?: Record<string, string>; parent?: string }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
 function brainOf(list: T[]) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegate && t.mode ? { delegation: { agent: t.delegate, ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), mode: t.mode } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -69,6 +69,17 @@ describe('task runner', () => {
     expect(brain.posts.map((p) => p.body.status)).toEqual(['active', 'active'])
     await runner.tick()
     expect(started).toHaveLength(2)
+  })
+
+  it('starts only a delegate that works alone: a together task stays with its owner (delegation.mode)', async () => {
+    const { started } = await run([
+      { id: 'plan', status: 'active' },
+      { id: 'alone', status: 'planned', parent: 'plan', checkpoint: 'after', delegate: 'atlas', mode: 'alone' },
+      { id: 'together', status: 'planned', parent: 'plan', checkpoint: 'after', delegate: 'atlas', mode: 'together' },
+      // Written before schema 23, without a delegation: alone.
+      { id: 'legacy', status: 'planned', parent: 'plan', checkpoint: 'after', delegate: 'atlas' },
+    ])
+    expect(started.map((s) => s.id).sort()).toEqual(['alone', 'legacy'])
   })
 
   it('leaves steps that wait for a dependency, have no delegate or no checkpoint, or whose task is not active', async () => {
@@ -202,7 +213,8 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
     const commands = createTaskCommands({
       store: new TaskCommandStore(join(home, 'b3-commands.json')), space: () => ({ id: 'main', name: 'Main', shared: false }) as never,
       brain: () => ({ get: brain.get, post: async (path: string, body: Record<string, unknown>) => {
-        const t = list[0]; for (const [k, v] of Object.entries(body)) if (k === 'delegate') t.delegate = v as string; else if (k === 'checkpoint') t.checkpoint = v as string
+        const t = list[0]; const d = body.delegation as { agent: string; checkpoint?: string } | undefined
+        if (d) { t.delegate = d.agent; t.checkpoint = d.checkpoint }
         return brain.post(path, body)
       } }),
       agentsOf: async () => ['atlas'], createJob: async () => ({ jobId: 'j' }), changed: () => {}, now: () => now, log: () => {},

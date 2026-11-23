@@ -2,9 +2,10 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
-import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, type HandOverTask, type ScheduleSpec } from '../domain/hand-over.js'
+import { planHandOver, planUndo, type Delegation, type HandOverRefusal, type HandOverRequest, type HandOverTask, type ScheduleSpec } from '../domain/hand-over.js'
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
+import { runsHere } from '../domain/task-owner.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
@@ -141,7 +142,8 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; waiting_on?: WaitingOn }
+  ingested_by?: string | null
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: Delegation; waiting_on?: WaitingOn }
 }
 
 export interface TaskCommandsDeps {
@@ -155,6 +157,12 @@ export interface TaskCommandsDeps {
    * Without it Work on it now never ends on its own.
    */
   sessionsSince?(taskId: string, since: string): { total: number; open: number }
+  /**
+   * The spaces and this cockpit's member: with both, the release also covers together tasks that no
+   * board command of this cockpit covers (the backfill's, or a chat's), on this member's tasks only.
+   */
+  spaces?(): BrainSpace[]
+  me?: string
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -167,8 +175,23 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   owner: t.properties?.assignee_ids?.[0],
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
+  ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
   waitingOn: t.properties?.waiting_on,
 })
+
+/**
+ * The agent works on the task together with its owner: delegation.mode together (schema 23). A
+ * task without a delegation (a brain before 23) is never together by its fields.
+ */
+export const isTogetherTask = (t: Pick<BrainTask, 'properties'>, agent?: string) =>
+  t.properties?.delegation?.mode === 'together' && (agent === undefined || t.properties.delegation.agent === agent)
+
+/** The journal line of a released Work on it now. */
+const releasedLine = (agent: string) =>
+  `Worked on it together with ${agent}; the session was put away, so ${agent} is released and does not go on alone. Hand it to ${agent} to let it go on.`
+
+/** How often the release looks at the brain for together tasks no board command covers. */
+export const TOGETHER_SCAN_MS = 60 * 1000
 
 export function createTaskCommands(deps: TaskCommandsDeps) {
   const iso = (ms: number) => new Date(ms).toISOString()
@@ -213,14 +236,47 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const agent = command.handOver!.delegate
       try {
         const task = await taskOf(brain, command.taskId!)
-        if (task && (task.status === 'planned' || task.status === 'active') && task.properties?.delegate === agent) {
-          await track(brain, task.id, { delegate: null, checkpoint: null },
-            `Worked on it together with ${agent}; the session was put away, so ${agent} is released and does not go on alone. Hand it to ${agent} to let it go on.`)
+        // Still together with this agent; a delegation since changed to alone (in a chat, say) is not taken back.
+        const stillTogether = task?.properties?.delegation ? isTogetherTask(task, agent) : task?.properties?.delegate === agent
+        if (task && (task.status === 'planned' || task.status === 'active') && stillTogether) {
+          await track(brain, task.id, { delegation: null }, releasedLine(agent))
         }
         save({ ...command, released: { at: new Date(now).toISOString(), agent } })
         deps.log(`[commands] ${command.opId.slice(0, 8)} together ended: ${agent} released from task ${command.taskId!.slice(0, 8)}`)
       } catch (err) {
         deps.log(`[commands] ${command.opId.slice(0, 8)} together release failed: ${(err as Error).message}`)
+      }
+    }
+  }
+
+  /**
+   * The release keyed on the task's fields (delegation.mode together): a together task with no open
+   * Work on it now here is released once it had sessions on this cockpit and all of them are put
+   * away. One with no session here is left alone: this cockpit knows nothing of its sessions.
+   */
+  let lastScan = -Infinity
+  const releaseTogetherTasks = async (now: number) => {
+    if (!deps.sessionsSince || !deps.spaces || deps.me === undefined || now - lastScan < TOGETHER_SCAN_MS) return
+    lastScan = now
+    for (const space of deps.spaces()) {
+      const brain = deps.brain(space)
+      if (!brain) continue
+      try {
+        for (const status of ['planned', 'active']) {
+          const listed = await brain.get('/list', { type: 'task', status, limit: 200 }) as { engrams?: BrainTask[] }
+          for (const task of (listed.engrams ?? []).filter((t) => isTogetherTask(t) && runsHere(space.shared, t, deps.me!))) {
+            const latest = latestHandOver(task.id)
+            if (latest && isOpenTogether(latest)) continue
+            const sessions = deps.sessionsSince(task.id, new Date(0).toISOString())
+            if (sessions.total === 0 || sessions.open > 0) continue
+            const agent = task.properties!.delegation!.agent
+            await track(brain, task.id, { delegation: null }, releasedLine(agent))
+            deps.changed(space.id)
+            deps.log(`[commands] together ended: ${agent} released from task ${task.id.slice(0, 8)} (no session open)`)
+          }
+        }
+      } catch (err) {
+        deps.log(`[commands] ${space.name}: together scan failed: ${(err as Error).message}`)
       }
     }
   }
@@ -358,6 +414,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         // A session's split or sort pending here is one that failed part-way: its retry resumes it, not the tick.
         for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) await apply(command)
         await releaseTogether(now)
+        await releaseTogetherTasks(now)
       }
       const current = run().finally(() => { if (ticking === current) ticking = null })
       ticking = current
@@ -385,6 +442,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     delegatedAt(taskId: string): string | null {
       const latest = latestHandOver(taskId)
       return latest?.handOver?.mode === 'now' ? latest.createdAt : null
+    },
+
+    /** The task's latest hand-over here was a Delegate now or a Schedule: the agent was handed it to work alone. */
+    handedAlone(taskId: string): boolean {
+      const mode = latestHandOver(taskId)?.handOver?.mode
+      return mode === 'now' || mode === 'schedule'
     },
 
     /** The agent released when Work on it now ended, while that is still the task's latest hand-over: the board offers "Hand to <agent>". */

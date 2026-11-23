@@ -83,6 +83,7 @@ import { PushNotifier, notifySessions } from './application/push-notifier.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
+import { backfillDelegationMode } from './application/delegation-backfill.js'
 import { createSplitSession } from './application/split-session.js'
 import { createSplitBrief } from './application/split-brief.js'
 import { createSortSession } from './application/sort-session.js'
@@ -739,10 +740,21 @@ async function main() {
       const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
       return { total: on.length, open: on.filter((e) => !e.archivedAt).length }
     },
+    // The release also covers together tasks no board command here covers (delegation.mode, schema 23).
+    spaces: () => spaces.list(),
+    me: owner,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
   })
+  // One-off: delegation.mode together for the tasks the owner works on with the agent right now (application/delegation-backfill.ts).
+  void backfillDelegationMode({
+    spaces: () => spaces.list(), brain: taskBrain, me: owner, log,
+    together: (taskId) => taskCommands?.together(taskId) ?? false,
+    handedAlone: (taskId) => taskCommands?.handedAlone(taskId) ?? false,
+    userSessionOpen: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt && !e.worker && e.jobId === null),
+    markerFile: path.join(COCKPIT_HOME, 'delegation-mode-backfill.json'),
+  }).catch((err) => log(`[backfill] delegation mode: ${(err as Error).message}`))
   // A session of the user's own on a task, started from the page (a task row, Advance task): the host binds the
   // task and queues it; the page claims it and opens it in chat when that is the user's view (application/start-worker.ts).
   const startOnTask = async (input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }) => {

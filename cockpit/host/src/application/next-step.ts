@@ -1,5 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
+import { worksAlone } from '../domain/hand-over.js'
 import { needsAnswer } from '../domain/session-attention.js'
 import type { SessionLedger } from '../session-ledger.js'
 
@@ -61,7 +62,7 @@ export interface StepFacts {
 interface Task {
   id: string
   status: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: { mode?: string }; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -154,7 +155,8 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       steps.push({
         status: child.status,
         checkpoint: child.properties?.checkpoint,
-        delegated: Boolean(child.properties?.delegate),
+        // Together with the owner (delegation.mode together), the runner never starts it.
+        delegated: Boolean(child.properties?.delegate) && worksAlone(child),
         depsCanResolve: depTasks.every((d) => d !== null && ['planned', 'active', 'resolved'].includes(d.status)),
       })
     }

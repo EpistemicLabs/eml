@@ -1,6 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
-import { planHandOver } from '../domain/hand-over.js'
+import { mirroredHandOver, planHandOver } from '../domain/hand-over.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
@@ -234,7 +234,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
       if (!planned.ok) return row
       const { status, waiting_on, ...fields } = planned.plan.patch
-      const next: Row['properties'] = { ...props, ...fields } as Row['properties']
+      const next: Row['properties'] = { ...props, ...mirroredHandOver(fields) } as Row['properties']
       if (waiting_on === null) delete next!.waiting_on
       return { ...row, ...(status ? { status } : {}), properties: next }
     }

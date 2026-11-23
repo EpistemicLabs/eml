@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { planHandOver, planUndo, type HandOverTask } from '../src/domain/hand-over.js'
+import { mirroredHandOver, planHandOver, planUndo, worksAlone, type HandOverTask } from '../src/domain/hand-over.js'
 
 const ctx = { agents: ['atlas', 'motti'] }
 const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', status: 'active', owner: 'lasse', ...patch })
 
 describe('planning a hand-over', () => {
-  it('delegate now: sets delegate and checkpoint, keeps the owner, journals it', () => {
+  it('delegate now: writes the delegation (mode alone), keeps the owner, journals it', () => {
     const r = planHandOver(task({ status: 'planned' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.plan.patch).toEqual({ delegate: 'atlas', checkpoint: 'after' })
+    expect(r.plan.patch).toEqual({ delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone' } })
     expect(r.plan.patch).not.toHaveProperty('assignee_ids')
     expect(r.plan.journal).toBe('Handed to atlas with checkpoint after; the owner stays.')
     expect(r.plan.job).toBeUndefined()
@@ -95,5 +95,41 @@ describe('planning the undo', () => {
       journal: 'Hand-over undone; the task is back as it was.',
     })
     expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegate: 'motti', checkpoint: null, waiting_on: null, status: 'planned' })
+  })
+})
+
+describe('delegation mode (schema 23)', () => {
+  it('Work on it now writes mode together; Delegate now and Schedule write mode alone', () => {
+    const modeOf = (req: Parameters<typeof planHandOver>[1]) => {
+      const r = planHandOver(task(), req, ctx)
+      return r.ok ? r.plan.patch.delegation?.mode : r.refusal
+    }
+    expect(modeOf({ mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Main' })).toBe('together')
+    expect(modeOf({ mode: 'now', delegate: 'atlas', checkpoint: 'before' })).toBe('alone')
+    expect(modeOf({ mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } })).toBe('alone')
+  })
+
+  it('writes one shape: never delegation beside delegate or checkpoint (core refuses both)', () => {
+    const r = planHandOver(task(), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
+    if (!r.ok) throw new Error(r.refusal)
+    expect(r.plan.patch).not.toHaveProperty('delegate')
+    expect(r.plan.patch).not.toHaveProperty('checkpoint')
+  })
+
+  it('undo puts the delegation back as it was, mode and request included', () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', mode: 'together' as const, requested_at: '2026-11-23T10:00:00.000Z' }
+    expect(planUndo(task({ delegate: 'atlas', checkpoint: 'after', delegation })).patch).toEqual({ delegation, waiting_on: null, status: 'active' })
+  })
+
+  it('mirrors a patch as core does, for showing a pending hand-over', () => {
+    expect(mirroredHandOver({ delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone' } })).toEqual({ delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone' }, delegate: 'atlas', checkpoint: 'after' })
+    expect(mirroredHandOver({ delegation: null })).toEqual({ delegation: null, delegate: null, checkpoint: null })
+    expect(mirroredHandOver({ delegate: null, checkpoint: 'before' })).toEqual({ delegate: null, checkpoint: 'before' })
+  })
+
+  it('works alone unless the mode says together; no delegation (a brain before 23) counts as alone', () => {
+    expect(worksAlone({ properties: { delegation: { mode: 'alone' } } })).toBe(true)
+    expect(worksAlone({ properties: { delegation: { mode: 'together' } } })).toBe(false)
+    expect(worksAlone({ properties: {} })).toBe(true)
   })
 })

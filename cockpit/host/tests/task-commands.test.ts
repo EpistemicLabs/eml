@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskCommands, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
+import { mirroredHandOver } from '../src/domain/hand-over.js'
+import { createTaskCommands, TaskCommandStore, TOGETHER_GRACE_MS, TOGETHER_SCAN_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'cockpit-task-commands-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -14,6 +15,7 @@ function world(tasks: Task[], opts: { bound?: string[] } = {}) {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
   const brain = {
     async get(path: string, query?: Record<string, unknown>) {
+      if (path === '/list' && query?.type === 'task' && !query.task_id) return { engrams: [...byId.values()].filter((t) => t.status === query.status) }
       if (path === '/list') return { engrams: query?.task_id ? (opts.bound ?? []).map((id) => ({ id })) : [] }
       const t = byId.get(path.slice('/engram/'.length))
       if (!t) throw new Error('not found')
@@ -22,7 +24,10 @@ function world(tasks: Task[], opts: { bound?: string[] } = {}) {
     async post(path: string, body: Record<string, unknown>) {
       posts.push({ path, body })
       const t = byId.get(/^\/task\/([^/]+)\/track$/.exec(path)![1])!
-      for (const [k, v] of Object.entries(body)) {
+      // As core mirrors it (task-state.ts): a delegation sets delegate and checkpoint, null clears all three.
+      const { delegation, delegate, checkpoint, ...rest } = body
+      const handOver = mirroredHandOver({ ...(delegation !== undefined ? { delegation } : {}), ...('delegate' in body ? { delegate } : {}), ...('checkpoint' in body ? { checkpoint } : {}) } as never)
+      for (const [k, v] of Object.entries({ ...rest, ...handOver })) {
         if (k === 'text' || k === 'outcome') continue
         if (k === 'status') t.status = v as string
         else if (v === null) delete t.properties[k]
@@ -65,7 +70,8 @@ describe('hand over', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
     await w.commands.tick()
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegate: 'atlas', checkpoint: 'after', text: 'Handed to atlas with checkpoint after; the owner stays.' } }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', mode: 'alone' }, text: 'Handed to atlas with checkpoint after; the owner stays.' } }])
+    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
     expect(w.commands.held('t1')).toBe(false)
     expect(w.changed).toContain('main')
   })
@@ -121,7 +127,8 @@ describe('hand over', () => {
     const w = world([owned('t1', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } })])
     const r = await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' } })
     expect(r).toMatchObject({ ok: true, command: { state: 'applied', brief: expect.stringContaining('Which list?') } })
-    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', waiting_on: null })
+    expect(w.posts[0].body).toMatchObject({ delegation: { agent: 'atlas', checkpoint: 'after', mode: 'together' }, waiting_on: null })
+    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
     expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
     expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
@@ -224,7 +231,7 @@ describe('work on it now ends (B2)', () => {
 
     pane.archived = true
     await w.commands.tick()
-    expect(w.posts.at(-1)).toEqual({ path: '/task/t1/track', body: { delegate: null, checkpoint: null, text: 'Worked on it together with atlas; the session was put away, so atlas is released and does not go on alone. Hand it to atlas to let it go on.' } })
+    expect(w.posts.at(-1)).toEqual({ path: '/task/t1/track', body: { delegation: null, text: 'Worked on it together with atlas; the session was put away, so atlas is released and does not go on alone. Hand it to atlas to let it go on.' } })
     expect(w.byId.get('t1')!.properties.delegate).toBeUndefined()
     expect(w.commands.together('t1')).toBe(false)
     expect(w.commands.releasedAgent('t1')).toBe('atlas')
@@ -255,7 +262,8 @@ describe('work on it now ends (B2)', () => {
     pane.archived = true
     await w.commands.tick()
     expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
-    expect(w.posts.some((p) => p.body.delegate === null)).toBe(false)
+    expect(w.posts.some((p) => p.body.delegation === null)).toBe(false)
+    expect(w.byId.get('t1')!.properties.delegation).toMatchObject({ mode: 'alone' })
     expect(w.commands.delegatedAt('t1')).toBe(new Date(Date.parse('2026-11-19T10:00:00Z') + 60_000).toISOString())
     expect(w.commands.releasedAgent('t1')).toBeNull()
   })
@@ -263,7 +271,8 @@ describe('work on it now ends (B2)', () => {
   it('leaves a task whose delegate changed meanwhile, or that was undone, as it is', async () => {
     const w = together()
     await w.commands.submit({ opId: 'op-tg4', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
-    w.byId.get('t1')!.properties.delegate = 'motti'
+    // Handed to motti in a chat: core starts a new delegation (mode alone) for a new agent.
+    Object.assign(w.byId.get('t1')!.properties, { delegate: 'motti', delegation: { agent: 'motti', checkpoint: 'after', mode: 'alone' } })
     w.open().archived = true
     await w.commands.tick()
     expect(w.byId.get('t1')!.properties.delegate).toBe('motti')
@@ -282,5 +291,63 @@ describe('work on it now ends (B2)', () => {
     w.later(8 * 24 * 60 * 60 * 1000)
     await w.commands.submit({ opId: 'op-snooze', kind: 'snooze', spaceId: 'main', snooze: { key: 'x', until: new Date(w.clock.now + 60_000).toISOString() } })
     expect(w.commands.together('t1')).toBe(true)
+  })
+})
+
+describe('the release keyed on delegation.mode', () => {
+  const togetherTask = (id: string, props: Record<string, unknown> = {}) =>
+    owned(id, { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', mode: 'together' }, ...props })
+
+  const scanWorld = (tasks: Task[], sessions: Record<string, { total: number; open: number }>, shared = false) => {
+    const w = world(tasks)
+    const space = { id: 'main', name: 'Main', shared }
+    const commands = createTaskCommands({
+      ...w.deps,
+      space: () => space as never,
+      spaces: () => [space as never],
+      me: 'lasse',
+      sessionsSince: (taskId) => sessions[taskId] ?? { total: 0, open: 0 },
+    })
+    return { ...w, commands }
+  }
+
+  it('releases a together task no board command covers once its sessions here are put away, with a journal line', async () => {
+    const w = scanWorld([togetherTask('closed'), togetherTask('open'), togetherTask('elsewhere'), owned('alone', { delegate: 'atlas', delegation: { agent: 'atlas', mode: 'alone' } })],
+      { closed: { total: 1, open: 0 }, open: { total: 2, open: 1 }, alone: { total: 1, open: 0 } })
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/closed/track', body: { delegation: null, text: 'Worked on it together with atlas; the session was put away, so atlas is released and does not go on alone. Hand it to atlas to let it go on.' } }])
+    expect(w.byId.get('closed')!.properties).not.toHaveProperty('delegate')
+    // Still open, no session on this cockpit, or alone: left as they are.
+    expect(w.byId.get('open')!.properties.delegate).toBe('atlas')
+    expect(w.byId.get('elsewhere')!.properties.delegate).toBe('atlas')
+    expect(w.byId.get('alone')!.properties.delegate).toBe('atlas')
+  })
+
+  it('looks at most once a minute', async () => {
+    const sessions = { t1: { total: 1, open: 1 } }
+    const w = scanWorld([togetherTask('t1')], sessions)
+    await w.commands.tick()
+    sessions.t1 = { total: 1, open: 0 }
+    w.later(1000)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(0)
+    w.later(TOGETHER_SCAN_MS)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(1)
+  })
+
+  it('in a shared space, only this member\'s tasks', async () => {
+    const w = scanWorld([togetherTask('theirs', { assignee_ids: ['dominik'] })], { theirs: { total: 1, open: 0 } }, true)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(0)
+  })
+
+  it('leaves a task an open Work on it now covers to that command', async () => {
+    const w = scanWorld([owned('t1')], { t1: { total: 1, open: 0 } })
+    await w.commands.submit({ opId: 'op-cov', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Main' } })
+    expect(w.byId.get('t1')!.properties.delegation).toMatchObject({ mode: 'together' })
+    // sessionsSince answers the same for every since here: the command's own release puts it away, once.
+    await w.commands.tick()
+    expect(w.posts.filter((p) => p.body.delegation === null)).toHaveLength(1)
   })
 })

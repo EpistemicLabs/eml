@@ -1,5 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
+import { worksAlone } from '../domain/hand-over.js'
 import { runsHere } from '../domain/task-owner.js'
 import { projectIdForBrain } from '../project-registry.js'
 
@@ -11,6 +12,9 @@ import { projectIdForBrain } from '../project-registry.js'
  *   - it is planned, has a delegate (the agent that works on it) and a
  *     checkpoint (before · after · none), so plain tasks and legacy tasks are
  *     never started (decision task-assignee-owner-and-agent-delegate);
+ *   - its delegate works alone: delegation.mode alone (schema 23). A task the
+ *     owner works on together with the agent never starts here; a task without
+ *     a delegation (a brain before 23) counts as alone;
  *   - as a step (a sub-task), its parent task is active (a parked plan does
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
@@ -56,7 +60,7 @@ interface Task {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: { mode?: string }; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -97,12 +101,12 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       return tasks.get(id)!
     }
     const listed = await brain.get('/list', { type: 'task', status: 'planned', limit: 200 }) as { engrams?: Task[] }
-    const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate)
+    const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate && worksAlone(t))
     const started = new Map<string, number>()
     for (const candidate of candidates) {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
-      if (!step.properties?.delegate || step.properties.waiting_on?.who) continue
+      if (!step.properties?.delegate || !worksAlone(step) || step.properties.waiting_on?.who) continue
       if (!runsHere(space.shared, step, deps.me)) continue
       if (deps.busy?.(step.id) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
       const parentId = parentOf(step)
