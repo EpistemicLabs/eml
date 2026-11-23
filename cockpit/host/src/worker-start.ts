@@ -1,4 +1,5 @@
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
+import { unattended } from './domain/spawn-request.js'
 import type { WorkerTurnOf } from './pty-bridge.js'
 import { IDLE_MS } from './domain/session-lifecycle.js'
 
@@ -54,7 +55,7 @@ export class WorkerStarter {
   /** Follow new requests and check the queue and idle workers every SWEEP_MS. */
   start(): void {
     this.deps.spawns.on('spawn', (request: SpawnRequest) => {
-      if (!request.fromSessionId) return
+      if (!unattended(request)) return
       if (!request.open || this.deps.spawns.watchers() === 0) this.tick()
       else setTimeout(() => this.tick(), this.graceMs).unref()
     })
@@ -73,7 +74,7 @@ export class WorkerStarter {
     if (ended > 0) this.deps.log(`[worker] stopped ${ended} idle session(s)`)
     const noTabs = this.deps.spawns.watchers() === 0
     const due = this.deps.spawns.list()
-      .filter((request) => request.fromSessionId)
+      .filter((request) => unattended(request))
       .filter((request) => !request.open || noTabs || this.now() - Date.parse(request.createdAt) >= this.graceMs)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     for (const request of due) {

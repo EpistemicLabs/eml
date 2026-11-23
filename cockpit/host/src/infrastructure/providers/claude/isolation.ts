@@ -6,8 +6,8 @@ import { claudeThemeMigrated, markClaudeThemeMigrated } from './login.js'
 import { HOOK_TOKEN_HEADER } from '../../../domain/agent-provider.js'
 import { readAgentMcpDefinitions, allowedMcpServers, type SpaceRuntime } from '../../../agent-runtime.js'
 import {
-  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
-  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
+  EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, LIST_AGENTS_HOOK_OPTIONS, SEND_MESSAGE_HOOK_OPTIONS, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, brainMcpServer, claudeHook, emlHookCommand, ensureHookNode,
+  installManagedSkills, listAgentsHookCommand, quote, sendMessageHookCommand, taskHookCommand, turnHookCommand, writeEmlHookConfig, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 
@@ -158,6 +158,7 @@ export function writeSpaceFiles(
   turnHookConfig: string,
   host: SpaceHost,
   runtime?: { id: string; configDir: string; mcpServers: Record<string, unknown> },
+  plugins?: { mcpServers: Record<string, unknown>; denied: string[] },
 ): SpaceFiles {
   const dir = runtime ? runtimeSpaceDir(runtime.configDir, spaceId) : spaceConfigDir(spaceId)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -169,7 +170,7 @@ export function writeSpaceFiles(
   writeEmlHookConfig(emlConfig, host.hooksUrl, host.mcpToken)
   fs.writeFileSync(
     mcpConfig,
-    JSON.stringify({ mcpServers: { ...runtime?.mcpServers, eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
+    JSON.stringify({ mcpServers: { ...(runtime?.mcpServers ?? plugins?.mcpServers), eml_brain: brainMcpServer(host.mcpUrl, host.mcpToken) } }),
     { mode: 0o600 },
   )
   fs.chmodSync(mcpConfig, 0o600)
@@ -180,13 +181,16 @@ export function writeSpaceFiles(
   // The project block (mcp-server hooks/project-block.ts): a second SessionStart
   // command, so its own output limit, on every source (startup, resume,
   // compact, clear). It brings the session's project, so the reminder drops
-  // its guess from the working directory.
+  // its guess from the working directory. The task hook (task-hook.ts) a third:
+  // the session's task, in a space with the task system on.
   fs.writeFileSync(
     settings,
     JSON.stringify({
       skipDangerousModePermissionPrompt: true,
+      // The claude.ai connectors and Claude Code plugin servers switched off in this space (space-plugins.ts).
+      ...(!runtime && plugins?.denied.length ? { deniedMcpServers: plugins.denied.map((serverName) => ({ serverName })) } : {}),
       hooks: {
-        SessionStart: [eml('session-start'), eml('project-block')],
+        SessionStart: [eml('session-start'), eml('project-block'), entry(taskHookCommand(), TASK_HOOK_OPTIONS)],
         UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
         // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
         Stop: [turn, eml('stop')],
@@ -212,17 +216,23 @@ export function removeSpaceFiles(spaceId: string, runtimeConfigDir?: string): vo
   if (runtimeConfigDir) fs.rmSync(runtimeSpaceDir(runtimeConfigDir, spaceId), { recursive: true, force: true })
 }
 
-/** A session's servers under a tool profile: the listed ones and always the brain. */
-export function limitMcpServers(config: { mcpServers: Record<string, unknown> }, allowed: string[]): { mcpServers: Record<string, unknown> } {
-  const mcpServers = Object.fromEntries(Object.entries(config.mcpServers).filter(([name]) => name === 'eml_brain' || allowed.includes(name)))
-  return { mcpServers }
+/** A session's servers: the listed ones (all, for null) and always the brain, and the extra ones it is given. */
+export function limitMcpServers(
+  config: { mcpServers: Record<string, unknown> },
+  allowed: string[] | null,
+  extra: Record<string, unknown> = {},
+): { mcpServers: Record<string, unknown> } {
+  const mcpServers = Object.fromEntries(
+    Object.entries(config.mcpServers).filter(([name]) => allowed === null || name === 'eml_brain' || allowed.includes(name)),
+  )
+  return { mcpServers: { ...mcpServers, ...extra } }
 }
 
 /** The mcp.json of a session limited to `allowed`, beside its space's. Owner-only: it holds the same secrets. */
-export function writeLimitedMcpConfig(spaceMcpConfig: string, sessionId: string, allowed: string[]): string {
+export function writeLimitedMcpConfig(spaceMcpConfig: string, sessionId: string, allowed: string[] | null, extra: Record<string, unknown> = {}): string {
   const config = JSON.parse(fs.readFileSync(spaceMcpConfig, 'utf8')) as { mcpServers: Record<string, unknown> }
   const file = path.join(path.dirname(spaceMcpConfig), `mcp-${sessionId}.json`)
-  fs.writeFileSync(file, JSON.stringify(limitMcpServers(config, allowed), null, 2), { mode: 0o600 })
+  fs.writeFileSync(file, JSON.stringify(limitMcpServers(config, allowed, extra), null, 2), { mode: 0o600 })
   fs.chmodSync(file, 0o600)
   return file
 }
@@ -274,11 +284,18 @@ export function syncAgentSkills(allowed: string[], configDir: string): string[] 
  * creates the folder: a missing one is the agent's problem to report. On a
  * problem nothing is written and the problem goes to the agent.
  */
-export function writeRuntimeFiles(runtime: SpaceRuntime, spaceId: string, turnHookConfig: string, host: SpaceHost): void {
+export function writeRuntimeFiles(
+  runtime: SpaceRuntime,
+  spaceId: string,
+  turnHookConfig: string,
+  host: SpaceHost,
+  /** The space's plugin servers (space-plugins.ts); without them, the agent.json list. */
+  pluginServers?: Record<string, unknown>,
+): void {
   const configDir = runtime.configDirs.claude
   if (!configDir || runtime.record === null || !fs.existsSync(configDir)) return
   try {
-    const mcpServers = allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
+    const mcpServers = pluginServers ?? allowedMcpServers(runtime.record.mcpServers, readAgentMcpDefinitions(runtime.id))
     const missing = syncAgentSkills(runtime.record.skills, configDir)
     if (missing.length > 0) throw new Error(`the listed skills ${missing.join(', ')} are not in its folder (run eml-cockpit agent sync-skills)`)
     seedClaudeJson(configDir)

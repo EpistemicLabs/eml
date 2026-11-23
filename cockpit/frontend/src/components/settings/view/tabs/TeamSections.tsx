@@ -8,12 +8,14 @@
 import { useState } from 'react';
 import { Check, Copy, Loader2 } from 'lucide-react';
 
-import { Button } from '@/shared/view/ui';
+import { cn } from '@/lib/utils';
+import { Button, Chip, Select } from '@/shared/view/ui';
 import { cancelInvite, confirmJoin, createInvite, errorText, joinStep, relayHost, stateTitle, type InviteView, type Role, type TeamSnapshot } from '@/lib/team';
 import { refreshTeams } from '@/stores/useTeamStore';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import { SETTINGS_INPUT_CLASS } from '../../constants/constants';
 
 const INVITE_NOTE = 'Send this link over a channel you trust. It works once and expires in 7 days; it is not shown again.';
 const COMPARE_NOTE = 'Compare the fingerprint with them over another channel before you confirm.';
@@ -49,11 +51,11 @@ export default function TeamSections({ spaceId, team }: { spaceId: string; team:
       <SettingsSection title="Members">
         <SettingsCard divided>
           {team.members.length === 0 ? (
-            <div className="px-4 py-4 text-sm text-muted-foreground">No members recorded yet.</div>
+            <div className="px-4 py-4 text-body text-muted-foreground">No members recorded yet.</div>
           ) : (
             team.members.map((m) => (
               <SettingsRow key={m.id} label={m.handle ?? m.fingerprint}>
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-2 text-ui text-muted-foreground">
                   {m.self && <Pill>you</Pill>}
                   <span>{m.role}</span>
                   <span>· {m.devices} {m.devices === 1 ? 'device' : 'devices'}</span>
@@ -107,18 +109,18 @@ function Invites({ spaceId, invites }: { spaceId: string; invites: InviteView[] 
       <SettingsCard divided>
         <SettingsRow label="Create invite link" description={link ? INVITE_NOTE : 'For a member, or for an owner who can invite too.'}>
           <div className="flex items-center gap-2">
-            <select
+            <Select
               aria-label="Role"
               value={role}
               onChange={(e) => setRole(e.target.value as Role)}
               disabled={busy !== null}
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+              className="min-h-(--target-min) px-2 text-ui"
             >
               <option value="member">member</option>
               <option value="owner">owner</option>
-            </select>
-            <Button size="sm" className="h-8 text-xs" onClick={() => void create()} disabled={busy !== null}>
-              {busy === 'create' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Create invite link'}
+            </Select>
+            <Button size="sm" onClick={() => void create()} disabled={busy !== null}>
+              {busy === 'create' ? <Loader2 aria-hidden className="animate-spin" /> : 'Create invite link'}
             </Button>
           </div>
         </SettingsRow>
@@ -129,15 +131,15 @@ function Invites({ spaceId, invites }: { spaceId: string; invites: InviteView[] 
               value={link}
               aria-label="Invite link"
               onFocus={(e) => e.currentTarget.select()}
-              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground outline-none"
+              className={cn(SETTINGS_INPUT_CLASS, 'min-w-0 flex-1 font-code')}
             />
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => void copy()}>
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            <Button variant="outline" size="sm" onClick={() => void copy()}>
+              {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
               {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>
         )}
-        {error && <div className="px-4 py-3 text-xs text-destructive">{error}</div>}
+        {error && <div className="px-4 py-3 text-ui text-stopped-ink">{error}</div>}
         {invites.map((invite) => (
           invite.pending ? (
             <SettingsRow
@@ -146,18 +148,18 @@ function Invites({ spaceId, invites }: { spaceId: string; invites: InviteView[] 
               description={`${COMPARE_NOTE} Joins as ${invite.role}.`}
             >
               <div className="flex items-center gap-2">
-                <Button size="sm" className="h-8 text-xs" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => confirmJoin(spaceId, invite.invite_id), 200)}>
-                  {busy === invite.invite_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Confirm'}
+                <Button size="sm" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => confirmJoin(spaceId, invite.invite_id), 200)}>
+                  {busy === invite.invite_id ? <Loader2 aria-hidden className="animate-spin" /> : 'Confirm'}
                 </Button>
-                <Button variant="outline" size="sm" className="h-8 text-xs" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => cancelInvite(spaceId, invite.invite_id), 200)}>
+                <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => cancelInvite(spaceId, invite.invite_id), 200)}>
                   Decline
                 </Button>
               </div>
             </SettingsRow>
           ) : (
             <SettingsRow key={invite.invite_id} label={`Invite for a ${invite.role}`} description={`Expires ${formatDate(invite.expires_at)}`}>
-              <Button variant="outline" size="sm" className="h-8 text-xs" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => cancelInvite(spaceId, invite.invite_id), 200)}>
-                {busy === invite.invite_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Cancel'}
+              <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(invite.invite_id, () => cancelInvite(spaceId, invite.invite_id), 200)}>
+                {busy === invite.invite_id ? <Loader2 aria-hidden className="animate-spin" /> : 'Cancel'}
               </Button>
             </SettingsRow>
           )
@@ -168,9 +170,9 @@ function Invites({ spaceId, invites }: { spaceId: string; invites: InviteView[] 
 }
 
 function Pill({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">{children}</span>;
+  return <Chip hue="mark" className="py-0.5">{children}</Chip>;
 }
 
 function Mono({ children }: { children: React.ReactNode }) {
-  return <span className="block font-mono text-xs text-foreground">{children}</span>;
+  return <span className="block font-code text-ui text-foreground">{children}</span>;
 }

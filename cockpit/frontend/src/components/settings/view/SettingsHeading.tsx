@@ -6,8 +6,8 @@ import type { SettingsMainTabMeta } from '../constants/constants';
 export default function SettingsHeading({ tab, description, children }: { tab: SettingsMainTabMeta; description?: string; children?: ReactNode }) {
   const heading = (
     <div className="flex items-center gap-4">
-      <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
-        <tab.icon className="h-5 w-5 text-muted-foreground" />
+      <h2 className="flex items-center gap-2 text-title font-semibold text-foreground">
+        <tab.icon aria-hidden className="size-5 text-muted-foreground" />
         {tab.heading ?? tab.label}
       </h2>
       {children}
@@ -17,7 +17,7 @@ export default function SettingsHeading({ tab, description, children }: { tab: S
   return (
     <div className="space-y-1">
       {heading}
-      <p className="text-sm text-muted-foreground">{description}</p>
+      <p className="text-body text-muted-foreground">{description}</p>
     </div>
   );
 }

@@ -7,7 +7,7 @@
 // 0.15.1: one name per view. A pane that holds a session and a note keeps
 // them apart — the terminal view shows (and renames) the session, the note
 // view shows (and renames) the note itself, never the other way round.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useWritable } from '@/stores/useTeamStore';
 
 import { usePaletteOps } from '@/contexts/PaletteOpsContext';
@@ -19,6 +19,8 @@ import { isPaneProtected, usePane, renamePane } from '@/stores/usePaneStore';
 import { endPaneDrag, startPaneDrag } from '@/components/app/paneDrag';
 import type { Project, ProjectSession } from '@/types/app';
 import { api } from '@/utils/api';
+import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 
 type MainContentTitleProps = {
   /** Owning pane id — enables inline rename. */
@@ -32,6 +34,8 @@ type MainContentTitleProps = {
    * chosen a title. Distinguishes parallel panes.
    */
   paneLabel?: string | null;
+  /** Shown right after the title, e.g. a chat session's limits. */
+  badge?: ReactNode;
 };
 
 // The stored session name — the ledger title. Used as the edit seed and the
@@ -45,7 +49,7 @@ function getSessionTitle(session: ProjectSession, paneLabel?: string | null): st
   return (session.summary as string) || paneLabel || 'New Session';
 }
 
-export default function MainContentTitle({ paneId, selectedProject, selectedSession, paneLabel }: MainContentTitleProps) {
+export default function MainContentTitle({ paneId, selectedProject, selectedSession, paneLabel, badge }: MainContentTitleProps) {
   const { refreshProjects } = usePaletteOps();
 
   // Live pane from the store: holds the user-chosen `title` override and the
@@ -196,7 +200,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
               }}
               placeholder="Pane name"
               aria-label="Pane name"
-              className="w-full min-w-0 rounded border border-border bg-transparent px-1 py-0.5 text-body leading-tight font-semibold text-foreground outline-none focus:border-foreground/40"
+              className={cn('w-full min-w-0 rounded border border-input bg-transparent px-1 py-0.5 text-body leading-tight font-semibold text-foreground', FOCUS)}
             />
           ) : (
             // Drag the title onto another pane to swap the two (PaneGrid), or onto a
@@ -209,7 +213,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
             >
             {showProvider && (
               <span className="ml-1 flex-shrink-0 text-muted-foreground" title={providers.find((p) => p.id === provider)?.label}>
-                <SessionProviderLogo provider={provider} className="h-3 w-3" />
+                <SessionProviderLogo provider={provider} className="size-3" />
               </span>
             )}
             <h2
@@ -226,10 +230,11 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
                 canRename && (isNoteView ? 'Click to rename the note' : 'Click to rename'),
                 !pane?.pinned && (isPaneProtected(paneId) ? 'drag onto a pane to swap' : 'drag onto a pane to swap, onto a desk tab to move'),
               ].filter(Boolean).join(' · ') || undefined}
-              className={`${canRename ? 'cursor-text hover:bg-foreground/5' : ''} truncate rounded px-1 text-body leading-tight font-semibold text-foreground transition-colors`}
+              className={cn(canRename && 'cursor-text hover:bg-muted', 'truncate rounded px-1 text-body leading-tight font-semibold text-foreground transition-colors', FOCUS)}
             >
               {title}
             </h2>
+            {badge && <span className="ml-1 flex-shrink-0">{badge}</span>}
             </div>
           )}
           <div className="truncate px-1 text-caption leading-tight text-muted-foreground">{subtitle}</div>

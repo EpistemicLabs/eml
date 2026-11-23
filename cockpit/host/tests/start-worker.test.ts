@@ -34,6 +34,15 @@ describe('StartWorker', () => {
     expect(worker.forPane(request)).toBe('terminal')
   })
 
+  it('a session of the user\'s own on a task, or split off, opens in chat when chat is their view', () => {
+    const { worker, started } = setup()
+    expect(worker.forPane({ ...request, fromSessionId: null, origin: 'task', taskId: 't1' })).toBe('sdk')
+    expect(worker.forPane({ ...request, origin: 'split' })).toBe('sdk')
+    expect(started).toEqual(['chat', 'chat'])
+    const terminal = setup({ inChat: false })
+    expect(terminal.worker.forPane({ ...request, fromSessionId: null, origin: 'task' })).toBe('terminal')
+  })
+
   it('the host\'s own requests stay in the terminal', () => {
     const { worker, started } = setup()
     expect(worker.forPane({ ...request, fromSessionId: null })).toBe('terminal')

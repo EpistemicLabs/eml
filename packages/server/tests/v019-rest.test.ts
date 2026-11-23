@@ -136,6 +136,19 @@ describe('v0.19 REST', () => {
       expect(reopened.body.properties.outcome).toBeUndefined()
       expect(reopened.body.reopen_candidates.map((k: { id: string }) => k.id)).toEqual([n.body.id])
     })
+
+    it('task system: delegate names an agent of the brain; anyone else is refused with the known agents', async () => {
+      const task = await create(validTask({ title: 'rest-delegate' }))
+      const ok = await post(`/task/${task.body.id}/track`, { delegate: 'default', checkpoint: 'after', text: 'handed to the agent' })
+      expect(ok.status).toBe(200)
+      expect(ok.body.properties.delegate).toBe('default')
+      const typo = await post(`/task/${task.body.id}/track`, { delegate: 'atlass', text: 'typo' })
+      expect(typo.status).toBe(400)
+      expect(typo.body.error).toBe('Invalid engram: delegate names "atlass", who is not an agent of this brain. Agents: default (eml_read_object object=agent).')
+      const created = await create(validTask({ title: 'rest-delegate-create', properties: { delegate: 'atlass' } }))
+      expect(created.status).toBe(400)
+      expect((await get('/list?type=task&delegate=default')).body.engrams.map((e: { id: string }) => e.id)).toEqual([task.body.id])
+    })
   })
 
   describe('POST /learning', () => {
@@ -388,6 +401,33 @@ describe('v0.19 REST', () => {
       expect(binding.status).toBe(400)
       expect(binding.body.error).toBe('binding is one of task, standing')
       expect((await get('/list?type=task&binding=task')).status).toBe(200)
+    })
+
+    it('v0.22: with_parent names each task\'s parent, and only when asked', async () => {
+      const parent = (await create(validTask({ title: 'plan-parent' }))).body as { id: string }
+      const child = (await post('/engram/task', { ...flat(validTask({ title: 'plan-child' })).body, parent_id: parent.id })).body as { id: string }
+      const rows = ((await get('/list?type=task&with_parent=true&limit=500')).body as { engrams: Array<{ id: string; parent_id?: string | null }> }).engrams
+      expect(rows.find((r) => r.id === child.id)?.parent_id).toBe(parent.id)
+      expect(rows.find((r) => r.id === parent.id)?.parent_id).toBeNull()
+      const plain = ((await get('/list?type=task&limit=500')).body as { engrams: Array<{ id: string; parent_id?: unknown }> }).engrams
+      expect(plain.find((r) => r.id === child.id)).not.toHaveProperty('parent_id')
+    })
+
+    it('with_origin names the task a task was spun off from (derived_from), and only when asked', async () => {
+      const origin = (await create(validTask({ title: 'origin-task' }))).body as { id: string }
+      const spun = (await create(validTask({ title: 'spun-off-task' }))).body as { id: string }
+      const note = (await create(validNote({ title: 'origin-note' }))).body as { id: string }
+      const fromNote = (await create(validTask({ title: 'derived-from-a-note' }))).body as { id: string }
+      expect((await post('/relate', { source_id: spun.id, target_id: origin.id, relation: 'derived_from', detection_method: 'manual' })).status).toBeLessThan(300)
+      expect((await post('/relate', { source_id: fromNote.id, target_id: note.id, relation: 'derived_from', detection_method: 'manual' })).status).toBeLessThan(300)
+      const rows = ((await get('/list?type=task&with_origin=true&limit=500')).body as { engrams: Array<{ id: string; origin_task_id?: string | null }> }).engrams
+      expect(rows.find((r) => r.id === spun.id)?.origin_task_id).toBe(origin.id)
+      expect(rows.find((r) => r.id === origin.id)?.origin_task_id).toBeNull()
+      expect(rows.find((r) => r.id === fromNote.id)?.origin_task_id).toBeNull()
+      const both = ((await get('/list?type=task&with_parent=true&with_origin=true&limit=500')).body as { engrams: Array<{ id: string; parent_id?: unknown; origin_task_id?: unknown }> }).engrams
+      expect(both.find((r) => r.id === spun.id)).toMatchObject({ parent_id: null, origin_task_id: origin.id })
+      const plain = ((await get('/list?type=task&limit=500')).body as { engrams: Array<{ id: string; origin_task_id?: unknown }> }).engrams
+      expect(plain.find((r) => r.id === spun.id)).not.toHaveProperty('origin_task_id')
     })
 
     it('v0.20: review_due on every row, filtered both ways; label is gone', async () => {

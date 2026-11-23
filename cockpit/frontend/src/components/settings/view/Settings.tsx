@@ -1,11 +1,14 @@
-// Kept: backdrop + frosted window (90vh, max-w-4xl), header with title,
-// "saved" flash and close, sidebar + fading content, Escape to close.
+// A window (90vh, max-w-settings) with the sections in a sidebar beside the open one; on a phone a
+// full-screen sheet that shows the sections first and opens one with a back button (a navigation
+// stack). Header with title, "saved" flash and close. The kit's Dialog closes it on Escape or a click
+// beside it and keeps the focus inside while it is open.
 // Trimmed: provider login modal, web-push wiring, the tabs the cockpit
 // has no substrate for (Data renders a placeholder until it does).
-import { useEffect } from 'react';
-import { X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronLeft, X } from 'lucide-react';
 
-import { Button } from '@/shared/view/ui';
+import { cn } from '@/lib/utils';
+import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 import SettingsSidebar from './SettingsSidebar';
 import PreferencesTab from './tabs/PreferencesTab';
 import AboutTab from './tabs/AboutTab';
@@ -20,32 +23,20 @@ import { useSettingsController } from '../hooks/useSettingsController';
 import { SETTINGS_MAIN_TABS } from '../constants/constants';
 import type { SettingsProps } from '../types/types';
 
-function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
+function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
   const {
     activeTab,
     setActiveTab,
     saveStatus,
     projectSortOrder,
     setProjectSortOrder,
-    notifyOnDone,
-    setNotifyOnDone,
     greetOnStart,
     setGreetOnStart,
-  } = useSettingsController({ isOpen, initialTab });
-
-  // Escape closes — registered in the capture phase so a focused terminal
-  // underneath doesn't swallow it (same reason DeskTabBar's ⌘1–9 does).
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', handler, true);
-    return () => document.removeEventListener('keydown', handler, true);
-  }, [isOpen, onClose]);
+  } = useSettingsController({ isOpen, initialTab: initialTab ?? 'account' });
+  // On a phone: the list of sections, or one section. Opened for a named tab, it shows that tab.
+  const [showSection, setShowSection] = useState(initialTab !== undefined);
+  useEffect(() => { if (isOpen) setShowSection(initialTab !== undefined); }, [isOpen, initialTab]);
+  const openSection = (tab: typeof activeTab) => { setActiveTab(tab); setShowSection(true); };
 
   if (!isOpen) {
     return null;
@@ -54,47 +45,54 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
   const activeMeta = SETTINGS_MAIN_TABS.find((tab) => tab.id === activeTab) ?? SETTINGS_MAIN_TABS[0];
 
   return (
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/20 p-4 backdrop-blur-md"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        className="frosted flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[20px]"
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        aria-labelledby="settings-title"
+        data-phone-view={showSection ? 'section' : 'list'}
+        className={cn(
+          'flex h-(--size-settings) max-w-settings flex-col overflow-hidden',
+          // Phone: a full-screen sheet clear of the notch and the home indicator.
+          'max-md:top-0 max-md:left-0 max-md:h-full max-md:max-w-none max-md:transform-none max-md:animate-fade-in max-md:rounded-none max-md:border-0',
+          'max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]',
+        )}
       >
         {/* Header */}
-        <div className="flex flex-shrink-0 items-center justify-between border-b border-foreground/8 px-5 py-3">
-          <h2 className="text-base font-semibold text-foreground">Settings</h2>
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-border px-5 py-3 max-md:px-2">
+          {showSection && (
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setShowSection(false)} aria-label="Back to all settings">
+              <ChevronLeft aria-hidden />
+            </Button>
+          )}
+          <DialogTitle id="settings-title" className="not-sr-only min-w-0 flex-1 truncate text-title font-semibold text-foreground">
+            <span className={cn(showSection && 'max-md:hidden')}>Settings</span>
+            {showSection && <span className="md:hidden">{activeMeta.label}</span>}
+          </DialogTitle>
           <div className="flex items-center gap-2">
             {saveStatus === 'success' && (
-              <span className="text-xs text-muted-foreground">Settings saved</span>
+              <span className="text-ui text-muted-foreground">Settings saved</span>
             )}
             {saveStatus === 'error' && (
-              <span className="text-xs text-destructive">Failed to save settings</span>
+              <span className="text-ui text-stopped-ink">Failed to save settings</span>
             )}
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={onClose}
               aria-label="Close settings"
-              className="h-10 w-10 p-0 text-muted-foreground hover:text-foreground active:bg-foreground/10"
             >
-              <X className="h-5 w-5" />
+              <X aria-hidden />
             </Button>
           </div>
         </div>
 
         {/* Body: sidebar + content */}
         <div className="flex min-h-0 flex-1">
-          <SettingsSidebar activeTab={activeTab} onChange={setActiveTab} />
+          <SettingsSidebar activeTab={activeTab} onChange={openSection} className={cn(showSection && 'max-md:hidden')} />
 
-          <main className="flex-1 overflow-y-auto">
-            <div key={activeTab} className="settings-content-enter space-y-8 p-6">
-              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && <SettingsHeading tab={activeMeta} />}
+          <main className={cn('flex-1 overflow-y-auto', !showSection && 'max-md:hidden')}>
+            <div key={activeTab} className="animate-fade-in space-y-8 p-6 max-md:p-4">
+              {/* On a phone the bar above already names the section. */}
+              {activeTab !== 'spaces' && activeTab !== 'agents' && activeTab !== 'about' && activeTab !== 'plugins' && <div className="max-md:hidden"><SettingsHeading tab={activeMeta} /></div>}
 
               {activeTab === 'account' && <AccountTab />}
 
@@ -108,8 +106,6 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
                 <PreferencesTab
                   projectSortOrder={projectSortOrder}
                   onProjectSortOrderChange={setProjectSortOrder}
-                  notifyOnDone={notifyOnDone}
-                  onNotifyOnDoneChange={setNotifyOnDone}
                   greetOnStart={greetOnStart}
                   onGreetOnStartChange={setGreetOnStart}
                 />
@@ -119,12 +115,12 @@ function Settings({ isOpen, onClose, initialTab = 'account' }: SettingsProps) {
 
               {activeTab === 'data' && <DataTab tab={activeMeta} />}
 
-              {activeTab === 'plugins' && <PluginsTab />}
+              {activeTab === 'plugins' && <PluginsTab tab={activeMeta} />}
             </div>
           </main>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

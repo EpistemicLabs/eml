@@ -8,9 +8,10 @@ import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components
 import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
+import { FOCUS, POPOVER } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 
-import { currentModelOption, matchCommands, sentMessages, stepHistory, type ChatState, type CommandInfo } from './chat-state';
+import { currentModelOption, matchCommands, sentMessages, withPaneCommands, stepHistory, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
 import { pasteTextDirectly } from './pasteText';
 import { TARGET } from './tool-icons';
@@ -51,17 +52,17 @@ function ChipMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className={cn('flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/5 disabled:opacity-60', TARGET)}
+        className={cn('flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-muted disabled:opacity-60', FOCUS, TARGET)}
       >
         {icon}
         <span className="truncate">{label}</span>
-        {chevron && !disabled && <ChevronDown className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}
+        {chevron && !disabled && <ChevronDown className="size-3 flex-shrink-0" strokeWidth={1.8} />}
       </button>
       {open && (
         <div
           role="menu"
           className={cn(
-            'absolute bottom-full z-30 mb-1 max-h-72 w-80 max-w-[80vw] overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg',
+            POPOVER, 'absolute bottom-full mb-1 max-h-72 w-80 max-w-(--size-chat-menu-max) overflow-auto',
             align === 'center' ? 'left-1/2 -translate-x-1/2' : align === 'right' ? 'right-0' : 'left-0',
           )}
         >
@@ -81,9 +82,9 @@ function MenuOption({
       role="menuitemradio"
       aria-checked={checked}
       onClick={onSelect}
-      className={cn('flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-foreground/5', TARGET)}
+      className={cn('flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted', FOCUS, TARGET)}
     >
-      <Check className={cn('mt-1 h-3.5 w-3.5 flex-shrink-0', !checked && 'invisible')} strokeWidth={2} />
+      <Check className={cn('mt-1 size-3.5 flex-shrink-0', !checked && 'invisible')} strokeWidth={2} />
       <span className="min-w-0">
         <span className="block text-foreground">{label}</span>
         {description && <span className="block text-muted-foreground">{description}</span>}
@@ -102,7 +103,7 @@ export function ModelPicker({ chat, onSetModel }: { chat: ChatState; onSetModel:
         title={chat.model ?? 'Model'}
         align="center"
         disabled={chat.models.length === 0}
-        icon={<Cpu className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}
+        icon={<Cpu className="size-3 flex-shrink-0" strokeWidth={1.8} />}
       >
         {(close) => chat.models.map((option) => (
           <MenuOption
@@ -128,7 +129,7 @@ function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: 
   const lastMessageAt = session?.lastMessageAt ?? null;
   return (
     <div className="flex-shrink-0">
-      <ChipMenu label={percent} title="Session details" align="right" chevron={false} icon={<Gauge className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}>
+      <ChipMenu label={percent} title="Session details" align="right" chevron={false} icon={<Gauge className="size-3 flex-shrink-0" strokeWidth={1.8} />}>
         {(close) => (
           <>
             <div className="flex justify-between gap-2 px-2 py-1">
@@ -173,17 +174,17 @@ function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: st
         <span className="block truncate text-foreground" title={title}>{title}</span>
         {detail && <span className="block truncate text-muted-foreground">{detail}</span>}
       </span>
-      <button type="button" aria-label={`Stop ${title}`} onClick={() => onStop(taskId)} className={cn('flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-foreground/5 hover:text-foreground', TARGET)}>
-        <Square className="h-3.5 w-3.5" strokeWidth={1.8} />
+      <button type="button" aria-label={`Stop ${title}`} onClick={() => onStop(taskId)} className={cn('flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS, TARGET)}>
+        <Square className="size-3.5" strokeWidth={1.8} />
       </button>
     </div>
   );
-  const iconClass = 'h-3.5 w-3.5 flex-shrink-0 text-muted-foreground';
+  const iconClass = 'size-3.5 flex-shrink-0 text-muted-foreground';
   return (
     <ChipMenu
       label={[agents.length ? count(agents.length, 'agent') : '', shells.length ? count(shells.length, 'shell') : ''].filter(Boolean).join(' · ')}
       title="Running in the background"
-      icon={<Loader2 className="h-3 w-3 flex-shrink-0 animate-spin" strokeWidth={1.8} />}
+      icon={<Loader2 className="size-3 flex-shrink-0 animate-spin" strokeWidth={1.8} />}
     >
       {() => [
         ...agents.map((agent) => row(agent.taskId, <Users className={iconClass} strokeWidth={1.8} />, agent.description, agent.activity)),
@@ -199,7 +200,7 @@ function CommandMenu({
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest' }); }, [active]);
   return (
-    <div role="listbox" aria-label="Commands" className="absolute right-0 bottom-full left-0 z-30 mb-1 max-h-64 overflow-auto rounded-lg border border-border bg-card p-1 shadow-lg">
+    <div role="listbox" aria-label="Commands" className={cn(POPOVER, 'absolute right-0 bottom-full left-0 mb-1 max-h-64 overflow-auto')}>
       {commands.map((command, index) => (
         <button
           key={command.name}
@@ -211,10 +212,10 @@ function CommandMenu({
           // Keeps the focus in the textarea.
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onPick(command)}
-          className={cn('flex w-full items-baseline gap-2 rounded px-2 py-1 text-left', TARGET, index === active && 'bg-foreground/5')}
+          className={cn('flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left', TARGET, index === active && 'bg-muted')}
         >
-          <span className="flex-shrink-0 font-mono text-foreground">/{command.name}</span>
-          {command.argumentHint && <span className="flex-shrink-0 font-mono text-muted-foreground">{command.argumentHint}</span>}
+          <span className="flex-shrink-0 font-code text-foreground">/{command.name}</span>
+          {command.argumentHint && <span className="flex-shrink-0 font-code text-muted-foreground">{command.argumentHint}</span>}
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{command.description}</span>
         </button>
       ))}
@@ -277,7 +278,7 @@ export function Composer({
     element.style.height = `${element.scrollHeight}px`;
   }, [draft]);
 
-  const matches = useMemo(() => (dismissed ? [] : matchCommands(chat.commands, draft)), [chat.commands, draft, dismissed]);
+  const matches = useMemo(() => (dismissed ? [] : matchCommands(withPaneCommands(chat.commands), draft)), [chat.commands, draft, dismissed]);
   const selected = Math.min(active, Math.max(matches.length - 1, 0));
 
   const change = (text: string) => {
@@ -367,13 +368,13 @@ export function Composer({
     else if (event.key === 'Escape' && running) { event.preventDefault(); onStop(); }
   };
 
-  // 28 px to see; on a phone the ::after keeps the tap area at 44 px.
-  const iconButton = "relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full after:absolute after:-inset-2 after:content-[''] md:after:hidden";
+  // --size-tab (28 px) to see; on a phone the ::after keeps the tap area at --target-touch.
+  const iconButton = cn("relative flex size-(--size-tab) flex-shrink-0 items-center justify-center rounded-full after:absolute after:-inset-2 after:content-[''] md:after:hidden", FOCUS);
   return (
     <div className="relative">
       {matches.length > 0 && <CommandMenu commands={matches} active={selected} onHover={setActive} onPick={insert} />}
       <div
-        className={compact ? 'glass-field rounded-3xl' : 'rounded-xl border border-border bg-card shadow-sm transition-shadow focus-within:border-foreground/30 focus-within:shadow-md'}
+        className={compact ? 'glass rounded-3xl' : 'glass rounded-2xl transition-shadow focus-within:border-(--glass-line-strong)'}
         onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
         onDrop={(event) => {
           const files = Array.from(event.dataTransfer.files);
@@ -391,15 +392,16 @@ export function Composer({
                   type="button"
                   aria-label="Remove image"
                   onClick={() => removeAttachment(attachment.id)}
-                  className="absolute -top-1.5 -right-1.5 rounded-full border border-border bg-card p-0.5 text-muted-foreground hover:text-foreground"
+                  // The ::after brings the tap area to the minimum target around the small mark.
+                  className={cn("absolute -top-1.5 -right-1.5 rounded-full border border-border bg-card p-0.5 text-muted-foreground after:absolute after:-inset-1 after:content-[''] hover:text-foreground", FOCUS)}
                 >
-                  <X className="h-3 w-3" />
+                  <X className="size-3" />
                 </button>
               </div>
             ))}
           </div>
         )}
-        {attachProblem && <div role="alert" className="px-3 pt-2 text-destructive">{attachProblem}</div>}
+        {attachProblem && <div role="alert" className="px-3 pt-2 text-stopped-ink">{attachProblem}</div>}
         <textarea
           ref={input}
           aria-label="Message"
@@ -437,15 +439,15 @@ export function Composer({
             aria-label="Attach an image"
             title="Attach an image (or paste or drop one)"
             onClick={() => filePicker.current?.click()}
-            className={cn('flex items-center rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-foreground/5', TARGET)}
+            className={cn('flex items-center rounded-md px-1.5 py-0.5 text-muted-foreground hover:bg-muted', FOCUS, TARGET)}
           >
-            <Paperclip className="h-3.5 w-3.5" strokeWidth={1.8} />
+            <Paperclip className="size-3.5" strokeWidth={1.8} />
           </button>
           <ChipMenu
             label={mode?.label ?? 'Mode'}
             title="Permission mode (Shift+Tab)"
             disabled={chat.modes.length === 0}
-            icon={<Shield className="h-3 w-3 flex-shrink-0" strokeWidth={1.8} />}
+            icon={<Shield className="size-3 flex-shrink-0" strokeWidth={1.8} />}
           >
             {(close) => chat.modes.map((option) => (
               <MenuOption
@@ -461,8 +463,8 @@ export function Composer({
           <div role="status" className={cn('min-w-0 flex-1 truncate px-1', compact ? 'text-left text-foreground' : 'text-right text-muted-foreground')}>{status}</div>
           {compact && <ContextChip chat={chat} session={session} onSetModel={onSetModel} />}
           {running && (
-            <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-foreground/5')}>
-              <Square className="h-3.5 w-3.5" />
+            <button type="button" aria-label="Stop" onClick={onStop} className={cn(iconButton, 'border border-border hover:bg-muted')}>
+              <Square className="size-3.5" />
             </button>
           )}
           {(!running || draft.trim() || attachments.length > 0) && (
@@ -473,7 +475,7 @@ export function Composer({
               onClick={() => sendText(draft)}
               className={cn(iconButton, 'bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30')}
             >
-              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.2} />
+              <ArrowUp className="size-3.5" strokeWidth={2.2} />
             </button>
           )}
         </div>

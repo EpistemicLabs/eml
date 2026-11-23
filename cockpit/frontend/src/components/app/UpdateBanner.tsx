@@ -64,6 +64,7 @@ export default function UpdateBanner() {
         <Banner
           tone="destructive"
           icon={XCircle}
+          dismissKey={`update-failed:${space?.id ?? ''}:${report.codeVersion ?? ''}:${report.from}:${failure}`}
           detail={report.error && `Reason: ${report.error}`}
           actions={
             <>
@@ -78,7 +79,7 @@ export default function UpdateBanner() {
             </>
           }
           below={open && (
-            <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-background/70 p-2 font-mono text-[11px] text-foreground">
+            <pre className="mt-2 max-h-60 overflow-auto rounded-md bg-card p-2 font-code text-caption text-foreground">
               {JSON.stringify(report, null, 2)}
             </pre>
           )}
@@ -91,6 +92,7 @@ export default function UpdateBanner() {
         <Banner
           tone="info"
           icon={ArrowUpCircle}
+          dismissKey={`update-offer:${latest.version}`}
           busy={busy}
           detail={app.error}
           actions={app.phase === 'idle' && (

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEngramPanel } from "@/lib/engram-panel";
+import { durationMs } from "@/lib/time";
+import { cn } from "@/lib/utils";
+import { FOCUS, LABEL, PAGER_BUTTON } from "@/shared/view/ui";
 import { EngramDetail } from "@/components/engram-detail";
 import type { Project } from "@/types/app";
 
@@ -56,8 +59,8 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
 
   // Slide in on open, slide out on close. `entered` drives the transform;
   // `renderId` keeps the panel mounted (with its last content) through the exit
-  // animation, then unmounts. Paging (id → id, both truthy) never triggers exit.
-  const SLIDE_MS = 200;
+  // animation (--duration-base, the panel's transition), then unmounts. Paging (id → id, both truthy)
+  // never triggers exit.
   const [entered, setEntered] = useState(false);
   const [renderId, setRenderId] = useState<string | null>(openedId);
   const asideRef = useRef<HTMLElement>(null);
@@ -71,7 +74,7 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
       return () => cancelAnimationFrame(raf);
     }
     setEntered(false); // start slide-out
-    const t = setTimeout(() => setRenderId(null), SLIDE_MS);
+    const t = setTimeout(() => setRenderId(null), durationMs('--duration-base'));
     return () => clearTimeout(t);
   }, [openedId]);
 
@@ -116,17 +119,18 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
   if (!renderId) return null;
 
   const hasPager = total > 1 && index >= 0;
-  const pagerButton =
-    "flex h-6 w-6 items-center justify-center rounded-md border border-border text-caption text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground";
 
   return (
     // The page behind stays as it is — no dimming, no blur — and
     // stays clickable: only the drawer takes pointer events.
-    <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-(--z-sheet) overflow-hidden">
       <aside
         ref={asideRef}
         tabIndex={-1}
-        className={`absolute top-2 right-2 bottom-2 flex w-[calc(100%-1rem)] flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-2xl outline-none transition-transform duration-200 sm:w-[min(600px,70vw)] ${entered ? "pointer-events-auto translate-x-0" : "translate-x-[calc(100%+1rem)]"}`}
+        className={cn(
+          "glass-thick absolute top-2 right-2 bottom-2 flex w-(--size-drawer-narrow) flex-col overflow-hidden rounded-2xl shadow-sheet outline-none transition-transform duration-(--duration-base) ease-(--ease-emphasized) sm:w-(--size-drawer)",
+          entered ? "pointer-events-auto translate-x-0" : "translate-x-(--offset-drawer-out)",
+        )}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
           <div className="flex items-center gap-2">
@@ -136,24 +140,24 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
                 onClick={back}
                 aria-label="Back"
                 title="Back (←)"
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-ui text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                className={cn("flex min-h-(--target-min) items-center gap-1 rounded-md px-1.5 text-ui text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground", FOCUS)}
               >
                 ← Back
               </button>
             )}
             {hasPager ? (
               <div className="flex items-center gap-1 text-caption text-muted-foreground">
-                <button type="button" onClick={goPrev} disabled={!prevId} aria-label="Previous" title="Previous (k / ↑)" className={pagerButton}>
+                <button type="button" onClick={goPrev} disabled={!prevId} aria-label="Previous" title="Previous (k / ↑)" className={PAGER_BUTTON}>
                   ‹
                 </button>
                 <span className="tabular-nums">{index + 1}/{total}</span>
-                <button type="button" onClick={goNext} disabled={!nextId} aria-label="Next" title="Next (j / ↓)" className={pagerButton}>
+                <button type="button" onClick={goNext} disabled={!nextId} aria-label="Next" title="Next (j / ↓)" className={PAGER_BUTTON}>
                   ›
                 </button>
               </div>
             ) : (
               !canGoBack && (
-                <span className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Engram</span>
+                <span className={LABEL}>Engram</span>
               )
             )}
           </div>
@@ -162,7 +166,7 @@ export function EngramDrawer({ projects }: { projects: Project[] }) {
             onClick={close}
             aria-label="Close"
             title="Close (Esc)"
-            className="rounded-md px-2 py-0.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className={cn("grid size-(--target-comfortable) place-items-center rounded-md text-body text-muted-foreground transition-colors duration-(--duration-fast) hover:bg-muted hover:text-foreground", FOCUS)}
           >
             ✕
           </button>

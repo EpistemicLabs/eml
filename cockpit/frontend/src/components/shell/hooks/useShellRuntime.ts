@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
-import { RECLAIM_TERMINAL_EVENT } from '@/stores/useReviewStore';
+import { RECLAIM_TERMINAL_EVENT } from '@/lib/terminal-reclaim';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
@@ -60,7 +60,7 @@ export interface ShellRuntimeOptions {
    * autocorrect, capitalize or suggest, which would rewrite commands.
    */
   touchInput: boolean;
-  /** Outside the desks (the review screen): the session's space, which a pane takes from its desk. */
+  /** Outside the desks (the task panel): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
   /** 'shell': the Shell plugin's terminal, `sessionId` its shell id; no project, no agent. */
   kind?: 'session' | 'shell';
@@ -133,10 +133,8 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
 
   // Values read at init time rather than reacting to them.
   const latestRef = useRef(options);
-  const isDarkRef = useRef(isDarkMode);
   useLayoutEffect(() => {
     latestRef.current = options;
-    isDarkRef.current = isDarkMode;
   });
 
   useEffect(() => {
@@ -354,7 +352,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     const terminal = new Terminal({
       ...TERMINAL_OPTIONS,
       fontSize: getTerminalFontSize(),
-      theme: getXtermTheme(isDarkRef.current),
+      theme: getXtermTheme(container),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -467,7 +465,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     const terminal = terminalRef.current;
     if (!terminal || appliedDarkRef.current === isDarkMode) return;
     appliedDarkRef.current = isDarkMode;
-    terminal.options.theme = getXtermTheme(isDarkMode);
+    terminal.options.theme = getXtermTheme(containerRef.current ?? document.documentElement);
     terminal.clearTextureAtlas();
   }, [isDarkMode]);
 
@@ -493,7 +491,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
       setSearchResults(null);
       return;
     }
-    const searchOptions = { incremental, decorations: getSearchDecorations(isDarkRef.current) };
+    const searchOptions = { incremental, decorations: getSearchDecorations(containerRef.current ?? document.documentElement) };
     if (direction === 'next') search.findNext(term, searchOptions);
     else search.findPrevious(term, searchOptions);
   }, []);
@@ -508,7 +506,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     if (autoConnect && initialized && !connecting && !connected && !superseded) void connect();
   }, [autoConnect, initialized, connecting, connected, superseded, connect]);
 
-  // The review screen borrowed this terminal's session and is done with it: take it back.
+  // The task panel borrowed this terminal's session and is done with it: take it back.
   useEffect(() => {
     const onReclaim = (event: Event) => {
       if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setSuperseded(false);

@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Brain, Clock, FileDiff, FolderGit2, MessageSquare, NotebookPen, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
 
 import type { PaneView } from '@/stores/usePaneStore';
+import { useActiveSpace } from '@/stores/useSpaceStore';
 
 /** A plugin the user can switch off; the host knows the same ids. */
 export type PluginId = 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time';
@@ -57,14 +58,14 @@ export const paneViewDef = (view: PaneView): PaneViewDef =>
 
 export const PLUGIN_DEFS = PANE_VIEW_DEFS.filter((def): def is PaneViewDef & { plugin: PluginId } => !!def.plugin);
 
-// ── Which plugins are on (host: /api/plugins, the same for every browser) ──
+// ── Which plugins are on in the active space (host: /api/plugins?space=, the same for every browser) ──
 
 const pluginsKey = ['cockpit-plugins'] as const;
 
 type PluginStates = Record<PluginId, boolean>;
 
-async function requestPlugins(init?: RequestInit): Promise<PluginStates> {
-  const res = await fetch('/api/plugins', init);
+async function requestPlugins(space: string | null, init?: RequestInit): Promise<PluginStates> {
+  const res = await fetch(space ? `/api/plugins?space=${encodeURIComponent(space)}` : '/api/plugins', init);
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.error?.message ?? `Request failed (${res.status})`);
   return Object.fromEntries(
@@ -72,14 +73,16 @@ async function requestPlugins(init?: RequestInit): Promise<PluginStates> {
   ) as PluginStates;
 }
 
+/** The plugins switched on in the active space: each space has its own (Settings › EML Plugins). */
 export function usePluginStates() {
-  return useQuery({ queryKey: pluginsKey, queryFn: () => requestPlugins(), staleTime: 60_000 });
+  const space = useActiveSpace()?.id ?? null;
+  return useQuery({ queryKey: [...pluginsKey, space], queryFn: () => requestPlugins(space), staleTime: 60_000 });
 }
 
 /**
  * Whether a view can be shown: the session views always, a plugin while it is
- * on. Until the host has answered every plugin counts as on, so a pane showing
- * one does not flip to another view while the page loads.
+ * on in the active space. Until the host has answered every plugin counts as
+ * on, so a pane showing one does not flip to another view while the page loads.
  */
 export function useViewEnabled(): (view: PaneView) => boolean {
   const states = usePluginStates().data;
@@ -89,11 +92,13 @@ export function useViewEnabled(): (view: PaneView) => boolean {
   };
 }
 
+/** Switches a plugin on or off in the active space. */
 export function useSetPluginEnabled() {
   const qc = useQueryClient();
+  const space = useActiveSpace()?.id ?? null;
   return useMutation({
     mutationFn: ({ id, enabled }: { id: PluginId; enabled: boolean }) =>
-      requestPlugins({ method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, enabled }) }),
-    onSuccess: (states) => qc.setQueryData(pluginsKey, states),
+      requestPlugins(null, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, enabled, ...(space ? { space } : {}) }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: pluginsKey }),
   });
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { SPACE_COLORS, setSpaceColor, spaceTone } from '@/lib/space-color';
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
 /** The palette as swatches; the one the space has is ringed. */
@@ -14,7 +15,7 @@ export function SpaceColorPicker({ space, onError }: { space: SpaceInfo; onError
     setBusy(false);
   };
   return (
-    <div role="radiogroup" aria-label={`Colour of ${space.name}`} className="flex items-center gap-1">
+    <div role="radiogroup" aria-label={`Colour of ${space.name}`} className="flex items-center">
       {SPACE_COLORS.map((color) => (
         <button
           key={color}
@@ -24,12 +25,15 @@ export function SpaceColorPicker({ space, onError }: { space: SpaceInfo; onError
           aria-label={color}
           title={color}
           onClick={() => void pick(color)}
-          style={{ backgroundColor: spaceTone({ color }) }}
-          className={cn(
-            'h-3.5 w-3.5 rounded-full transition-transform hover:scale-110',
-            color === space.color && 'ring-2 ring-foreground/70 ring-offset-1 ring-offset-card',
-          )}
-        />
+          className={cn('grid size-(--target-min) place-items-center rounded-full hover:bg-muted', FOCUS)}
+        >
+          {/* The swatch stays small; the button around it keeps the 24px target. The picked one is ringed. */}
+          <span
+            aria-hidden
+            style={{ backgroundColor: spaceTone({ color }) }}
+            className={cn('size-3.5 rounded-full', color === space.color && 'ring-2 ring-foreground ring-offset-2 ring-offset-card')}
+          />
+        </button>
       ))}
     </div>
   );

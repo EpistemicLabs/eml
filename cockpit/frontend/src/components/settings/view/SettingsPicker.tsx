@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS } from '@/shared/view/ui';
 
 type SettingsPickerProps = {
   items: ReadonlyArray<{ id: string; label: ReactNode }>;
@@ -25,9 +26,10 @@ export default function SettingsPicker({ items, value, onChange, ariaLabel }: Se
           aria-pressed={item.id === value}
           onClick={() => onChange(item.id)}
           className={cn(
-            'flex flex-shrink-0 items-center gap-2 rounded-t-lg border border-b-0 px-3 py-2 text-sm font-medium',
+            'flex min-h-(--target-comfortable) flex-shrink-0 items-center gap-2 rounded-t-lg border border-b-0 px-3 text-body font-medium',
+            FOCUS,
             item.id === value
-              ? 'border-foreground/10 text-foreground'
+              ? 'border-border bg-card text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground',
           )}
         >

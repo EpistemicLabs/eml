@@ -27,5 +27,39 @@ export interface SpawnRequest {
   wakeable?: boolean
   /** What the worker may use; its limits hold only in the chat runtime or a host-started process. */
   toolProfile?: ToolProfile
+  /**
+   * 'job': a job's run (application/job-runner.ts); 'runner': a plan step the
+   * task runner started (application/task-runner.ts). Both unattended like a
+   * session's worker, also without a requester. 'split': a topic the user split
+   * off a session (application/split-session.ts): their own session, not a
+   * worker, though it remembers the session it came from. 'task': a session of
+   * the user's own on a task, started from the page (a task row, Advance task).
+   */
+  origin?: 'job' | 'runner' | 'split' | 'task'
+  /** The desk the page should open the pane on (a page id; the page falls back to the active desk). */
+  deskId?: string
+  /** The brain task the session works on from its first hook (task system). */
+  taskId?: string
+  /** The job whose run this is (origin 'job'): what its session's channel tools act for. */
+  jobId?: string
   createdAt: string
+}
+
+/** A session or a job asked for it: it runs unattended on the host, not in a tab the user opens. */
+/**
+ * Whether a terminal session launches unattended: a worker does, and so does one opened with a prompt
+ * (an outside command), except a topic the user split off, which is their own.
+ */
+export function launchesUnattended(session: { worker: boolean; initialPrompt: boolean; own: boolean }): boolean {
+  return session.worker || (session.initialPrompt && !session.own)
+}
+
+/** The user's own session that the host still starts (a split, a session on a task): it opens in chat when chat is their view. */
+export function ownStart(request: Pick<SpawnRequest, 'origin'>): boolean {
+  return request.origin === 'split' || request.origin === 'task'
+}
+
+export function unattended(request: Pick<SpawnRequest, 'fromSessionId' | 'origin'>): boolean {
+  if (request.origin === 'split' || request.origin === 'task') return false
+  return request.fromSessionId !== null || request.origin === 'job' || request.origin === 'runner'
 }

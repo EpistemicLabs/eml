@@ -1,0 +1,12 @@
+{
+  "id": "shell",
+  "name": "Shell",
+  "description": "A terminal on this computer: your own shell in your home folder, as in the Terminal app. Remote users only get it after `eml-cockpit remote shell on`.",
+  "tier": "official",
+  "defaultEnabled": false,
+  "parts": {
+    "pane": {
+      "builtin": "shell"
+    }
+  }
+}

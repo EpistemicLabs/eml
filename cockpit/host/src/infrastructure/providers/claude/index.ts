@@ -105,7 +105,13 @@ class ClaudeProvider implements AgentProvider {
     // a worker the host started without a pane, which the app is the way to follow.
     const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const profile = req.toolProfile ?? null
-    const limitedMcp = profile?.mcpServers ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile.mcpServers) : null
+    // A session's own mcp.json: when its profile limits the servers, or it is given extra ones.
+    const extra = req.extraMcpServers && Object.keys(req.extraMcpServers).length > 0 ? req.extraMcpServers : null
+    const limitedMcp = profile?.mcpServers || extra
+      ? writeLimitedMcpConfig(req.space.files.mcpConfig, req.sessionId, profile?.mcpServers ?? null, extra ?? {})
+      : null
+    // A runtime given browser control (the Chrome setting lives in the shared config, not the runtime's), or a lent one.
+    const chrome = (!!runtime?.chrome && !limitedMcp) || req.chrome === true
     const args = [
       // No --strict-mcp-config: the brain MCP is always injected, and MCPs the
       // user sets up inside the cockpit (claude mcp add -s user, claude.ai
@@ -115,8 +121,7 @@ class ClaudeProvider implements AgentProvider {
       '--mcp-config', limitedMcp ?? req.space.files.mcpConfig,
       // A space with a runtime of its own, or a tool profile: exactly its mcp.json, whatever else is configured anywhere.
       ...(runtime || limitedMcp ? ['--strict-mcp-config'] : []),
-      // A runtime given browser control: the Chrome setting lives in the shared config, not the runtime's.
-      ...(runtime?.chrome && !limitedMcp ? ['--chrome'] : []),
+      ...(chrome ? ['--chrome'] : []),
       ...(profile?.deniedTools.length ? ['--disallowedTools', profile.deniedTools.join(',')] : []),
       '--settings', req.space.files.settings, '--setting-sources', 'user,project,local',
       // Permission mode: the user's choice (Settings › Models, default auto);
@@ -141,7 +146,8 @@ class ClaudeProvider implements AgentProvider {
       args,
       // Driven from the Claude app too: it outlives the browser tab.
       keepRunning: remoteControl,
-      ...(profile ? { limits: { mcpConfig: limitedMcp, deniedTools: profile.deniedTools } } : {}),
+      ...(chrome ? { chrome } : {}),
+      ...(profile || limitedMcp ? { limits: { mcpConfig: limitedMcp, deniedTools: profile?.deniedTools ?? [] } } : {}),
       env: {
         CLAUDE_CONFIG_DIR: configDir,
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own

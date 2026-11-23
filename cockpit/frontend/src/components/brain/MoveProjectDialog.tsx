@@ -16,12 +16,10 @@ import { errorText } from '@/lib/team';
 import { PROJECTS_CHANGED_EVENT } from '@/hooks/useProjectsState';
 import { useSpaces } from '@/stores/useSpaceStore';
 import { refreshTeams, useTeams } from '@/stores/useTeamStore';
-import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, Select } from '@/shared/view/ui';
 
 type PlanState = { status: 'loading' } | { status: 'ready'; plan: MovePlanView } | { status: 'error'; text: string };
 type RunState = { status: 'idle' } | { status: 'running' } | { status: 'answered'; outcome: MoveOutcome };
-
-const selectClass = 'w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-foreground focus:border-foreground/40 focus:outline-none disabled:opacity-50';
 
 export default function MoveProjectDialog({ projectId, projectName, open, onOpenChange }: {
   projectId: string;
@@ -102,23 +100,23 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!running) onOpenChange(next); }}>
-      <DialogContent className="max-w-lg rounded-lg border border-border bg-card shadow-xl" aria-busy={running}>
+      <DialogContent aria-busy={running}>
         <div className="border-b border-border p-4">
-          <DialogTitle className="not-sr-only text-lg font-semibold text-foreground">Move {projectName} to a shared space</DialogTitle>
+          <DialogTitle className="not-sr-only text-title font-semibold text-foreground">Move {projectName} to a shared space</DialogTitle>
         </div>
 
-        <div className="flex flex-col gap-4 p-4 text-sm">
+        <div className="flex flex-col gap-4 p-4 text-body">
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">Shared space</span>
-            <select className={selectClass} value={targetId} onChange={(e) => { setTargetId(e.target.value); setRun({ status: 'idle' }); }} disabled={running || done || pending}>
+            <span className="text-ui font-medium text-muted-foreground">Shared space</span>
+            <Select className="w-full" value={targetId} onChange={(e) => { setTargetId(e.target.value); setRun({ status: 'idle' }); }} disabled={running || done || pending}>
               {options.map((o) => (
                 <option key={o.id} value={o.id} disabled={!o.enabled}>{o.label}</option>
               ))}
-            </select>
+            </Select>
           </label>
 
           {plan.status === 'loading' && <p className="text-muted-foreground">Working out what moves…</p>}
-          {plan.status === 'error' && <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-foreground">{plan.text}</p>}
+          {plan.status === 'error' && <p className="rounded-md border border-border bg-muted px-3 py-2 text-foreground">{plan.text}</p>}
           {text && (
             <div className="flex flex-col gap-2 text-foreground">
               <p>{text.what}</p>
@@ -140,7 +138,7 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
           )}
 
           {refused.length > 0 && (
-            <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+            <div className="rounded-md border border-border bg-muted px-3 py-2">
               <p className="font-medium text-foreground">This project cannot move right now:</p>
               <ul className="ml-4 mt-1 list-disc text-muted-foreground">
                 {refused.map((r, i) => <li key={i}>{r}</li>)}
@@ -149,10 +147,10 @@ export default function MoveProjectDialog({ projectId, projectName, open, onOpen
           )}
 
           {run.status === 'answered' && (
-            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-foreground" role="status">
+            <div className="rounded-md border border-border bg-muted px-3 py-2 text-foreground" role="status">
               <p>{run.outcome.text}</p>
               {run.outcome.kind === 'done' && run.outcome.backup && (
-                <p className="mt-1 break-all font-mono text-xs text-muted-foreground">Backup: {run.outcome.backup}</p>
+                <p className="mt-1 break-all font-code text-caption text-muted-foreground">Backup: {run.outcome.backup}</p>
               )}
             </div>
           )}

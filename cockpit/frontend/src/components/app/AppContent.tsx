@@ -1,4 +1,4 @@
-// Kept: the Sidebar column + DeskTabBar + per-desk pane grids; every
+// Kept: the Sidebar column (spaces, desks, task views) + per-desk pane grids; every
 // visited desk stays MOUNTED and only the active one is shown
 // (display:none), so a terminal's xterm + WebSocket survive a desk switch;
 // lazy mount on first activation; the sidebar → pane handlers
@@ -14,10 +14,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
-import { ReviewScreen } from '../review/ReviewScreen';
+import JobsView from '../jobs/JobsView';
+import { TaskBoard } from '../task-board/TaskBoard';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
-import ProjectFolderDialog from '../project-creation-wizard/ProjectFolderDialog';
+import { ProjectModals } from '../projects/ProjectModals';
+import { useProjectActions } from '../projects/useProjectActions';
 import { EngramDrawer } from '../engram-drawer';
 import { PaletteOpsProvider, usePaletteOpsRegister } from '@/contexts/PaletteOpsContext';
 import { FirstRunSignIn } from '@/components/first-run/FirstRun';
@@ -25,18 +27,21 @@ import { findProjectOwningSession, projectsOfSpace, spaceLoaded, useProjectsStat
 import { usePaneContext } from '@/hooks/usePaneContext';
 import * as paneStore from '@/stores/usePaneStore';
 import { getTopView, setTopView, useTopView } from '@/stores/useTopViewStore';
-import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest, type TurnEvent } from '@/stores/useTurnStateStore';
+import { connectTurnEvents, countNeedsYou, markSeen, useTurnStore, waitingSessions, type SpawnRequest } from '@/stores/useTurnStateStore';
 import { setSessionDeskMain } from '@/lib/session-actions';
 import { useSeenResults } from './useSeenResults';
+import { usePushLinks } from './usePushLinks';
 import { api } from '@/utils/api';
-import { readSettings, setHostChatView } from '@/components/settings/utils/settingsStorage';
+import { setHostChatView } from '@/components/settings/utils/settingsStorage';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
 import { useTimeBeat } from '@/components/time-plugin/useTimeBeat';
 import type { Project, ProjectSession } from '@/types/app';
 
 import { PaneGridLayout } from './PaneGrid';
-import DeskTabBar from './DeskTabBar';
+import { ShortcutSheet } from '../top-bar/ShortcutSheet';
+import { useCockpitShortcuts } from '../top-bar/useCockpitShortcuts';
+import { setLauncherProjects } from '../session-launcher/launcher-projects';
 import CompactNavBar from './CompactNavBar';
 import { SPACE_CHANGED_EVENT } from '@/stores/useSpaceStore';
 import { useQueryClient } from '@tanstack/react-query';
@@ -44,13 +49,14 @@ import UpdateBanner from './UpdateBanner';
 import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
 import TeamBanner from './TeamBanner';
-import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 import { useDrawerSwipe } from '@/hooks/useDrawerSwipe';
 import { useSoftKeyboardOpen } from '@/hooks/useSoftKeyboardOpen';
 import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleViewportHeight';
-import { Brain } from 'lucide-react';
+import { TasksCard } from '@/components/tasks-card/TasksCard';
+import { useTasksCard } from '@/stores/useTasksCardStore';
+import { OpenTaskToast } from '@/components/command-palette/OpenTaskToast';
 
 export default function AppContent() {
   return (
@@ -61,7 +67,6 @@ export default function AppContent() {
 }
 
 function AppContentInner() {
-  const { info: about } = useAboutInfo();
   const compact = useCompactLayout();
   useVisibleViewportHeight();
   // The compact layout's sidebar drawer; closed again whenever the layout widens.
@@ -89,19 +94,30 @@ function AppContentInner() {
     openSettings,
     refreshProjects: refreshProjectsSilently,
   });
+  // The empty panes' launcher offers the open space's projects.
+  useEffect(() => { setLauncherProjects(projects); }, [projects]);
+  // ⌘. Inbox, ⌘, Settings, G then I / N / P, ? (top-bar/shortcuts.ts lists them all).
+  const openSettingsDefault = useCallback(() => openSettings(), [openSettings]);
+  useCockpitShortcuts(openSettingsDefault);
+
+  // Scheduled jobs read their times on the user's clock, not the server's: tell the host this browser's zone.
+  useEffect(() => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) void api.setTimeZone(zone).catch(() => { /* an older host has no jobs */ });
+  }, []);
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
-  // The phone has no way back from the Brain tab, so it stays on the desks.
+  // The phone's navigation drawer leads back from the brain and the task views, not from Jobs.
   useEffect(() => {
-    if (compact && topView === 'brain') setTopView('desks');
+    if (compact && topView === 'jobs') setTopView('desks');
   }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
   // Streams from the host (Claude Code hooks → /api/events). A finished
   // session counts as unseen until the user is looking at its desk with
-  // the window in front; that drives the tab badges, the title count and
-  // the opt-in browser notification.
+  // the window in front; that drives the tab badges and the title count.
+  // Notifications are web push from the host (lib/push.ts).
   const turnSnapshot = useTurnStore();
   const projectsRef = React.useRef(projects);
   projectsRef.current = projects;
@@ -134,35 +150,7 @@ function AppContentInner() {
       !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
-  // The last "Session finished" notification per session, closed when the next one comes.
-  const sessionNotifications = useRef(new Map<string, Notification>());
-
   useEffect(() => {
-    const onTurn = (event: TurnEvent) => {
-      if ((event.state !== 'done' && event.state !== 'waiting') || event.silent || event.repeated || !readSettings().notifyOnDone) return;
-      if (document.visibilityState === 'visible' && document.hasFocus()) return;
-      if (!('Notification' in window) || Notification.permission !== 'granted') return;
-      const session = projectsRef.current
-        .flatMap((project) => project.sessions ?? [])
-        .find((candidate) => candidate.id === event.sessionId);
-      try {
-        // A fresh tag per turn: a notification that reuses a tag replaces the
-        // old one without a banner, and on macOS `renotify` does not bring the
-        // banner back — so only a session's first turn alerted. Closing the
-        // session's previous notification keeps one entry per session.
-        sessionNotifications.current.get(event.sessionId)?.close();
-        const name = event.title || session?.summary;
-        const heading = event.state === 'waiting' ? 'Needs you' : event.batch && event.batch > 1 ? `All ${event.batch} workers finished` : 'Session finished';
-        const notification = new Notification(heading, {
-          body: name || (event.state === 'waiting' ? 'A session is waiting for you' : 'Claude finished a turn'),
-          tag: `${event.sessionId}:${Date.now()}`,
-        });
-        sessionNotifications.current.set(event.sessionId, notification);
-        notification.onclose = () => {
-          if (sessionNotifications.current.get(event.sessionId) === notification) sessionNotifications.current.delete(event.sessionId);
-        };
-      } catch { /* notifications unavailable */ }
-    };
     // Worker sessions requested by a session (skill spawn-session) or by the
     // host (first run: sign-in, getting started): claim each one — only one tab
     // gets it — and open its pane on the requester's desk. A project the page
@@ -186,8 +174,8 @@ function AppContentInner() {
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
-        // A session's worker runs on the host and shows in the sidebar, unless it asked for a pane.
-        if (request.fromSessionId && !request.open) continue;
+        // A session's worker, a job's run and a background task run stay on the host and show in the sidebar, unless they asked for a pane.
+        if ((request.fromSessionId || request.origin === 'job' || request.origin === 'runner') && !request.open) continue;
         void api.claimSpawn(request.id).then(async (response) => {
           if (!response.ok) return;
           const { runtime } = await response.json() as { runtime?: string };
@@ -195,7 +183,7 @@ function AppContentInner() {
         }).catch(() => { /* host gone — the request is dropped with it */ });
       }
     };
-    return connectTurnEvents(onTurn, onSpawns);
+    return connectTurnEvents(onSpawns);
   }, []);
   // Note changes on the same stream → note queries + the sidebar's unseen dot.
   useNotesLiveSync();
@@ -228,6 +216,7 @@ function AppContentInner() {
   }, [desks]);
 
   useSeenResults();
+  usePushLinks();
 
   // "Seen" has two triggers. Explicit: the user switches to a desk (or
   // back from the Brain view) — that is looking, regardless of window
@@ -285,19 +274,6 @@ function AppContentInner() {
   }, [activeDeskId, desks]);
 
   // ── Sidebar handlers (drive the active pane) ────────────────────────
-  const handleProjectSelect = useCallback((_project: Project) => {
-    // Clicking a project is PURE sidebar navigation — it expands the project
-    // and reveals its sessions (handled inside the sidebar). It must NOT
-    // touch the active pane.
-    //
-    // Re-homing the active pane's projectId here used to silently swap a
-    // running terminal: the project path is part of the host's PTY key, so
-    // changing the pane's project tore down the live PTY and reconnected to
-    // a different one — the "active terminal got swapped" bug.
-    //
-    // A pane only adopts a project when the user opens an actual session in
-    // it (handleSessionSelect) or starts a new one (handleNewSession).
-  }, []);
 
   // The project a sidebar session belongs to. Callers tag it (__projectId);
   // when that is missing, derive it from the projects list so a pane never
@@ -317,22 +293,23 @@ function AppContentInner() {
     else paneStore.openInPane(target);
   }, [projectIdForSession]);
 
-  // "Set folder…" from the sidebar. (A project without a folder no longer
-  // needs one before its first session — the host makes a cockpit folder.)
-  const [folderTarget, setFolderTarget] = React.useState<{ project: Project } | null>(null);
+  // Project management (Plan) and its dialogs: here, so the launcher's "New project…" opens the
+  // wizard from any view.
+  const projectActions = useProjectActions({ onChanged: handleSidebarRefresh, onRemoved: handleProjectDelete });
 
   // A new session never overwrites what the active pane shows.
   const handleNewSession = useCallback((project: Project) => {
     paneStore.openInPane({ surface: 'terminal', projectId: project.projectId });
   }, []);
 
+  // The tasks card: next to the sidebar or right of the desk, never on a phone.
+  const tasksCard = useTasksCard();
+  const tasksCardPlace = !compact && tasksCard.shown ? tasksCard.place : null;
+
   // ── Sidebar derives its selection from the active pane.
   const activePaneCtx = usePaneContext(activePaneId, projects);
   useDocumentTitle(activePaneCtx.project?.displayName, unseenTotal);
 
-  // In the drawer a pick is the end of the errand: show what was picked.
-  const closingDrawer = <A extends unknown[]>(handler: (...args: A) => void) =>
-    (...args: A) => { handler(...args); setDrawerOpen(false); };
 
   return (
     <div
@@ -340,78 +317,24 @@ function AppContentInner() {
       className="fixed inset-x-0 top-0 flex flex-col bg-background"
       style={{ height: `var(${APP_HEIGHT_VAR}, 100dvh)` }}
     >
-      {/* One top row across the full width (cockpit layout): the brand label at the left, the desk tabs beside it.
-          The sidebar rail and the pane grid start below it, top-aligned. */}
-      {!compact && (
-      <div className="flex h-[54px] flex-shrink-0 items-stretch border-b border-foreground/15 bg-background/60 pt-[env(safe-area-inset-top)] backdrop-blur-sm box-content">
-        {/* Brand: the same coral brain mark as Settings › About, then the wordmark. */}
-        <div className="flex flex-shrink-0 items-center gap-2.5 pr-4 pl-3 text-[18px] font-semibold tracking-wide text-primary">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
-            <Brain className="h-4 w-4 text-primary-foreground" />
-          </span>
-          EML COCKPIT
-          {about && (
-            <button
-              type="button"
-              onClick={() => openSettings('about')}
-              title="About EML Cockpit"
-              className="font-mono text-[11px] font-normal tracking-normal text-muted-foreground/70 transition-colors hover:text-foreground"
-            >
-              v{about.version}
-            </button>
-          )}
-          {about?.runMode === 'dev' && (
-            <span
-              className="rounded border border-warning/50 bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider text-warning"
-              title={`Development cockpit (v${about.version}) — not your production cockpit`}
-            >
-              DEV
-            </span>
-          )}
-        </div>
-        {/* Per brain space: its Brain tab (the dashboard) and its desks (DeskTabBar). */}
-        {/* Many spaces scroll sideways; the mouse wheel scrolls it too. */}
-        <div
-          className="scrollbar-hide min-w-0 flex-1 overflow-x-auto"
-          onWheel={(e) => { if (e.deltaY !== 0 && e.deltaX === 0) e.currentTarget.scrollLeft += e.deltaY; }}
-        >
-          <DeskTabBar />
-        </div>
-      </div>
-      )}
-
-      {/* Full width under the header, in this order: update (available → installing → outcome),
-          a space without an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
-      <div className={cn(compact && 'pt-[env(safe-area-inset-top)] empty:hidden')}>
-        <UpdateBanner />
-        <AgentUpgradeBanner />
-        <TeamBanner />
-        <BrainHygieneBanner />
-      </div>
 
       <div className="relative flex min-h-0 flex-1">
       {/* Card styling (frosted/rounded/overflow) lives inside Sidebar: it
           renders the icon rail plus a hover overlay that must extend past
-          this wrapper — overflow-hidden here would clip it. z-40 lifts the
-          overlay above the pane grid. */}
-      <div className={compact ? 'contents' : 'relative z-40 my-2 ml-2 h-[calc(100%-1rem)] flex-shrink-0'}>
+          this wrapper — overflow-hidden here would clip it. The chrome layer
+          lifts the overlay above the pane grid; the row stretches it to its
+          height less the margins. */}
+      <div className={compact ? 'contents' : 'relative z-(--z-chrome) my-2 ml-2 flex-shrink-0 self-stretch'}>
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
-          projects={projects}
-          projectsBySpace={projectsBySpace}
-          selectedProject={activePaneCtx.project}
-          selectedSession={activePaneCtx.session}
-          onProjectSelect={compact ? closingDrawer(handleProjectSelect) : handleProjectSelect}
-          onSessionSelect={compact ? closingDrawer(handleSessionSelect) : handleSessionSelect}
-          onNewSession={compact ? closingDrawer(handleNewSession) : handleNewSession}
-          onSessionDelete={handleSessionDelete}
-          onProjectDelete={handleProjectDelete}
-          isLoading={isLoadingProjects}
-          onRefresh={handleSidebarRefresh}
-          onShowSettings={() => { setDrawerOpen(false); openSettings(); }}
-          onSetFolder={(project) => setFolderTarget({ project })}
+          onShowSettings={(tab) => { setDrawerOpen(false); openSettings(tab); }}
         />
       </div>
+      {tasksCardPlace === 'left' && (
+        <div className="relative my-2 ml-2 flex-shrink-0 self-stretch">
+          <TasksCard projects={projectsBySpace} />
+        </div>
+      )}
 
       {/* The home indicator's inset is only needed at the screen's bottom edge. With the keyboard
           up the app already ends above it, but iOS keeps reporting the inset. */}
@@ -419,6 +342,15 @@ function AppContentInner() {
         className={cn('relative flex min-w-0 flex-1 flex-col', !compact && !keyboardOpen && 'pb-[env(safe-area-inset-bottom)]')}
         style={compact ? ({ '--bottom-inset': keyboardOpen ? '0px' : 'env(safe-area-inset-bottom)' } as React.CSSProperties) : undefined}
       >
+        {/* Over the panes, in this order: update (available → installing → outcome), a space without
+            an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
+        {/* On a phone the top banner sits between the floating menu and close buttons. */}
+        <div className={cn('peer', compact && 'pt-[env(safe-area-inset-top)] empty:hidden [&>:first-child]:mx-[calc(var(--inset-phone-nav)+--spacing(1))]')}>
+          <UpdateBanner />
+          <AgentUpgradeBanner />
+          <TeamBanner />
+          <BrainHygieneBanner />
+        </div>
         {compact && <CompactNavBar onOpenMenu={openDrawer} />}
         <div className="relative min-h-0 min-w-0 flex-1">
           {/* The brain dashboard overlays the grid box when the Brain tab is
@@ -429,8 +361,17 @@ function AppContentInner() {
               <BrainDashboard />
             </div>
           )}
-          {/* The review screen lies over the desks the same way: they stay as they are. */}
-          {topView === 'review' && <ReviewScreen />}
+          {topView === 'jobs' && (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
+              <JobsView />
+            </div>
+          )}
+          {/* With no banner above, the task views start below the phone's floating buttons, as a pane does. */}
+          {topView === 'tasks' && (
+            <div className={cn('absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background', compact && '[.peer:empty~*_&]:pt-[calc(env(safe-area-inset-top)+var(--pad-pane-compact-top))]')}>
+              <TaskBoard projects={projectsBySpace} projectActions={projectActions} />
+            </div>
+          )}
           {/* All visited desks stay mounted, stacked in the same box; only
               the active one is shown. Hiding (not unmounting) keeps each
               desk's terminals/WebSockets alive across switches. */}
@@ -466,18 +407,17 @@ function AppContentInner() {
             })}
         </div>
       </div>
+      {tasksCardPlace === 'right' && (
+        <div className="relative my-2 mr-2 flex-shrink-0 self-stretch">
+          <TasksCard projects={projectsBySpace} />
+        </div>
+      )}
       {/* Inside the row, not on the viewport: the drawer starts and ends
           where the sidebar does, under the header and any banner. */}
       <EngramDrawer projects={projects} />
       </div>
 
-      {folderTarget && (
-        <ProjectFolderDialog
-          project={folderTarget.project}
-          onClose={() => setFolderTarget(null)}
-          onSaved={() => { void refreshProjectsSilently(); }}
-        />
-      )}
+      <ProjectModals actions={projectActions} />
 
       <Settings
         isOpen={showSettings}
@@ -486,7 +426,9 @@ function AppContentInner() {
       />
 
       <FirstRunSignIn />
+      <ShortcutSheet />
 
+      <OpenTaskToast />
       <CommandPalette
         projects={projects}
         selectedProject={activePaneCtx.project}

@@ -1,0 +1,159 @@
+import { createHash, randomBytes } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import * as path from 'node:path'
+import { z } from 'zod'
+import { writeOwnerOnly } from './owner-only-file.js'
+
+/**
+ * Signing in to Google with the user's own OAuth client (decision gmail-plugin-mcp-scope-and-sign-in):
+ * an OAuth "Desktop app" client the user made in their Google Cloud project, stored once, owner-only.
+ * Its refresh tokens serve the gmail plugin's channel and MCP alike.
+ *
+ * The consent page sends the browser to a loopback address afterwards. That page doesn't load when the
+ * cockpit is used from another device (remote access) and often not even on this one — so the user
+ * pastes the address the browser ended on, and the cockpit takes the code from it. No server listens.
+ */
+
+const clientFileSchema = z.object({
+  installed: z.object({
+    client_id: z.string().min(1),
+    client_secret: z.string().min(1),
+    auth_uri: z.string().url().default('https://accounts.google.com/o/oauth2/v2/auth'),
+    token_uri: z.string().url().default('https://oauth2.googleapis.com/token'),
+  }),
+})
+export type GoogleClient = z.infer<typeof clientFileSchema>['installed']
+
+/** The redirect a Desktop client may always use; nothing has to listen there. */
+const REDIRECT = 'http://127.0.0.1:53682/'
+const PENDING_MS = 15 * 60_000
+
+export interface SignedIn {
+  address: string
+  credentialsFile: string
+  tokenFile: string
+}
+
+/** Why a sign-in could not be finished; only an unreachable Google is worth trying again. */
+export interface SignInRefusal {
+  ok: false
+  code: 'bad_address' | 'refused_by_google' | 'unknown_sign_in' | 'no_client' | 'google_unreachable' | 'token_refused' | 'scopes_missing' | 'no_mailbox'
+  reason: string
+  retryable: boolean
+}
+
+export class GoogleSignIn {
+  private readonly pending = new Map<string, { verifier: string; scopes: string[]; at: number }>()
+
+  constructor(private readonly options: { dir: string; gmailApi?: string; now?: () => number }) {}
+
+  get clientFile(): string {
+    return path.join(this.options.dir, 'client.json')
+  }
+
+  /** The stored client, or null without one or with one that doesn't read. */
+  async client(): Promise<GoogleClient | null> {
+    try {
+      return clientFileSchema.parse(JSON.parse(await fs.readFile(this.clientFile, 'utf8'))).installed
+    } catch {
+      return null
+    }
+  }
+
+  /** Stores the client the user downloaded from Google Cloud; only a Desktop app client will do. */
+  async saveClient(raw: unknown): Promise<{ ok: true } | { ok: false; reason: string }> {
+    let parsed: unknown = raw
+    if (typeof raw === 'string') {
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        return { ok: false, reason: 'That is not the JSON file Google Cloud gives for an OAuth client' }
+      }
+    }
+    const client = clientFileSchema.safeParse(parsed)
+    if (!client.success) return { ok: false, reason: 'Use an OAuth client of type "Desktop app" (its file starts with {"installed": …})' }
+    await writeOwnerOnly(this.clientFile, `${JSON.stringify({ installed: client.data.installed }, null, 2)}\n`)
+    return { ok: true }
+  }
+
+  /** The consent page's address for these scopes. */
+  async start(scopes: string[]): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {
+    const client = await this.client()
+    if (!client) return { ok: false, reason: 'Add your Google OAuth client first' }
+    const now = this.options.now?.() ?? Date.now()
+    for (const [key, entry] of this.pending) if (now - entry.at > PENDING_MS) this.pending.delete(key)
+    const state = randomBytes(16).toString('hex')
+    const verifier = randomBytes(32).toString('base64url')
+    this.pending.set(state, { verifier, scopes, at: now })
+    const url = new URL(client.auth_uri)
+    url.search = new URLSearchParams({
+      client_id: client.client_id,
+      redirect_uri: REDIRECT,
+      response_type: 'code',
+      scope: scopes.join(' '),
+      access_type: 'offline',
+      // Asked every time, so Google hands out a refresh token also on a second sign-in.
+      prompt: 'consent',
+      include_granted_scopes: 'true',
+      state,
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+    }).toString()
+    return { ok: true, url: url.toString() }
+  }
+
+  /**
+   * Takes the code from the address the browser ended on, and keeps the refresh token Google gives
+   * for it. A refusal names its reason; only an unreachable Google is worth trying again, with the
+   * same address (the code is only used up once Google answered).
+   */
+  async finish(redirected: string): Promise<{ ok: true; signedIn: SignedIn } | SignInRefusal> {
+    const refuse = (code: SignInRefusal['code'], reason: string): SignInRefusal => ({ ok: false, code, reason, retryable: code === 'google_unreachable' })
+    let url: URL
+    try {
+      url = new URL(redirected.trim())
+    } catch {
+      return refuse('bad_address', 'Paste the whole address from the browser, starting with http://127.0.0.1')
+    }
+    if (url.searchParams.get('error')) return refuse('refused_by_google', `Google said: ${url.searchParams.get('error')}`)
+    const state = url.searchParams.get('state') ?? ''
+    const code = url.searchParams.get('code')
+    const pending = this.pending.get(state)
+    if (!pending || !code) return refuse('unknown_sign_in', 'This address belongs to no sign-in started here (or it is older than 15 minutes): start again')
+    const client = await this.client()
+    if (!client) return refuse('no_client', 'The Google OAuth client is gone')
+    let tokenAnswer: { status: number; body: { refresh_token?: string; access_token?: string; scope?: string; error_description?: string } | null }
+    try {
+      const response = await fetch(client.token_uri, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ code, client_id: client.client_id, client_secret: client.client_secret, redirect_uri: REDIRECT, grant_type: 'authorization_code', code_verifier: pending.verifier }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      tokenAnswer = { status: response.status, body: await response.json().catch(() => null) }
+    } catch {
+      return refuse('google_unreachable', 'Google cannot be reached right now: try Finish again in a moment')
+    }
+    if (tokenAnswer.status >= 500) return refuse('google_unreachable', 'Google cannot answer right now: try Finish again in a moment')
+    // Google has seen the code: it is used up, whatever the answer.
+    this.pending.delete(state)
+    if (tokenAnswer.status !== 200 || !tokenAnswer.body?.refresh_token || !tokenAnswer.body.access_token) {
+      return refuse('token_refused', `Google gave no sign-in for it${tokenAnswer.body?.error_description ? `: ${tokenAnswer.body.error_description}` : ''}`)
+    }
+    const granted = (tokenAnswer.body.scope ?? '').split(' ')
+    const missing = pending.scopes.filter((s) => !granted.includes(s))
+    if (missing.length > 0) return refuse('scopes_missing', `The sign-in lacks ${missing.map((s) => s.split('/').pop()).join(', ')}: tick every box on Google's page`)
+    let profile: { emailAddress?: string } | null
+    try {
+      const response = await fetch(`${this.options.gmailApi ?? 'https://gmail.googleapis.com'}/gmail/v1/users/me/profile`, { headers: { authorization: `Bearer ${tokenAnswer.body.access_token}` }, signal: AbortSignal.timeout(30_000) })
+      profile = response.ok ? await response.json() as { emailAddress?: string } : null
+    } catch {
+      profile = null
+    }
+    if (!profile?.emailAddress) return refuse('no_mailbox', 'Signed in, but Gmail did not name the mailbox: start again')
+    // Named by chance, not by the mailbox: the name shows up in listings and logs.
+    const tokenFile = path.join(this.options.dir, `${randomBytes(8).toString('hex')}.token.json`)
+    await writeOwnerOnly(tokenFile, `${JSON.stringify({ refresh_token: tokenAnswer.body.refresh_token })}\n`)
+    return { ok: true, signedIn: { address: profile.emailAddress, credentialsFile: this.clientFile, tokenFile } }
+  }
+}

@@ -6,7 +6,8 @@
 import { useCallback, useState } from 'react';
 import { FolderOpen, X } from 'lucide-react';
 
-import { Button } from '@/shared/view/ui';
+import { cn } from '@/lib/utils';
+import { Button, Dialog, DialogContent, DialogTitle, HUE } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import type { Project } from '@/types/app';
 
@@ -58,48 +59,45 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="flex w-full max-w-lg flex-col rounded-lg border border-border bg-card shadow-xl">
+    // Escape closes it, a click beside it does not: that would throw away the typed path. Not while it saves.
+    <Dialog open onOpenChange={(open) => { if (!open && !isSaving) onClose(); }}>
+      <DialogContent aria-labelledby="link-folder-title" dismissOnOutsideClick={false} className="flex flex-col">
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
-              <FolderOpen className="h-4 w-4 text-foreground" />
+            <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
+              <FolderOpen aria-hidden className="size-4 text-foreground" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-foreground">{project.fullPath && !isCockpitFolder ? 'Change folder' : 'Link folder'}</h3>
-              <p className="text-xs text-muted-foreground">{project.displayName}</p>
+              <DialogTitle id="link-folder-title" className="not-sr-only text-title font-semibold text-foreground">{project.fullPath && !isCockpitFolder ? 'Change folder' : 'Link folder'}</DialogTitle>
+              <p className="text-ui text-muted-foreground">{project.displayName}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={isSaving} aria-label="Close">
+            <X aria-hidden />
+          </Button>
         </div>
 
         <div className="space-y-4 p-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Project folder</label>
+            <label className="text-ui font-medium text-foreground">Project folder</label>
             <FolderPathField
               value={folderPath}
               disabled={isSaving}
               onChange={setFolderPath}
               onKeyDown={submitOnEnter}
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-ui text-muted-foreground">
               Where Claude works: code, documents, notes — anything in this folder Claude can read and edit. Its CLAUDE.md and .claude/settings apply.
             </p>
             {isCockpitFolder && project.fullPath && (
-              <p className="text-xs text-muted-foreground">
-                Currently running in the cockpit folder <span className="font-mono">{project.fullPath}</span>. Files there stay where they are.
+              <p className="text-ui text-muted-foreground">
+                Currently running in the cockpit folder <span className="font-code">{project.fullPath}</span>. Files there stay where they are.
               </p>
             )}
           </div>
 
           {error && (
-            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">{error}</div>
+            <div className={cn('rounded-lg border px-3 py-2 text-body', HUE.stopped.tint, HUE.stopped.edge, HUE.stopped.ink)}>{error}</div>
           )}
         </div>
 
@@ -111,7 +109,7 @@ export default function ProjectFolderDialog({ project, onClose, onSaved }: Proje
             Link folder
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

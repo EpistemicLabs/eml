@@ -29,7 +29,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
   }, [shown, defaultProvider]);
 
   if (!providers || !defaultProvider) {
-    return <p className="text-sm text-muted-foreground">{isError ? 'The cockpit host is not reachable.' : 'Checking…'}</p>;
+    return <p className="text-body text-muted-foreground">{isError ? 'The cockpit host is not reachable.' : 'Checking…'}</p>;
   }
 
   const current = providers.find((provider) => provider.id === shown) ?? defaultProvider;
@@ -52,7 +52,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
               disabled={setDefault.isPending}
             />
           </SettingsRow>
-          {setDefault.isError && <p className="px-4 pb-4 text-sm text-destructive">{setDefault.error.message}</p>}
+          {setDefault.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setDefault.error.message}</p>}
         </SettingsCard>
       </SettingsSection>
 
@@ -64,7 +64,7 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
             onChange={(id) => setShown(id as LLMProvider)}
             ariaLabel="Provider settings"
           />
-          <div className="space-y-8 rounded-xl rounded-tl-none border border-foreground/10 p-4">
+          <div className="space-y-8 rounded-xl rounded-tl-none border border-border bg-card p-4">
             {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
             {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
             {qwen && <QwenSettings qwen={qwen} />}

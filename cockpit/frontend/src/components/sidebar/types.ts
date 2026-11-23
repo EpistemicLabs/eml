@@ -1,65 +1,13 @@
-import type { ProjectsBySpace } from '@/hooks/useProjectsState';
-import type { Project, ProjectSession } from '@/types/app';
-
-/** Projects is the default; the overview (beta) is what needs the user, what is finished, and the rest. */
-export type SidebarViewMode = 'projects' | 'conversations' | 'overview';
-
-export type ProjectSortOrder = 'name' | 'date';
-
-/** The fixed props of the sidebar component. */
+/** The sidebar's props: the drawer comes separately (Sidebar). */
 export interface SidebarProps {
-  projects: Project[];
-  /** Every space's projects seen so far: what All spaces lists. */
-  projectsBySpace: ProjectsBySpace;
-  selectedProject: Project | null;
-  selectedSession: ProjectSession | null;
-  onProjectSelect: (project: Project) => void;
-  onSessionSelect: (session: ProjectSession) => void;
-  onNewSession: (project: Project) => void;
-  onSessionDelete?: (sessionId: string) => void;
-  onProjectDelete?: (projectId: string) => void;
-  isLoading: boolean;
-  onRefresh: () => Promise<void> | void;
-  onShowSettings: () => void;
-  onSetFolder: (project: Project) => void;
+  /** Settings, optionally open on one tab (the account row opens Account). */
+  onShowSettings: (tab?: string) => void;
 }
 
 /** The compact layout's sidebar: a drawer the page opens and closes. */
 export interface SidebarDrawer {
   open: boolean;
   onClose: () => void;
-}
-
-export interface PendingProjectDelete {
-  project: Project;
-  sessionCount: number;
-}
-
-export interface PendingSessionDelete {
-  projectId: string;
-  sessionId: string;
-  title: string;
-}
-
-export interface RenameState {
-  id: string;
-  draft: string;
-}
-
-export interface ProjectGroups {
-  pinned: Project[];
-  brain: Project[];
-  folder: Project[];
-}
-
-export interface ConversationEntry {
-  project: Project;
-  session: ProjectSession;
-}
-
-export interface ConversationGroup {
-  label: 'Pinned' | 'Today' | 'Yesterday' | 'Last 7 days' | 'Older';
-  entries: ConversationEntry[];
 }
 
 export interface SidebarError {

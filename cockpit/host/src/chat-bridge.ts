@@ -13,11 +13,13 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { baseAgentEnv, type SessionState } from './pty-bridge.js'
 import { sessionAddress } from './session-address.js'
 import { readPastedImage } from './paste-images.js'
-import type { SpawnRequest } from './domain/spawn-request.js'
+import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { greetingFor } from './session-greeting.js'
+import { toolLabel } from './domain/tool-label.js'
 
 /**
  * Chat view ↔ session runtime, beside pty-bridge.ts for the terminal: one running
@@ -31,6 +33,7 @@ import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, ty
  *   client → { type:'send', text, id? }              (`id`: the one the view already shows it under)
  *   client → { type:'interrupt' }
  *   client → { type:'answer', requestId, answer }
+ *   client → { type:'restart', unlimited?, forJob? } (a new process for the same conversation; `unlimited`: the user lifts its limits first)
  *   client → { type:'tool_servers' }
  *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
  *   client → { type:'set_mode', mode }
@@ -38,6 +41,7 @@ import { attentionAfterTurn, missingSummary, needsAnswer, shouldAskForStatus, ty
  *   client → { type:'stop_agent', taskId }
  *   host   → { type:'terminal_busy', state }        (init with whenIdle refused: send it again later)
  *   host   → { type:'switching', reason }           (the handoff is under way)
+ *   host   → { type:'limits', deniedTools, mcpServers, job, liftable }  (what the session may not use; after joined and on change)
  *   host   → { type:'joined' }                      (the session takes messages from this socket now)
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
@@ -66,7 +70,7 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
 
-// Without this a session started by hand stays nameless: the greeting that used to ask has gone.
+// A session started by hand without the greeting (it is off, or the session predates it) names itself this way.
 const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
 
 const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your closing summary as visible text.'
@@ -76,6 +80,27 @@ const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what change
 const SUMMARY_REMINDER = `Your turn ends without a visible reply. Write your closing summary now, as text, not in thinking. ${SUMMARY_SHAPE}`
 const QUESTIONS_REMINDER = `You said you have a question, but your reply does not ask it. Write the questions as visible text, as a numbered list, each one answerable on its own. ${SUMMARY_SHAPE}`
 
+/** A session's limits as its views get them. */
+export interface SessionLimitsView {
+  deniedTools: string[]
+  /** The only MCP servers it gets besides the brain; null: all its space has. */
+  mcpServers: string[] | null
+  job: { id: string; name: string } | null
+  /** The user can lift them from the chat view. */
+  liftable: boolean
+}
+
+/** What the user lifting limits is told as: readable names for the conversation (`label`), the exact ones for the agent. */
+export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpServers'>, jobName: string | null, label: (tool: string) => string = (tool) => tool): string {
+  const parts = [
+    ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.map(label).join(', ')})`] : []),
+    ...(limits.mcpServers !== null ? ['the limit to some MCP servers'] : []),
+  ]
+  const forJob = jobName ? ` Future runs of the job "${jobName}" start without them too.` : ''
+  return `The user lifted this session's limits: ${parts.join(' and ')}. From this restart it may use all tools its space has.${forJob}`
+}
+
+export const RESTART_NOTICE = 'Restarted. MCP servers, settings and skills were loaded fresh.'
 const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for this session" grants from there do not carry over.'
 
 interface ChatEntry {
@@ -101,6 +126,12 @@ interface ChatEntry {
   /** The status said this turn, and the visible text written after it: the closing summary. */
   status: WorkerStatus | null
   textAfterStatus: string
+  /** Everything the agent wrote this turn: the task router reads the handoff at its end. */
+  turnText: string
+  /** A turn finished since the session last handed off (or started): there is something to hand off. */
+  worked: boolean
+  /** It was asked for its handoff before an idle stop: it stops once that turn is over. */
+  stopAfterTurn: boolean
   askedSummary: boolean
   /** The memory ceiling its process started with, and the kills at it already reported; null: none. */
   ceiling: { limits: SessionLimits; kills: number } | null
@@ -108,6 +139,8 @@ interface ChatEntry {
   ceilingNote: string | null
   /** The agent's process; null until it started. */
   pid: number | null
+  /** Limits the user lifted that the agent has not been told of yet: it goes with its next prompt. */
+  liftNote?: string | null
 }
 
 export interface ChatContext {
@@ -119,6 +152,16 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  /** A turn finished with this text: the task router reads its handoff (application/task-router.ts). */
+  turnDone?: (sessionId: string, text: string) => void
+  /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
+  answered?: (sessionId: string) => void
+  /**
+   * Before an idle stop: the prompt that asks this session for its handoff
+   * (application/session-task.ts), or null when it needs none. Asked once per
+   * stretch of work; the session stops when that turn is over.
+   */
+  handoffBeforeStop?: (sessionId: string) => string | null
   /** The session's process died on its own: whatever its turn state said no longer holds. */
   onExit?: (sessionId: string) => void
   /** Whether a terminal process holds this session: a read-only view can't take it from there. */
@@ -131,10 +174,20 @@ export interface ChatContext {
   limits?: () => { session: SessionLimits; idleMs: number }
   /** More sessions run than the cap allows (session-limits.ts). */
   overCap?: () => boolean
+  /** The job a session works for; `limited`: a channel job the user limited, whose limits are its own. */
+  jobOf?: (sessionId: string) => { id: string; name: string; limited: boolean } | null
+  /** The user lifted a job's limits for its future runs too. */
+  clearJobProfile?: (jobId: string) => void
+  /** The schedule tool's actions, for the session that calls it (application/jobs.ts); absent: no tool. */
+  jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
 }
 
 type ClientMessage = {
   id?: unknown
+  /** Settings › Preferences › Sessions: a plain new chat opens with the greeting (session-greeting.ts). */
+  greet?: unknown
+  /** A new chat started from the empty pane's launcher: its first message, sent once the session starts. */
+  prompt?: unknown
   readOnly?: unknown
   whenIdle?: unknown
   images?: unknown
@@ -153,6 +206,9 @@ type ClientMessage = {
   taskId?: unknown
   name?: unknown
   action?: unknown
+  /** restart: the user lifts the session's limits first; forJob: its job's future runs too. */
+  unlimited?: unknown
+  forJob?: unknown
 }
 
 function send(ws: WebSocket | null, message: Record<string, unknown>): void {
@@ -281,6 +337,14 @@ export class ChatBridge {
     for (const entry of [...this.entries.values()]) {
       this.reportCeilingKills(entry)
       if (!chatSessionShouldStop({ ...this.facts(entry, now), idleMs })) continue
+      if (entry.stopAfterTurn && entry.active) continue
+      const prompt = entry.worked && !entry.stopAfterTurn && !entry.closing ? this.ctx.handoffBeforeStop?.(entry.sessionId) ?? null : null
+      if (prompt) {
+        this.sendMessage(entry, prompt)
+        entry.worked = false
+        entry.stopAfterTurn = true
+        continue
+      }
       void this.end(entry.sessionId, IDLE_STOP)
       ended += 1
     }
@@ -372,7 +436,11 @@ export class ChatBridge {
           })
         } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
           this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
-        } else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
+        } else if (data.type === 'restart') {
+          if (data.unlimited === true) this.lift(entry, data.forJob === true)
+          void this.restart(entry).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
+        }
+        else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
         else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -431,11 +499,18 @@ export class ChatBridge {
     const after = typeof data.after === 'number' ? data.after : 0
     const epoch = typeof data.epoch === 'number' ? data.epoch : null
     const path = project.path
+    // As in the terminal: only a plain new session greets. One the ledger knows is a resume or a worker
+    // (spawned work is recorded before its view opens), and a chat never brings a first prompt of its own.
+    const isNew = !this.ctx.ledger.has(sessionId)
+    // A new chat from the launcher brings its first message (and model); a known session never does.
+    const prompt = isNew ? text(data.prompt).trim() || null : null
+    const model = isNew && SAFE_MODEL.test(text(data.model)) ? text(data.model) : null
+    const greeting = greetingFor({ resume: !isNew, initialPrompt: prompt, greet: data.greet === true, worker: false })
     const handoff = this.handoff()
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
-      readOnly,
+      readOnly, greeting, firstPrompt: prompt, model,
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -456,6 +531,12 @@ export class ChatBridge {
     after: number
     /** Show the conversation and start no process until it is used. */
     readOnly: boolean
+    /** A plain new chat's first prompt (session-greeting.ts): the session starts at once and sends it. */
+    greeting: string | null
+    /** A new chat's own first message (the launcher): sent like the greeting, which it replaces. */
+    firstPrompt: string | null
+    /** The model a new chat starts with. */
+    model: string | null
     onSwitch: () => void
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
@@ -476,7 +557,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -488,19 +569,29 @@ export class ChatBridge {
       for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.runtime)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
-    if (opts.readOnly) {
+    const first = resume ? null : opts.firstPrompt ?? opts.greeting
+    if (first) {
+      if (opts.model) {
+        this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, first === opts.greeting)
+        this.ctx.ledger.setChatSettings(sessionId, { model: opts.model })
+      }
+      this.startEntry(entry, provider, space, paneId, false, first === opts.greeting)
+      this.sendMessage(entry, first)
+    } else if (opts.readOnly) {
       if (!entry.runtime) this.emit(entry, { kind: 'process', state: 'stopped' })
     } else this.startEntry(entry, provider, space, paneId, resume)
+    send(ws, { type: 'limits', ...this.limitsOf(entry.sessionId) })
     send(ws, { type: 'joined' })
   }
 
   /** The session gets its process here, once someone uses it. */
-  private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean): void {
+  private startEntry(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, paneId: string | null, resume: boolean, greeted = false): void {
     // A message can arrive while the view still loads, and it starts the session first.
     if (entry.runtime) return
     const { sessionId, projectId, projectPath } = entry
     provider.trustProject(projectPath, sessionSpaceOf(space))
-    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey)
+    // greeted: the title and summary logic skip the greeting as a first prompt, as in the terminal.
+    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, greeted)
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
     // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
     const stored = this.ctx.ledger.get(sessionId)
@@ -509,6 +600,65 @@ export class ChatBridge {
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
+  }
+
+  /** What the session may not use, as its views show it: from the ledger, so what holds at its next start. */
+  private limitsOf(sessionId: string): SessionLimitsView {
+    const profile = this.ctx.ledger.get(sessionId)?.toolProfile ?? null
+    const job = this.ctx.jobOf?.(sessionId) ?? null
+    const deniedTools = profile?.deniedTools ?? []
+    const mcpServers = profile?.mcpServers ?? null
+    return {
+      deniedTools, mcpServers,
+      job: job ? { id: job.id, name: job.name } : null,
+      // A limited channel job's limits are worked out at each start; the user lends it tools in the Jobs view.
+      liftable: (deniedTools.length > 0 || mcpServers !== null) && !job?.limited,
+    }
+  }
+
+  /**
+   * The user lifts the session's limits, and with forJob those of its job's future runs. Only the
+   * page asks for it, over this socket; no agent tool reaches it. The restart that follows applies it.
+   */
+  private lift(entry: ChatEntry, forJob: boolean): void {
+    const limits = this.limitsOf(entry.sessionId)
+    if (!limits.liftable) throw new Error('This session has no limits that can be lifted here.')
+    this.ctx.ledger.clearToolProfile(entry.sessionId)
+    const job = forJob && limits.job && this.ctx.clearJobProfile ? limits.job : null
+    if (job) this.ctx.clearJobProfile!(job.id)
+    entry.liftNote = liftNotice(limits, job?.name ?? null)
+    this.emit(entry, { kind: 'notice', text: liftNotice(limits, job?.name ?? null, toolLabel) })
+    this.log(`limits of ${entry.sessionId} lifted by the user${job ? `, and of job ${job.id}` : ''}`)
+    const frame = { type: 'limits', ...this.limitsOf(entry.sessionId) }
+    for (const ws of entry.clients) send(ws, frame)
+  }
+
+  /**
+   * A new process for the same conversation, the views staying on it: a running turn is
+   * stopped first, then it resumes under the same id and reads its MCP servers, settings and
+   * skills fresh. What it may use stays as it started (the ledger's tool profile).
+   */
+  private async restart(entry: ChatEntry): Promise<void> {
+    if (entry.closing) return
+    const runtime = entry.runtime
+    if (runtime) {
+      // Closing for the moment: a message now is refused rather than lost with the old process.
+      entry.closing = true
+      try {
+        if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
+        await runtime.close()
+      } finally {
+        entry.runtime = null
+        entry.closing = false
+      }
+      this.ctx.memory?.release(entry.sessionId)
+      this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
+    }
+    // Ended or deleted meanwhile: nothing to bring back.
+    if (entry.closed || this.entries.get(entry.sessionId) !== entry) return
+    this.emit(entry, { kind: 'notice', text: RESTART_NOTICE })
+    this.ensureStarted(entry)
+    this.log(`restarted chat session ${entry.sessionId}`)
   }
 
   /** A read-only view is being used, or a crash left the entry without a process: the conversation goes on. */
@@ -544,20 +694,21 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
       try {
         provider.trustProject(path, sessionSpaceOf(space))
         // Started by hand it is the user's own session, in the mode they use: only a session's worker runs unattended.
-        const worker = request.fromSessionId !== null
-        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, null, space.ledgerKey)
+        const worker = unattended(request)
+        this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, request.taskId ?? null, space.ledgerKey)
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
         if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
+        if (request.jobId) this.ctx.ledger.setJobId(sessionId, request.jobId)
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted.
         this.ctx.onTurn(sessionId, 'working')
@@ -596,7 +747,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -643,9 +794,11 @@ export class ChatBridge {
       cwd: projectPath, env, address,
       files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
       strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
-      ...(space.runtime?.chrome && !launch.limits?.mcpConfig ? { chrome: true } : {}),
+      // The provider decides: a runtime's own browser control, or Chrome lent to a limited job.
+      ...(launch.chrome ? { chrome: true } : {}),
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
+      ...(this.ctx.jobs ? { jobs: (input: Record<string, unknown>) => this.ctx.jobs!(entry.sessionId, input) } : {}),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
       onSpawn: (pid) => { entry.pid = pid; this.placeInCeiling(entry, pid) },
     })
@@ -664,18 +817,21 @@ export class ChatBridge {
     return {
       onPrompt: () => {
         const stored = this.ctx.ledger.get(entry.sessionId)
-        const name = stored && !stored.worker && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+        // A greeted session was already told to name itself once the user's reply shows the topic.
+        const name = stored && !stored.worker && !stored.greeted && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
         // The agent saw a tool die (exit 137) without a reason: this is the reason.
         const ceiling = entry.ceilingNote ? `The cockpit: ${entry.ceilingNote}` : null
         entry.ceilingNote = null
-        return [ceiling, name].filter(Boolean).join('\n\n') || null
+        const lifted = entry.liftNote ? `The cockpit: ${entry.liftNote}` : null
+        entry.liftNote = null
+        return [ceiling, lifted, name].filter(Boolean).join('\n\n') || null
       },
       report: (status, reason) => {
         entry.declared = true
         entry.status = status
         entry.textAfterStatus = ''
+        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
-        if (needsAnswer(status)) this.ctx.onTurn(entry.sessionId, 'waiting')
       },
       onTurnEnding: () => {
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
@@ -719,6 +875,7 @@ export class ChatBridge {
         break
       case 'text':
         if (entry.status) entry.textAfterStatus += event.text
+        entry.turnText += event.text
         break
       case 'turn_end': {
         entry.active = false
@@ -730,10 +887,19 @@ export class ChatBridge {
         })
         if (attention) {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
-          if (needsAnswer(attention)) this.ctx.onTurn(entry.sessionId, 'waiting')
         }
         // An interrupted turn left nothing to look at, and a host going down is not its end.
-        if (!entry.closing && event.reason !== 'interrupted') this.ctx.ledger.setResult(entry.sessionId, true)
+        if (!entry.closing && event.reason !== 'interrupted') {
+          this.ctx.ledger.setResult(entry.sessionId, true)
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText)
+          if (!entry.stopAfterTurn) entry.worked = true
+        }
+        entry.turnText = ''
+        // Its handoff before an idle stop is written: now it stops.
+        if (entry.stopAfterTurn && !entry.closing) {
+          entry.stopAfterTurn = false
+          void this.end(entry.sessionId, IDLE_STOP)
+        }
         break
       }
       case 'runtime_exit':
@@ -768,6 +934,8 @@ export class ChatBridge {
 
   private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = [], clientId = ''): void {
     if (!message.trim() && imageNames.length === 0) return
+    // Someone wrote to it: an idle stop it was about to make is off.
+    entry.stopAfterTurn = false
     if (entry.closing) throw new Error('This session is closing. Send that again in a moment.')
     // First: an image that can't be read must not leave half a message behind.
     const images = imageNames.map(readPastedImage)
@@ -784,6 +952,8 @@ export class ChatBridge {
     entry.status = null
     entry.textAfterStatus = ''
     entry.askedSummary = false
+    const asked = this.ctx.ledger.get(entry.sessionId)
+    if (asked?.attention || asked?.taskId) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)
@@ -830,6 +1000,7 @@ export class ChatBridge {
     const from = epoch === current ? after : 0
     if (epoch !== current) send(ws, { type: 'reset', epoch: current })
     for (const stored of this.ctx.events.after(entry.sessionId, from)) send(ws, { type: 'event', seq: stored.seq, event: stored.event })
+    send(ws, { type: 'limits', ...this.limitsOf(entry.sessionId) })
     send(ws, { type: 'joined' })
   }
 

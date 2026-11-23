@@ -41,4 +41,6 @@ export type MainContentProps = {
 
 export type MainContentStateViewProps = {
   mode: 'loading' | 'empty';
+  /** The empty pane the launcher starts a session in. */
+  paneId?: string;
 };

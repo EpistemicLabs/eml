@@ -1,9 +1,10 @@
 // The session's MCP servers: what is there, on/off, reconnect. Signing in stays
 // in the terminal's /mcp: the SDK has no call for it.
 import { useEffect, useRef, type ReactNode } from 'react';
-import { AlertTriangle, Check, CircleOff, Loader2, Power, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Check, CircleOff, Loader2, Power, RefreshCw, RotateCcw, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { Chip, FOCUS } from '@/shared/view/ui';
 import Tooltip from '@/shared/view/ui/Tooltip';
 
 import type { ToolServer } from './chat-state';
@@ -12,7 +13,7 @@ import type { ToolServerAction } from './useChatSocket';
 // Servers connect in the background, and the host pushes nothing about it.
 const PENDING_POLL_MS = 2_000;
 
-const COLUMNS = 'grid grid-cols-[minmax(0,1fr)_8.5rem_5.5rem] items-center gap-x-3';
+const COLUMNS = 'grid grid-cols-(--grid-tool-servers) items-center gap-x-3';
 
 const TRANSPORT: Record<NonNullable<ToolServer['transport']>, string> = { web: 'Web', process: 'Process' };
 
@@ -22,16 +23,16 @@ export function shouldPoll(servers: ToolServer[] | null): boolean {
 }
 
 function statusOf(server: ToolServer): { label: string; icon: ReactNode } {
-  const size = 'h-3.5 w-3.5';
+  const size = 'size-3.5';
   switch (server.status) {
     case 'connected':
       return { label: `Connected, ${server.toolCount} tools`, icon: <Check className={size} /> };
     case 'pending':
       return { label: 'Connecting', icon: <Loader2 className={cn(size, 'animate-spin text-muted-foreground')} /> };
     case 'needs-auth':
-      return { label: 'Needs sign-in', icon: <AlertTriangle className={cn(size, 'text-warning')} /> };
+      return { label: 'Needs sign-in', icon: <AlertTriangle className={cn(size, 'text-you-ink')} /> };
     case 'failed':
-      return { label: 'Failed', icon: <AlertTriangle className={cn(size, 'text-destructive')} /> };
+      return { label: 'Failed', icon: <AlertTriangle className={cn(size, 'text-stopped-ink')} /> };
     case 'disabled':
       return { label: 'Off', icon: <CircleOff className={cn(size, 'text-muted-foreground')} /> };
   }
@@ -44,7 +45,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
         type="button"
         aria-label={label}
         onClick={onClick}
-        className="flex min-h-11 min-w-11 items-center justify-center rounded text-muted-foreground hover:bg-foreground/5 hover:text-foreground md:h-6 md:min-h-0 md:w-6 md:min-w-0"
+        className={cn('flex min-h-(--target-touch) min-w-(--target-touch) items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground md:size-(--target-min) md:min-h-0 md:min-w-0', FOCUS)}
       >
         {children}
       </button>
@@ -52,11 +53,13 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
+export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, onClose }: {
   servers: ToolServer[] | null;
   error: string | null;
   onAsk: () => boolean;
   onChange: (name: string, action: ToolServerAction) => boolean;
+  /** A new process for the session: it reads its servers from the configuration again. */
+  onRestart: () => void;
   onClose: () => void;
 }) {
   const ask = useRef(onAsk);
@@ -71,12 +74,15 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
 
   const needsSignIn = servers?.some((server) => server.status === 'needs-auth');
   return (
-    <div className="max-h-72 overflow-auto rounded-md border border-border bg-card p-2 text-xs">
+    <div className="max-h-72 overflow-auto rounded-xl border border-border bg-card p-2 text-ui">
       <div className="flex items-center justify-between pb-1">
-        <span className="font-medium">MCP servers</span>
-        <IconButton label="Close MCP servers" onClick={onClose}><X className="h-3.5 w-3.5" /></IconButton>
+        <span className="font-semibold">MCP servers</span>
+        <span className="flex items-center gap-0.5">
+          <IconButton label="Restart session: loads new or changed servers" onClick={onRestart}><RotateCcw aria-hidden className="size-3.5" /></IconButton>
+          <IconButton label="Close MCP servers" onClick={onClose}><X aria-hidden className="size-3.5" /></IconButton>
+        </span>
       </div>
-      {error && <div role="alert" className="pb-1 text-destructive break-words">{error}</div>}
+      {error && <div role="alert" className="pb-1 text-stopped-ink break-words">{error}</div>}
       {servers === null && <div className="text-muted-foreground">Loading…</div>}
       {servers?.length === 0 && !error && <div className="text-muted-foreground">No servers in this session.</div>}
       {servers && servers.length > 0 && (
@@ -90,29 +96,29 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onClose }: {
         const status = statusOf(server);
         const off = server.status === 'disabled';
         return (
-          <div key={server.name} className="border-b border-border/50 py-0.5 last:border-b-0">
+          <div key={server.name} className="border-b border-border py-0.5 last:border-b-0">
             <div className={COLUMNS}>
               {/* Plain text: names come from configuration. */}
               <span className="truncate" title={server.name}>{server.name}</span>
               <span className="flex items-center gap-1 text-muted-foreground">
                 {server.transport ? TRANSPORT[server.transport] : ''}
-                {server.scope && <span className="rounded-full border border-border px-1.5 text-[10px] leading-4">{server.scope}</span>}
+                {server.scope && <Chip>{server.scope}</Chip>}
               </span>
               <span className="flex items-center gap-0.5">
                 <Tooltip content={status.label} position="top">
-                  <span role="img" aria-label={status.label} className="flex h-6 w-6 items-center justify-center">{status.icon}</span>
+                  <span role="img" aria-label={status.label} className="flex size-(--target-min) items-center justify-center">{status.icon}</span>
                 </Tooltip>
                 {!off && (
                   <IconButton label={`Reconnect ${server.name}`} onClick={() => onChange(server.name, 'reconnect')}>
-                    <RefreshCw className="h-3.5 w-3.5" />
+                    <RefreshCw aria-hidden className="size-3.5" />
                   </IconButton>
                 )}
                 <IconButton label={`Turn ${server.name} ${off ? 'on' : 'off'} (all sessions in this project)`} onClick={() => onChange(server.name, off ? 'enable' : 'disable')}>
-                  <Power className="h-3.5 w-3.5" />
+                  <Power aria-hidden className="size-3.5" />
                 </IconButton>
               </span>
             </div>
-            {server.error && <div className="text-destructive break-words">{server.error}</div>}
+            {server.error && <div className="text-stopped-ink break-words">{server.error}</div>}
           </div>
         );
       })}

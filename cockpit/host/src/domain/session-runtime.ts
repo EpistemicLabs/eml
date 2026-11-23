@@ -196,6 +196,8 @@ export interface SessionRuntimeStart {
     /** Its turn is about to end: what to tell it instead of letting it stop; null lets it stop. */
     onTurnEnding(): string | null
   }
+  /** The schedule tool's actions for this session (application/jobs.ts); the answer is what the agent reads. */
+  jobs?: (input: Record<string, unknown>) => Promise<string>
 }
 
 export interface SessionRuntimeFactory {

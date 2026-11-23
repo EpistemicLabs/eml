@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
+import { readSettings } from '@/components/settings/utils/settingsStorage';
+import { clearChatStart, peekChatStart, rememberModels } from './chat-start';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setTerminalBusy, setToolServers, showSentMessage } from './chat-store';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
@@ -32,7 +34,15 @@ async function mintNonce(): Promise<string | null> {
 // How often a view waiting for the terminal asks again.
 const BUSY_RETRY_MS = 3_000;
 
-/** `spaceId` for a view outside the desks (the review screen); a pane's comes from its desk. */
+/** `spaceId` for a view outside the desks (the task panel); a pane's comes from its desk. */
+/** The open chat socket of each session shown in a pane: controls outside the chat pane (the pane header) send through it. */
+const senders = new Map<string, (frame: Record<string, unknown>) => boolean>();
+
+/** The user lifts the session's limits and it restarts; forJob: its job's future runs too. False when no chat view of it is open. */
+export function liftLimits(sessionId: string, forJob: boolean): boolean {
+  return senders.get(sessionId)?.({ type: 'restart', unlimited: true, forJob }) ?? false;
+}
+
 export function useChatSocket(paneId: string, projectId: string, sessionId: string, whenIdle = false, spaceId?: string | null) {
   const sendInitRef = useRef<((wait: boolean) => void) | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -68,8 +78,14 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       const sendInit = (wait: boolean) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         const space = spaceId !== undefined ? spaceId : paneStore.getDeskOfPane(paneId)?.spaceId ?? null;
+        const start = peekChatStart(sessionId);
         socket.send(JSON.stringify({
           type: 'init', paneId, projectId, sessionId, spaceId: space, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
+          // Settings › Preferences › Sessions; the host greets only a plain new chat, as in the terminal.
+          greet: readSettings().greetOnStart,
+          // A chat started from the launcher: its first message and model (the host ignores them for a known session).
+          ...(start?.prompt ? { prompt: start.prompt } : {}),
+          ...(start?.model ? { model: start.model } : {}),
         }));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
@@ -82,9 +98,10 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null };
+        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null } & Partial<SessionLimits>;
         if (frame.type === 'joined') {
           joinedRef.current = true;
+          clearChatStart(sessionId);
           for (const waiting of waitingRef.current.splice(0)) socket.send(JSON.stringify(waiting));
           return;
         }
@@ -97,12 +114,14 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
+          if (frame.event.kind === 'capabilities') rememberModels(frame.event.models);
         } else if (frame.type === 'reset' && typeof frame.epoch === 'number') {
           resetChat(sessionId, frame.epoch);
           for (const waiting of waitingRef.current) if (waiting.type === 'send') showSentMessage(sessionId, waiting.id as string, waiting.text as string);
         }
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
         else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
+        else if (frame.type === 'limits') setLimits(sessionId, { deniedTools: frame.deniedTools ?? [], mcpServers: frame.mcpServers ?? null, job: frame.job ?? null, liftable: frame.liftable === true });
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
       socket.onclose = (event) => {
@@ -142,6 +161,11 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     return true;
   }, []);
 
+  useEffect(() => {
+    senders.set(sessionId, sendFrame);
+    return () => { if (senders.get(sessionId) === sendFrame) senders.delete(sessionId); };
+  }, [sessionId, sendFrame]);
+
   return {
     send: useCallback((text: string, images: string[] = []) => {
       const id = `sent-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -159,6 +183,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
     setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
+    restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
     takeOver: useCallback(() => sendInitRef.current?.(false), []),

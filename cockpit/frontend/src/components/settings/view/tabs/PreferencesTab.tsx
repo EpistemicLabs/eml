@@ -2,39 +2,33 @@
 // (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
 import { useSyncExternalStore } from 'react';
 
-import { ThemeModeSelector } from '@/shared/view/ui';
+import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';
+import { setTasksCardPlace, setTasksCardShown, useTasksCard } from '@/stores/useTasksCardStore';
 import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
-import SettingsToggle from '../SettingsToggle';
 import NotificationsSection from './NotificationsSection';
 import SessionLimitsRows from './SessionLimitsRows';
 
 type PreferencesTabProps = {
   projectSortOrder: ProjectSortOrder;
   onProjectSortOrderChange: (value: ProjectSortOrder) => void;
-  notifyOnDone: boolean;
-  onNotifyOnDoneChange: (value: boolean) => void;
   greetOnStart: boolean;
   onGreetOnStartChange: (value: boolean) => void;
 };
 
 // Apple-style inline select — bg-transparent so it sits ON the form-card
 // surface instead of lifting off as a third visual layer.
-const inlineSelectClass =
-  'rounded-md border border-foreground/8 bg-transparent p-2 text-sm text-foreground focus:border-foreground/40 focus:outline-none';
-
 export default function PreferencesTab({
   projectSortOrder,
   onProjectSortOrderChange,
-  notifyOnDone,
-  onNotifyOnDoneChange,
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
   const chatOverride = useSyncExternalStore(subscribeSettings, () => readSettings().chatOverride);
+  const tasksCard = useTasksCard();
   return (
     <div className="space-y-8">
       <SettingsSection title="Appearance">
@@ -52,16 +46,35 @@ export default function PreferencesTab({
         <SettingsCard divided>
           <SettingsRow
             label="Project sorting"
-            description="How projects are ordered in the sidebar"
+            description="How projects are ordered in Plan"
           >
-            <select
+            <Select
               value={projectSortOrder}
               onChange={(event) => onProjectSortOrderChange(event.target.value as ProjectSortOrder)}
-              className={`${inlineSelectClass} w-36`}
+              className="w-36"
             >
               <option value="name">Alphabetical</option>
               <option value="date">Recent Activity</option>
-            </select>
+            </Select>
+          </SettingsRow>
+          <SettingsRow
+            label="Tasks card"
+            description="The task trees of the sessions on a desk. G then T shows or hides it (⌘T in the installed app)."
+          >
+            <Select
+              value={tasksCard.shown ? tasksCard.place : 'hidden'}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === 'hidden') setTasksCardShown(false);
+                else setTasksCardPlace(value === 'right' ? 'right' : 'left');
+              }}
+              className="w-36"
+              aria-label="Tasks card"
+            >
+              <option value="left">Next to the sidebar</option>
+              <option value="right">Right of the desk</option>
+              <option value="hidden">Hidden</option>
+            </Select>
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
@@ -72,7 +85,7 @@ export default function PreferencesTab({
             label="Greeting at session start"
             description="A new session opens with a short greeting and where the project stands. Sessions started with their own task stay as they are."
           >
-            <SettingsToggle
+            <Switch
               checked={greetOnStart}
               onChange={onGreetOnStartChange}
               ariaLabel="Greeting at session start"
@@ -82,22 +95,22 @@ export default function PreferencesTab({
             label="Open sessions in"
             description='Where Claude sessions open in this browser, unless you picked the view for that session. "As the cockpit" follows Settings › Models › Chat view. A turn running in the terminal is not interrupted.'
           >
-            <select
+            <Select
               value={chatOverride === undefined ? 'cockpit' : chatOverride ? 'chat' : 'terminal'}
               onChange={(event) => writeSettings({ chatOverride: event.target.value === 'cockpit' ? null : event.target.value === 'chat' })}
-              className={`${inlineSelectClass} w-36`}
+              className="w-36"
               aria-label="Open sessions in"
             >
               <option value="cockpit">As the cockpit</option>
               <option value="chat">Chat</option>
               <option value="terminal">Terminal</option>
-            </select>
+            </Select>
           </SettingsRow>
           <SessionLimitsRows />
         </SettingsCard>
       </SettingsSection>
 
-      <NotificationsSection notifyOnDone={notifyOnDone} onNotifyOnDoneChange={onNotifyOnDoneChange} />
+      <NotificationsSection />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 // The chat view's state as a pure fold over the host's events
 // (host domain/session-runtime.ts). One source: a view is rebuilt from the log,
 // never merged with anything else.
+import { SORT_PICKS, type SortRow, type SplitRelation } from '@/lib/split';
 
 export type ToolStatus = 'running' | 'completed' | 'failed' | 'launched' | 'interrupted';
 export type ToolKind = 'read' | 'edit' | 'execute' | 'search' | 'fetch' | 'agent' | 'other';
@@ -349,7 +350,62 @@ export type RenderGroup =
   | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' | 'thinking' }> }
   | { kind: 'tools'; id: string; tools: FoldedItem[] }
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
-  | { kind: 'status'; id: string; status: string; reason: string | null };
+  | { kind: 'status'; id: string; status: string; reason: string | null }
+  | { kind: 'offer'; id: string; offer: SplitOffer }
+  | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string }
+  | { kind: 'created'; id: string; taskId: string; title: string };
+
+/** A task the agent created (the brain's eml_create_task, once it answered): shown as a bar with Undo, not folded away. */
+export function createdTaskOfTool(item: Extract<ChatItem, { type: 'tool' }>): { taskId: string; title: string } | null {
+  if (!/(^|__)eml_create_task$/.test(item.name) || item.status !== 'completed') return null;
+  const id = /"id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/.exec(item.output)?.[1];
+  if (!id) return null;
+  return { taskId: id, title: typeof item.input.title === 'string' && item.input.title ? item.input.title : id };
+}
+
+/** One topic of a sort the agent proposed (the cockpit's propose_sort tool). */
+export type SortProposal = SortRow;
+
+const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+/** The agent proposed sorting this session: shown as a card, its rows read tolerantly. */
+export function sortOfTool(item: Extract<ChatItem, { type: 'tool' }>): { rows: SortProposal[]; reason: string } | null {
+  if (!/(^|__)propose_sort$/.test(item.name) || !Array.isArray(item.input.rows)) return null;
+  const rows = (item.input.rows as Array<Record<string, unknown>>).flatMap((r): SortProposal[] => {
+    const topic = text(r?.topic);
+    if (!topic) return [];
+    const pick = SORT_PICKS.find((p) => p === r.pick) ?? 'keep';
+    return [{ topic, pick, ...(text(r.when) ? { when: text(r.when) } : {}), ...(text(r.summary) ? { summary: text(r.summary) } : {}), ...(text(r.today) ? { today: text(r.today) } : {}), ...(text(r.taskId) ? { taskId: text(r.taskId) } : {}), ...(text(r.brief) ? { brief: text(r.brief) } : {}) }];
+  });
+  return rows.length > 0 ? { rows, reason: text(item.input.reason) ?? '' } : null;
+}
+
+/** A split the agent offered (the cockpit's offer_split tool): its draft for the split dialog. */
+export interface SplitOffer {
+  title: string;
+  relation: SplitRelation;
+  /** A project id or name, as the agent wrote it. */
+  project: string | null;
+  /** The open task the agent says the topic already has. */
+  task: string | null;
+  brief: string;
+  reason: string;
+}
+
+/** The agent offered to split a topic off: shown as a card with the choice, not folded away with the tools. */
+export function offerOfTool(item: Extract<ChatItem, { type: 'tool' }>): SplitOffer | null {
+  if (!/(^|__)offer_split$/.test(item.name)) return null;
+  const { title, relation, project, task, brief, reason } = item.input;
+  if (typeof title !== 'string' || typeof brief !== 'string') return null;
+  return {
+    title,
+    relation: relation === 'sub' || relation === 'unrelated' ? relation : 'spun',
+    project: typeof project === 'string' && project ? project : null,
+    task: typeof task === 'string' && task ? task : null,
+    brief,
+    reason: typeof reason === 'string' ? reason : '',
+  };
+}
 
 /** How a session said it stands (the cockpit's status tool): shown as a label, not folded away with the tools. */
 export function statusOfTool(item: Extract<ChatItem, { type: 'tool' }>): { status: string; reason: string | null } | null {
@@ -375,9 +431,21 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
       if (item.text) run.push(item);
     } else if (item.type === 'tool') {
       const said = statusOfTool(item);
+      const offer = offerOfTool(item);
+      const sort = sortOfTool(item);
+      const created = createdTaskOfTool(item);
       if (said) {
         flush();
         groups.push({ kind: 'status', id: item.id, ...said });
+      } else if (offer) {
+        flush();
+        groups.push({ kind: 'offer', id: item.id, offer });
+      } else if (sort) {
+        flush();
+        groups.push({ kind: 'sort', id: item.id, ...sort });
+      } else if (created) {
+        flush();
+        groups.push({ kind: 'created', id: item.id, ...created });
       } else if (item.toolKind === 'agent') {
         flush();
         groups.push({ kind: 'agent', tool: item });
@@ -539,6 +607,24 @@ export function stepHistory(count: number, index: number | null, step: -1 | 1): 
   const next = index + step;
   if (next < 0) return 0;
   return next >= count ? null : next;
+}
+
+/** What the chat sends the agent when the user keeps an offered topic here: it carries on and does not offer it again. */
+export const keepItHereMessage = (title: string) => `Keep it here: we stay on "${title}" in this chat.`;
+/** What the chat sends the agent when the user puts a proposed sort off: no new proposal before the next compaction. */
+export const SORT_LATER_MESSAGE = 'Later: no sort now.';
+
+/** Whether a sent message is one of the pane's own commands (PANE_COMMANDS), e.g. "/split". */
+export const isPaneCommand = (text: string, name: string) => text.trim() === `/${name}`;
+
+/** Commands the chat pane handles itself (ChatPane onSend), listed before the agent's own. */
+export const PANE_COMMANDS: CommandInfo[] = [
+  { name: 'split', description: 'Split the latest topic off into a task and a session of its own', argumentHint: '', aliases: [] },
+];
+
+/** The pane's commands and the agent's, each name once. */
+export function withPaneCommands(commands: CommandInfo[]): CommandInfo[] {
+  return [...PANE_COMMANDS, ...commands.filter((c) => !PANE_COMMANDS.some((p) => p.name === c.name))];
 }
 
 /** The commands a draft is asking for: only while it is a bare `/word`. Name matches first, in the list's order. */

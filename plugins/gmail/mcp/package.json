@@ -1,0 +1,19 @@
+{
+  "name": "@engramprotocol/plugin-gmail-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The gmail plugin's MCP part: mail and calendar tools for interactive sessions, on the user's Google sign-in",
+  "license": "AGPL-3.0-only",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@engramprotocol/plugin-gmail-channel": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

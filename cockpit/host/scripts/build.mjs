@@ -7,14 +7,18 @@
 //   dist/server.cjs   brain server + core       — esbuild, CJS, better-sqlite3 external
 //   dist/core.cjs     core (provisioning)       — esbuild, CJS, better-sqlite3 external
 //   dist/core-log.cjs core's op-log tools (move, verify) for the agent upgrade — esbuild, CJS
+//   dist/channel-bridge.cjs      channel bridge process  — esbuild, CJS, better-sqlite3 external
+//   dist/channel-bridge-mcp.cjs  a job's bridge tools    — esbuild, CJS
+//   dist/gmail-mcp.cjs           the gmail plugin's MCP part — esbuild, CJS
 //   ui/               frontend build            — copied from ../frontend/dist
 //   migrations/       brain + control SQL       — copied from packages/core/migrations
+//   plugins/<id>/plugin.json  official plugins' manifests — copied from the repo's plugins/
 //   THIRD_PARTY_LICENSES.md                     — notices for the code bundled into dist/ and ui/
 // The SQL files sit next to dist/ so core's `__dirname/../migrations` resolves the
 // same way inside the bundle as it does in the workspace checkout.
 import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,8 +31,10 @@ const pkgRoot = (name) => path.dirname(require.resolve(`${name}/package.json`))
 const server = pkgRoot('@engramprotocol/server')
 const core = pkgRoot('@engramprotocol/core')
 const frontend = pkgRoot('@engramprotocol/cockpit-frontend')
+const channelBridge = pkgRoot('@engramprotocol/channel-bridge')
+const gmailMcp = pkgRoot('@engramprotocol/plugin-gmail-mcp')
 
-for (const p of ['dist', 'ui', 'migrations', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
+for (const p of ['dist', 'ui', 'migrations', 'plugins', 'THIRD_PARTY_LICENSES.md']) rmSync(path.join(HOST, p), { recursive: true, force: true })
 
 const common = {
   bundle: true, platform: 'node', format: 'cjs', target: 'node20',
@@ -49,6 +55,9 @@ const bundles = [
     },
     outfile: path.join(HOST, 'dist', 'core-log.cjs'),
   }),
+  await build({ ...common, entryPoints: [path.join(channelBridge, 'dist', 'entrypoints', 'main.js')], outfile: path.join(HOST, 'dist', 'channel-bridge.cjs') }),
+  await build({ ...common, entryPoints: [path.join(channelBridge, 'dist', 'entrypoints', 'mcp-server.js')], outfile: path.join(HOST, 'dist', 'channel-bridge-mcp.cjs') }),
+  await build({ ...common, entryPoints: [path.join(gmailMcp, 'dist', 'main.js')], outfile: path.join(HOST, 'dist', 'gmail-mcp.cjs') }),
 ]
 // esbuild metafile inputs are relative to the working directory.
 const bundledFiles = bundles.flatMap((result) => Object.keys(result.metafile.inputs).map((input) => path.resolve(input)))
@@ -62,6 +71,12 @@ bundledFiles.push(...JSON.parse(readFileSync(UI_MODULES, 'utf8')))
 cpSync(uiDist, path.join(HOST, 'ui'), { recursive: true, filter: (src) => src !== UI_MODULES })
 const licensed = writeThirdPartyLicenses(bundledFiles, path.join(HOST, 'THIRD_PARTY_LICENSES.md'))
 cpSync(path.join(core, 'migrations'), path.join(HOST, 'migrations'), { recursive: true })
+// Only the manifests: a plugin's code parts are bundled where they run (the channel into dist/channel-bridge.cjs).
+const PLUGINS = path.resolve(HOST, '..', '..', 'plugins')
+for (const id of readdirSync(PLUGINS)) {
+  const manifest = path.join(PLUGINS, id, 'plugin.json')
+  if (existsSync(manifest)) cpSync(manifest, path.join(HOST, 'plugins', id, 'plugin.json'))
+}
 
 execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', path.join(HOST, 'tsconfig.json')], { stdio: 'inherit' })
-console.log(`eml-cockpit: dist/ ui/ migrations/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)
+console.log(`eml-cockpit: dist/ ui/ migrations/ plugins/ ready, THIRD_PARTY_LICENSES.md for ${licensed} packages`)

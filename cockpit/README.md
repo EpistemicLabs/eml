@@ -269,6 +269,54 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
   pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
+- **Jobs:** a session schedules work for later with the `schedule` tool (in the chat view's `cockpit` MCP server, next to
+  the status tool) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`): a repeating job (cron) or a one-time task (a date), read
+  in the user's time zone (the page tells the host its browser's zone). At the time the host wakes a fresh worker, the
+  job's own session, or a session that exists, with the job's prompt behind a line saying the cockpit sent it
+  (`domain/job.ts`, `application/job-runner.ts`). Jobs and their last 100 runs live in `<home>/jobs.json`, not in the
+  brain; a job runs in its maker's space with at most its maker's tools. Runs start a few at a time and only with room
+  (the worker check above); a busy target is tried again for up to an hour; a repeating run due more than 6 hours ago
+  (the cockpit was down) is recorded as missed, a one-time run still runs late; a run is skipped while the job's
+  previous one still works; three failures in a row pause the job. A schedule is one
+  trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs. It reaches the host at
+  `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
+  space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
+  decides which session that reaches and answers delivered, retry or refused.
+- **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
+  `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
+  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
+  `msg_reply` (`dist/channel-bridge-mcp.cjs`), no Bash and of its space's MCP servers only the brain
+  (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
+  skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
+  cockpit token in the host.
+- **Jobs view:** the header's **Jobs** shows every space's jobs with their next and last runs (a missed run stands
+  out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
+  run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
+  session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
+  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
+- **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
+  added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
+  subscribed device with the session's name, its project and what it said; a tap opens that session. While the user
+  works in the cockpit on a device (a click or key there within ten minutes), only that device is told and the phone
+  stays quiet. No push about a session someone has on screen, nor the same notice twice within two minutes. The host signs and encrypts each
+  message itself (`infrastructure/push/web-push.ts`, RFC 8291/8292, no library) and sends it to the browser's push
+  service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
+  devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in
+  `frontend/public/sw.js`.
+- **Goal and wake-ups:** a job carries the goal its agent set (`goal`); every run's first line states it and asks
+  the session to report done only once it is reached, and until then to set its next wake-up (`update` with `at`)
+  unless a repeating schedule continues it. `finish` ends a job whose goal is reached. Nothing wakes a job on its own
+  beyond its triggers.
+- **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
+  mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
+  clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
+  view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
+  channel tools act for that job on every resume.
+- **Limited jobs and grants:** every job starts with its maker's tools; the user can mark one **limited** (the Jobs
+  view's switch, the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
+  servers only the brain; web tools stay, and the schedule tool reaches only their own job (next wake-up, goal,
+  finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
+  ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
@@ -348,10 +396,66 @@ Pending reviews and the tab's amber badge read the brain's `review_due=true` lis
 
 A pane's views come in two groups (`lib/pane-views.ts`): the session's — Terminal, Chat — and the
 plugins, the project's views — Brain, Note, Worktrees, Repository — and Shell and Time. The tab bar and the "+" menus (pane and sidebar)
-show both groups. All six are the cockpit's own plugins, switched on or off
+show both groups. All six are official plugins with only a pane part, switched on or off
 for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/PATCH /api/plugins`,
-`host/src/plugins-api.ts`). Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
-the user set is kept. A plugin switched off leaves the menus, its routes answer 404 (Notes:
+`host/src/plugins-api.ts`), per space. Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
+the user set is kept.
+
+Every plugin has a manifest, `plugin.json` (`host/src/domain/plugin-manifest.ts`): id, name, tier and
+its parts — `pane` (a built-in view), `mcp` (an MCP server, stdio or http, whose settings may name a
+`secret` filled in from a connection) and `channel` (a channel bridge adapter by account type) — and
+whether it starts on. The official ones live in the repo's `plugins/<id>/` and ship with the package
+(the build copies the manifests to `host/plugins/`); Gmail is one, with a channel part. The user's own
+custom MCP servers live in `<home>/plugins/custom.json` (owner-only), added and removed on this machine
+only (`POST /api/plugins/custom`, `DELETE /api/plugins/custom/<id>`). The tier decides the parts
+(decision cockpit-plugin-isolation): official, custom and dev plugins may run servers, a community
+plugin is a pane only, and a custom one an MCP server only. `GET /api/plugins` shows an MCP part's
+settings by name only, never their values. `host/src/infrastructure/plugins/plugin-registry.ts` reads them.
+
+Settings › EML Plugins (`frontend/src/components/settings/view/tabs/PluginsTab.tsx`, `lib/plugins-admin.ts`)
+shows them in four views: Installed (tier, parts, sign-ins, spaces), Spaces (a switch per plugin and
+space, with the sign-in it uses), Connectors (the claude.ai connectors per space) and Add plugin
+(a custom MCP server by command or URL, its secret values stored as a sign-in of its own); a plugin
+opens on its own page with its parts, sign-ins, spaces and what its tier lets it do. Sign-ins and
+custom servers are managed on the cockpit's own machine only.
+
+**Gmail** (`plugins/gmail/`) has a channel part (the bridge's mailbox) and an MCP part (mail and
+calendar tools for the user's own sessions, `plugins/gmail/mcp`) on one Google sign-in. The cockpit
+signs in with the user's own OAuth "Desktop app" client (`host/src/infrastructure/plugins/google-sign-in.ts`,
+`<home>/plugins/google/`, owner-only): the client JSON once, then Google's consent page and the
+address the browser ended on pasted back — it needn't load, so this works over remote access too
+(`/api/plugins/google/*`). A space may use several Google accounts at once; each sign-in is its own
+MCP server (`gmail`, `gmail-<short name>`) and its own bridge account. An official plugin keeps its
+server names, so the gmail plugin's servers replace imported servers of the same name.
+
+**Per space** (`host/src/application/space-plugins.ts`, `<home>/plugins/spaces.json`): a plugin is on
+or off in each space, all or nothing; a part can be switched off for every space. A plugin with a
+sign-in uses one of the user's connections there (`<home>/plugins/connections.json`, owner-only:
+the values a plugin's `{ secret }` settings stand for, never sent to the page). From this the cockpit
+writes each space's session files whenever a switch changes (a running session keeps what it started
+with): `mcp.json` holds the brain and the MCP servers of its plugins under their server names, and
+`settings.json` lists the claude.ai connectors and Claude Code plugin servers switched off in it as
+`deniedMcpServers` (Claude Code honours a name there for a single connector; `--strict-mcp-config`
+would drop every connector, so a space without an agent runtime stays non-strict). An agent with a
+runtime of its own keeps `--strict-mcp-config` and gets its space's plugin servers in place of its
+`agent.json` list. Codex reads one `config.toml` for every space: each space's plugin servers are
+written there switched off, and a session switches on its own with `--config mcp_servers.<name>.enabled=true`.
+
+On a home's first boot with plugins the cockpit-wide switches of before carry over to every space,
+and the MCP servers configured outside the plugins are imported once
+(`host/src/infrastructure/plugins/mcp-import.ts`): the user-level servers of the cockpit's Claude
+config (`<home>/claude-config/.claude.json`) and each agent runtime's `mcp-servers.json` (as far as its
+`agent.json` lists them) become custom MCP plugins under their own server names, on in exactly the
+spaces that loaded them; their values go into connections. `.claude.json` is copied to
+`<home>/plugins/backups/` first and keeps only what couldn't be imported; agent files stay untouched.
+The channel bridge's accounts file (`<home>/channel-bridge/accounts.json`)
+is written by the cockpit from the channel plugins: one account per connection, listing every space
+with a job token where the plugin is on with it; a change restarts the bridge with it. A file
+written by hand before becomes the gmail plugin's connections on that first boot, each keeping its
+account id (the bridge's cursors and threads carry on), after a copy to `<home>/plugins/backups/`.
+`spaces.json` → `done` records each step, so it never runs twice. To undo it: copy the backup over
+`<home>/claude-config/.claude.json` (and the accounts backup over `<home>/channel-bridge/accounts.json`)
+and remove `<home>/plugins/` (that also resets the switches). A plugin switched off leaves the menus, its routes answer 404 (Notes:
 `/api/notes`), and a pane showing it moves to the first plugin still on, or to the terminal; what it
 holds stays — notes stay engrams. Brain off hides only the pane view: the header's Brain tab and the
 agents' brain stay. With every plugin off, the tab bar shows only the session's views.
@@ -464,6 +568,7 @@ the cockpit's own Claude Code; `claude-config/` =
 the app's `CLAUDE_CONFIG_DIR`, pre-seeded with onboarding/theme and per-project trust;
 `codex/` and `codex-config/` = the cockpit's own Codex CLI and its `CODEX_HOME`, once Codex is set up;
 `spawn-inbox/` = worker requests from sandboxed sessions, read and removed at once; `tasks/` = task-run files;
+`channel-bridge/` = the channel bridge's database, tokens, address and accounts file;
 `bin/node` = a link to the host's node for the session hooks (their text names it and `app/current/…`, so it survives updates);
 `projects.json` = the project registry; `sessions.json` = the session ledger; `config` = the
 brain tokens (the spaces' and the agents'), the human's handle and the spaces' agent bindings, chmod

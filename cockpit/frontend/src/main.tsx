@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource-variable/inter";
+import "@fontsource-variable/schibsted-grotesk";
 import "./index.css";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { PanelSourceContext } from "@/lib/engram-panel";
@@ -11,9 +12,12 @@ import { App } from "@/App";
 import { FirstRunGate } from "@/components/first-run/FirstRun";
 import { SingleWindowGate } from "@/components/app/SingleWindowGate";
 import { installSpaceHeader } from "@/lib/space-fetch";
+import { registerServiceWorker } from "@/lib/push";
 
 // Every host request names the active brain space (lib/space-fetch.ts).
 installSpaceHeader();
+// Push messages and taps on them (public/sw.js).
+registerServiceWorker();
 
 const queryClient = new QueryClient({
   defaultOptions: {

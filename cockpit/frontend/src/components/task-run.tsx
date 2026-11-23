@@ -6,6 +6,9 @@
 import { useMemo, useState } from "react";
 import { Play, SquareTerminal } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
+import { useActiveSpace } from "@/stores/useSpaceStore";
+import { startTaskSession } from "@/lib/task-board";
+import { tellStartProblem } from "@/components/command-palette/openTask";
 
 import { BrainCard } from "@/components/brain/ui";
 import type { Engram } from "@/lib/types";
@@ -20,11 +23,13 @@ import {
   useActiveDeskId,
   useDesks,
 } from "@/stores/usePaneStore";
+import { cn } from "@/lib/utils";
+import { BUTTON, FIELD, LABEL, PRIMARY } from "@/shared/view/ui";
 
 const NEW_DESK = "__new__";
 
 function CardTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">{children}</div>;
+  return <div className={cn(LABEL, "mb-2")}>{children}</div>;
 }
 
 /** The run session of a task, across all projects. */
@@ -48,7 +53,16 @@ export function runPrompt(engram: Engram, extra: string): string {
   return `Use the task-run skill for task ${name}.${line ? `\n\n${line}` : ""}`;
 }
 
-export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; projects: Project[]; onStarted?: () => void }) {
+/** The desk choice that starts the run without a pane: it runs on the host, unattended. */
+const NO_DESK = "__no-desk__";
+
+export function TaskRunCard({ engram, projects, onStarted, background = false }: {
+  engram: Engram;
+  projects: Project[];
+  onStarted?: () => void;
+  /** Start without a desk by default (the Tasks view, where the run's chat shows next to the task). */
+  background?: boolean;
+}) {
   const desks = useDesks();
   const activeDeskId = useActiveDeskId();
   const run = useMemo(() => findRun(projects, engram.id), [projects, engram.id]);
@@ -57,7 +71,9 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
   const [open, setOpen] = useState(false);
   // A shared brain that is not live takes no write; a run would write (useTeamStore).
   const brain = useWritable();
-  const [deskId, setDeskId] = useState<string>(activeDeskId);
+  const activeSpace = useActiveSpace();
+  const [deskId, setDeskId] = useState<string>(background ? NO_DESK : activeDeskId);
+  const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string>(defaultProject?.projectId ?? "");
   const [extra, setExtra] = useState("");
 
@@ -79,9 +95,9 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
               openInPane({ surface: "terminal", projectId: run.project.projectId, sessionId: run.session.id });
               onStarted?.();
             }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-ui text-foreground transition-colors hover:bg-accent/60"
+            className={cn(BUTTON, "shrink-0 gap-1.5 px-3 text-ui")}
           >
-            <SquareTerminal className="h-3.5 w-3.5" />
+            <SquareTerminal aria-hidden className="size-3.5" />
             Open run
           </button>
         </div>
@@ -92,6 +108,21 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
   const start = () => {
     if (!projectId) return;
     const title = engram.title ?? "Task run";
+    if (deskId === NO_DESK) {
+      // Runs on the host; the request goes to the active space (the Tasks view switched to the task's).
+      setError(null);
+      void fetch("/api/tasks/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, prompt: runPrompt(engram, extra), title, taskId: engram.id }),
+      }).then((res) => {
+        if (!res.ok) { setError(`The run could not start (HTTP ${res.status}).`); return; }
+        setOpen(false);
+        setExtra("");
+        if (!background) onStarted?.();
+      }).catch(() => setError("The run could not start: the cockpit did not answer."));
+      return;
+    }
     let target = deskId;
     let emptyPaneId: string | null = null;
     if (deskId === NEW_DESK) {
@@ -101,15 +132,20 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
       const desk = getDesks().find((s) => s.id === target);
       if (desk && desk.panes.length === 1 && isEmptyPane(desk.panes[0])) emptyPaneId = desk.panes[0].id;
     }
-    addWorkerPane({
-      fromSessionId: null,
-      projectId,
-      prompt: runPrompt(engram, extra),
-      title,
-      deskId: target,
-      taskId: engram.id,
+    // The host starts it with the task bound (in chat when that is the user's view); an older host can't, so
+    // then the pane starts it in the terminal.
+    const prompt = runPrompt(engram, extra);
+    // In a new desk the starter pane makes way only for a pane opened here; the host's pane arrives a moment later
+    // next to it, and removing the desk's only pane first would leave no desk to open it on.
+    const fallback = () => {
+      addWorkerPane({ fromSessionId: null, projectId, prompt, title, deskId: target, taskId: engram.id });
+      if (emptyPaneId) removePane(emptyPaneId);
+    };
+    if (activeSpace) void startTaskSession({ id: engram.id, spaceId: activeSpace.id }, { projectId, prompt, title, deskId: target }).then((outcome) => {
+      if (outcome.kind === 'no_route') fallback();
+      else tellStartProblem(outcome, title);
     });
-    if (emptyPaneId) removePane(emptyPaneId);
+    else fallback();
     setOpen(false);
     setExtra("");
     onStarted?.();
@@ -129,9 +165,9 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
             onClick={() => setOpen(true)}
             disabled={!brain.writable}
             title={brain.reason ?? undefined}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className={cn(PRIMARY, "shrink-0 gap-1.5 px-3 text-ui")}
           >
-            <Play className="h-3.5 w-3.5" />
+            <Play aria-hidden className="size-3.5" />
             Advance task
           </button>
         </div>
@@ -142,7 +178,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
             <select
               value={deskId}
               onChange={(e) => setDeskId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             >
               {desks.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -151,6 +187,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
                 </option>
               ))}
               <option value={NEW_DESK}>New desk for this task</option>
+              <option value={NO_DESK}>No desk: run in the background</option>
             </select>
           </label>
           <label className="flex flex-col gap-1 text-caption text-muted-foreground">
@@ -158,7 +195,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             >
               {!projectId && <option value="">Choose a project…</option>}
               {projects.map((p) => (
@@ -170,7 +207,7 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
           </label>
           <label className="flex flex-col gap-1 text-caption text-muted-foreground">
             First message
-            <div className="rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap text-foreground">
+            <div className="rounded-lg border border-border bg-muted px-3 py-1.5 font-code text-caption whitespace-pre-wrap text-foreground">
               {runPrompt(engram, "")}
             </div>
             <textarea
@@ -178,14 +215,20 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
               onChange={(e) => setExtra(e.target.value)}
               placeholder="Optional: add a line for the run"
               rows={2}
-              className="rounded-md border border-border bg-background px-2 py-1 text-ui text-foreground"
+              className={cn(FIELD, "text-ui")}
             />
           </label>
+          {deskId === NO_DESK && (
+            <p className="text-caption text-muted-foreground">
+              It runs without a pane and stops at each checkpoint with a question in Your turn. Its chat shows next to the task in the Tasks view.
+            </p>
+          )}
+          {error && <p role="alert" className="text-caption text-stopped-ink">{error}</p>}
           <div className="flex justify-end gap-2">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-md border border-border px-2.5 py-1 text-ui text-muted-foreground transition-colors hover:bg-accent/60"
+              className={cn(BUTTON, "px-3 text-ui")}
             >
               Cancel
             </button>
@@ -193,9 +236,9 @@ export function TaskRunCard({ engram, projects, onStarted }: { engram: Engram; p
               type="button"
               onClick={start}
               disabled={!projectId}
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+              className={cn(PRIMARY, "gap-1.5 px-3 text-ui")}
             >
-              <Play className="h-3.5 w-3.5" />
+              <Play aria-hidden className="size-3.5" />
               Start run
             </button>
           </div>

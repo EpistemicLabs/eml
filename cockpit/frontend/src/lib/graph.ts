@@ -174,32 +174,16 @@ export function buildGraph(
   return { nodes, isolated, edges: inEdges, externalCount, hiddenHistory };
 }
 
+export const RELATION_TYPES: readonly RelationType[] = [
+  "supersedes", "supports", "contradicts", "derived_from", "refines", "related_to", "blocks", "part_of",
+];
+
 /**
- * Relation colours per theme, as literal hex: React Flow builds the arrow
- * marker's id from the colour, so a CSS variable would not do here. Pick the
- * set with relationColors(isDarkMode).
+ * Relation colours as concrete values, read from the --relation-* tokens of the element the graph
+ * renders in (so the theme applies). React Flow builds the arrow marker's id from
+ * the colour, so a var() would not do here; read again when the theme changes.
  */
-export const RELATION_COLORS_LIGHT: Record<RelationType, string> = {
-  supersedes: "#b45309",
-  supports: "#047857",
-  contradicts: "#dc2626",
-  derived_from: "#4f46e5",
-  refines: "#0369a1",
-  related_to: "#64748b",
-  blocks: "#be123c",
-  part_of: "#0f766e",
-};
-
-export const relationColors = (isDarkMode: boolean): Record<RelationType, string> =>
-  isDarkMode ? RELATION_COLORS : RELATION_COLORS_LIGHT;
-
-export const RELATION_COLORS: Record<RelationType, string> = {
-  supersedes: "#f59e0b",
-  supports: "#10b981",
-  contradicts: "#ef4444",
-  derived_from: "#6366f1",
-  refines: "#0ea5e9",
-  related_to: "#94a3b8",
-  blocks: "#e11d48",
-  part_of: "#2fb5a5", // v0.15: petrol, apart from refines (sky) / derived_from (indigo) / related_to (grey)
-};
+export function readRelationColors(el: Element): Record<RelationType, string> {
+  const style = getComputedStyle(el);
+  return Object.fromEntries(RELATION_TYPES.map((r) => [r, style.getPropertyValue(`--relation-${r}`).trim()])) as Record<RelationType, string>;
+}

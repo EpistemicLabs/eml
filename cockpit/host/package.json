@@ -1,6 +1,6 @@
 {
   "name": "eml-cockpit",
-  "version": "0.21.5",
+  "version": "0.21.153",
   "license": "AGPL-3.0-only",
   "private": false,
   "description": "EML Cockpit — a local web app that runs isolated Claude Code sessions next to your local brain. One process: brain server + session runtime + UI, all on loopback.",
@@ -12,6 +12,7 @@
     "dist",
     "ui",
     "migrations",
+    "plugins",
     "skills",
     "README.md",
     "LICENSE",
@@ -42,8 +43,10 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@engramprotocol/channel-bridge": "workspace:*",
     "@engramprotocol/cockpit-frontend": "workspace:*",
     "@engramprotocol/core": "workspace:*",
+    "@engramprotocol/plugin-gmail-mcp": "workspace:*",
     "@engramprotocol/server": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.2",

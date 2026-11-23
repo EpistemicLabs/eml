@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useEngram, useSubjectMembers, useSubjects } from "@/lib/queries";
-import { TypeBadge, ReviewFlag } from "@/components/ui/badge";
 import { ReviewActions } from "@/components/review-actions";
 import { BrainCard } from "@/components/brain/ui";
-import { SUBJECT_STATUS_COLOR } from "@/lib/subject-graph";
-import { withAlpha } from "@/components/ui/badge";
 import { TYPE_FIELD_ORDER, type Engram, type Entry, type LearningState, type Relation, type Subject } from "@/lib/types";
+import { WaitingOnCard } from "@/components/task-sections";
 import { TaskHubBlocks, TaskJournal, TaskOutcome, TaskStageCard, useTaskHub } from "@/components/task-sections";
 import { TaskRunCard } from "@/components/task-run";
 import type { Project } from "@/types/app";
+import { cn } from "@/lib/utils";
+import { FOCUS, LABEL } from "@/shared/view/ui";
+import { ReviewFlag, TypeBadge } from "@/shared/view/ui/EngramType";
 
 // Ported from packages/web/components/engram-detail.tsx (next/link → react-router
 // Link; web's Card → the cockpit's BrainCard). The engram body inside the
@@ -38,7 +39,7 @@ function isUuid(v: unknown): v is string {
 function EngramRef({ id, relationHref }: { id: string; relationHref: (otherId: string) => string }) {
   const { data } = useEngram(id);
   return (
-    <Link to={relationHref(id)} className="inline-flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 transition-colors hover:bg-muted">
+    <Link to={relationHref(id)} className={cn("inline-flex min-h-(--target-min) min-w-0 items-center gap-1.5 rounded-md px-1.5 transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}>
       {data && (
         <span className="shrink-0">
           <TypeBadge type={data.type} />
@@ -82,7 +83,7 @@ function RelationItem({
   const { data } = useEngram(other);
 
   return (
-    <Link to={relationHref(other)} className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted">
+    <Link to={relationHref(other)} className={cn("flex min-h-(--target-min) items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}>
       <span className="w-3 shrink-0 text-center text-muted-foreground">{outgoing ? "→" : "←"}</span>
       <span className="shrink-0 text-caption text-muted-foreground">{relation.relation}</span>
       {data && (
@@ -95,29 +96,29 @@ function RelationItem({
   );
 }
 
-// v0.14: a subject chip carries its lifecycle — active = green status badge,
-// closed = grey + struck through. Rounded-rect (not a pill) with a status dot so
+// A subject chip carries its lifecycle — active = a strong edge and a solid dot,
+// closed = grey, hollow dot, struck through (no hue). Rounded-rect (not a pill) with a status dot so
 // it never reads as a tag pill or the amber review flag. Click = show the other
 // engrams in this subject (across scopes).
 function SubjectChip({ id, subject, open, onClick }: { id: string; subject?: Subject; open: boolean; onClick: () => void }) {
   const status = subject?.status ?? "active";
-  const color = SUBJECT_STATUS_COLOR[status];
   const closed = status === "closed";
   return (
     <button
       type="button"
       onClick={onClick}
       title={`${subject?.description ?? subject?.name ?? id} · ${status} · click for the other engrams in this subject`}
-      className="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-caption transition-colors"
-      style={{
-        borderColor: withAlpha(color, open ? 0.9 : 0.5),
-        backgroundColor: withAlpha(color, open ? 0.2 : 0.1),
-        color: closed ? SUBJECT_STATUS_COLOR.closed : undefined,
-      }}
+      aria-expanded={open}
+      className={cn(
+        "inline-flex min-h-(--target-min) items-center gap-1.5 rounded-md border px-2 text-caption transition-colors duration-(--duration-fast)",
+        closed ? "border-border text-muted-foreground" : "border-border-strong text-foreground",
+        open ? "bg-muted" : "bg-card hover:bg-muted",
+        FOCUS,
+      )}
     >
-      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      <span className={closed ? "line-through" : "text-foreground"}>{subject?.name ?? id}</span>
-      <span className="text-[10px] tracking-wide uppercase" style={{ color }}>{status}</span>
+      <span aria-hidden className={cn("inline-block size-1.5 rounded-full", closed ? "border border-border-strong" : "bg-foreground")} />
+      <span className={closed ? "line-through" : undefined}>{subject?.name ?? id}</span>
+      <span className="uppercase tracking-label text-muted-foreground">{status}</span>
     </button>
   );
 }
@@ -146,7 +147,7 @@ function SubjectMembers({ subject, id, engramId, relationHref }: {
       ) : (
         <div className="flex flex-col gap-0.5">
           {others.map((e) => (
-            <Link key={e.id} to={relationHref(e.id)} className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted">
+            <Link key={e.id} to={relationHref(e.id)} className={cn("flex min-h-(--target-min) items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}>
               <span className="shrink-0">
                 <TypeBadge type={e.type} />
               </span>
@@ -161,7 +162,7 @@ function SubjectMembers({ subject, id, engramId, relationHref }: {
 }
 
 function CardTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">{children}</div>;
+  return <div className={cn(LABEL, "mb-2")}>{children}</div>;
 }
 
 // Shared engram body for the drawer (web also rendered it on a full page;
@@ -172,6 +173,7 @@ export function EngramDetail({
   relationHref,
   projects,
   onLeave,
+  runInBackground = false,
 }: {
   id: string;
   relationHref: (otherId: string) => string;
@@ -179,13 +181,15 @@ export function EngramDetail({
   projects?: Project[];
   /** Called when an action moves the user away from the drawer (a task run opens). */
   onLeave?: () => void;
+  /** A task run starts without a desk by default (the Tasks view). */
+  runInBackground?: boolean;
 }) {
   const { data: engram, isLoading, error } = useEngram(id);
   const subjectsQuery = useSubjects();
   const [openSubject, setOpenSubject] = useState<string | null>(null);
 
   if (isLoading) return <p className="text-ui text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-ui text-destructive">{(error as Error).message}</p>;
+  if (error) return <p className="text-ui text-stopped-ink">{(error as Error).message}</p>;
   if (!engram) return <p className="text-ui text-muted-foreground">Not found.</p>;
 
   const isTask = engram.type === "task";
@@ -210,7 +214,7 @@ export function EngramDetail({
 
       {engram.subjects && engram.subjects.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-0.5 text-caption tracking-wide text-muted-foreground/70 uppercase">Subjects</span>
+          <span className={cn(LABEL, "mr-0.5")}>Subjects</span>
           {engram.subjects.map((t) => (
             <SubjectChip
               key={t}
@@ -234,18 +238,19 @@ export function EngramDetail({
 
       {engram.tags && engram.tags.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-0.5 text-caption tracking-wide text-muted-foreground/70 uppercase">Tags</span>
+          <span className={cn(LABEL, "mr-0.5")}>Tags</span>
           {engram.tags.map((t) => (
-            <span key={t} className="rounded-full border border-border bg-muted px-2 py-0.5 text-caption text-muted-foreground">
+            <span key={t} className="rounded-full bg-muted px-2 text-caption text-muted-foreground">
               {t}
             </span>
           ))}
         </div>
       )}
 
+      {isTask && <WaitingOnCard engram={engram} />}
       {isTask && <TaskOutcome engram={engram} />}
       {isTask && <TaskStageCard engram={engram} />}
-      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} />}
+      {isTask && projects && <TaskRunCard engram={engram} projects={projects} onStarted={onLeave} background={runInBackground} />}
 
       <BrainCard className="px-4 py-3">
         <div className="text-body leading-relaxed whitespace-pre-wrap text-foreground">{engram.content}</div>
@@ -269,7 +274,7 @@ function EngramTail({ engram, relationHref }: { engram: Engram; relationHref: (o
   // software's own state (the notes pane's hash), not shown.
   const props = engram.properties ?? {};
   const named = (TYPE_FIELD_ORDER[engram.type] ?? []).filter(
-    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome")),
+    (k) => props[k] !== undefined && props[k] !== null && !(isTask && (k === "stage" || k === "outcome" || k === "waiting_on")),
   );
   const other = Object.keys(props).filter((k) => !(TYPE_FIELD_ORDER[engram.type] ?? []).includes(k) && k !== "app");
   const otherEntries = (engram.entries ?? []).filter((e) => e.kind === "evidence" || e.kind === "review" || (!isTask && (e.kind === "note" || e.kind === "change")));
@@ -318,6 +323,7 @@ const FIELD_LABELS: Record<string, string> = {
   next_step: "next step", assignee_ids: "assignees", due_date: "due", review_due_at: "review due",
   occurred_at: "occurred", change_type: "change", source_url: "source url",
   source_name: "source name", checked_at: "checked", rule_type: "rule type", open_threads: "open threads",
+  depends_on: "depends on",
 };
 
 function FieldsCard({ title, keys, props, relationHref }: {
@@ -357,7 +363,7 @@ function Provenance({ engram }: { engram: Engram }) {
   ].filter(Boolean) as string[];
   if (parts.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted-foreground/70">
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-caption text-muted-foreground">
       {parts.map((p) => <span key={p}>{p}</span>)}
     </div>
   );
@@ -372,12 +378,14 @@ const LEARNING_STATE_TEXT: Record<LearningState["state"], { label: string; hint:
 
 function LearningBadge({ state }: { state: LearningState }) {
   const t = LEARNING_STATE_TEXT[state.state];
-  const color = state.state === "ripe" ? "var(--type-learning)" : state.state === "unclear" ? "var(--color-warning, #b7791f)" : "var(--color-muted-foreground)";
+  // Ripe is the state that leads somewhere (a rule): it gets the strong edge; the rest stay grey.
   return (
     <span
       title={`${t.hint} · ${state.supporting_sessions} session${state.supporting_sessions === 1 ? "" : "s"}${state.from_user ? ", from the user" : ""}`}
-      className="inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-      style={{ borderColor: withAlpha(color, 0.45), color, backgroundColor: withAlpha(color, 0.1) }}
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-1.5 text-caption font-medium uppercase tracking-label",
+        state.state === "ripe" ? "border-foreground text-foreground" : "border-border text-muted-foreground",
+      )}
     >
       {t.label}
     </span>
@@ -404,7 +412,7 @@ function EntriesCard({ engram, entries }: { engram: Engram; entries: Entry[] }) 
               {e.author && <span>{e.author}</span>}
               {e.kind === "evidence" && e.source && <span>source: {e.source}</span>}
               {e.kind === "evidence" && e.stance && e.stance !== "supports" && (
-                <span className="rounded-full border border-border px-1.5 text-[10px] leading-4">{e.stance}</span>
+                <span className="rounded-full border border-border px-1.5 text-caption">{e.stance}</span>
               )}
               {e.session_id && <span>session {e.session_id.slice(0, 8)}</span>}
             </div>

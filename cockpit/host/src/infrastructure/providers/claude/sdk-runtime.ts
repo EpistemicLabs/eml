@@ -10,6 +10,9 @@ import type {
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
+import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
+import { SPLIT_RELATIONS } from '../../../domain/split.js'
+import { SORT_PICKS } from '../../../domain/sort.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -428,6 +431,88 @@ const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, when
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
   + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
 
+export const OFFER_SPLIT_TOOL = 'offer_split'
+const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
+  + 'Call it as soon as the user brings up new work that is not part of what this session works on (its task\'s goal, or its first request), before you start on it, instead of creating a task for it yourself; a question that only clarifies the current work is not a new topic. '
+  + 'Steps of the current work, and a task the user explicitly asks you to note, are not splits: create those yourself. '
+  + 'Once per topic: never again for a topic the user kept here. Until they choose, answer briefly or wait; do not start real work on the new topic. '
+  + 'relation: sub only if this session\'s task cannot be done without it; spun if it grew out of this work; unrelated if it has nothing to do with it. '
+  + 'project: the project it belongs to (its id or name), if not this one. task: the id of an open task this topic already has (check eml_list first); the split then goes onto that task instead of making a new one. '
+  + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
+const OFFER_SPLIT_TOOL_INPUT = {
+  title: z.string().describe('The new topic in two to five words, sentence case.'),
+  relation: z.enum(SPLIT_RELATIONS),
+  project: z.string().optional(),
+  task: z.string().optional().describe('An open task this topic already has: its id.'),
+  brief: z.string(),
+  reason: z.string().describe('One line: why this is a new topic.'),
+}
+
+/** What the agent reads after offering a split: nothing happened yet, the user decides. */
+export const OFFER_SPLIT_ANSWER = 'Offered: the chat shows the user Split off… and Keep it here. Nothing is split until they choose; do not start on the new topic meanwhile. If they keep it here, carry on with it in this chat and do not offer it again.'
+
+export const PROPOSE_SORT_TOOL = 'propose_sort'
+const PROPOSE_SORT_TOOL_DESCRIPTION = 'Propose where each topic of this session belongs, when the session has drifted: after a compaction, or once it has covered four or more topics outside its task\'s goal. '
+  + 'The chat shows the user a card; Sort topics… opens a table of your rows where they change what is wrong and apply. Nothing starts on its own; nothing happens until they apply. '
+  + 'Read your own transcript and the brain (open tasks of the project) first. One row per topic, oldest first: when (a short date), topic (two to five words), summary (where it stands, a few words), '
+  + 'today (what the brain has for it now: this task, a task, a linked task, nothing), pick, taskId (its task if it has one), brief (for a topic without a task: what a session needs to pick it up). '
+  + 'pick: keep (it is this task\'s work) · sub (this task cannot be done without it) · spun (it grew out of this work) · unrelated (its own task, no link) · drop (close it: not needed). '
+  + 'Offer it once; if the user says later, do not offer it again before the next compaction.'
+const PROPOSE_SORT_TOOL_INPUT = {
+  rows: z.array(z.object({
+    when: z.string().optional(),
+    topic: z.string(),
+    summary: z.string().optional(),
+    today: z.string().optional(),
+    pick: z.enum(SORT_PICKS),
+    taskId: z.string().optional(),
+    brief: z.string().optional(),
+  })),
+  reason: z.string().describe('One line: why this session should be sorted now.'),
+}
+
+/** What the agent reads after proposing a sort: nothing happened yet, the user decides. */
+export const PROPOSE_SORT_ANSWER = 'Proposed: the chat shows the user Sort topics… and Later. Nothing changes until they apply; carry on meanwhile.'
+
+const SCHEDULE_TOOL = 'schedule'
+const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
+  + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
+  + 'not for work you can do now. '
+  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
+  + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
+  + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own; pass it when the user names another. '
+  + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
+  + 'self (this session, to continue here later), or session (another session of this space, by address). '
+  + 'A job made earlier with its own session moves to a worker with update and target worker. '
+  + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
+  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
+  + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
+  + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
+  + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
+  + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
+  + 'A job runs in this space with at most this session\'s tools; a limited job\'s session reaches only its own job (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
+const SCHEDULE_TOOL_INPUT = {
+  action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish']),
+  job: z.string().optional().describe('The job to act on: its id (or the first 8 characters) or its exact name.'),
+  name: z.string().optional().describe('A short name the user recognizes, e.g. "Daily brief".'),
+  prompt: z.string().optional().describe('What the woken session should do; it reads nothing else.'),
+  cron: z.string().optional(),
+  at: z.string().optional(),
+  timezone: z.string().optional(),
+  target: z.enum(['worker', 'self', 'session']).optional(),
+  session: z.string().optional().describe('With target session: the session\'s address.'),
+  project: z.string().optional().describe('For a worker: the project it runs in.'),
+  provider: z.string().optional(),
+  max_runs: z.number().int().optional(),
+  ends_at: z.string().optional(),
+  task_id: z.string().optional(),
+  goal: z.string().optional().describe('What has to be true for the job to be over; every run is told it.'),
+  deny_tools: z.array(z.string()).optional(),
+  notify: z.enum(['needs-me', 'always', 'never']).optional(),
+  mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()
+    .describe('Mail that wakes the job: sender domains (e.g. example.com) and addresses.'),
+}
+
 // The result is what the model reads next: it asks for the closing summary right there.
 const NEXT_STEP: Record<string, string> = {
   done: 'Now write your closing summary as visible text: what was asked, what you did, what changed (files, links).',
@@ -436,20 +521,25 @@ const NEXT_STEP: Record<string, string> = {
   failed: 'Now write your closing summary as visible text: what was asked, what you tried, what went wrong.',
 }
 
-/** The status tool and the check before a worker's turn ends, in this process: no extra server per worker. */
-function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>) {
-  const server = createSdkMcpServer({
-    name: 'cockpit',
-    tools: [tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
-      worker.report(status, reason ?? null)
-      return { content: [{ type: 'text', text: `Recorded: ${status}. ${NEXT_STEP[status] ?? ''}`.trim() }] }
-      // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
-    }, { alwaysLoad: true })],
+/** The status tool, the schedule tool and the check before a worker's turn ends, in this process: no extra server per session. */
+function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs']) {
+  const status = tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
+    worker.report(status, reason ?? null)
+    return { content: [{ type: 'text', text: `Recorded: ${status}. ${NEXT_STEP[status] ?? ''}`.trim() }] }
+    // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
+  }, { alwaysLoad: true })
+  const schedule = jobs && tool(SCHEDULE_TOOL, SCHEDULE_TOOL_DESCRIPTION, SCHEDULE_TOOL_INPUT, async (input) => {
+    const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+    return { content: [{ type: 'text', text }] }
   })
+  // Changes nothing: the chat renders the call as a card, and the user's choice comes back as a message.
+  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => ({ content: [{ type: 'text', text: OFFER_SPLIT_ANSWER }] }))
+  const proposeSort = tool(PROPOSE_SORT_TOOL, PROPOSE_SORT_TOOL_DESCRIPTION, PROPOSE_SORT_TOOL_INPUT, async () => ({ content: [{ type: 'text', text: PROPOSE_SORT_ANSWER }] }))
+  const server = createSdkMcpServer({ name: 'cockpit', tools: schedule ? [status, offerSplit, proposeSort, schedule] : [status, offerSplit, proposeSort] })
   return {
     mcpServers: { cockpit: server },
-    // Nobody may be there to answer a card about the tool that says so.
-    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`],
+    // Nobody may be there to answer a card about these tools.
+    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`, `mcp__cockpit__${OFFER_SPLIT_TOOL}`, `mcp__cockpit__${PROPOSE_SORT_TOOL}`, ...(schedule ? [`mcp__cockpit__${SCHEDULE_TOOL}`] : [])],
     hooks: {
       UserPromptSubmit: [{
         hooks: [async () => {
@@ -509,7 +599,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
-        ...(request.worker ? workerOptions(request.worker) : {}),
+        ...(request.worker ? workerOptions(request.worker, request.jobs) : {}),
         ...(request.deniedTools?.length ? { disallowedTools: request.deniedTools } : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {

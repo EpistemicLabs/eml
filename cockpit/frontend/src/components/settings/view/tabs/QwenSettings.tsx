@@ -77,7 +77,7 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
           placeholder="https://…"
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          className="w-72 font-mono text-xs"
+          className="w-72 font-code text-ui"
         />
       </SettingsRow>
       <SettingsRow label="Model" description="The model id as the endpoint names it, e.g. qwen/qwen3.8-27b.">
@@ -86,7 +86,7 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
           placeholder="model id"
           value={model}
           onChange={(event) => setModel(event.target.value)}
-          className="w-72 font-mono text-xs"
+          className="w-72 font-code text-ui"
         />
       </SettingsRow>
       <SettingsRow
@@ -105,7 +105,7 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
             placeholder={keySet ? '••••••••' : 'key'}
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            className="w-52 font-mono text-xs"
+            className="w-52 font-code text-ui"
           />
           {keySet && (
             <Button type="button" size="sm" variant="outline" disabled={setSettings.isPending} onClick={() => setSettings.mutate({ apiKey: '' })}>
@@ -115,7 +115,7 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
         </div>
       </SettingsRow>
       <div className="flex items-center justify-between gap-4 px-4 py-3">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           {complete
             ? 'The key reaches each Qwen Code session in its environment, so commands the model runs there can read it. Use a key with a spending limit.'
             : 'Base URL and model are both needed before saving.'}
@@ -124,7 +124,7 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
           Save
         </Button>
       </div>
-      {setSettings.isError && <p className="px-4 pb-4 text-sm text-destructive">{setSettings.error.message}</p>}
+      {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
     </form>
   );
 }
@@ -169,10 +169,10 @@ export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
               disabled={setSettings.isPending}
             />
           </SettingsRow>
-          <div className="px-4 py-3 text-sm text-muted-foreground">
+          <div className="px-4 py-3 text-body text-muted-foreground">
             Worker sessions opened by another session always run in Auto — nobody is watching them.
           </div>
-          {setSettings.isError && <p className="px-4 pb-4 text-sm text-destructive">{setSettings.error.message}</p>}
+          {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
         </SettingsCard>
       </SettingsSection>
 

@@ -9,9 +9,10 @@ import { useState } from 'react';
 import { Link2, Loader2, Users, XCircle } from 'lucide-react';
 
 import { deadJoin, joinStep, stateTitle, stateTone } from '@/lib/team';
+import { cn } from '@/lib/utils';
 import { joinSharedSpace, removeSpace, useActiveSpace } from '@/stores/useSpaceStore';
 import { refreshTeams, useTeam } from '@/stores/useTeamStore';
-import { Banner, BannerButton, BannerLink } from './Banner';
+import { Banner, BANNER_FIELD, BannerButton, BannerLink } from './Banner';
 
 export default function TeamBanner() {
   const space = useActiveSpace();
@@ -50,6 +51,7 @@ export default function TeamBanner() {
   return (
     <Banner
       tone={stateTone(team.state)}
+      dismissKey={`team:${space.id}:${team.state.kind}`}
       icon={team.state.kind === 'joining' ? Users : XCircle}
       busy={busy || team.state.kind === 'joining' || team.state.kind === 'catching_up'}
       detail={error ?? step ?? team.read_only}
@@ -69,9 +71,9 @@ export default function TeamBanner() {
             spellCheck={false}
             autoFocus
             disabled={busy}
-            className="min-w-0 flex-1 rounded-md border border-current/30 bg-background/70 px-2 py-1 font-mono text-xs text-foreground outline-none"
+            className={cn(BANNER_FIELD, 'min-w-0 flex-1 font-code')}
           />
-          <BannerButton disabled={busy || !link.trim()} onClick={() => void join()}>{busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Join'}</BannerButton>
+          <BannerButton disabled={busy || !link.trim()} onClick={() => void join()}>{busy ? <Loader2 aria-hidden className="size-3 animate-spin" /> : 'Join'}</BannerButton>
           <BannerLink onClick={() => { setLink(null); setError(null); }}>Cancel</BannerLink>
         </form>
       )}

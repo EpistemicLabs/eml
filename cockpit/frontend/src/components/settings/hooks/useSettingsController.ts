@@ -24,13 +24,11 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   const [activeTab, setActiveTab] = useState<SettingsMainTab>(() => normalizeMainTab(initialTab));
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(null);
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSortOrder>(() => readSettings().projectSortOrder);
-  const [notifyOnDone, setNotifyOnDone] = useState<boolean>(() => readSettings().notifyOnDone);
   const [greetOnStart, setGreetOnStart] = useState<boolean>(() => readSettings().greetOnStart);
 
   const loadSettings = useCallback(() => {
     const settings = readSettings();
     setProjectSortOrder(settings.projectSortOrder);
-    setNotifyOnDone(settings.notifyOnDone);
     setGreetOnStart(settings.greetOnStart);
   }, []);
 
@@ -50,11 +48,6 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
   const changeProjectSortOrder = useCallback((value: ProjectSortOrder) => {
     setProjectSortOrder(value);
     save({ projectSortOrder: value });
-  }, [save]);
-
-  const changeNotifyOnDone = useCallback((value: boolean) => {
-    setNotifyOnDone(value);
-    save({ notifyOnDone: value });
   }, [save]);
 
   const changeGreetOnStart = useCallback((value: boolean) => {
@@ -82,8 +75,6 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     saveStatus,
     projectSortOrder,
     setProjectSortOrder: changeProjectSortOrder,
-    notifyOnDone,
-    setNotifyOnDone: changeNotifyOnDone,
     greetOnStart,
     setGreetOnStart: changeGreetOnStart,
   };

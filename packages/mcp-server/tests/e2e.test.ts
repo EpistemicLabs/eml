@@ -241,6 +241,20 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(jsonOf(second).superseded).toHaveLength(1)
     })
 
+    it('task system: eml_track_task hands a task to an agent and eml_list finds it by delegate', async () => {
+      const t = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'hand-me-over' })))
+      const handed = await call('eml_track_task', { task_id: t.id, delegate: 'mcp', checkpoint: 'after', text: 'handed to the agent' })
+      expect(handed.isError).toBeFalsy()
+      expect(jsonOf(handed).properties.delegate).toBe('mcp')
+      const other = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'not-handed-over' })))
+      const listed = textOf(await call('eml_list', { type: 'task', delegate: 'mcp' }))
+      expect(listed).toContain(t.id)
+      expect(listed).not.toContain(other.id)
+      const unknown = await call('eml_track_task', { task_id: t.id, delegate: 'nobody', text: 'typo' })
+      expect(unknown.isError).toBe(true)
+      expect(textOf(unknown)).toContain('is not an agent of this brain')
+    })
+
     it('eml_set_status on an entity without status_tracks asks for it', async () => {
       const r = await call('eml_set_status', { scope: 'entity.bob', state: 'onboarded', content: 'Bob is in' })
       expect(textOf(r)).toContain('entity.bob has no status_tracks yet')

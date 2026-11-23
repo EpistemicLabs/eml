@@ -195,3 +195,17 @@ export function writeBanner(result: unknown): string | null {
     .filter((p): p is string => p !== null)
   return parts.length > 0 ? parts.join('\n\n') : null
 }
+
+/**
+ * A task half handed to an agent: a checkpoint without a delegate, or a delegate without a
+ * checkpoint. The runner starts a task only with both, so say what is missing.
+ */
+export function handOverBanner(args: { delegate?: string; checkpoint?: string }): string | null {
+  if (args.checkpoint && !args.delegate) {
+    return `⚠ checkpoint ${args.checkpoint} is set but no delegate: no agent will start this task. If an agent should do it, set delegate (eml_track_task delegate=<agent>); the owner stays in assignee_ids.`
+  }
+  if (args.delegate && !args.checkpoint) {
+    return `⚠ delegate ${args.delegate} is set but no checkpoint: the runner will not start this task. Set checkpoint (after by default, before when the plan needs the user's OK) with eml_track_task.`
+  }
+  return null
+}

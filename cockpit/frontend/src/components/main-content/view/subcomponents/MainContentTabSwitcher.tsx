@@ -5,6 +5,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { buttonVariants, LABEL, POPOVER, ROW, TAB, TRACK } from '@/shared/view/ui';
 import Tooltip from '@/shared/view/ui/Tooltip';
 import { PANE_VIEW_DEFS, useViewEnabled, type PaneViewDef } from '@/lib/pane-views';
 import { newSessionEntries, useProviders } from '@/lib/providers';
@@ -29,6 +30,8 @@ type MainContentTabSwitcherProps = {
   onToggleMainPane?: () => void;
   // A terminal/chat handoff is under way: why those two can't be switched now.
   switchBlocked?: string | null;
+  // Which groups of views it offers: outside a pane only the session's own (terminal, chat).
+  groups?: ReadonlyArray<PaneViewDef['group']>;
 };
 
 const GROUPS = [
@@ -52,6 +55,7 @@ export default function MainContentTabSwitcher({
   isMainPane = false,
   onToggleMainPane,
   switchBlocked = null,
+  groups = ['session', 'plugin'],
 }: MainContentTabSwitcherProps) {
   const closeLabel = 'Close this pane';
   const addLabel = 'New pane next to this one';
@@ -59,8 +63,9 @@ export default function MainContentTabSwitcher({
   const sessionEntries = newSessionEntries(useProviders().data ?? []);
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
-  const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view));
-  const groups = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
+  const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
+  // The offered groups that still have a view switched on.
+  const shown = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
   type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
   // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
   // terminal entries come from newSessionEntries, one per ready agent CLI.
@@ -89,9 +94,9 @@ export default function MainContentTabSwitcher({
   return (
     <div className="flex items-center gap-2">
       {/* View-mode segmented control, one pill per group: the session's views │ the plugins. */}
-      <div role="radiogroup" className="flex items-center gap-1.5">
-        {groups.map(({ group }) => (
-          <div key={group} className="flex items-center gap-0.5 rounded-md bg-foreground/10 p-0.5 ring-1 ring-foreground/10">
+      {shown.length > 0 && <div role="radiogroup" className="flex items-center gap-1.5">
+        {shown.map(({ group }) => (
+          <div key={group} className={cn(TRACK, 'bg-foreground/8')}>
             {modes.filter((mode) => mode.group === group).map((mode) => {
               const isActive = paneView === mode.view;
               const blocked = !isActive && !!switchBlocked && mode.group === 'session';
@@ -104,23 +109,18 @@ export default function MainContentTabSwitcher({
                     aria-label={mode.label}
                     disabled={blocked}
                     onClick={() => onSetPaneView(mode.view)}
-                    className={cn(
-                      'flex h-6 w-7 items-center justify-center rounded transition-colors duration-150 disabled:opacity-40',
-                      isActive
-                        ? 'bg-foreground/20 text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
+                    className={cn(TAB, 'px-2 transition-colors duration-(--duration-fast) disabled:opacity-40 aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-(--shadow-pill)')}
                   >
-                    <mode.icon className="h-3.5 w-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
+                    <mode.icon aria-hidden className="size-3.5" strokeWidth={isActive ? 2.2 : 1.8} />
                   </button>
                 </Tooltip>
               );
             })}
           </div>
         ))}
-      </div>
+      </div>}
 
-      {(onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-foreground/15" aria-hidden="true" />}
+      {shown.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-border" aria-hidden="true" />}
 
       {onToggleMainPane && (
         <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">
@@ -129,12 +129,9 @@ export default function MainContentTabSwitcher({
             onClick={onToggleMainPane}
             aria-label={isMainPane ? 'Stop being the main pane' : 'Make main pane'}
             aria-pressed={isMainPane}
-            className={cn(
-              'flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground',
-              isMainPane ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground/80',
-            )}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'size-(--size-tab) rounded-(--radius-tab)', isMainPane && 'bg-muted text-foreground')}
           >
-            <PanelLeft className="h-4 w-4" strokeWidth={isMainPane ? 2.2 : 1.8} />
+            <PanelLeft aria-hidden className="size-4" strokeWidth={isMainPane ? 2.2 : 1.8} />
           </button>
         </Tooltip>
       )}
@@ -148,21 +145,18 @@ export default function MainContentTabSwitcher({
             aria-label={addLabel}
             aria-haspopup="menu"
             aria-expanded={addOpen}
-            className={cn(
-              'flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground',
-              addOpen && 'bg-foreground/5 text-foreground',
-            )}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'size-(--size-tab) rounded-(--radius-tab)', addOpen && 'bg-muted text-foreground')}
           >
-            <Plus className="h-4 w-4" strokeWidth={1.8} />
+            <Plus aria-hidden className="size-4" strokeWidth={1.8} />
           </button>
           {addOpen && (
             <div
               role="menu"
-              className="absolute top-full right-0 z-40 mt-1 min-w-[10rem] rounded-md border border-foreground/20 bg-muted p-1 shadow-[0_8px_24px_rgba(0,0,0,0.14)] ring-1 dark:shadow-[0_8px_24px_rgba(0,0,0,0.6)] ring-black/5 dark:ring-black/40"
+              className={cn(POPOVER, 'absolute top-full right-0 mt-1 min-w-(--size-menu-min)')}
             >
-              {groups.map(({ group, title }, index) => (
+              {shown.map(({ group, title }, index) => (
                 <Fragment key={group}>
-                  <div className={cn('px-2 pb-0.5 text-[11px] font-medium text-muted-foreground', index > 0 ? 'mt-1 border-t border-foreground/10 pt-1.5' : 'pt-1')}>
+                  <div className={cn(LABEL, 'px-2 pb-0.5', index > 0 ? 'mt-1 border-t border-border pt-1.5' : 'pt-1')}>
                     {title}
                   </div>
                   {addItems(group).map((item) => (
@@ -171,9 +165,9 @@ export default function MainContentTabSwitcher({
                       type="button"
                       role="menuitem"
                       onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider); }}
-                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-ui whitespace-nowrap text-foreground transition-colors hover:bg-foreground/10"
+                      className={cn(ROW, 'py-1 whitespace-nowrap')}
                     >
-                      <item.icon className="h-3.5 w-3.5 text-foreground/80" strokeWidth={1.8} />
+                      <item.icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
                       {item.label}
                     </button>
                   ))}
@@ -192,9 +186,9 @@ export default function MainContentTabSwitcher({
               onClick={onClosePane}
               aria-label={closeLabel}
               data-pane-close
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/80 transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground"
+              className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'size-(--size-tab) rounded-(--radius-tab)')}
             >
-              <X className="h-4 w-4" strokeWidth={1.8} />
+              <X aria-hidden className="size-4" strokeWidth={1.8} />
             </button>
           </Tooltip>
         </>

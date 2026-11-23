@@ -1,3 +1,4 @@
+import type { ProjectLead } from './domain/project-lead.js'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { COCKPIT_HOME } from './paths.js'
@@ -52,6 +53,10 @@ export interface LedgerEntry {
   worker: boolean
   /** v0.17: a task run — the brain task this session advances (skill task-run). */
   taskId: string | null
+  /** Task system: the cockpit created the task for this session (application/session-task.ts). */
+  taskAuto?: true
+  /** The project it leads, and the day (domain/project-lead.ts); it has no task of its own. */
+  leadOf?: ProjectLead
   /** The brain space the session runs in (brain-space.ts); null = the main space (pre-spaces entries). */
   spaceId: string | null
   /**
@@ -77,6 +82,8 @@ export interface LedgerEntry {
   parentSessionId: string | null
   /** When someone last saw it, on any device. */
   readAt: string | null
+  /** Inbox: snoozed until then (the Tasks view's Inbox hides it); null when not snoozed. */
+  snoozedUntil?: string
   /** A turn ended and nobody has seen the result; null once someone has. */
   resultAt: string | null
   /** Out of the lists since then; the conversation stays and a new message brings it back. */
@@ -85,6 +92,8 @@ export interface LedgerEntry {
   toolProfile: ToolProfile | null
   /** A worker's turn is running: a host restart cuts it off (recover-workers.ts). `retried`: it already got its one retry. */
   turnInFlight: { retried: boolean } | null
+  /** The job whose run started it (domain/job.ts): its channel tools act for that job on every resume. */
+  jobId: string | null
   /** The folder the agent last worked in, as its hooks report it (a worktree, say); null before the first. */
   workdir: string | null
 }
@@ -120,6 +129,8 @@ function load(): LedgerFile {
           pinned: entry.pinned === true,
           worker: entry.worker === true,
           taskId: typeof entry.taskId === 'string' && entry.taskId ? entry.taskId : null,
+          ...(entry.taskAuto === true ? { taskAuto: true as const } : {}),
+          ...(entry.leadOf && typeof entry.leadOf.projectId === 'string' && typeof entry.leadOf.day === 'string' ? { leadOf: { projectId: entry.leadOf.projectId, day: entry.leadOf.day } } : {}),
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
           keepRunning: entry.keepRunning === true,
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
@@ -135,10 +146,12 @@ function load(): LedgerFile {
           deskMain: entry.deskMain === true,
           parentSessionId: typeof entry.parentSessionId === 'string' && entry.parentSessionId ? entry.parentSessionId : null,
           readAt: typeof entry.readAt === 'string' ? entry.readAt : null,
+          ...(typeof entry.snoozedUntil === 'string' ? { snoozedUntil: entry.snoozedUntil } : {}),
           resultAt: typeof entry.resultAt === 'string' ? entry.resultAt : null,
           archivedAt: typeof entry.archivedAt === 'string' ? entry.archivedAt : null,
           toolProfile: entry.toolProfile && Array.isArray(entry.toolProfile.deniedTools) ? entry.toolProfile : null,
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
+          jobId: typeof entry.jobId === 'string' && entry.jobId ? entry.jobId : null,
           workdir: typeof entry.workdir === 'string' && entry.workdir ? entry.workdir : null,
         }
       }
@@ -153,6 +166,10 @@ export class SessionLedger {
   private data: LedgerFile = load()
   /** Who asked for a worker that has no entry yet: its first spawn takes it. */
   private expectedParents = new Map<string, string>()
+  private expectedTaskParents = new Map<string, string>()
+  private expectedLeads = new Map<string, ProjectLead>()
+  /** Sessions split off another one (expectOwn): recorded as the user's own even though they start with a prompt. */
+  private expectedOwn = new Set<string>()
 
   has(sessionId: string): boolean {
     return sessionId in this.data.sessions
@@ -197,8 +214,11 @@ export class SessionLedger {
       agentTitle: prev?.agentTitle ?? null,
       greeted: prev ? prev.greeted : greeted,
       pinned: prev?.pinned ?? false,
-      worker: worker || prev?.worker === true,
+      worker: (worker && !this.expectedOwn.has(sessionId)) || prev?.worker === true,
       taskId: taskId ?? prev?.taskId ?? null,
+      ...(prev?.taskAuto && (taskId === null || taskId === prev.taskId) ? { taskAuto: true as const } : {}),
+      ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
+      ...(prev?.snoozedUntil ? { snoozedUntil: prev.snoozedUntil } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
       keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
@@ -213,6 +233,7 @@ export class SessionLedger {
       resultAt: prev?.resultAt ?? null,
       archivedAt: prev?.archivedAt ?? null,
       toolProfile: prev?.toolProfile ?? null,
+      jobId: prev?.jobId ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
       workdir: prev?.workdir ?? null,
     }
@@ -244,9 +265,62 @@ export class SessionLedger {
     this.persist()
   }
 
+  /** A session the user split off another one: their own, not a worker, though it starts with a prompt. */
+  expectOwn(sessionId: string): void {
+    this.expectedOwn.add(sessionId)
+  }
+
+  expectsOwn(sessionId: string): boolean {
+    return this.expectedOwn.has(sessionId)
+  }
+
   /** A worker was asked for by this session; recorded when it starts, however it starts. */
   expectParent(sessionId: string, parentSessionId: string): void {
     this.expectedParents.set(sessionId, parentSessionId)
+  }
+
+  /** Task system: the worker's task is to be a step of this task (spawn --step); read when its task is created. */
+  expectTaskParent(sessionId: string, taskId: string): void {
+    this.expectedTaskParents.set(sessionId, taskId)
+  }
+
+  expectedTaskParent(sessionId: string): string | null {
+    return this.expectedTaskParents.get(sessionId) ?? null
+  }
+
+  /** A project lead the page is about to open (POST /api/projects/lead); recorded on the session at its first hook. */
+  expectLead(sessionId: string, lead: ProjectLead): void {
+    this.expectedLeads.set(sessionId, lead)
+  }
+
+  /** The lead of a project for a day: a session that is one, or one about to start; null when there is none. */
+  leadFor(projectId: string, day: string, spaceId: string | null): string | null {
+    for (const [sessionId, lead] of this.expectedLeads) if (lead.projectId === projectId && lead.day === day && !this.data.sessions[sessionId]?.leadOf) return sessionId
+    const found = Object.entries(this.data.sessions)
+      .find(([, e]) => e.leadOf?.projectId === projectId && e.leadOf.day === day && !e.archivedAt && (e.spaceId ?? null) === spaceId)
+    return found?.[0] ?? null
+  }
+
+  /** The session's lead record, persisting an expected one on first use. */
+  claimLead(sessionId: string): ProjectLead | null {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return null
+    if (entry.leadOf) return entry.leadOf
+    const expected = this.expectedLeads.get(sessionId)
+    if (!expected) return null
+    entry.leadOf = expected
+    this.expectedLeads.delete(sessionId)
+    this.persist()
+    return expected
+  }
+
+  /** Inbox snooze: hidden until then; null wakes it. */
+  setSnooze(sessionId: string, until: string | null): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    if (until) entry.snoozedUntil = until
+    else delete entry.snoozedUntil
+    this.persist()
   }
 
   markRead(sessionId: string): void {
@@ -296,6 +370,32 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     entry.toolProfile = toolProfile
+    this.persist()
+  }
+
+  /** The user lifted the session's limits: from its next start it may use all its space has. */
+  clearToolProfile(sessionId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.toolProfile) return
+    entry.toolProfile = null
+    this.persist()
+  }
+
+  /** Set when a job's run starts the session; it holds on every resume. */
+  /** Task system: the brain task the session works on; `auto` when the cockpit created it (application/session-task.ts). */
+  setTask(sessionId: string, taskId: string | null, auto = false): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.taskId = taskId
+    if (auto) entry.taskAuto = true
+    else delete entry.taskAuto
+    this.persist()
+  }
+
+  setJobId(sessionId: string, jobId: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry || entry.jobId === jobId) return
+    entry.jobId = jobId
     this.persist()
   }
 

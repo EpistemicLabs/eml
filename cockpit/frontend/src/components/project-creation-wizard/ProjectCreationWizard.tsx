@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Brain, FolderPlus, X } from 'lucide-react';
 
-import { Button, Input } from '@/shared/view/ui';
+import { Button, Dialog, DialogContent, DialogTitle, HUE, Input, TAB, Textarea, TRACK } from '@/shared/view/ui';
 import { brainGet, brainPost } from '@/lib/api';
 import { useWritable } from '@/stores/useTeamStore';
 import { cn } from '@/lib/utils';
@@ -40,9 +40,6 @@ const uniqueId = (slug: string, taken: ReadonlySet<string>) => {
     if (!taken.has(candidate)) return candidate;
   }
 };
-
-const textareaClass =
-  'flex w-full rounded-md border border-foreground/15 bg-foreground/[0.04] px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground focus-visible:border-foreground/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-none';
 
 export default function ProjectCreationWizard({ onClose, onProjectCreated }: ProjectCreationWizardProps) {
   const [mode, setMode] = useState<Mode>('brain');
@@ -134,26 +131,23 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="flex w-full max-w-lg flex-col rounded-lg border border-border bg-card shadow-xl">
+    // Escape closes it, a click beside it does not: that would throw away what was typed. Not while it creates.
+    <Dialog open onOpenChange={(open) => { if (!open && !isCreating) onClose(); }}>
+      <DialogContent aria-labelledby="add-project-title" dismissOnOutsideClick={false} className="flex flex-col">
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
-              {mode === 'brain' ? <Brain className="h-4 w-4 text-foreground" /> : <FolderPlus className="h-4 w-4 text-foreground" />}
+            <div className="flex size-8 items-center justify-center rounded-lg bg-muted">
+              {mode === 'brain' ? <Brain aria-hidden className="size-4 text-foreground" /> : <FolderPlus aria-hidden className="size-4 text-foreground" />}
             </div>
-            <h3 className="text-lg font-semibold text-foreground">Add project</h3>
+            <DialogTitle id="add-project-title" className="not-sr-only text-title font-semibold text-foreground">Add project</DialogTitle>
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <Button variant="ghost" size="icon" onClick={onClose} disabled={isCreating} aria-label="Close">
+            <X aria-hidden />
+          </Button>
         </div>
 
         <div className="space-y-4 p-4">
-          <div role="radiogroup" aria-label="Project kind" className="inline-flex items-center gap-0.5 rounded-full border border-border bg-muted p-0.5">
+          <div role="radiogroup" aria-label="Project kind" className={cn(TRACK, 'inline-flex bg-muted')}>
             {([
               { value: 'brain', label: 'Brain project' },
               { value: 'folder', label: 'Local cockpit folder' },
@@ -166,10 +160,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
                   role="radio"
                   aria-checked={active}
                   onClick={() => { setMode(option.value); setError(null); }}
-                  className={cn(
-                    'h-7 rounded-full px-3 text-ui font-medium transition-colors',
-                    active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                  )}
+                  className={cn(TAB, 'text-ui aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-(--shadow-pill)')}
                 >
                   {option.label}
                 </button>
@@ -180,7 +171,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
           {mode === 'brain' ? (
             <>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Name</label>
+                <label className="text-ui font-medium text-foreground">Name</label>
                 <Input
                   type="text"
                   value={brainName}
@@ -190,12 +181,12 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
                   disabled={isCreating}
                   onKeyDown={submitOnEnter}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Engrams live under <span className="font-mono">project.{brainId || '…'}</span>
+                <p className="text-ui text-muted-foreground">
+                  Engrams live under <span className="font-code">project.{brainId || '…'}</span>
                 </p>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Goal (optional)</label>
+                <label className="text-ui font-medium text-foreground">Goal (optional)</label>
                 <Input
                   type="text"
                   value={brainGoal}
@@ -206,38 +197,38 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Description (optional)</label>
-                <textarea
+                <label className="text-ui font-medium text-foreground">Description (optional)</label>
+                <Textarea
                   value={brainDescription}
                   onChange={(event) => setBrainDescription(event.target.value)}
                   placeholder="1–2 sentences of context"
                   rows={2}
                   disabled={isCreating}
-                  className={textareaClass}
+                  className="resize-none"
                   onKeyDown={submitOnEnter}
                 />
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-ui text-muted-foreground">
                 The project appears in the sidebar right away; its folder is assigned when you start the first session.
               </p>
             </>
           ) : (
             <>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Project folder</label>
+                <label className="text-ui font-medium text-foreground">Project folder</label>
                 <FolderPathField
                   value={folderPath}
                   disabled={isCreating}
                   onChange={setFolderPath}
                   onKeyDown={submitOnEnter}
                 />
-                <p className="text-xs text-muted-foreground">
+                <p className="text-ui text-muted-foreground">
                   Sessions run in this folder; its CLAUDE.md and .claude/settings apply. Cockpit only — nothing is written to the brain.
                 </p>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Display name (optional)</label>
+                <label className="text-ui font-medium text-foreground">Display name (optional)</label>
                 <Input
                   type="text"
                   value={customName}
@@ -251,7 +242,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
           )}
 
           {error && (
-            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
+            <div className={cn('rounded-lg border px-3 py-2 text-body', HUE.stopped.tint, HUE.stopped.edge, HUE.stopped.ink)}>
               {error}
             </div>
           )}
@@ -265,7 +256,7 @@ export default function ProjectCreationWizard({ onClose, onProjectCreated }: Pro
             {mode === 'brain' ? 'Create project' : 'Add folder'}
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

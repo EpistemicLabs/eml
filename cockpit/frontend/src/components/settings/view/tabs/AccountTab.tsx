@@ -5,14 +5,17 @@
 // a closed beta, Pro is announced. Changing the name comes later.
 import { useState } from 'react';
 
+import { Chip } from '@/shared/view/ui';
+import { SETTINGS_BUTTON_CLASS, SETTINGS_INPUT_CLASS } from '../../constants/constants';
+
 import { useAccount, type AccountStatus } from '../../hooks/useAccount';
 import { useAgents } from '../../hooks/useAgents';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 
-const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
-const input = 'rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-foreground/40';
+const button = SETTINGS_BUTTON_CLASS;
+const input = SETTINGS_INPUT_CLASS;
 
 export default function AccountTab() {
   const { handle, name, loaded, failed } = useAgents();
@@ -31,7 +34,7 @@ export default function AccountTab() {
       <SettingsSection title="You">
         <SettingsCard divided>
           <SettingsRow label="Name" description="How your agent knows you">
-            <span className="text-sm text-foreground">{loaded ? name ?? '—' : fallback}</span>
+            <span className="text-body text-foreground">{loaded ? name ?? '—' : fallback}</span>
           </SettingsRow>
           <SettingsRow label="Writes as" description="The handle stamped on every engram your sessions write">
             <Mono>{loaded ? handle ?? '—' : fallback}</Mono>
@@ -65,14 +68,14 @@ function AccountCard({ account }: { account: ReturnType<typeof useAccount> }) {
   if (failed) {
     return (
       <SettingsCard>
-        <div className="px-4 py-4 text-sm text-muted-foreground">The cockpit could not read the account state.</div>
+        <div className="px-4 py-4 text-body text-muted-foreground">The cockpit could not read the account state.</div>
       </SettingsCard>
     );
   }
   if (!status) {
     return (
       <SettingsCard>
-        <div className="px-4 py-4 text-sm text-muted-foreground">…</div>
+        <div className="px-4 py-4 text-body text-muted-foreground">…</div>
       </SettingsCard>
     );
   }
@@ -133,7 +136,7 @@ function AccountCard({ account }: { account: ReturnType<typeof useAccount> }) {
               placeholder="123456"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className={`w-28 font-mono ${input}`}
+              className={`w-28 font-code ${input}`}
             />
             <button type="submit" className={button} disabled={busy || code.replace(/\s/g, '').length !== 6}>
               {busy ? 'Signing in…' : 'Sign in'}
@@ -155,21 +158,17 @@ function signedInDescription(status: Extract<AccountStatus, { signedIn: true }>)
 }
 
 function Problem({ children }: { children: React.ReactNode }) {
-  return <div className="px-4 py-3 text-xs text-destructive">{children}</div>;
+  return <div className="px-4 py-3 text-ui text-stopped-ink">{children}</div>;
 }
 
 function Pill({ children, active = false }: { children: React.ReactNode; active?: boolean }) {
   return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-        active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'
-      }`}
-    >
+    <Chip hue={active ? 'mark' : undefined} className="py-0.5">
       {children}
-    </span>
+    </Chip>
   );
 }
 
 function Mono({ children }: { children: React.ReactNode }) {
-  return <span className="block font-mono text-xs text-foreground">{children}</span>;
+  return <span className="block font-code text-ui text-foreground">{children}</span>;
 }

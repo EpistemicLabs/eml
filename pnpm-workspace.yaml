@@ -1,4 +1,6 @@
 packages:
   - "packages/*"
+  - "plugins/*/channel"
+  - "plugins/*/mcp"
   - "cockpit/host"
   - "cockpit/frontend"

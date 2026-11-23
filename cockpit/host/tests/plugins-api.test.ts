@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -21,6 +21,7 @@ const wtX = `${repo}-x`
 const plain = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-plugins-plain-')))
 
 let host: http.Server
+let pluginsModule: typeof import('../src/plugins-api.js')
 let base: string
 
 // The Shell plugin's running terminals, as the bridge would hold them.
@@ -43,7 +44,13 @@ beforeAll(async () => {
   execFileSync('git', ['-C', wtX, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'second'])
   writeFileSync(join(repo, 'dirty.txt'), 'x\n')
 
-  const { handlePluginsApi } = await import('../src/plugins-api.js')
+  const { handlePluginsApi, spacePlugins } = await import('../src/plugins-api.js')
+  pluginsModule = await import('../src/plugins-api.js')
+  // A home's first boot: the switches an older cockpit kept (none here) carry over to both spaces.
+  await spacePlugins.setup(
+    [{ id: 'main', agent: null, ownRuntime: false }, { id: 'other', agent: null, ownRuntime: false }],
+    {}, { claudeJson: join(home, 'claude-config', '.claude.json'), agents: [] }, join(home, 'plugins', 'backups'),
+  )
   const { TimeTracker } = await import('../src/time-tracking.js')
   const folders: Record<string, string> = { p1: repo, p2: plain }
   const deps = {
@@ -58,6 +65,8 @@ beforeAll(async () => {
     sessionProcesses: () => new Map([[40, { id: 's1', name: 'Dev server session', projectId: 'p1' }]]),
     ownPorts: () => new Map([[6000, 'EML brain server']]),
     endShell: (id: string) => shells.delete(id),
+    spaceIds: () => ['main', 'other'],
+    outside: { list: async () => [{ name: 'claude.ai Slack', kind: 'connector' as const }] },
     time: new TimeTracker(() => ({ spaceId: null, projectId: 'p1', taskId: null }), async () => true, join(home, 'time')),
     sessionName: (id: string) => (id === 's1' ? 'Dev server session' : null),
     timeNames: async ({ projects }: { projects: Array<{ spaceId: string | null; projectId: string | null }> }) => ({
@@ -95,13 +104,22 @@ const patch = (body: unknown) => fetch(`${base}/api/plugins`, { method: 'PATCH',
 describe('plugin switches', () => {
   it('starts with Brain, Note and Worktrees on and the later plugins off', async () => {
     const res = await fetch(`${base}/api/plugins`)
-    expect(await res.json()).toEqual({ plugins: [{ id: 'brain', enabled: true }, { id: 'note', enabled: true }, { id: 'worktrees', enabled: true }, { id: 'repository', enabled: false }, { id: 'shell', enabled: false }, { id: 'time', enabled: false }] })
+    const { plugins } = await res.json()
+    expect(Object.fromEntries(plugins.map((p: { id: string; enabled: boolean }) => [p.id, p.enabled]))).toEqual({
+      brain: true, note: true, worktrees: true, repository: false, shell: false, time: false, gmail: false,
+    })
+  })
+
+  it('describes each official plugin by its manifest', async () => {
+    const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
+    expect(plugins.find((p: { id: string }) => p.id === 'note')).toMatchObject({ name: 'Note', tier: 'official', parts: ['pane'], pane: 'note', channel: null, mcp: null })
+    expect(plugins.find((p: { id: string }) => p.id === 'gmail')).toMatchObject({ tier: 'official', parts: ['mcp', 'channel'], pane: null, channel: 'gmail', auth: { kind: 'google-oauth' }, mcp: { transport: 'stdio', target: 'gmail-mcp.cjs' } })
   })
 
   // Switches every plugin on for the tests below.
   it('keeps what the user chose over the default', async () => {
     await patch({ id: 'brain', enabled: false })
-    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time']) await patch({ id, enabled: true })
+    for (const id of ['note', 'worktrees', 'repository', 'shell', 'time', 'gmail']) await patch({ id, enabled: true })
     const res = await patch({ id: 'brain', enabled: true })
     expect((await res.json()).plugins.every((p: { enabled: boolean }) => p.enabled)).toBe(true)
   })
@@ -113,8 +131,8 @@ describe('plugin switches', () => {
 
   it('keeps a switch in the config and refuses the plugin\'s routes while off', async () => {
     const res = await patch({ id: 'note', enabled: false })
-    expect((await res.json()).plugins).toContainEqual({ id: 'note', enabled: false })
-    expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).plugins).toMatchObject({ note: false })
+    expect((await res.json()).plugins).toContainEqual(expect.objectContaining({ id: 'note', enabled: false }))
+    expect(JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces.main.plugins.note).toBeUndefined()
     expect((await fetch(`${base}/api/notes?projectId=p1`)).status).toBe(404)
     expect((await fetch(`${base}/api/notes/abc`)).status).toBe(404)
 
@@ -134,6 +152,176 @@ describe('plugin switches', () => {
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(404)
     await patch({ id: 'repository', enabled: true })
     expect((await fetch(`${base}/api/plugins/repository/repo?projectId=p1`)).status).toBe(200)
+  })
+})
+
+describe('custom MCP plugins', () => {
+  const add = (body: unknown) => fetch(`${base}/api/plugins/custom`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const lookup = { id: 'lookup', name: 'Lookup', parts: { mcp: { transport: 'stdio', command: 'lookup-mcp', args: ['--token', 'abc'], env: { LOOKUP_KEY: { secret: 'key' }, LOOKUP_REGION: 'eu' } } } }
+
+  it('adds one owner-only, starts it off and shows its settings by name only', async () => {
+    const res = await add(lookup)
+    expect(res.status).toBe(201)
+    expect((await res.json()).plugin).toMatchObject({
+      id: 'lookup', tier: 'custom', parts: ['mcp'], enabled: false,
+      mcp: { transport: 'stdio', target: 'lookup-mcp', settings: [{ name: 'LOOKUP_KEY', secret: true }, { name: 'LOOKUP_REGION', secret: false }] },
+    })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins`)).json())
+    expect(listed).toContain('"lookup"')
+    expect(listed).not.toContain('abc')
+    expect(listed).not.toContain('"eu"')
+    const file = join(home, 'plugins', 'custom.json')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(JSON.parse(readFileSync(file, 'utf8')).plugins[0]).toMatchObject({ id: 'lookup', tier: 'custom' })
+  })
+
+  it('refuses a taken id, an official one, a channel or a pane, and a bad manifest', async () => {
+    expect((await add(lookup)).status).toBe(400)
+    expect((await add({ ...lookup, id: 'gmail' })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'mail2', parts: { channel: { adapter: 'gmail' } } })).status).toBe(400)
+    expect((await add({ ...lookup, id: 'view2', parts: { pane: { builtin: 'note' } } })).status).toBe(400)
+    expect((await add({ id: 'Bad Id', name: 'x', parts: {} })).status).toBe(400)
+    // It can't make itself official.
+    const official = await add({ ...lookup, id: 'sneaky', tier: 'official' })
+    expect((await official.json()).plugin).toMatchObject({ tier: 'custom' })
+    await fetch(`${base}/api/plugins/custom/sneaky`, { method: 'DELETE' })
+  })
+
+  it('switches like any plugin and forgets the switch when removed', async () => {
+    await patch({ id: 'lookup', enabled: true, space: 'other' })
+    const spaces = () => JSON.parse(readFileSync(join(home, 'plugins', 'spaces.json'), 'utf8')).spaces
+    expect(spaces().other.plugins.lookup).toEqual({ connections: [] })
+    expect(spaces().main.plugins.lookup).toBeUndefined()
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(200)
+    expect((await fetch(`${base}/api/plugins/custom/lookup`, { method: 'DELETE' })).status).toBe(404)
+    expect(spaces().other.plugins.lookup).toBeUndefined()
+    expect((await patch({ id: 'lookup', enabled: true })).status).toBe(400)
+  })
+})
+
+describe('plugins per space', () => {
+  const view = async (space: string, id: string) =>
+    (await (await fetch(`${base}/api/plugins?space=${space}`)).json()).plugins.find((p: { id: string }) => p.id === id)
+
+  it('switches a plugin in one space only and tells each space its own state', async () => {
+    await patch({ id: 'time', enabled: false, space: 'other' })
+    expect(await view('main', 'time')).toMatchObject({ enabled: true })
+    expect(await view('other', 'time')).toMatchObject({ enabled: false, spaces: { main: [] } })
+    await patch({ id: 'time', enabled: true, space: 'other' })
+  })
+
+  it('keeps connections owner-only and never sends their values back', async () => {
+    const res = await fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plugin: 'gmail', label: 'Test mailbox', values: { token: 'placeholder-value' } }),
+    })
+    expect(res.status).toBe(201)
+    const { connection } = await res.json()
+    expect(connection).toMatchObject({ plugin: 'gmail', label: 'Test mailbox', secrets: ['token'] })
+    const listed = JSON.stringify(await (await fetch(`${base}/api/plugins/connections`)).json())
+    expect(listed).not.toContain('placeholder-value')
+    expect(statSync(join(home, 'plugins', 'connections.json')).mode & 0o777).toBe(0o600)
+    // A connection of another plugin can't be picked.
+    expect((await patch({ id: 'time', enabled: true, space: 'main', connection: connection.id })).status).toBe(400)
+    expect((await patch({ id: 'gmail', enabled: true, space: 'main', connection: connection.id })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: [connection.id] } })
+    // Removed, the space keeps the plugin without one.
+    expect((await fetch(`${base}/api/plugins/connections/${connection.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect(await view('main', 'gmail')).toMatchObject({ enabled: true, spaces: { main: [] } })
+    await patch({ id: 'gmail', enabled: false, space: 'main' })
+  })
+
+  it('lets a remote user add a custom server once remote access lets the shell in', async () => {
+    writeFileSync(join(home, 'remote.json'), JSON.stringify({ origins: ['https://cockpit.example'], users: [], shell: true }))
+    try {
+      const res = await fetch(`${base}/api/plugins/custom`, {
+        method: 'POST', headers: { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: 'remote-two', name: 'R', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+      })
+      expect(res.status).toBe(201)
+      await fetch(`${base}/api/plugins/custom/remote-two`, { method: 'DELETE' })
+    } finally {
+      rmSync(join(home, 'remote.json'), { force: true })
+    }
+  })
+
+  it('lets a remote user remove a custom server without the shell on', async () => {
+    const added = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'remote-gone', name: 'G', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+    })
+    expect(added.status).toBe(201)
+    const removed = await fetch(`${base}/api/plugins/custom/remote-gone`, { method: 'DELETE', headers: { 'x-forwarded-for': '100.64.0.2' } })
+    expect(removed.status).toBe(200)
+  })
+
+  it('lets a remote user see and add sign-ins, but adds a custom server remotely only with the shell on', async () => {
+    const remote = { 'x-forwarded-for': '100.64.0.2', 'Content-Type': 'application/json' }
+    expect((await fetch(`${base}/api/plugins/connections`, { headers: remote })).status).toBe(200)
+    const custom = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: remote, body: JSON.stringify({ id: 'remote-one', name: 'R', parts: { mcp: { transport: 'stdio', command: 'x' } } }),
+    })
+    expect(custom.status).toBe(403)
+    expect((await custom.json()).error.message).toContain('remote shell on')
+  })
+
+  it('deletes a removed sign-in\'s token file when the cockpit wrote it, never one another program keeps', async () => {
+    const google = join(home, 'plugins', 'google')
+    mkdirSync(google, { recursive: true })
+    const own = join(google, 'abc.token.json')
+    const foreign = join(home, 'elsewhere.token.json')
+    writeFileSync(own, '{}')
+    writeFileSync(foreign, '{}')
+    const add = (tokenFile: string) => fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plugin: 'gmail', label: 'x', values: { tokenFile } }),
+    }).then((r) => r.json()).then((b) => b.connection.id as string)
+    const ownId = await add(own)
+    const foreignId = await add(foreign)
+    await fetch(`${base}/api/plugins/connections/${ownId}`, { method: 'DELETE' })
+    await fetch(`${base}/api/plugins/connections/${foreignId}`, { method: 'DELETE' })
+    expect(existsSync(own)).toBe(false)
+    expect(existsSync(foreign)).toBe(true)
+  })
+
+  it('tells of the imported servers until the notice is done', async () => {
+    await pluginsModule.pluginStore.updateSpaces((state) => ({ ...state, imported: ['lookup-imported'], importNoticeDone: false }))
+    expect((await (await fetch(`${base}/api/plugins`)).json()).importNotice).toEqual({ count: 1 })
+    expect((await fetch(`${base}/api/plugins/import-notice`, { method: 'DELETE' })).status).toBe(200)
+    expect((await (await fetch(`${base}/api/plugins`)).json()).importNotice).toBeNull()
+  })
+
+  it('switches a part off for every space and on again', async () => {
+    const parts = (enabled: boolean) => fetch(`${base}/api/plugins/parts`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'gmail', part: 'mcp', enabled }) })
+    expect((await (await parts(false)).json()).plugins.find((p: { id: string }) => p.id === 'gmail').partsOff).toEqual(['mcp'])
+    expect((await (await parts(true)).json()).plugins.find((p: { id: string }) => p.id === 'gmail').partsOff).toEqual([])
+    expect((await fetch(`${base}/api/plugins/parts`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'gmail', part: 'wings', enabled: false }) })).status).toBe(400)
+  })
+
+  it('offers the OAuth client an earlier sign-in was made with, and copies it on request', async () => {
+    const clientFile = join(home, 'earlier-client.json')
+    writeFileSync(clientFile, JSON.stringify({ installed: { client_id: 'client-placeholder', client_secret: 'secret-placeholder' } }))
+    const add = (credentialsFile: string) => fetch(`${base}/api/plugins/connections`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plugin: 'gmail', label: 'Earlier', values: { credentialsFile } }),
+    }).then((r) => r.json()).then((b) => b.connection.id as string)
+    const earlier = await add(clientFile)
+    const gone = await add(join(home, 'no-such-client.json'))
+    const client = await (await fetch(`${base}/api/plugins/google/client`)).json()
+    expect(client).toMatchObject({ configured: false, fromSignIns: expect.arrayContaining([{ id: earlier, label: 'Earlier' }]) })
+    const put = (fromConnection: string) => fetch(`${base}/api/plugins/google/client`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fromConnection }) })
+    expect((await put(gone)).status).toBe(400)
+    expect(await (await put(earlier)).json()).toMatchObject({ configured: true })
+    expect(JSON.parse(readFileSync(join(home, 'plugins', 'google', 'client.json'), 'utf8')).installed.client_id).toBe('client-placeholder')
+    expect(statSync(join(home, 'plugins', 'google', 'client.json')).mode & 0o777).toBe(0o600)
+    for (const id of [earlier, gone]) await fetch(`${base}/api/plugins/connections/${id}`, { method: 'DELETE' })
+  })
+
+  it('switches a claude.ai connector off in one space', async () => {
+    const res = await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: false }),
+    })
+    expect((await res.json()).servers).toEqual([{ name: 'claude.ai Slack', kind: 'connector', off: ['other'] }])
+    await fetch(`${base}/api/plugins/outside`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: true }),
+    })
   })
 })
 
@@ -360,5 +548,67 @@ describe('time', () => {
     await patch({ id: 'time', enabled: false })
     expect((await fetch(`${base}/api/plugins/time`)).status).toBe(404)
     await patch({ id: 'time', enabled: true })
+  })
+})
+
+describe('OAuth sign-ins to a remote MCP server', () => {
+  let oauthServer: http.Server
+  let remote: string
+
+  beforeAll(async () => {
+    oauthServer = http.createServer((req, res) => {
+      const json = (status: number, value: unknown, headers: Record<string, string> = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(value)) }
+      req.resume()
+      req.on('end', () => {
+        if (req.url === '/mcp') return json(401, {}, { 'www-authenticate': `Bearer resource_metadata="${remote}/.well-known/oauth-protected-resource"` })
+        if (req.url === '/.well-known/oauth-protected-resource') return json(200, { resource: `${remote}/mcp`, authorization_servers: [remote] })
+        if (req.url === '/.well-known/oauth-authorization-server') return json(200, { authorization_endpoint: `${remote}/authorize`, token_endpoint: `${remote}/token`, registration_endpoint: `${remote}/register` })
+        if (req.url === '/register') return json(201, { client_id: 'client-1' })
+        if (req.url === '/token') return json(200, { access_token: 'placeholder-access', refresh_token: 'placeholder-refresh', expires_in: 3600 })
+        json(404, {})
+      })
+    })
+    remote = `http://127.0.0.1:${await listen(oauthServer)}`
+  })
+  afterAll(async () => { await new Promise((r) => oauthServer.close(r)) })
+
+  it('signs in through the server\'s consent page and its callback, then the plugin uses the cockpit\'s sign-ins', async () => {
+    const added = await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'bank', name: 'Bank', parts: { mcp: { transport: 'http', url: `${remote}/mcp`, headers: {} } } }),
+    })
+    expect(added.status).toBe(201)
+    const start = await fetch(`${base}/api/plugins/oauth/sign-in`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', origin: 'http://127.0.0.1:4317' }, body: JSON.stringify({ plugin: 'bank', label: 'Company B', slug: 'b' }),
+    })
+    expect(start.status).toBe(200)
+    const consent = new URL((await start.json()).url)
+    expect(consent.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:4317/api/plugins/oauth/callback')
+    const callback = await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)
+    expect(callback.status).toBe(200)
+    expect(await callback.text()).toContain('Company B is signed in')
+    // Through remote access the browser can't reach the loopback callback: the user pastes the address.
+    const remoteStart = await fetch(`${base}/api/plugins/oauth/sign-in`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '100.64.0.2' }, body: JSON.stringify({ plugin: 'bank', label: 'Company C', slug: 'c' }),
+    })
+    const remoteAnswer = await remoteStart.json()
+    expect(remoteAnswer.paste).toBe(true)
+    const remoteState = new URL(remoteAnswer.url).searchParams.get('state')
+    const pasted = `http://127.0.0.1:4317/api/plugins/oauth/callback?code=code-2&state=${remoteState}`
+    const finish = (redirect: string) => fetch(`${base}/api/plugins/oauth/finish`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect }) })
+    const finished = await finish(pasted)
+    expect(finished.status).toBe(200)
+    expect((await finished.json()).connection.label).toBe('Company C')
+    expect((await finish(pasted)).status).toBe(400)
+    expect((await finish('not an address')).status).toBe(400)
+    const { connections } = await (await fetch(`${base}/api/plugins/connections`)).json()
+    const signedIn = connections.find((c: { plugin: string }) => c.plugin === 'bank')
+    expect(signedIn).toMatchObject({ label: 'Company B', slug: 'b', oauth: true, signInNeeded: false })
+    expect(connections.filter((c: { plugin: string }) => c.plugin === 'bank')).toHaveLength(2)
+    expect(JSON.stringify(connections)).not.toContain('placeholder-access')
+    const { plugins } = await (await fetch(`${base}/api/plugins`)).json()
+    expect(plugins.find((p: { id: string }) => p.id === 'bank').auth).toEqual({ kind: 'mcp-oauth', scopes: [] })
+    // A callback a second time, or one never started here, changes nothing.
+    expect((await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)).status).toBe(400)
+    await fetch(`${base}/api/plugins/custom/bank`, { method: 'DELETE' })
   })
 })

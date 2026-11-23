@@ -9,12 +9,15 @@ import { useState } from 'react';
 
 import { useAboutInfo } from '@/hooks/useAboutInfo';
 import { useProviders } from '@/lib/providers';
+import { durationMs } from '@/lib/time';
+import { cn } from '@/lib/utils';
 import { Button } from '@/shared/view/ui';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { useAppUpdate } from '@/hooks/useAppUpdate';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
+import { SETTINGS_BUTTON_CLASS, SETTINGS_INPUT_CLASS } from '../../constants/constants';
 
 export default function AboutTab() {
   const { info, failed } = useAboutInfo();
@@ -38,7 +41,7 @@ export default function AboutTab() {
   const copyVersions = async () => {
     if (await copyTextToClipboard(versions.map(([name, value]) => `${name}: ${value}`).join('\n'))) {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.setTimeout(() => setCopied(false), durationMs('--duration-feedback'));
     }
   };
 
@@ -46,10 +49,10 @@ export default function AboutTab() {
     <div className="space-y-6">
       {/* Logo + name */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-primary/90 shadow-sm">
-          <Brain className="h-5 w-5 text-primary-foreground" />
+        <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-xl bg-foreground shadow-card">
+          <Brain aria-hidden className="size-5 text-background" />
         </div>
-        <span className="text-base font-semibold text-foreground">EML Cockpit</span>
+        <span className="text-title font-semibold text-foreground">EML Cockpit</span>
       </div>
 
       <SettingsSection
@@ -57,7 +60,7 @@ export default function AboutTab() {
         description="Paste these into a bug report."
       >
         <SettingsCard divided>
-          {versions.length === 0 && <div className="px-4 py-4 text-sm text-muted-foreground">{failed ? 'unknown' : '…'}</div>}
+          {versions.length === 0 && <div className="px-4 py-4 text-body text-muted-foreground">{failed ? 'unknown' : '…'}</div>}
           {versions.map(([name, value]) => (
             <SettingsRow key={name} label={name}>
               <Mono>{value}</Mono>
@@ -65,7 +68,7 @@ export default function AboutTab() {
           ))}
           {versions.length > 0 && (
             <div className="flex justify-end px-4 py-3">
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => void copyVersions()}>
+              <Button variant="outline" size="sm" onClick={() => void copyVersions()}>
                 {copied ? 'Copied' : 'Copy'}
               </Button>
             </div>
@@ -75,11 +78,11 @@ export default function AboutTab() {
 
       <SettingsSection title="License">
         <SettingsCard>
-          <div className="space-y-2 px-4 py-4 text-sm text-muted-foreground">
+          <div className="space-y-2 px-4 py-4 text-body text-muted-foreground">
             <p>EML Cockpit is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).</p>
             <p>Copyright © 2026 Dominik Tilman and Lasse Lung.</p>
             <p>
-              <a href="https://github.com/EpistemicLabs/eml/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2 hover:text-primary">
+              <a href="https://github.com/EpistemicLabs/eml/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2 hover:no-underline focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring">
                 Read the license
               </a>
             </p>
@@ -96,7 +99,7 @@ export default function AboutTab() {
 
 function Mono({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <span className={`block font-mono text-xs text-foreground ${className ?? ''}`}>
+    <span className={`block font-code text-ui text-foreground ${className ?? ''}`}>
       {children}
     </span>
   );
@@ -124,14 +127,14 @@ function UpdatesCard() {
   if (!status) {
     return (
       <SettingsCard>
-        <div className="px-4 py-4 text-sm text-muted-foreground">…</div>
+        <div className="px-4 py-4 text-body text-muted-foreground">…</div>
       </SettingsCard>
     );
   }
   if (!status.managed) {
     return (
       <SettingsCard>
-        <div className="px-4 py-4 text-sm text-muted-foreground">
+        <div className="px-4 py-4 text-body text-muted-foreground">
           This cockpit runs from source (development) — update it with git. Installed cockpits update here.
         </div>
       </SettingsCard>
@@ -139,7 +142,7 @@ function UpdatesCard() {
   }
 
   const busy = phase !== 'idle' || status.busy;
-  const button = 'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-foreground/5 disabled:opacity-50';
+  const button = SETTINGS_BUTTON_CLASS;
 
   return (
     <SettingsCard divided>
@@ -194,7 +197,7 @@ function UpdatesCard() {
               placeholder="github_pat_…"
               value={token}
               onChange={(e) => setTokenInput(e.target.value)}
-              className="w-44 rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-foreground/40"
+              className={cn(SETTINGS_INPUT_CLASS, 'w-44 font-code')}
             />
             <button type="submit" className={button} disabled={busy || !token.trim()}>
               Save
@@ -203,12 +206,12 @@ function UpdatesCard() {
         )}
       </SettingsRow>
       {(error || status.error || status.lastResult?.outcome === 'failed') && (
-        <div className="px-4 py-3 text-xs text-destructive">
+        <div className="px-4 py-3 text-ui text-stopped-ink">
           {error ?? status.error ?? `Last update failed: ${status.lastResult?.error ?? 'unknown error'}`}
         </div>
       )}
       {(phase === 'installing' || phase === 'restarting') && (
-        <div className="px-4 py-3 text-xs text-muted-foreground">
+        <div className="px-4 py-3 text-ui text-muted-foreground">
           {phase === 'installing' ? 'Installing…' : 'Restarting — the page reloads when the cockpit is back.'}
         </div>
       )}

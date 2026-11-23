@@ -4,7 +4,7 @@ import './log-file.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
+import { CLAUDE_TURN_HOOK_CONFIG, COCKPIT_HOME, DIAGNOSE_CLI_JS, SCHEDULE_CLI_JS, SESSION_DIRECTORY_CLI_JS, SESSION_MESSAGE_CLI_JS, MESSAGE_TOKEN_FILE, SESSION_TITLE_CLI_JS, SPAWN_CLI_JS, SPAWN_INBOX_DIR, TASKS_DIR } from './paths.js'
 import { watchSpawnInbox } from './spawn-inbox.js'
 import { fillHumanName, loadBrain } from './provision.js'
 import { readCockpitConfig, writeCockpitConfig } from './config.js'
@@ -16,15 +16,18 @@ import { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
-import { pluginStates } from './plugins-api.js'
+import { pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
+import { importBridgeAccounts, ownsBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
+import { bridgeAccountsFor } from './domain/space-plugins.js'
+import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
+import { writeCodexPluginServers } from './infrastructure/providers/codex/index.js'
 import { readRemoteAccess } from './remote-access.js'
-import { ChatBridge } from './chat-bridge.js'
+import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
 import { shutDownOnSignal } from './application/shut-down.js'
-import { needsAnswer } from './domain/session-attention.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
 import { loadMessageToken } from './message-token.js'
 import { sessionAddress } from './session-address.js'
@@ -36,12 +39,18 @@ import { getFreePort } from './ports.js'
 import { TurnTracker, type TurnEvent } from './turn-state.js'
 import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace, sessionSpaceOf } from './brain-space.js'
-import { HOOKS_PATH, MCP_PATH, createBrainMcpHandler } from './brain-mcp.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
+import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
+import { createSessionTask, kebabTitle } from './application/session-task.js'
+import { brainIdFromProjectId } from './project-registry.js'
+import { createTaskRouter } from './application/task-router.js'
+import { createTaskRunner, stepPrompt } from './application/task-runner.js'
+import { createNextStepCheck } from './application/next-step.js'
+import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
-import { BACKUPS_DIR, DATA_DIR } from './paths.js'
+import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
@@ -53,6 +62,33 @@ import { runRemoteCommand } from './remote.js'
 import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
+import { JobStore } from './job-store.js'
+import { JobRunner } from './application/job-runner.js'
+import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
+import { resolveProject } from './spawn-api.js'
+import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
+import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
+import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
+import { clearJobProfile } from './application/clear-job-profile.js'
+import { takeBackJobTools } from './application/take-back-job-tools.js'
+import { sessionJobFacts } from './application/limited-job-scope.js'
+import { isHeld, type GrantTool, type Job } from './domain/job.js'
+import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
+import { bridgeFiles } from './channel-bridge-api.js'
+import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
+import { createCodexProvider } from './infrastructure/providers/codex/index.js'
+import type { Notifier } from './notifications.js'
+import { PushStore } from './push-store.js'
+import { PushNotifier, notifySessions } from './application/push-notifier.js'
+import { sessionFacts, withProject } from './application/session-facts.js'
+import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
+import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
+import { createSplitSession } from './application/split-session.js'
+import { createSplitBrief } from './application/split-brief.js'
+import { createSortSession } from './application/sort-session.js'
+import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
+import { createTaskBoard } from './application/task-board.js'
+import { projectIdForBrain } from './project-registry.js'
 
 /**
  * Cockpit host entrypoint: set up the cockpit's own Claude Code → load the local
@@ -100,7 +136,17 @@ async function main() {
   // wait for it. Until it is done, or if it fails, sessions say what's missing
   // (Settings › Models retries).
   const ledger = new SessionLedger()
-  const providers = new ProviderRegistry({ providerOf: (sessionId) => ledger.get(sessionId)?.provider, preferred: readDefaultProvider })
+  // A channel job's session gets the bridge's tools and its limits at every launch (channel-job-launch.ts).
+  const channelJobOf = (sessionId: string) => {
+    const jobId = ledger.get(sessionId)?.jobId
+    const job = jobId ? jobStore.get(jobId) : undefined
+    return job && isChannelJob(job) ? channelJobFacts(job, Date.now()) : null
+  }
+  const providers = new ProviderRegistry({
+    providerOf: (sessionId) => ledger.get(sessionId)?.provider,
+    preferred: readDefaultProvider,
+    providers: [withChannelTools(createClaudeProvider(), { channelJobOf, bridgeServer: bridgeServerFor }), createCodexProvider()],
+  })
   for (const provider of providers.all()) {
     const name = provider.label.toLowerCase()
     void provider.runtime.install().finally(() => {
@@ -170,6 +216,41 @@ async function main() {
   const upgradeStateOf = (brainId: string, bound: string | null | undefined): UpgradeState | null => (bound ? null : upgrade ?? upgradeStates.get(brainId) ?? null)
   const agents = loadAgentBrains(config, server.baseUrl, log)
   const row = brainForLocalToken(config?.token ?? brain.token)
+  // The plugins per space (application/space-plugins.ts): once per home the cockpit-wide switches
+  // carry over and the MCP servers configured outside the plugins are imported; then every space
+  // opens with the servers and the connector switches it has.
+  const extraRows = (config?.spaces ?? []).flatMap((extra) => {
+    const extraRow = brainForLocalToken(extra.token)
+    return extraRow ? [{ id: extraRow.id, agent: extra.agent ?? null }] : []
+  })
+  const importSpaces = [{ id: row?.id ?? 'main', agent: config?.agent ?? null }, ...extraRows]
+    .map((space) => ({ ...space, ownRuntime: agents.expectsRuntime(space.agent) }))
+  const runtimeAgents = [...new Set(importSpaces.filter((space) => space.ownRuntime && space.agent).map((space) => space.agent as string))]
+  try {
+    const imported = await spacePlugins.setup(importSpaces, config?.plugins ?? {}, {
+      claudeJson: path.join(CONFIG_DIR, '.claude.json'),
+      agents: runtimeAgents.map((id) => {
+        let allowed: string[] = []
+        let definitions: Record<string, unknown> | null = null
+        try { allowed = readAgentRuntime(id).mcpServers } catch { /* the runtime reports its own problem */ }
+        try { definitions = readAgentMcpDefinitions(id) } catch { /* likewise */ }
+        return { id, allowed, definitions }
+      }),
+    }, path.join(PLUGINS_HOME, 'backups'))
+    const accounts = await importBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, pluginStore, path.join(PLUGINS_HOME, 'backups'))
+    if (accounts.imported.length > 0) log(`plugins: the channel bridge's accounts ${accounts.imported.join(', ')} became connections of their plugin`)
+    if (accounts.problem) log(`plugins: ${accounts.problem}`)
+    if (imported.imported.length > 0) log(`plugins: imported ${imported.imported.map((i) => i.serverName).join(', ')} as custom MCP plugins${imported.backup ? ` (backup ${imported.backup})` : ''}`)
+    for (const skipped of imported.skipped) log(`plugins: ${skipped.serverName} not imported — ${skipped.reason}`)
+  } catch (err) {
+    log(`plugins: setup failed — ${(err as Error).message}`)
+  }
+  const pluginSnapshot = await spacePlugins.snapshot().catch((err: Error) => { log(`plugins: ${err.message}`); return null })
+  const pluginFiles = (spaceId: string) => {
+    const files = pluginSnapshot?.filesFor(spaceId)
+    for (const problem of files?.problems ?? []) log(`plugins: space ${spaceId} — ${problem}`)
+    return files
+  }
   const main = openBrainSpace({
     id: row?.id ?? 'main',
     name: config?.mainName ?? 'Main',
@@ -178,24 +259,46 @@ async function main() {
     upgrade: upgradeStateOf(row?.id ?? 'main', config?.agent),
     main: true,
     color: config?.mainColor,
+    taskSystem: config?.mainTaskSystem === true,
     url: server.baseUrl,
     token: config?.token ?? brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
     mcpUrl,
     hooksUrl,
+    plugins: pluginFiles(row?.id ?? 'main'),
   })
   const spaces = new BrainSpaces(main, config?.spaceOrder)
   for (const extra of config?.spaces ?? []) {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color,
+      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color, taskSystem: extra.taskSystem === true,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl, ownRuntime: agents.expectsRuntime(extra.agent),
+      plugins: pluginFiles(extraRow.id),
     }))
     const runtime = spaces.get(extraRow.id)?.runtime
     const problem = runtime?.problem('claude')
     if (runtime) log(`space ${extra.name ?? extraRow.name}: runtime of ${runtime.id}${problem ? ` — ${problem}` : ''}`)
   }
+  // Codex reads one config for every space: each space's plugin servers are written there, off,
+  // and its sessions switch on their own (codex/plugin-servers.ts).
+  const writeCodexServers = async () => {
+    const snapshot = await spacePlugins.snapshot()
+    writeCodexPluginServers(Object.fromEntries(spaces.list().map((space) => [space.id, snapshot.filesFor(space.id).mcpServers])))
+  }
+  await writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+  // Set once the channel bridge runs: a switch may change its accounts.
+  let channelsChanged: () => void = () => {}
+  // A switch changed later rewrites that space's session files (its next session starts with it).
+  spacePlugins.onRewrite((spaceId, files) => {
+    const space = spaces.get(spaceId)
+    if (!space?.rewriteFiles) return false
+    space.rewriteFiles(files)
+    for (const problem of files.problems) log(`plugins: space ${space.name} — ${problem}`)
+    void writeCodexServers().catch((err: Error) => log(`plugins: Codex config — ${err.message}`))
+    channelsChanged()
+    return true
+  })
   // v0.21: which spaces are shared brains, from the brain server (team-space.ts).
   await loadSharedFlags(spaces.list())
   // The human's name moves into the config once (after the agent upgrade, which sets the handle).
@@ -228,6 +331,8 @@ async function main() {
     COCKPIT_MESSAGE_JS: SESSION_MESSAGE_CLI_JS,
     // Find a session by what the user calls it (session-directory-cli.ts).
     COCKPIT_SESSIONS_JS: SESSION_DIRECTORY_CLI_JS,
+    // The schedule tool for sessions without it (schedule-cli.ts, skill schedule).
+    COCKPIT_SCHEDULE_JS: SCHEDULE_CLI_JS,
     // Redacted diagnostics for an issue (skill report-issue, diagnose-cli.ts).
     COCKPIT_DIAGNOSE_JS: DIAGNOSE_CLI_JS,
     COCKPIT_HOME,
@@ -253,7 +358,106 @@ async function main() {
     },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver })
+  // Task system: every session of a space that switched it on works on a brain task (application/session-task.ts).
+  const taskBrain = (space: BrainSpace) => {
+    const agent = boundAgent({ agents }, space)
+    return 'refused' in agent ? null : sessionClient(space, agent)
+  }
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
+  // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
+  const owner = config?.handle ?? 'user'
+  const taskRouter = createTaskRouter({
+    ledger, spaces, brain: taskBrain, owner, log,
+    // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
+    finished: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry?.worker || entry.pinned || entry.deskMain) return
+      ledger.archive(sessionId)
+    },
+  })
+  // The task board's commands (application/task-commands.ts), made below; the runner asks them first.
+  let taskCommands: TaskCommands | null = null
+  // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
+  const ensureTaskProject = (space: BrainSpace, projectId: string): string | null => {
+    const brainId = brainIdFromProjectId(projectId)
+    if (!space.registry.get(projectId) && brainId) space.registry.ensureBrain(brainId, brainId)
+    if (!space.registry.get(projectId)) return `project ${projectId} is not in space ${space.name}`
+    if (!space.registry.get(projectId)!.path) space.registry.ensureCockpitFolder(projectId)
+    return null
+  }
+  // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
+  const taskRunner = createTaskRunner({
+    spaces, brain: taskBrain, log,
+    busy: (taskId) => ledger.list().some((e) => e.taskId === taskId && !e.archivedAt),
+    scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
+    held: (taskId) => taskCommands?.held(taskId) ?? false,
+    brief: (taskId) => taskCommands?.briefOf(taskId),
+    start: (space, step) => {
+      const problem = ensureTaskProject(space, step.projectId)
+      if (problem) return problem
+      spawns.add({
+        projectId: step.projectId, prompt: stepPrompt(step, step.checkpoint), title: step.title, fromSessionId: null,
+        origin: 'runner', taskId: step.id, ...(space.main ? {} : { spaceId: space.id }),
+      })
+      return null
+    },
+  })
+  taskRunner.every(RUNNER_TICK_MS)
+  // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
+  const nextStep = createNextStepCheck({
+    ledger, spaces, brain: taskBrain, owner, log,
+    jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
+      ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
+      channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),
+      runWaiting: jobStore.runs(job.id).some((run) => run.status === 'waiting'),
+    })),
+    runStartedAt: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      const run = entry?.jobId ? jobStore.runs(entry.jobId).filter((r) => r.sessionId === sessionId && r.startedAt).at(-1) : undefined
+      return run?.startedAt ?? entry?.createdAt ?? ''
+    },
+    working: (sessionId) => turns.get(sessionId)?.state === 'working',
+    watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    waiting: (sessionId) => flagged(sessionId),
+    // Like a finished worker: one the user pinned or put on the desk stays.
+    quiet: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry?.worker || entry.pinned || entry.deskMain) return
+      ledger.archive(sessionId)
+    },
+  })
+  setInterval(() => { void nextStep.tick() }, RUNNER_TICK_MS).unref?.()
+  // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
+  const cycles = createCycles({ spaces, log, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
+  // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
+  const turnEnded = (sessionId: string, text: string) => {
+    void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
+      .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
+  }
+  const sessionNamed = (sessionId: string, title: string) => {
+    sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
+  }
+  // Sessions that had their name before their placeholder task: the task takes it now (once the brain answers).
+  setTimeout(() => {
+    for (const entry of ledger.list()) {
+      const name = entry.title ?? entry.agentTitle
+      if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
+    }
+  }, 15_000).unref?.()
+  // The spawn API's newTask: written into the brain at once (decision no-task-triage).
+  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
+    const fields = { title: kebabTitle(input.title) ?? input.title, content: input.content, scope: input.scope, status: 'active' }
+    const brain = taskBrain(space)
+    if (!brain) return { error: `space ${space.name} has no agent` }
+    const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>
+    try {
+      return await post(input.scope).catch(() => post('global'))
+    } catch (err) {
+      return { error: (err as Error).message }
+    }
+  }
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -272,11 +476,18 @@ async function main() {
   const swept = bridge.sweepEmptySessions()
   if (swept > 0) process.stderr.write(`[pty] forgot ${swept} session(s) that never ran a turn\n`)
   const turns = new TurnTracker()
+  // A session flagged for the user (a question, a failure) shows as a new result: its desk dot
+  // clears once seen; the flag keeps it in Your turn (decision desk-dot-until-seen).
+  const flagged = (sessionId: string) => { if (turns.get(sessionId)?.state !== 'working') turns.apply({ sessionId, state: 'done' }) }
+  const sdkRuntimes = createClaudeSdkRuntimes()
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
-    runtimes: createClaudeSdkRuntimes(),
+    runtimes: sdkRuntimes,
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
+    turnDone: turnEnded,
+    answered: (sessionId) => { void taskRouter.answered(sessionId) },
+    handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
     onExit: (sessionId) => turns.forget(sessionId),
     memory,
     limits: () => {
@@ -284,6 +495,19 @@ async function main() {
       return { session: sessionLimits(settings), idleMs: idleMs(settings) }
     },
     overCap: (): boolean => cap() > 0 && running() > cap(),
+    jobOf: (sessionId) => {
+      const jobId = ledger.get(sessionId)?.jobId
+      const job = jobId ? jobStore.get(jobId) : undefined
+      return job ? { id: job.id, name: job.name, limited: job.limited === true } : null
+    },
+    clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
+    // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
+    jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
+      const caller = jobCaller(sessionId)
+      if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
+      const answer: JobAnswer = await jobs.handle(caller, input)
+      return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
+    },
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -295,9 +519,13 @@ async function main() {
     },
   }, handoff)
   const sessionHandoff = new SessionHandoff({ terminal: bridge, sdk: chat })
-  // Turn state starts empty; what a session waits for someone about is saved.
-  for (const { sessionId, attention } of ledger.list()) if (attention && needsAnswer(attention.kind)) turns.apply({ sessionId, state: 'waiting' })
-  spawns.on('spawn', (request: SpawnRequest) => { if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId) })
+  // Turn state starts empty. A saved question or failure is not turned back into waiting: the desk dot
+  // shows what is new until it is seen, the Inbox and Your turn hold what needs an answer, and only a
+  // live prompt keeps a session waiting (decision desk-dot-until-seen).
+  spawns.on('spawn', (request: SpawnRequest) => {
+    if (request.fromSessionId) ledger.expectParent(request.id, request.fromSessionId)
+    if (request.origin === 'split' || request.origin === 'task') ledger.expectOwn(request.id)
+  })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
     runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
@@ -306,6 +534,148 @@ async function main() {
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
   })
+  // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
+  const jobStore = new JobStore()
+  // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
+  const pushStore = new PushStore()
+  const pushNotifier = new PushNotifier({
+    devices: () => pushStore.devices(),
+    send: (device, payload, options) => {
+      const keys = pushStore.vapid()
+      if (!keys) throw new Error('push key not stored')
+      return sendPush(device, payload, keys, vapidSubject(device.origin), { ttlSeconds: 12 * 3600, ...options })
+    },
+    forget: (endpoint) => { pushStore.unsubscribe(endpoint) },
+    log,
+    now: () => Date.now(),
+  })
+  const notifier: Notifier = pushNotifier
+  const projectName = (spaceId: string | null, projectId: string | null) =>
+    projectId ? spaces.resolve(spaceId).registry.get(projectId)?.displayName : undefined
+  // Sessions tell what the review section shows: Needs you, Check this, a new result.
+  notifySessions({ turns, notifier, facts: (sessionId) => sessionFacts({ ledger, turns, projectName }, sessionId) })
+  const userTimeZone = () => jobStore.timeZone() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  const jobCaller = (sessionId: string): JobCaller | null => {
+    const entry = ledger.get(sessionId)
+    if (!entry) return null
+    // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
+    const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
+    // In a task-system space a job belongs to the task its maker works on.
+    const taskId = taskSystemOn(spaces.resolve(entry.spaceId)) && entry.taskId ? entry.taskId : null
+    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId, ...facts }
+  }
+  // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
+  const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)
+  const jobSessions: JobSessions = {
+    sessionsOf: (jobId) => ledger.list().filter((entry) => entry.jobId === jobId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => entry.sessionId),
+    runs: sessionRuns,
+    turnOver: (sessionId) => new Promise<void>((resolve) => {
+      const over = () => turns.get(sessionId)?.state !== 'working' || !sessionRuns(sessionId)
+      if (over()) return resolve()
+      const check = () => {
+        if (!over()) return
+        turns.off('turn', check)
+        clearInterval(timer)
+        resolve()
+      }
+      // The turn event is the signal; the look every few seconds covers a process that ended without one.
+      const timer = setInterval(check, 5_000)
+      timer.unref()
+      turns.on('turn', check)
+    }),
+    stop: (sessionId) => chat.isRunning(sessionId) ? chat.end(sessionId, IDLE_STOP) : bridge.end(sessionId),
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    timeZone: userTimeZone,
+    log,
+  }
+  const onGrant = (job: Job, tool: GrantTool) => void lendJobTool(jobSessions, job, tool)
+    .catch((err: unknown) => log(`[jobs] lending ${tool} to job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
+  const onGrantEnd = (job: Job, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
+    .catch((err: unknown) => log(`[jobs] taking ${tools.join(', ')} back from job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
+  const jobRunner = new JobRunner({
+    store: jobStore, log, timeZone: userTimeZone,
+    hasRoom: (): boolean => startWorker.hasRoom(),
+    sessionRuns,
+    onGrantEnd,
+    sessionState: (sessionId) => {
+      if (!ledger.has(sessionId)) return 'queued'
+      if (turns.get(sessionId)?.state === 'working') return 'working'
+      return chat.isRunning(sessionId) || bridge.isRunning(sessionId) ? 'idle' : 'stopped'
+    },
+    statusSince: (sessionId, since) => {
+      const entry = ledger.get(sessionId)
+      const said = [entry?.attention, entry?.lastStatus].find((status) => status && status.at >= since)
+      return said ? { kind: said.kind, reason: said.reason } : null
+    },
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    startWorker: (job, sessionId, text) => {
+      if (job.target.type === 'session') return 'not a worker job'
+      const parent = job.createdBy && ledger.has(job.createdBy) ? job.createdBy : null
+      spawns.add({
+        id: sessionId, projectId: job.target.projectId, prompt: text, title: job.name, fromSessionId: parent, origin: 'job', jobId: job.id,
+        ...(job.target.provider ? { provider: job.target.provider } : {}),
+        ...(job.toolProfile ? { toolProfile: job.toolProfile } : {}),
+        ...(job.spaceId ? { spaceId: job.spaceId } : {}),
+      })
+      return null
+    },
+    notify: (input) => {
+      log(`[jobs] tell: job=${input.jobId?.slice(0, 8) ?? '-'} kind=${input.kind}`)
+      notifier.notify(withProject({ ledger, projectName }, input))
+    },
+    // In the review section, as "Needs you": the job's own session if it has one, else whoever made it.
+    flag: (job, text) => {
+      const own = job.target.type === 'worker' ? null : job.target.sessionId
+      const sessionId = [own, job.createdBy].find((id): id is string => !!id && ledger.has(id))
+      if (!sessionId) return
+      ledger.setAttention(sessionId, { kind: 'failed', reason: text.slice(0, 300) })
+      flagged(sessionId)
+    },
+  })
+  const jobs = new Jobs({
+    store: jobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
+    resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
+    findSession: (spaceId, target) => ledger.list(undefined, spaceId)
+      .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
+    addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
+    projectName: (spaceId, projectId) => {
+      const project = spaces.resolve(spaceId).registry.get(projectId)
+      return project ? project.customName ?? project.displayName : projectId
+    },
+    providerKnown: (id) => providers.get(id) !== undefined,
+    // The main space is local by construction; any other counts as shared until the brain server said otherwise.
+    sharedSpace: (spaceId) => {
+      const space = spaces.resolve(spaceId)
+      return !space.main && space.shared !== false
+    },
+    onGrant, onGrantEnd,
+  })
+  // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
+  const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
+  ensureJobTokens(jobSpaceIds())
+  // The channel bridge, once there are mailboxes for it to watch (channel-bridge.ts).
+  // The bridge's accounts follow the channel plugins' switches and connections (no home space: one
+  // account per connection, on in every space that picked it); the bridge reads them at start.
+  const writeAccounts = async (): Promise<boolean> => {
+    // A hand-written file the import could not take over is left as it is.
+    if (!(await ownsBridgeAccounts(pluginStore))) return false
+    const snapshot = await spacePlugins.snapshot()
+    const { accounts, problems } = bridgeAccountsFor(snapshot.state, snapshot.manifests, await pluginStore.connections(), jobSpaceIds())
+    for (const problem of problems) log(`plugins: ${problem}`)
+    return writeBridgeAccounts(CHANNEL_BRIDGE_ACCOUNTS_FILE, accounts)
+  }
+  await writeAccounts().catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  let channelBridge = await startChannelBridge(url, log)
+  let bridgeRestart: Promise<unknown> = Promise.resolve()
+  channelsChanged = () => {
+    bridgeRestart = bridgeRestart.then(async () => {
+      if (!(await writeAccounts())) return
+      channelBridge?.stop()
+      channelBridge = await startChannelBridge(url, log)
+      log('[bridge] restarted with its new accounts')
+    }).catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
+  }
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
   turns.on('notification', (type: string) => { if (type !== 'idle_prompt') log(`[turn] notification ${type}`) })
   // The Time plugin's clocks: the agent's from the turns, the user's from the browser's beats.
@@ -318,10 +688,176 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
+  // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
+  const taskBoard = createTaskBoard({
+    spaces: () => spaces.list(),
+    brain: taskBrain,
+    viewer: owner,
+    sessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
+      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
+    nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
+      .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    snoozes: () => taskCommands?.snoozes() ?? [],
+    pendingCommands: () => taskCommands?.pending() ?? [],
+    now: () => Date.now(),
+    log,
+  })
+  const taskCommandStore = new TaskCommandStore()
+  taskCommands = createTaskCommands({
+    store: taskCommandStore,
+    space: (spaceId) => spaces.get(spaceId),
+    brain: taskBrain,
+    agentsOf: async (space) => {
+      const found = await taskBrain(space)?.get('/object/agent').catch(() => null) as { objects?: Array<{ id: string }> } | null
+      return (found?.objects ?? []).map((a) => a.id)
+    },
+    runner: (space) => taskSystemOn(space),
+    createJob: async (space, task, spec, prompt) => {
+      const brainProject = task.scope.startsWith('project.') ? task.scope.slice('project.'.length) : null
+      if (!brainProject) return { error: `the task has no project to run in (scope ${task.scope})` }
+      const projectId = projectIdForBrain(brainProject)
+      const problem = ensureTaskProject(space, projectId)
+      if (problem) return { error: problem }
+      const answer = await jobs.handle(
+        { sessionId: null, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
+        { action: 'create', name: task.title ?? task.id, prompt, ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, task_id: task.id },
+      )
+      return answer.job ? { jobId: answer.job.id } : { error: answer.text }
+    },
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
+  // A session of the user's own on a task, started from the page (a task row, Advance task): the host binds the
+  // task and queues it; the page claims it and opens it in chat when that is the user's view (application/start-worker.ts).
+  const startOnTask = async (input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }) => {
+    const space = spaces.get(input.spaceId)
+    if (!space) return { ok: false as const, refusal: 'unknown_space' as const }
+    const task = await taskBrain(space)?.get(`/engram/${encodeURIComponent(input.taskId)}`).catch(() => null) as { title?: string | null; status?: string; scope?: string } | null | undefined
+    if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
+    if (task.status !== 'planned' && task.status !== 'active') return { ok: false as const, refusal: 'task_closed' as const }
+    const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
+    const projectId = input.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+    if (!projectId) return { ok: false as const, refusal: 'no_project' as const }
+    const problem = ensureTaskProject(space, projectId)
+    if (problem) return { ok: false as const, refusal: 'no_project' as const, message: problem }
+    const title = input.title ?? task.title ?? input.taskId
+    const request = spawns.add({
+      projectId, title: title.slice(0, 60), fromSessionId: null, open: true, origin: 'task', taskId: input.taskId,
+      prompt: input.prompt ?? `Work on task ${input.taskId} ("${title}") together with the user, who owns it. Start by saying where it stands and what you would do next.`,
+      ...(input.deskId ? { deskId: input.deskId } : {}),
+      ...(space.main ? {} : { spaceId: space.id }),
+    })
+    return { ok: true as const, sessionId: request.id }
+  }
+  // What a split or a sort reads about a session.
+  const splitSessionFacts = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    return entry ? { spaceId: entry.spaceId, title: entry.title ?? entry.agentTitle ?? sessionId, taskId: entry.taskId } : null
+  }
+  // Sorting a drifted session (application/sort-session.ts).
+  const sortSession = createSortSession({
+    store: taskCommandStore,
+    session: splitSessionFacts,
+    space: (spaceId) => spaces.resolve(spaceId),
+    taskSystem: (space) => taskSystemOn(space),
+    brain: taskBrain,
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
+  // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
+  const claudeConfigOf = (spaceId: string | null) => {
+    const space = spaces.resolve(spaceId)
+    return space.runtime ? space.runtime.configDirs.claude ?? null : CONFIG_DIR
+  }
+  // The space's open tasks, for splitting onto one instead of making another.
+  const openTasksOf = async (space: BrainSpace) => {
+    const brain = taskBrain(space)
+    if (!brain) return []
+    const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: 200 }).catch(() => ({ engrams: [] }))))
+    return lists.flatMap((l) => ((l as { engrams?: Array<{ id: string; title: string | null; scope: string }> }).engrams ?? []))
+      .map((t) => ({ id: t.id, title: t.title ?? t.id, project: t.scope.startsWith('project.') ? t.scope.slice('project.'.length) : null }))
+  }
+  const splitBrief = createSplitBrief({
+    transcript: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+      const space = spaces.resolve(entry.spaceId)
+      const projectPath = space.registry.get(entry.projectId)?.path
+      if (!projectPath) return null
+      const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
+      return sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
+    },
+    facts: async (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry) return null
+      const space = spaces.resolve(entry.spaceId)
+      const task = taskSystemOn(space) && entry.taskId
+        ? await taskBrain(space)?.get(`/engram/${entry.taskId}`).catch(() => null) as { title?: string } | null | undefined
+        : null
+      return {
+        sessionTitle: entry.title ?? entry.agentTitle ?? sessionId,
+        taskTitle: task?.title ?? null,
+        projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName, brainProjectId: p.brainProjectId })),
+        openTasks: await openTasksOf(space),
+        taskSystem: taskSystemOn(space),
+        hasTask: taskSystemOn(space) && entry.taskId !== null,
+      }
+    },
+    complete: async (sessionId, prompt) => {
+      const configDir = claudeConfigOf(ledger.get(sessionId)?.spaceId ?? null)
+      if (!configDir) throw new Error('this space has no Claude Code sign-in')
+      return claudeOneShot(configDir, prompt)
+    },
+    today: () => new Date().toISOString().slice(0, 10),
+  })
+  taskCommands.every(TASK_COMMAND_TICK_MS)
+  taskBoard.every(TASK_BOARD_REFRESH_MS, TASK_BOARD_VIEWED_MS)
+
+  // Split off a topic from a session (application/split-session.ts); its commands share the task commands' file.
+  const splitSession = createSplitSession({
+    store: taskCommandStore,
+    session: splitSessionFacts,
+    space: (spaceId) => spaces.resolve(spaceId),
+    taskSystem: (space) => taskSystemOn(space),
+    brain: taskBrain,
+    brainProject: (space, projectId) => {
+      const project = space.registry.get(projectId)
+      return project ? project.brainProjectId : (brainIdFromProjectId(projectId) ?? undefined)
+    },
+    spawn: ({ fromSessionId, projectId, title, prompt, taskId, space }) => spawns.add({
+      projectId, prompt, title: title.slice(0, 60), fromSessionId, open: true, origin: 'split',
+      ...(taskId ? { taskId } : {}),
+      ...(space.main ? {} : { spaceId: space.id }),
+    }).id,
+    endSession: async (sessionId) => {
+      bridge.killSession(sessionId)
+      await chat.end(sessionId, 'split undone')
+      ledger.setTurnInFlight(sessionId, false)
+      turns.forget(sessionId)
+      ledger.archive(sessionId)
+    },
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+    now: () => Date.now(),
+    log,
+  })
+
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl },
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
+      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
+        sessionInfo: (sessionId) => {
+          const entry = ledger.get(sessionId)
+          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk', attention: entry.attention?.kind ?? null } : null
+        },
+      },
+      channelBridge: bridgeFiles(),
+      push: { store: pushStore, notifier: pushNotifier },
+      jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
+    },
     origins,
   )
 
@@ -330,6 +866,8 @@ async function main() {
     host.listen(hostPort, '127.0.0.1', resolve)
   })
   log(`cockpit: ${url}`)
+  // The week's cycle in each task-system space; checked hourly, the week turns at the user's midnight.
+  cycles.every(60 * 60_000)
   // Sessions kept running for Remote Control come back without a browser,
   // once the host answers their hooks.
   const kept = bridge.resumeKeptSessions()
@@ -341,7 +879,7 @@ async function main() {
     giveUp: (sessionId, kind, reason) => {
       ledger.setTurnInFlight(sessionId, false)
       ledger.setAttention(sessionId, { kind, reason })
-      turns.apply({ sessionId, state: 'waiting' })
+      flagged(sessionId)
     },
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     waitForRoom: () => waitForRoom(() => startWorker.hasRoom()),
@@ -362,6 +900,7 @@ async function main() {
     },
   })
   workers.start()
+  jobRunner.start()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -375,6 +914,8 @@ async function main() {
   const shutdown = shutDownOnSignal({
     stop: () => {
       workers.stop()
+      jobRunner.stop()
+      channelBridge?.stop()
       try { bridge.dispose() } catch { /* best-effort */ }
       try { host.close() } catch { /* best-effort */ }
     },
@@ -388,6 +929,13 @@ async function main() {
 }
 
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
+// How often the task runner looks for plan steps that are ready, besides after every turn.
+const RUNNER_TICK_MS = 60_000
+/** Pending task board commands are applied once their undo window is over. */
+const TASK_COMMAND_TICK_MS = 1000
+/** The task board refreshes this often while a page looks at it, and not at all while none does. */
+const TASK_BOARD_REFRESH_MS = 20_000
+const TASK_BOARD_VIEWED_MS = 120_000
 const RECOVERY_GAP_MS = 10_000
 // Waiting longer than this for room, the worker goes anyway: a full machine must not hold it forever.
 const RECOVERY_WAIT_MS = 10 * 60_000

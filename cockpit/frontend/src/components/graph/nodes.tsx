@@ -1,12 +1,21 @@
 import { createContext, useContext } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { TYPE_COLORS, withAlpha } from "@/components/ui/badge";
 import { CARD_W } from "@/lib/graph";
 import type { EngramType, SubjectStatus } from "@/lib/types";
 import { SUBJECT_STATUS_COLOR } from "@/lib/subject-graph";
+import { cn } from "@/lib/utils";
+import { typeColor } from "@/shared/view/ui/EngramType";
 
-// Ported from packages/web/components/graph/nodes.tsx (CSS vars retargeted to the
-// cockpit tokens; the tag-hub node for the tags lens included).
+/** Edges start and end in the middle of a node: its handles sit there, invisible and point-sized. */
+const CENTER_HANDLE = "!top-1/2 !left-1/2 !size-px !min-h-0 !min-w-0 !-translate-x-1/2 !-translate-y-1/2 !border-0 !opacity-0";
+/** The floating legend in a graph's corner. */
+export const GRAPH_PANEL = "glass rounded-lg px-3 py-2 text-ui shadow-overlay";
+/** Edges: a thin line at a low, token-set opacity, so the nodes stay in front. */
+export const edgeStyle = (stroke: string, faint = false) => ({ stroke, strokeWidth: "var(--width-graph-line)", opacity: faint ? "var(--opacity-graph-edge-faint)" : "var(--opacity-graph-edge)" });
+/** Nodes fade (not blink) as the hover moves across the graph. */
+const FADE = "transition-opacity duration-(--duration-fast)";
+
+// The graph's nodes in tokens v2 (the tag-hub and subject-hub nodes for their lenses included).
 
 export interface EngramNodeData {
   label: string;
@@ -32,58 +41,35 @@ export function EngramNode({ id, data }: NodeProps) {
   const { neighbors } = useContext(HoverContext);
   const dimmed = neighbors ? !neighbors.has(id) : false;
   const highlighted = neighbors?.has(id) === true;
-  const color = TYPE_COLORS[d.engramType] ?? "var(--color-muted-foreground)";
-  const centerHandle = {
-    top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-    opacity: 0, width: 1, height: 1, minWidth: 1, minHeight: 1, border: "none",
-  } as const;
+  const color = typeColor(d.engramType);
 
   return (
     <div
-      style={{ width: CARD_W, opacity: dimmed ? 0.12 : d.isolated ? 0.6 : 1, transition: "opacity 120ms" }}
+      // Width from the layout model (CARD_W), so nodes and the force layout agree.
+      style={{ width: CARD_W }}
+      className={cn(FADE, dimmed ? "opacity-(--opacity-graph-dim)" : d.isolated && "opacity-(--opacity-graph-isolated)")}
       title={d.label}
     >
-      <Handle type="target" position={Position.Top} style={centerHandle} />
+      <Handle type="target" position={Position.Top} className={CENTER_HANDLE} />
+      {/* The type's hue is the node's edge (a graph node may carry it); the text stays monochrome. */}
       <div
-        style={{
-          borderRadius: 6,
-          borderLeft: `4px solid ${color}`,
-          borderTop: "1px solid var(--color-border)",
-          borderRight: "1px solid var(--color-border)",
-          borderBottom: "1px solid var(--color-border)",
-          background: "var(--color-card)",
-          padding: "5px 8px",
-          boxShadow: highlighted
-            ? `0 0 0 2px ${color}, 0 2px 6px rgba(0,0,0,0.4)`
-            : "0 1px 2px rgba(0,0,0,0.3)",
-        }}
+        className={cn(
+          "rounded-md border border-l-(length:--width-graph-edge) border-border bg-card px-2 py-1",
+          highlighted ? "shadow-overlay ring-2 ring-foreground" : "shadow-card",
+        )}
+        style={{ borderLeftColor: color }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-          <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", color }}>
-            {d.engramType}
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {d.review && (
-              <span style={{ fontSize: 10, lineHeight: 1, color: "var(--color-review)" }} title="Flagged for review">⚑</span>
-            )}
-            {d.historyCount >= 1 && (
-              <span style={{ fontSize: 9, color: "var(--color-muted-foreground)" }} title={`${d.historyCount} superseded version(s)`}>
-                ⧗{d.historyCount}
-              </span>
-            )}
-            {d.degree >= 2 && <span style={{ fontSize: 9, color: "var(--color-muted-foreground)" }}>·{d.degree}</span>}
+        <div className="flex items-center justify-between gap-1.5">
+          <span className="text-caption leading-none font-semibold tracking-label text-muted-foreground uppercase">{d.engramType}</span>
+          <span className="flex items-center gap-1 text-caption leading-none text-muted-foreground">
+            {d.review && <span className="text-you-ink" title="Flagged for review">⚑</span>}
+            {d.historyCount >= 1 && <span title={`${d.historyCount} superseded version(s)`}>⧗{d.historyCount}</span>}
+            {d.degree >= 2 && <span>·{d.degree}</span>}
           </span>
         </div>
-        <div
-          style={{
-            fontSize: 11, lineHeight: 1.2, color: "var(--color-foreground)",
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-          }}
-        >
-          {d.label}
-        </div>
+        <div className="mt-0.5 line-clamp-2 text-caption text-foreground">{d.label}</div>
       </div>
-      <Handle type="source" position={Position.Bottom} style={centerHandle} />
+      <Handle type="source" position={Position.Bottom} className={CENTER_HANDLE} />
     </div>
   );
 }
@@ -108,32 +94,25 @@ export function TagHubNode({ id, data }: NodeProps) {
   const { neighbors } = useContext(HoverContext);
   const dimmed = neighbors ? !neighbors.has(id) : false;
   const highlighted = neighbors?.has(id) === true;
-  const centerHandle = {
-    top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-    opacity: 0, width: 1, height: 1, minWidth: 1, minHeight: 1, border: "none",
-  } as const;
 
   return (
     <div
-      style={{ opacity: dimmed ? 0.15 : 1, transition: "opacity 120ms" }}
+      className={cn(FADE, dimmed && "opacity-(--opacity-graph-hub-dim)")}
       title={`#${d.tag} · ${d.memberCount} engram${d.memberCount === 1 ? "" : "s"}`}
     >
-      <Handle type="target" position={Position.Top} style={centerHandle} />
+      <Handle type="target" position={Position.Top} className={CENTER_HANDLE} />
+      {/* A monochrome pill; the tag's own hue is only its dot. */}
       <div
-        // Tinted pill like the type chips — no solid fill with white text.
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 999, padding: "5px 11px",
-          background: withAlpha(d.color, 0.16), border: `1px solid ${withAlpha(d.color, 0.5)}`, color: d.color,
-          fontSize: 12, fontWeight: 700, letterSpacing: "0.01em", whiteSpace: "nowrap",
-          boxShadow: highlighted ? `0 0 0 3px ${withAlpha(d.color, 0.3)}, 0 2px 8px rgba(0,0,0,0.45)` : "0 1px 3px rgba(0,0,0,0.4)",
-        }}
+        className={cn(
+          "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border-strong bg-card px-3 py-1 text-ui font-bold text-foreground",
+          highlighted ? "shadow-overlay ring-2 ring-foreground" : "shadow-card",
+        )}
       >
+        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: d.color }} />
         <span>#{d.tag}</span>
-        <span style={{ fontSize: 10, fontWeight: 700, background: withAlpha(d.color, 0.22), borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>
-          {d.memberCount}
-        </span>
+        <span className="rounded-full bg-muted px-1.5 text-caption font-bold">{d.memberCount}</span>
       </div>
-      <Handle type="source" position={Position.Bottom} style={centerHandle} />
+      <Handle type="source" position={Position.Bottom} className={CENTER_HANDLE} />
     </div>
   );
 }
@@ -165,50 +144,35 @@ export function SubjectHubNode({ id, data }: NodeProps) {
   const dimmed = neighbors ? !neighbors.has(id) : false;
   const highlighted = neighbors?.has(id) === true;
   const closed = d.status === "closed";
-  const color = closed ? SUBJECT_STATUS_COLOR.closed : d.color;
-  const ring = SUBJECT_STATUS_COLOR[d.status];
   const count = d.totalCount > d.memberCount ? `${d.memberCount}/${d.totalCount}` : String(d.memberCount);
-  const centerHandle = {
-    top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-    opacity: 0, width: 1, height: 1, minWidth: 1, minHeight: 1, border: "none",
-  } as const;
 
   return (
     <div
-      style={{ opacity: dimmed ? 0.15 : closed ? 0.4 : 1, transition: "opacity 120ms" }}
+      className={cn(FADE, dimmed ? "opacity-(--opacity-graph-hub-dim)" : closed && "opacity-(--opacity-graph-closed)")}
       title={
         `${d.name} · ${d.status}` +
         ` · ${d.memberCount} here${d.totalCount > d.memberCount ? `, ${d.totalCount} across the brain` : ""}` +
         (d.description ? `\n${d.description}` : "")
       }
     >
-      <Handle type="target" position={Position.Top} style={centerHandle} />
+      <Handle type="target" position={Position.Top} className={CENTER_HANDLE} />
+      {/* The lifecycle reads at a glance: active = solid ring in the text colour, closed = dashed
+          grey ring with the name struck through. The subject's hue is only its dot. */}
       <div
-        style={{
-          display: "flex", flexDirection: "column", gap: 2, maxWidth: 220, borderRadius: 10, padding: "6px 11px",
-          background: withAlpha(color, 0.14),
-          border: closed ? `2px dashed ${withAlpha(ring, 0.7)}` : `2px solid ${ring}`,
-          boxShadow: highlighted ? `0 0 0 3px ${withAlpha(color, 0.3)}, 0 2px 8px rgba(0,0,0,0.45)` : "0 1px 3px rgba(0,0,0,0.4)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", textDecoration: closed ? "line-through" : "none" }}>{d.name}</span>
-          <span style={{ fontSize: 10, fontWeight: 700, background: withAlpha(color, 0.22), borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>
-            {count}
-          </span>
-        </div>
-        {d.description && (
-          <div
-            style={{
-              fontSize: 10, lineHeight: 1.25, color: "var(--color-muted-foreground)",
-              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-            }}
-          >
-            {d.description}
-          </div>
+        className={cn(
+          "flex max-w-(--size-graph-hub) flex-col gap-0.5 rounded-lg border-2 bg-card px-3 py-1.5",
+          closed ? "border-dashed border-border-strong" : "border-foreground",
+          highlighted ? "shadow-overlay ring-2 ring-foreground" : "shadow-card",
         )}
+      >
+        <div className="flex items-center gap-1.5 whitespace-nowrap text-ui font-bold text-foreground">
+          <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: closed ? SUBJECT_STATUS_COLOR.closed : d.color }} />
+          <span className={cn("truncate", closed && "line-through")}>{d.name}</span>
+          <span className="rounded-full bg-muted px-1.5 text-caption font-bold">{count}</span>
+        </div>
+        {d.description && <div className="line-clamp-2 text-caption text-muted-foreground">{d.description}</div>}
       </div>
-      <Handle type="source" position={Position.Bottom} style={centerHandle} />
+      <Handle type="source" position={Position.Bottom} className={CENTER_HANDLE} />
     </div>
   );
 }

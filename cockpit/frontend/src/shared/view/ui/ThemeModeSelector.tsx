@@ -3,6 +3,8 @@ import { Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme, type ThemeMode } from '@/contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 
+import { TAB, TRACK } from './styles';
+
 const MODES: ReadonlyArray<{ value: ThemeMode; icon: typeof Sun; label: string }> = [
   { value: 'system', icon: Monitor, label: 'System' },
   { value: 'light', icon: Sun, label: 'Light' },
@@ -26,7 +28,7 @@ export default function ThemeModeSelector({ ariaLabel }: ThemeModeSelectorProps)
     <div
       role="radiogroup"
       aria-label={ariaLabel ?? 'Appearance'}
-      className="inline-flex items-center gap-0.5 rounded-full border border-border bg-muted p-0.5"
+      className={cn(TRACK, 'inline-flex bg-muted')}
     >
       {MODES.map(({ value, icon: Icon, label }) => {
         const active = themeMode === value;
@@ -39,15 +41,9 @@ export default function ThemeModeSelector({ ariaLabel }: ThemeModeSelectorProps)
             aria-label={label}
             title={label}
             onClick={() => setThemeMode(value)}
-            className={cn(
-              'flex h-6 w-9 cursor-pointer items-center justify-center rounded-full transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-muted',
-              active
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
+            className={cn(TAB, 'px-2 aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-(--shadow-pill)')}
           >
-            <Icon className="h-3.5 w-3.5" />
+            <Icon aria-hidden className="size-3.5" />
           </button>
         );
       })}

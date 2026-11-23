@@ -39,7 +39,7 @@ export default function BrainSearch({ q }: { q: string }) {
 
       <form onSubmit={submit} className="flex gap-2">
         <Input placeholder="Search the brain…" value={input} autoFocus onChange={(e) => setInput(e.target.value)} />
-        <Button type="submit" variant="secondary" size="sm" className="h-9">Search</Button>
+        <Button type="submit" variant="secondary">Search</Button>
       </form>
 
       <ListPanel title="Results" action={<span className="text-caption text-muted-foreground">{summary}</span>}>

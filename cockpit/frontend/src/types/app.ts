@@ -24,6 +24,8 @@ export interface ProjectSession {
   paneId?: string | null;
   /** The brain task this session advances (a task run). */
   taskId?: string | null;
+  /** The job it works for, when a job started it. */
+  jobId?: string | null;
   state?: SessionState;
   /** Value at fetch time; the live source is the turn store. */
   turnState?: TurnState;
@@ -39,6 +41,8 @@ export interface ProjectSession {
   /** A turn ended and nobody has seen the result. */
   resultAt?: string | null;
   archivedAt?: string | null;
+  /** Inbox: hidden until then (the Tasks view's snooze). */
+  snoozedUntil?: string | null;
   /** The folder its agent last worked in (a worktree, say), as its hooks report it. */
   workdir?: string | null;
   /** Background tasks of its own still running (chat sessions); archiving would kill them. */

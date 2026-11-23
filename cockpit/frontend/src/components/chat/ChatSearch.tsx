@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
+import { buttonVariants } from '@/shared/view/ui';
+
 import { keysToReveal, searchItems, type ChatItem } from './chat-state';
 import { pasteTextDirectly } from './pasteText';
 
@@ -89,9 +91,9 @@ export function ChatSearch({
   const step = (by: 1 | -1) => {
     if (matches.length > 0) setPosition((current + by + matches.length) % matches.length);
   };
-  const button = 'rounded p-1 text-muted-foreground hover:bg-foreground/5 disabled:opacity-40';
+  const button = buttonVariants({ variant: 'ghost', size: 'icon-sm' });
   return (
-    <div role="search" className="flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1">
+    <div role="search" className="glass flex items-center gap-1 rounded-xl px-2 py-1">
       <input
         ref={input}
         type="text"
@@ -111,9 +113,9 @@ export function ChatSearch({
       <span role="status" className="flex-shrink-0 text-muted-foreground">
         {query.trim() ? `${current + 1} of ${matches.length}` : ''}
       </span>
-      <button type="button" aria-label="Previous match" disabled={matches.length === 0} onClick={() => step(-1)} className={button}><ChevronUp className="h-3.5 w-3.5" /></button>
-      <button type="button" aria-label="Next match" disabled={matches.length === 0} onClick={() => step(1)} className={button}><ChevronDown className="h-3.5 w-3.5" /></button>
-      <button type="button" aria-label="Close search" onClick={onClose} className={button}><X className="h-3.5 w-3.5" /></button>
+      <button type="button" aria-label="Previous match" disabled={matches.length === 0} onClick={() => step(-1)} className={button}><ChevronUp aria-hidden className="size-3.5" /></button>
+      <button type="button" aria-label="Next match" disabled={matches.length === 0} onClick={() => step(1)} className={button}><ChevronDown aria-hidden className="size-3.5" /></button>
+      <button type="button" aria-label="Close search" onClick={onClose} className={button}><X aria-hidden className="size-3.5" /></button>
     </div>
   );
 }

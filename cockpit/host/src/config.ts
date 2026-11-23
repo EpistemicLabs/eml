@@ -29,6 +29,8 @@ export interface CockpitConfig {
   mainName?: string
   /** Colour of the main space (Settings › Spaces); absent = grey. */
   mainColor?: SpaceColor
+  /** The task system (tasks own sessions, router, runner) is on for the main space; absent = off. */
+  mainTaskSystem?: true
   /**
    * The home's human: the handle every brain token is issued under, so
    * ingested_by names them in every brain. Set by the first-run setup or the
@@ -47,10 +49,10 @@ export interface CockpitConfig {
   /**
    * Further local brain spaces (brain-space.ts): token, display name, the
    * bound agent and the colour the user chose for this cockpit (absent = grey)
-   * each; which brain a token belongs to comes from control.db at boot.
-   * Absent = main only.
+   * each, and whether the task system is on there (absent = off); which brain
+   * a token belongs to comes from control.db at boot. Absent = main only.
    */
-  spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor }>
+  spaces?: Array<{ token: string; name?: string; agent?: string; color?: SpaceColor; taskSystem?: true }>
   /**
    * The order the user gave the spaces in the header (brain-space.ts
    * ordered): space ids, main included. A space it does not name follows in
@@ -97,12 +99,13 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
     if (!parsed.token) return null
     const spaces = Array.isArray(parsed.spaces)
       ? parsed.spaces
-          .filter((s): s is { token: string; name?: string; agent?: string; color?: SpaceColor } => !!s && typeof s.token === 'string' && !!s.token)
+          .filter((s): s is { token: string; name?: string; agent?: string; color?: SpaceColor; taskSystem?: true } => !!s && typeof s.token === 'string' && !!s.token)
           .map((s) => ({
             token: s.token,
             ...(typeof s.name === 'string' && s.name.trim() ? { name: s.name.trim() } : {}),
             ...agentOf(s.agent),
             ...(isSpaceColor(s.color) ? { color: s.color } : {}),
+            ...(s.taskSystem === true ? { taskSystem: true as const } : {}),
           }))
       : []
     const spaceOrder = Array.isArray(parsed.spaceOrder) ? parsed.spaceOrder.filter((id): id is string => typeof id === 'string' && !!id) : []
@@ -119,6 +122,7 @@ export async function readCockpitConfig(): Promise<CockpitConfig | null> {
       ...(typeof parsed.name === 'string' && parsed.name.trim() ? { name: parsed.name.trim() } : {}),
       ...agentOf(parsed.agent),
       ...(isSpaceColor(parsed.mainColor) ? { mainColor: parsed.mainColor } : {}),
+      ...(parsed.mainTaskSystem === true ? { mainTaskSystem: true as const } : {}),
       ...(spaces.length ? { spaces } : {}),
       ...(spaceOrder.length ? { spaceOrder } : {}),
       ...(agents.length ? { agents } : {}),

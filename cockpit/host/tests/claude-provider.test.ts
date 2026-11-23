@@ -50,6 +50,19 @@ describe('Claude Code provider', () => {
     expect(Object.values(launch.env).join(' ')).not.toContain(space.token)
   })
 
+  it('gives a limited session browser control only when it was lent for now', () => {
+    mkdirSync(join(configDir, 'spaces', 'space-1'), { recursive: true })
+    writeFileSync(space.files.mcpConfig, JSON.stringify({ mcpServers: { eml_brain: { type: 'http', url: 'http://127.0.0.1:60000/mcp' } } }))
+    const limited = { sessionId: 'job-1', address: 'eml-job1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: true,
+      toolProfile: { deniedTools: ['Bash'], mcpServers: [] } }
+    const without = provider.launch(limited)
+    expect(without.args).not.toContain('--chrome')
+    expect(without.chrome).toBeUndefined()
+    const lent = provider.launch({ ...limited, chrome: true })
+    expect(lent.args).toContain('--chrome')
+    expect(lent.chrome).toBe(true)
+  })
+
   it('resumes by id and hands an initial prompt over as the last argument', () => {
     const base = { address: 'eml-abc', space, providerSessionId: null, initialPrompt: null, unattended: false }
     expect(provider.launch({ ...base, sessionId: 'abc-1', resume: true }).args.slice(-2)).toEqual(['--resume', 'abc-1'])

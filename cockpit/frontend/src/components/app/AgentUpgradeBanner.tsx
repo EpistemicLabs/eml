@@ -7,8 +7,9 @@
 import { useState, type FormEvent } from 'react';
 import { Bot, FolderSearch } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import { loadSpaces, useActiveSpace } from '@/stores/useSpaceStore';
-import { Banner, BannerButton, BannerLink } from './Banner';
+import { Banner, BANNER_FIELD, BannerButton, BannerLink } from './Banner';
 
 async function errorMessage(res: Response): Promise<string> {
   try {
@@ -61,12 +62,13 @@ export default function AgentUpgradeBanner() {
     <Banner
       tone="info"
       icon={Bot}
+      dismissKey={`agent-upgrade:${space.id}:${state?.reason ?? ''}:${state?.needs ?? ''}`}
       busy={busy}
       detail={detail}
       actions={state?.report && !needsHandle ? <BannerLink icon={FolderSearch} onClick={reveal}>Show report</BannerLink> : undefined}
       below={needsHandle && !saved ? (
         <form className="mt-2 flex items-center gap-2" onSubmit={(e) => void save(e)}>
-          <label className="text-xs" htmlFor="agent-upgrade-handle">Your handle</label>
+          <label className="text-ui" htmlFor="agent-upgrade-handle">Your handle</label>
           <input
             id="agent-upgrade-handle"
             value={handle}
@@ -74,7 +76,7 @@ export default function AgentUpgradeBanner() {
             placeholder="e.g. alex"
             maxLength={63}
             disabled={busy}
-            className="h-7 w-40 rounded-md border border-current/30 bg-background px-2 text-xs text-foreground outline-none"
+            className={cn(BANNER_FIELD, 'w-40')}
           />
           <BannerButton disabled={busy || !handle.trim()} onClick={() => undefined}>Save</BannerButton>
         </form>

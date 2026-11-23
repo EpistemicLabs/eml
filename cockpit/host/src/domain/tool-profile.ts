@@ -9,6 +9,35 @@ export interface ToolProfile {
   mcpServers: string[] | null
 }
 
+/** An MCP server a session gets beside its space's, as a provider writes it into its config. */
+export interface McpServerSpec {
+  type: 'stdio'
+  command: string
+  args: string[]
+  env: Record<string, string>
+}
+
+/** A tool the user can lift for a limited job's session for a while. */
+export type GrantableTool = 'SendMessage' | 'chrome'
+
+/**
+ * Tools a limited job's session does not get, since its text comes from strangers: no shell and no
+ * messages to other sessions. Web tools stay on, and so does the schedule tool, with which it reaches
+ * only its own job (application/limited-job-scope.ts).
+ */
+const LIMITED_DENIED_TOOLS = ['Bash', 'SendMessage']
+
+/**
+ * What a limited job's session may use: what its maker could not, minus the tools above unless the
+ * user granted one for now; of its space's MCP servers only the brain. Its channel tools come from
+ * the cockpit at every launch.
+ */
+export function channelJobProfile(base: ToolProfile | null, granted: GrantableTool[]): ToolProfile {
+  const denied = base?.deniedTools ?? []
+  const closed = LIMITED_DENIED_TOOLS.filter((tool) => !denied.includes(tool) && !granted.includes(tool as GrantableTool))
+  return { deniedTools: [...denied, ...closed], mcpServers: [] }
+}
+
 const names = (value: unknown): string[] | null =>
   Array.isArray(value) && value.every((name) => typeof name === 'string' && /^[\w.:*()-]+$/.test(name)) ? value as string[] : null
 

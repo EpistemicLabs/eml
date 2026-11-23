@@ -1,14 +1,13 @@
-// Small building blocks shared by the brain views, in the cockpit's own
-// look (the Settings modal's card and section idiom) — packages/web's
-// shadcn cards/buttons are deliberately not ported (decision:
-// adapt to the cockpit design, don't copy web's).
+// Small building blocks shared by the brain views (tokens v2): cards on the card surface, labels
+// in the v2 caption, controls from the shared kit.
 import type { CSSProperties, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
+import { FOCUS, LABEL, PAGER_BUTTON, TAB, TRACK } from '@/shared/view/ui';
 
 export function BrainCard({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
-    <div className={cn('rounded-xl border border-foreground/8 bg-foreground/4', className)} style={style}>
+    <div className={cn('rounded-xl border border-border bg-card shadow-card', className)} style={style}>
       {children}
     </div>
   );
@@ -29,8 +28,8 @@ export function SectionHeader({
   return (
     <div className={cn('mb-3 flex min-h-6 items-center justify-between gap-2', className)}>
       <div className="flex min-w-0 items-center gap-2">
-        {accent && <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: accent }} />}
-        <h2 className="truncate text-xs font-semibold tracking-wider text-muted-foreground uppercase">{title}</h2>
+        {accent && <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: accent }} />}
+        <h2 className={cn(LABEL, 'truncate')}>{title}</h2>
       </div>
       {right}
     </div>
@@ -60,7 +59,7 @@ export function ListPanel({
         accent={accent}
         right={action ?? (count !== undefined ? <span className="text-caption tabular-nums text-muted-foreground">{count}</span> : undefined)}
       />
-      <div className="flex max-h-[420px] flex-col gap-1.5 overflow-y-auto pr-1">{children}</div>
+      <div className="flex max-h-(--size-brain-list) flex-col gap-1.5 overflow-y-auto pr-1">{children}</div>
     </BrainCard>
   );
 }
@@ -78,7 +77,7 @@ export function Segmented<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className="inline-flex items-center gap-0.5 rounded-full border border-border bg-muted p-0.5">
+    <div role="radiogroup" aria-label={ariaLabel} className={cn(TRACK, 'inline-flex bg-muted')}>
       {options.map((option) => {
         const active = option.value === value;
         return (
@@ -89,10 +88,7 @@ export function Segmented<T extends string>({
             aria-checked={active}
             title={option.title}
             onClick={() => onChange(option.value)}
-            className={cn(
-              'h-6 rounded-full px-2.5 text-caption font-medium capitalize transition-colors',
-              active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-            )}
+            className={cn(TAB, 'px-2.5 capitalize aria-checked:bg-card aria-checked:text-foreground aria-checked:shadow-(--shadow-pill)')}
           >
             {option.label}
           </button>
@@ -121,10 +117,11 @@ export function ToggleChip({
       title={title}
       aria-pressed={active}
       className={cn(
-        'h-6 rounded-full border px-2.5 text-caption font-medium transition-colors',
+        'min-h-(--target-min) rounded-full border px-2.5 text-caption font-medium transition-colors duration-(--duration-fast)',
         active
-          ? 'border-foreground/30 bg-foreground/10 text-foreground'
-          : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground',
+          ? 'border-border-strong bg-muted text-foreground'
+          : 'border-border text-muted-foreground hover:border-border-strong hover:text-foreground',
+        FOCUS,
       )}
     >
       {children}
@@ -146,15 +143,13 @@ export function Pager({
   olderTitle?: string;
   newerTitle?: string;
 }) {
-  const button =
-    'flex h-6 w-6 items-center justify-center rounded-md border border-border text-caption text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:text-muted-foreground';
   return (
     <div className="flex items-center gap-1 text-caption text-muted-foreground">
-      <button type="button" className={button} onClick={() => onChange(index + 1)} disabled={index >= total - 1} title={olderTitle}>
+      <button type="button" className={PAGER_BUTTON} onClick={() => onChange(index + 1)} disabled={index >= total - 1} title={olderTitle}>
         ‹
       </button>
       <span className="tabular-nums">{index + 1}/{total}</span>
-      <button type="button" className={button} onClick={() => onChange(index - 1)} disabled={index <= 0} title={newerTitle}>
+      <button type="button" className={PAGER_BUTTON} onClick={() => onChange(index - 1)} disabled={index <= 0} title={newerTitle}>
         ›
       </button>
     </div>

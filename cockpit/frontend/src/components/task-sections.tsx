@@ -1,20 +1,22 @@
 import { useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { engramQuery, useAddTaskEntry } from "@/lib/queries";
 import { useWritable } from "@/stores/useTeamStore";
-import { TypeBadge, TYPE_COLORS, withAlpha } from "@/components/ui/badge";
 import { BrainCard } from "@/components/brain/ui";
 import { TASK_STAGES, TASK_STAGE_HINTS, taskStage, type Engram, type Relation, type TaskEntry, type TaskStage } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { FIELD, FOCUS, LABEL, PRIMARY, Select } from "@/shared/view/ui";
+import { ReviewFlag, TypeBadge } from "@/shared/view/ui/EngramType";
 
 // v0.15 (spec §2–§4, cockpit Cluster K): the task as a hub inside the engram
 // drawer — stage + status, outcome on close, parent / sub-tasks, the decisions
 // and notes linked to it, and its journal. Relations shown here are taken out
-// of the generic Relations card (the caller renders the rest).
+// of the generic Relations card (the caller renders the rest). Tokens v2: stage,
+// status and outcome are grey with a label; strength (text colour vs grey) says
+// what is current.
 
-const TASK = TYPE_COLORS.task;
-const CLOSED_OK = TYPE_COLORS.status;
-const GREY = "var(--color-muted-foreground)";
 const OPEN = new Set(["planned", "active"]);
 
 function label(e: Engram): string {
@@ -24,15 +26,12 @@ function label(e: Engram): string {
 }
 
 function CardTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2 text-xs font-semibold tracking-wider text-muted-foreground uppercase">{children}</div>;
+  return <div className={cn(LABEL, "mb-2")}>{children}</div>;
 }
 
 export function StageChip({ stage, move = false }: { stage: TaskStage; move?: boolean }) {
   return (
-    <span
-      className="inline-flex shrink-0 items-center rounded-full border px-1.5 text-[10px] leading-4"
-      style={{ color: TASK, borderColor: withAlpha(TASK, 0.45), backgroundColor: withAlpha(TASK, 0.1) }}
-    >
+    <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-1.5 text-caption text-foreground">
       {move ? `→ ${stage}` : stage}
     </span>
   );
@@ -50,7 +49,6 @@ export function TaskStageCard({ engram }: { engram: Engram }) {
     );
   }
   const at = TASK_STAGES.indexOf(stage);
-  const on = closed ? GREY : TASK;
   return (
     <BrainCard className="px-4 py-3">
       <CardTitle>{closed ? "Stage · frozen" : "Stage"}</CardTitle>
@@ -58,8 +56,10 @@ export function TaskStageCard({ engram }: { engram: Engram }) {
         {TASK_STAGES.map((s, i) => (
           <div key={s} className="flex min-w-16 flex-1 flex-col gap-1">
             <div
-              className="h-1 rounded-full"
-              style={{ background: i < at ? withAlpha(on, 0.5) : i === at ? on : "var(--color-muted)" }}
+              className={cn(
+                "h-1 rounded-full",
+                i > at ? "bg-muted" : closed ? (i === at ? "bg-border-strong" : "bg-border") : i === at ? "bg-foreground" : "bg-foreground/40",
+              )}
             />
             <span title={TASK_STAGE_HINTS[s]} className={`text-caption ${i === at ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{s}</span>
           </div>
@@ -73,13 +73,10 @@ export function TaskStageCard({ engram }: { engram: Engram }) {
 export function TaskOutcome({ engram }: { engram: Engram }) {
   const outcome = engram.properties?.outcome;
   if (typeof outcome !== "string" || !outcome.trim()) return null;
-  const color = engram.status === "resolved" ? CLOSED_OK : GREY;
+  const resolved = engram.status === "resolved";
   return (
-    <div
-      className="flex items-baseline gap-3 rounded-lg border px-3.5 py-2.5"
-      style={{ borderColor: withAlpha(color, 0.4), backgroundColor: withAlpha(color, 0.08) }}
-    >
-      <span className="text-caption font-semibold tracking-wider uppercase" style={{ color }}>Outcome</span>
+    <div className={cn("flex items-baseline gap-3 rounded-lg border bg-muted px-3.5 py-2.5", resolved ? "border-border-strong" : "border-border")}>
+      <span className={cn(LABEL, resolved && "text-foreground")}>Outcome</span>
       <span className="text-ui text-foreground">{outcome}</span>
     </div>
   );
@@ -88,7 +85,7 @@ export function TaskOutcome({ engram }: { engram: Engram }) {
 function HubRow({ e, relation, href, side }: { e: Engram; relation?: string; href: string; side?: React.ReactNode }) {
   const stage = taskStage(e);
   return (
-    <Link to={href} className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-muted">
+    <Link to={href} className={cn("flex min-h-(--target-min) items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}>
       {relation && (
         <>
           <span className="w-3 shrink-0 text-center text-muted-foreground">←</span>
@@ -106,14 +103,47 @@ function HubRow({ e, relation, href, side }: { e: Engram; relation?: string; hre
 }
 
 function MiniStatus({ status }: { status: string }) {
-  const color = status === "active" ? TASK : status === "resolved" ? CLOSED_OK : undefined;
   return (
-    <span
-      className="shrink-0 rounded-full border border-border px-1.5 text-[10px] leading-4 text-muted-foreground"
-      style={color ? { color, borderColor: withAlpha(color, 0.45) } : undefined}
-    >
+    <span className={cn("shrink-0 rounded-full border px-1.5 text-caption", status === "active" ? "border-border-strong text-foreground" : "border-border text-muted-foreground")}>
       {status}
     </span>
+  );
+}
+
+/** A step's place in its plan: whose turn it is, what it still waits for, its checkpoint, its status. */
+function StepSide({ step, steps }: { step: Engram; steps: Engram[] }) {
+  const props = step.properties ?? {};
+  const waiting = props.waiting_on as { who?: string } | undefined;
+  const dependsOn = Array.isArray(props.depends_on) ? (props.depends_on as string[]) : [];
+  const blockedBy = dependsOn
+    .map((id) => steps.find((s) => s.id === id))
+    .filter((s): s is Engram => !!s && s.status !== "resolved");
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {waiting?.who && <span className="text-caption font-medium text-foreground">{waiting.who}'s turn</span>}
+      {OPEN.has(step.status) && blockedBy.length > 0 && (
+        <span className="max-w-40 truncate text-caption text-muted-foreground" title={blockedBy.map(label).join(", ")}>
+          after {blockedBy.map(label).join(", ")}
+        </span>
+      )}
+      {typeof props.checkpoint === "string" && props.checkpoint !== "none" && (
+        <span className="text-caption text-muted-foreground">{props.checkpoint === "before" ? "go first" : "review after"}</span>
+      )}
+      <MiniStatus status={step.status} />
+    </span>
+  );
+}
+
+/** Whose turn it is on this task (the cockpit's router writes it): only shown while someone has to act. */
+export function WaitingOnCard({ engram }: { engram: Engram }) {
+  const waiting = engram.properties?.waiting_on as { who?: string; why?: string; since?: string } | undefined;
+  if (!waiting?.who || !OPEN.has(engram.status)) return null;
+  return (
+    <BrainCard className="px-4 py-3">
+      <CardTitle>Waiting on {waiting.who}</CardTitle>
+      <div className="text-ui text-foreground">{waiting.why}</div>
+      {waiting.since && <div className="mt-1 text-caption text-muted-foreground">since {waiting.since.slice(0, 16).replace("T", " ")}</div>}
+    </BrainCard>
   );
 }
 
@@ -168,6 +198,9 @@ export function TaskHubBlocks({
   ParentRef: (props: { id: string }) => React.ReactNode;
 }) {
   const open = hub.children.filter((c) => OPEN.has(c.status)).length;
+  // A plan (task system): steps with a checkpoint. Its rows say how far each one is and what it waits for.
+  const plan = hub.children.some((c) => typeof c.properties?.checkpoint === "string");
+  const done = hub.children.filter((c) => c.status === "resolved").length;
   return (
     <>
       {(hub.parentId || hub.children.length > 0) && (
@@ -182,12 +215,16 @@ export function TaskHubBlocks({
             <>
               <div className="px-1">
                 <CardTitle>
-                  Sub-tasks <span className="font-normal tracking-normal normal-case">· {open} of {hub.children.length} open</span>
+                  {plan ? (
+                    <>Plan <span className="font-normal tracking-normal normal-case">· {done} of {hub.children.length} done</span></>
+                  ) : (
+                    <>Sub-tasks <span className="font-normal tracking-normal normal-case">· {open} of {hub.children.length} open</span></>
+                  )}
                 </CardTitle>
               </div>
               <div className="flex flex-col gap-0.5">
                 {hub.children.map((c) => (
-                  <HubRow key={c.id} e={c} href={relationHref(c.id)} side={<MiniStatus status={c.status} />} />
+                  <HubRow key={c.id} e={c} href={relationHref(c.id)} side={plan ? <StepSide step={c} steps={hub.children} /> : <MiniStatus status={c.status} />} />
                 ))}
               </div>
             </>
@@ -239,10 +276,37 @@ function formatAt(iso: string): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** The task's append-only journal, newest first, under a one-line composer. */
-export function TaskJournal({ engram, relationHref }: { engram: Engram; relationHref: (otherId: string) => string }) {
+/** A folded journal's time: the clock today, the day before that. */
+function shortAt(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/**
+ * The one line a folded journal shows: the newest note (the server's change entries only restate a field),
+ * a leading Markdown heading as its label ("### Handoff" → "Handoff"), the rest on one line.
+ */
+export function journalGist(entries: Array<Pick<TaskEntry, "kind" | "text">>): { head: string | null; text: string } | null {
+  const note = entries.find((e) => e.kind === "note" && e.text.trim());
+  if (!note) return null;
+  const lines = note.text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const heading = /^#{1,6}\s+(.+)$/.exec(lines[0] ?? "");
+  const rest = (heading ? lines.slice(1) : lines).join(" · ").replace(/^Result:\s*/, "");
+  return { head: heading ? heading[1] : null, text: rest };
+}
+
+/**
+ * The task's append-only journal, newest first, under a one-line composer. `foldable`: it starts folded to
+ * one line (count, newest time, the newest note's gist) and opens on a click; folded again for each task.
+ */
+export function TaskJournal({ engram, relationHref, foldable = false }: { engram: Engram; relationHref: (otherId: string) => string; foldable?: boolean }) {
   // newest first: where the task stands is the latest entry
   const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change").reverse();
+  const [open, setOpen] = useState(!foldable);
+  const gist = journalGist(entries);
   const add = useAddTaskEntry();
   const brain = useWritable();
   const [text, setText] = useState("");
@@ -260,42 +324,70 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
   }
 
   return (
-    <BrainCard className="px-4 py-3">
-      <CardTitle>
-        Journal{" "}
-        <span className="font-normal tracking-normal normal-case">
-          · {entries.length} {entries.length === 1 ? "entry" : "entries"}, newest first
-        </span>
-      </CardTitle>
+    <BrainCard className={foldable ? "px-1.5 py-1.5" : "px-4 py-3"}>
+      {foldable ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`journal-${engram.id}`}
+          onClick={() => setOpen((o) => !o)}
+          className={cn("grid min-h-(--target-comfortable) w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-1.5 py-1 text-left hover:bg-muted", FOCUS)}
+        >
+          <ChevronRight aria-hidden className={cn("size-3.5 text-muted-foreground transition-transform duration-(--duration-fast)", open && "rotate-90")} />
+          <span className="flex min-w-0 flex-col">
+            <span className={LABEL}>
+              Journal{" "}
+              <span className="font-normal tracking-normal normal-case">
+                · {entries.length} {entries.length === 1 ? "entry" : "entries"}{open ? ", newest first" : ""}
+              </span>
+            </span>
+            {!open && gist && (
+              <span className="line-clamp-2 text-ui text-muted-foreground">
+                {gist.head && <b className="font-medium text-foreground">{gist.head}: </b>}{gist.text}
+              </span>
+            )}
+          </span>
+          {entries[0] && <time dateTime={entries[0].at} title={formatAt(entries[0].at)} className="whitespace-nowrap text-caption tabular-nums text-muted-foreground">newest {shortAt(entries[0].at)}</time>}
+        </button>
+      ) : (
+        <CardTitle>
+          Journal{" "}
+          <span className="font-normal tracking-normal normal-case">
+            · {entries.length} {entries.length === 1 ? "entry" : "entries"}, newest first
+          </span>
+        </CardTitle>
+      )}
+      {open && (
+      <div id={`journal-${engram.id}`} className={foldable ? "px-2.5 pt-2 pb-1.5" : undefined}>
       <form onSubmit={submit} className="mb-3 flex flex-wrap gap-2">
         <input
           aria-label="New journal entry"
           value={text}
           onChange={(ev) => setText(ev.target.value)}
           placeholder="Add an entry — what happened, what's next"
-          className="h-7 min-w-0 flex-1 rounded-md border border-foreground/15 bg-foreground/[0.04] px-2.5 text-ui text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground/30"
+          className={cn(FIELD, "w-auto min-w-0 flex-1 text-ui")}
         />
         {!closed && (
-          <select
+          <Select
             aria-label="Stage change"
             value={stage}
             onChange={(ev) => setStage(ev.target.value as TaskStage | "")}
-            className="h-7 rounded-md border border-foreground/15 bg-foreground/[0.04] px-1.5 text-ui text-muted-foreground outline-none focus:border-foreground/30"
+            className="text-ui"
           >
             <option value="">stage —</option>
             {TASK_STAGES.map((s) => <option key={s} value={s} title={TASK_STAGE_HINTS[s]}>{s}</option>)}
-          </select>
+          </Select>
         )}
         <button
           type="submit"
           disabled={!text.trim() || add.isPending || !brain.writable}
           title={brain.reason ?? undefined}
-          className="h-7 rounded-md border border-primary bg-primary px-2.5 text-ui font-medium text-primary-foreground transition-opacity disabled:opacity-40"
+          className={cn(PRIMARY, "px-3 text-ui")}
         >
           {add.isPending ? "Adding…" : "Add"}
         </button>
       </form>
-      {add.error && <p className="-mt-1 mb-3 text-caption text-destructive">{(add.error as Error).message}</p>}
+      {add.error && <p className="-mt-1 mb-3 text-caption text-stopped-ink">{(add.error as Error).message}</p>}
       {entries.length === 0 ? (
         <p className="text-caption text-muted-foreground">No entries yet.</p>
       ) : (
@@ -307,11 +399,12 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
             const change = e.kind === "change";
             const linked = change ? TRAILING_ID.exec(e.text) : null;
             return (
-              <li key={e.id} className="grid grid-cols-[14px_1fr] gap-2.5">
+              <li key={e.id} className="grid grid-cols-(--grid-journal) gap-2.5">
                 <div className="flex flex-col items-center">
+                  {/* A note is a solid dot; a change the server wrote is a hollow one. */}
                   <span
-                    className="mt-1.5 h-[7px] w-[7px] shrink-0 rounded-full"
-                    style={change ? { border: `1px solid ${TASK}`, opacity: 0.6 } : { background: TASK }}
+                    aria-hidden
+                    className={cn("mt-1.5 size-(--size-journal-dot) shrink-0 rounded-full", change ? "border border-border-strong" : "bg-foreground")}
                   />
                   {i < entries.length - 1 && <span className="mt-1 w-px flex-1 bg-border" />}
                 </div>
@@ -320,13 +413,13 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
                     <span>{formatAt(e.at)}</span>
                     {e.author && <span>{e.author}</span>}
                     {moved && <StageChip stage={e.stage!} move />}
-                    {change && <span className="rounded-full border border-dashed border-border px-1.5 text-[10px] leading-4">change</span>}
+                    {change && <span className="rounded-full border border-dashed border-border px-1.5 text-caption">change</span>}
                   </div>
                   <div className={change ? "mt-0.5 text-caption whitespace-pre-wrap text-muted-foreground" : "mt-0.5 text-ui whitespace-pre-wrap text-foreground"}>
                     {linked ? (
                       <>
                         {linked[1]}{" "}
-                        <Link to={relationHref(linked[2])} className="underline decoration-dotted underline-offset-2 hover:text-foreground">
+                        <Link to={relationHref(linked[2])} className={cn("rounded-sm underline decoration-dotted underline-offset-2 hover:text-foreground", FOCUS)}>
                           open
                         </Link>
                       </>
@@ -339,6 +432,8 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
             );
           })}
         </ol>
+      )}
+      </div>
       )}
     </BrainCard>
   );
@@ -401,31 +496,24 @@ export function TaskRow({
       to={href}
       onClick={onOpen}
       title={task.content}
-      className="flex items-center gap-4 rounded-lg bg-muted/50 px-3 py-2 transition-colors hover:bg-muted"
+      className={cn("flex items-center gap-4 rounded-lg bg-background px-3 py-2 transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}
     >
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-body">
           <span className="truncate">{label(task)}</span>
           {stage && <StageChip stage={stage} />}
-          {task.review_due && (
-            <span className="inline-flex shrink-0 items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-warning uppercase">
-              review
-            </span>
-          )}
+          {task.review_due && <ReviewFlag />}
         </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-ui text-muted-foreground">
           {showScope && <span className="truncate">{task.scope.replace(/^project\./, "")}</span>}
           {showScope && <span aria-hidden>·</span>}
           <span className="inline-flex shrink-0 items-center gap-1.5">
-            <span
-              className="inline-block h-1.5 w-1.5 rounded-full"
-              style={inProgress ? { background: TASK } : { boxShadow: `inset 0 0 0 1px ${GREY}` }}
-            />
+            <span aria-hidden className={cn("inline-block size-1.5 rounded-full", inProgress ? "bg-foreground" : "border border-muted-foreground")} />
             {inProgress ? "in progress" : "open"}
           </span>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground tabular-nums">
+      <div className="flex shrink-0 items-center gap-3 text-ui text-muted-foreground tabular-nums">
         {assignee && <span title="assignee">→ {assignee}</span>}
         <span title={`last update ${task.updated_at}`}>{timeAgo(task.updated_at)}</span>
       </div>
