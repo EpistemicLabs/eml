@@ -7,7 +7,7 @@
 // 0.15.1: one name per view. A pane that holds a session and a note keeps
 // them apart — the terminal view shows (and renames) the session, the note
 // view shows (and renames) the note itself, never the other way round.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useWritable } from '@/stores/useTeamStore';
 
 import { usePaletteOps } from '@/contexts/PaletteOpsContext';
@@ -34,6 +34,8 @@ type MainContentTitleProps = {
    * chosen a title. Distinguishes parallel panes.
    */
   paneLabel?: string | null;
+  /** Shown right after the title, e.g. a chat session's limits. */
+  badge?: ReactNode;
 };
 
 // The stored session name — the ledger title. Used as the edit seed and the
@@ -47,7 +49,7 @@ function getSessionTitle(session: ProjectSession, paneLabel?: string | null): st
   return (session.summary as string) || paneLabel || 'New Session';
 }
 
-export default function MainContentTitle({ paneId, selectedProject, selectedSession, paneLabel }: MainContentTitleProps) {
+export default function MainContentTitle({ paneId, selectedProject, selectedSession, paneLabel, badge }: MainContentTitleProps) {
   const { refreshProjects } = usePaletteOps();
 
   // Live pane from the store: holds the user-chosen `title` override and the
@@ -232,6 +234,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
             >
               {title}
             </h2>
+            {badge && <span className="ml-1 flex-shrink-0">{badge}</span>}
             </div>
           )}
           <div className="truncate px-1 text-caption leading-tight text-muted-foreground">{subtitle}</div>

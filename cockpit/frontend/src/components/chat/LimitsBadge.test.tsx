@@ -2,60 +2,74 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { LimitsPanel, limitsLabel } from './LimitsPanel';
+import { setLimits } from './chat-store';
+import { isLimited, LimitsBadge, limitsActions, limitsName } from './LimitsBadge';
+
+const sent: Array<Record<string, unknown>> = [];
+vi.mock('./useChatSocket', () => ({ liftLimits: (sessionId: string, forJob: boolean) => { sent.push({ sessionId, forJob }); return true; } }));
 
 const base = { deniedTools: [], mcpServers: null, job: null, liftable: false };
 const blocked = { deniedTools: ['mcp__gmail__send_email', 'mcp__gmail__reply_to_email'], mcpServers: null, liftable: true };
 const job = { id: 'job-1', name: 'Weekly analysis' };
 
-afterEach(() => { cleanup(); });
+afterEach(() => { cleanup(); sent.length = 0; });
 
-describe('limitsLabel', () => {
+describe('isLimited and limitsName', () => {
   it('shows nothing for a session without limits, or before the host said', () => {
-    expect(limitsLabel(null)).toBeNull();
-    expect(limitsLabel(base)).toBeNull();
+    expect(isLimited(null)).toBe(false);
+    expect(isLimited(base)).toBe(false);
   });
 
-  it('counts the blocked tools', () => {
-    expect(limitsLabel({ ...base, deniedTools: ['a'] })).toBe('1 tool blocked');
-    expect(limitsLabel({ ...base, deniedTools: ['a', 'b'] })).toBe('2 tools blocked');
-  });
-
-  it('names a limit to some MCP servers when no tool is blocked', () => {
-    expect(limitsLabel({ ...base, mcpServers: [] })).toBe('MCP limited');
+  it('counts what is off', () => {
+    expect(limitsName({ ...base, deniedTools: ['a'] })).toBe('Limited: 1 tool off');
+    expect(limitsName({ ...base, ...blocked })).toBe('Limited: 2 tools off');
+    expect(limitsName({ ...base, mcpServers: [] })).toBe('Limited: some MCP servers only');
   });
 });
 
-describe('the limits panel', () => {
-  it('lists the blocked tools and the job, and lifts them for its future runs too by default', () => {
-    const onLift = vi.fn();
-    render(<LimitsPanel limits={{ ...blocked, job }} running={false} onLift={onLift} onClose={() => {}} />);
-    expect(screen.getByText('mcp__gmail__send_email')).toBeTruthy();
-    expect(screen.getByText('Set by the job "Weekly analysis".')).toBeTruthy();
-    expect((screen.getByRole('checkbox', { name: 'Also for future runs of this job' }) as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Restart without limits' }));
-    expect(onLift).toHaveBeenCalledWith(true);
+describe('limitsActions', () => {
+  it('offers this session, and with a job its future runs too', () => {
+    expect(limitsActions({ ...blocked, job }, () => {}).map((a) => a.label)).toEqual(['Allow in this session', 'Allow in this session and future runs']);
+    expect(limitsActions({ ...blocked, job: null }, () => {}).map((a) => a.label)).toEqual(['Allow in this session']);
   });
 
-  it('lifts them for this session only once the box is unticked', () => {
-    const onLift = vi.fn();
-    render(<LimitsPanel limits={{ ...blocked, job }} running={false} onLift={onLift} onClose={() => {}} />);
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Also for future runs of this job' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Restart without limits' }));
-    expect(onLift).toHaveBeenCalledWith(false);
+  it('offers nothing for limits it cannot lift', () => {
+    expect(limitsActions({ ...blocked, job, liftable: false }, () => {})).toEqual([]);
+  });
+});
+
+describe('the limits badge', () => {
+  it('lists what is off in readable names and lifts it for the job\'s future runs when asked', () => {
+    setLimits('s-badge-1', { ...blocked, job });
+    render(<LimitsBadge sessionId="s-badge-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
+    expect(screen.getByText('This job session can\'t use:')).toBeTruthy();
+    expect(screen.getByText('Gmail · Send email')).toBeTruthy();
+    expect(screen.getByText('Gmail · Reply to email')).toBeTruthy();
+    expect(screen.queryByText('mcp__gmail__send_email')).toBeNull();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Allow in this session and future runs' }));
+    expect(sent).toEqual([{ sessionId: 's-badge-1', forJob: true }]);
   });
 
-  it('offers no job choice for a session no job started', () => {
-    const onLift = vi.fn();
-    render(<LimitsPanel limits={{ ...blocked, job: null }} running onLift={onLift} onClose={() => {}} />);
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop turn and restart without limits' }));
-    expect(onLift).toHaveBeenCalledWith(false);
+  it('lifts it for this session only', () => {
+    setLimits('s-badge-2', { ...blocked, job });
+    render(<LimitsBadge sessionId="s-badge-2" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Allow in this session' }));
+    expect(sent).toEqual([{ sessionId: 's-badge-2', forJob: false }]);
   });
 
-  it('has no lift for limits it cannot lift, and says where tools are lent instead', () => {
-    render(<LimitsPanel limits={{ ...blocked, job, liftable: false }} running={false} onLift={() => {}} onClose={() => {}} />);
-    expect(screen.queryByRole('button', { name: /without limits/ })).toBeNull();
+  it('says where tools are lent when it cannot lift them', () => {
+    setLimits('s-badge-3', { ...blocked, job, liftable: false });
+    render(<LimitsBadge sessionId="s-badge-3" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
+    expect(screen.queryAllByRole('menuitem')).toEqual([]);
     expect(screen.getByText(/Lend it tools in the Jobs view/)).toBeTruthy();
+  });
+
+  it('is not there for a session without limits', () => {
+    setLimits('s-badge-4', base);
+    render(<LimitsBadge sessionId="s-badge-4" />);
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

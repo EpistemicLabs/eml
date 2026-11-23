@@ -21,6 +21,7 @@ import { SessionChat } from '../../ui/session-chat';
 import { ShellPluginPane } from '../../shell-plugin/ShellPluginPane';
 import { TimePane } from '../../time-plugin/TimePane';
 import { useSwitchBlocked } from '../../chat/chat-store';
+import { LimitsBadge } from '../../chat/LimitsBadge';
 import type { MainContentProps } from '../types/types';
 import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
 import { useTurnStore } from '@/stores/useTurnStateStore';
@@ -152,6 +153,7 @@ function MainContent({
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
                 paneLabel={paneLabel}
+                badge={paneView === 'chat' && sessionId ? <LimitsBadge sessionId={sessionId} /> : null}
               />
             </div>
 
