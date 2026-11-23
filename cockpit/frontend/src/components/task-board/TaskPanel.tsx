@@ -72,7 +72,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     <div className="flex flex-wrap gap-2">
       {review && <button type="button" className={PRIMARY} onClick={() => onReview(task)}>Looks good, done</button>}
       <button type="button" className={review || asked ? BUTTON : PRIMARY} onClick={() => onHandOver(task, 'now')}>
-        {task.delegate ? `Run ${agentName(task.delegate)} now` : 'Delegate now'}
+        {task.delegate ? `Run ${agentName(task.delegate)} now` : task.handTo ? `Hand to ${agentName(task.handTo)}` : 'Delegate now'}
       </button>
       <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'schedule')}>Schedule…</button>
       <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'together')}>Work on it now</button>

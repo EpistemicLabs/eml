@@ -35,7 +35,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands'] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
@@ -49,6 +49,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
+    releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
     now: () => clock.now,
     log: () => {},
   }
@@ -59,6 +60,18 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('offers to hand a task to the agent Work on it now released, only while nobody is delegated (B2)', async () => {
+    const { board } = setup({
+      main: [mine('released'), mine('handed-again', { delegate: 'atlas', checkpoint: 'after' }, 'planned'), mine('plain')],
+      released: { released: 'atlas', 'handed-again': 'atlas' },
+    })
+    const model = await board.refresh()
+    const byId = new Map(model.tasks.map((t) => [t.id, t]))
+    expect(byId.get('released')).toMatchObject({ handTo: 'atlas', turn: 'needs_you', group: 'own' })
+    expect(byId.get('handed-again')!.handTo).toBeUndefined()
+    expect(byId.get('plain')!.handTo).toBeUndefined()
+  })
+
   it('puts every open task in its turn and counts Needs you once', async () => {
     const { board } = setup({
       main: [

@@ -43,6 +43,7 @@ describe('what a card says', () => {
     expect(cardLine(task({ turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint', delegate: 'atlas' }), NOW)).toBe('Delegated without a checkpoint, so nothing will start it.');
     expect(cardLine(task({ turn: 'review', group: undefined, waitingOn: { who: 'lasse', why: 'Review: draft written' } }), NOW)).toBe('draft written');
     expect(cardLine(task({ pending: { opId: 'o', kind: 'hand_over', undoUntil: '' }, delegate: 'atlas' }), NOW)).toMatch(/^Handed to Atlas/);
+    expect(cardLine(task({ turn: 'needs_you', group: 'own', handTo: 'atlas' }), NOW)).toBe('You worked on it with Atlas. Hand it to Atlas to let it go on alone.');
   });
 
   it('colours only Needs you and what is stuck', () => {

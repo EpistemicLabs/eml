@@ -51,6 +51,8 @@ export interface BoardTask {
   sessionIds: string[]
   working: boolean
   nextRunAt: string | null
+  /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
+  handTo?: string
   /** A command on it still in its undo window. */
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
 }
@@ -99,6 +101,8 @@ export interface TaskBoardDeps {
   nextRunOf(taskId: string): string | null
   snoozes(): Snooze[]
   pendingCommands(): TaskCommand[]
+  /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
+  releasedAgent?(taskId: string): string | null
   now(): number
   log(line: string): void
 }
@@ -281,6 +285,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           sessionIds: sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
+          ...(() => {
+            const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id) : null
+            return agent ? { handTo: agent } : {}
+          })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
         })
         if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
