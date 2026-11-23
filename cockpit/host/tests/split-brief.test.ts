@@ -50,11 +50,11 @@ describe('the split brief', () => {
     const prompts: string[] = []
     const brief = createSplitBrief({
       transcript: async (id) => (id === 's1' || id === 's2' ? transcript : null),
-      facts: async (id) => (id === 's1' || id === 's2' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }] } : null),
+      facts: async (id) => (id === 's1' || id === 's2' ? { sessionTitle: 'Session review', taskTitle: null, projects: [{ id: 'p-ui', name: 'EML UI/UX' }], hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }] } : null),
       complete: async (id, prompt) => { if (id === 's2') throw new Error('not signed in'); prompts.push(prompt); return '{"title":"Media viewer","relation":"spun","projectId":"p-ui","brief":"Goal: open files."}' },
       today: () => '2026-11-22',
     })
-    const context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }], taskSystem: true, hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }], matchTaskId: null }
+    const context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }], hasTask: true, openTasks: [{ id: 't-mv', title: 'media-viewer', project: 'ui' }], matchTaskId: null }
     expect(await brief.write('s1', 'u2')).toEqual({ ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: open files.' }, context: { ...context, matchTaskId: 't-mv' } })
     expect(await brief.write('s2')).toEqual({ ok: false, reason: 'failed', message: 'not signed in', context })
     expect(prompts[0]).not.toContain('back to the sidebar')

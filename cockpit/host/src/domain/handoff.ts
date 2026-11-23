@@ -1,5 +1,5 @@
 /**
- * The handoff a session ends with in a task-system space (application/session-task.ts
+ * The handoff a session ends with (application/session-task.ts
  * asks for it): a "### Handoff" block at the end of its last message.
  *
  *   ### Handoff

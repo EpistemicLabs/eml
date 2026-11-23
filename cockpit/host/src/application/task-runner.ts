@@ -1,11 +1,11 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace } from '../brain-space.js'
+import type { BrainSpace } from '../brain-space.js'
+import { runsHere } from '../domain/task-owner.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
- * The runner (note task-system-phase-1-build-plan, M3): in a space with the
- * task system on, it starts the plan steps that are ready, each in a session
- * of its own.
+ * The runner (note task-system-phase-1-build-plan, M3): in every space it
+ * starts the plan steps that are ready, each in a session of its own.
  *
  * A task is ready when:
  *   - it is planned, has a delegate (the agent that works on it) and a
@@ -17,6 +17,8 @@ import { projectIdForBrain } from '../project-registry.js'
  *   - nobody is waited on (waiting_on), its hand-over can no longer be undone,
  *     and no job of its own will start it at a set time;
  *   - no session works on it already (a worker someone started on it);
+ *   - in a shared space, this cockpit's member owns it (domain/task-owner.ts):
+ *     each member's cockpit starts its own member's steps;
  *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
  *     run at most MAX_RUNNING at a time per space.
  * Starting it marks it active, so it starts once. Its session gets the task
@@ -32,6 +34,8 @@ const STANDALONE = '(standalone)'
 export interface TaskRunnerDeps {
   spaces: { list(): BrainSpace[] }
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
+  /** This cockpit's member (the config handle): in a shared space it starts only their steps. */
+  me: string
   /** A session works on this task already (a worker started on it by hand or by a session). */
   busy?(taskId: string): boolean
   /** Its hand-over can still be undone: nothing starts until the undo window is over. */
@@ -51,6 +55,7 @@ interface Task {
   content: string
   status: string
   scope: string
+  ingested_by?: string | null
   properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
@@ -98,6 +103,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const step = await get(candidate.id)
       if (!step || step.status !== 'planned') continue
       if (!step.properties?.delegate || step.properties.waiting_on?.who) continue
+      if (!runsHere(space.shared, step, deps.me)) continue
       if (deps.busy?.(step.id) || deps.held?.(step.id) || deps.scheduled?.(step.id)) continue
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
@@ -136,7 +142,6 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
 
   const tickOnce = async () => {
     for (const space of deps.spaces.list()) {
-      if (!taskSystemOn(space)) continue
       const brain = deps.brain(space)
       if (!brain) continue
       try {

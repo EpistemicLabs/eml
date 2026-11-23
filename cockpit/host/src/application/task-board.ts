@@ -1,5 +1,5 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace } from '../brain-space.js'
+import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -15,8 +15,7 @@ import type { TaskCommand } from './task-commands.js'
  * tasks, the host what runs on them; this joins both once, so Inbox, Now, Plan, the sidebar and the
  * header all count the same thing.
  *
- * On the board (Inbox, Now, the counts): the spaces with the task system on. Plan also reads the other
- * spaces, read-only. The brain publishes no changes, so the board refreshes on a timer, after every
+ * The board covers every space. The brain publishes no changes, so the board refreshes on a timer, after every
  * command and after a turn ended, and compares turns to report what moved.
  */
 
@@ -37,7 +36,7 @@ export interface BoardTask {
   priority?: string
   due?: string
   parentId: string | null
-  /** The task it was spun off from (a derived_from link); null when none, or outside a task-system space. */
+  /** The task it was spun off from (a derived_from link); null when none. */
   originId: string | null
   /** How it hangs in its tree: a sub-task under parentId, spun off from originId, or a root. */
   rel: 'sub' | 'spun' | null
@@ -49,8 +48,6 @@ export interface BoardTask {
   coverage: Coverage
   urgency: number
   important: boolean
-  /** In a space with the task system on: on the board and in the counts. */
-  onBoard: boolean
   sessionIds: string[]
   working: boolean
   nextRunAt: string | null
@@ -81,7 +78,7 @@ export interface BoardEvent {
 export interface Board {
   at: string
   viewer: string
-  spaces: Array<{ id: string; name: string; taskSystem: boolean; agents: string[] }>
+  spaces: Array<{ id: string; name: string; agents: string[] }>
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>
   tasks: BoardTask[]
   lineage: LineageTask[]
@@ -195,13 +192,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     ((await brain.get(`/object/${object}`).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
 
   /** A pending command's effect on the task, shown before it is applied. */
-  const overlay = (row: Row, command: TaskCommand | undefined, agents: string[], runner: boolean): Row => {
+  const overlay = (row: Row, command: TaskCommand | undefined, agents: string[]): Row => {
     if (!command || command.state !== 'pending') return row
     if (command.kind === 'review') return { ...row, status: 'resolved', updated_at: command.createdAt || row.updated_at }
     if (command.kind === 'close') return { ...row, status: 'invalidated' }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents, runner })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
       if (!planned.ok) return row
       const { status, waiting_on, ...fields } = planned.plan.patch
       const next: Row['properties'] = { ...props, ...fields } as Row['properties']
@@ -220,19 +217,17 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
-      const onBoard = taskSystemOn(space)
       const agents = brain ? (await objects(brain, 'agent')).map((a) => String(a.id)) : []
-      board.spaces.push({ id: space.id, name: space.name, taskSystem: onBoard, agents })
+      board.spaces.push({ id: space.id, name: space.name, agents })
       if (!brain) continue
       for (const p of await objects(brain, 'project')) {
         board.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
-      // Origins (spun off from) only where the task system is on; other spaces' trees are built from sessions.
-      const origins: Record<string, string> = onBoard ? { with_origin: 'true' } : {}
+      const origins = { with_origin: 'true' }
       const [planned, active, resolved] = await Promise.all([
         list(brain, 'planned', origins), list(brain, 'active', origins), list(brain, 'resolved', { order_by: 'updated_at', limit: RESOLVED_LIMIT, ...origins }),
       ])
-      const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents, onBoard))
+      const rows = [...planned, ...active, ...resolved].map((row) => overlay(row, commandOf(row.id), agents))
       const statusOf = new Map(rows.map((r) => [r.id, r.status]))
 
       const spaceTasks: BoardTask[] = []
@@ -251,13 +246,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           parentActive: row.parent_id ? (statusOf.has(row.parent_id) ? statusOf.get(row.parent_id) === 'active' : null) : null,
           depsResolved: (props.depends_on ?? []).every((id) => !statusOf.has(id) || statusOf.get(id) === 'resolved'),
         }
-        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id), runner: onBoard }
+        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
         const command = commandOf(row.id)
         const parentId = row.parent_id ?? null
-        const originId = onBoard ? row.origin_task_id ?? null : null
+        const originId = row.origin_task_id ?? null
         spaceTasks.push({
           id: row.id,
           spaceId: space.id,
@@ -283,22 +278,21 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           coverage: coverageOf(facts, live, deps.viewer, now, stepsWaiting),
           urgency: urgencyOf(facts, live, deps.viewer, now),
           important: isImportant(facts, live, deps.viewer, now),
-          onBoard,
           sessionIds: sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
         })
-        if (onBoard && row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
       }
       board.tasks.push(...spaceTasks)
-      if (onBoard) board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))
+      board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))
     }
 
     const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now)
     board.inbox = inbox.live
     board.snoozed = inbox.snoozed
-    board.counts = { needsYou: board.tasks.filter((t) => t.onBoard && t.turn === 'needs_you').length, inbox: inbox.live.length }
+    board.counts = { needsYou: board.tasks.filter((t) => t.turn === 'needs_you').length, inbox: inbox.live.length }
 
     // What moved since the last refresh; the first build only records where everything stands.
     const changes: BoardEvent[] = []
@@ -306,7 +300,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     for (const t of board.tasks) {
       const key = `${t.spaceId}/${t.id}`
       seen.add(key)
-      if (turns.has(key) && turns.get(key) !== t.turn && t.onBoard) changes.push({ at: board.at, taskId: t.id, spaceId: t.spaceId, from: turns.get(key) ?? null, to: t.turn })
+      if (turns.has(key) && turns.get(key) !== t.turn) changes.push({ at: board.at, taskId: t.id, spaceId: t.spaceId, from: turns.get(key) ?? null, to: t.turn })
       turns.set(key, t.turn)
     }
     for (const key of [...turns.keys()]) if (!seen.has(key)) turns.delete(key)

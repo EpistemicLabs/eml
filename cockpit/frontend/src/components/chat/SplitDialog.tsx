@@ -85,8 +85,6 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
     return () => { current = false; };
   }, [sessionId, upTo, offered, projectId]);
 
-  // Where the task system is off there is no task to link: the new session only remembers this one.
-  const linksTasks = context?.taskSystem ?? true;
   // Until the space's context is in, the dialog shows no choice that might change (no jump).
   const settled = context !== null;
   const relations = RELATIONS.filter(([r]) => r !== 'sub' || (context?.hasTask ?? true));
@@ -103,7 +101,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
     setSending(true);
     setError(null);
     const answer = await splitOff(sessionId, {
-      title: title.trim(), brief: brief.trim(), relation: linksTasks ? relation : 'unrelated', when, projectId: project,
+      title: title.trim(), brief: brief.trim(), relation, when, projectId: project,
       ...(onExisting ? { existingTaskId: existingId } : {}),
     }, opId);
     setSending(false);
@@ -140,7 +138,7 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
               )}
             </div>
           )}
-          {!settled || onExisting ? null : linksTasks ? (
+          {!settled || onExisting ? null : (
             <div className="flex flex-col gap-1.5">
               <span id="split-relation" className={LABEL}>How it relates</span>
               <div role="radiogroup" aria-labelledby="split-relation" className="flex flex-col gap-1.5">
@@ -149,8 +147,6 @@ export function SplitDialog({ sessionId, projectId, upTo, offered, onClose, onDo
                 ))}
               </div>
             </div>
-          ) : (
-            <p className="m-0 text-ui text-muted-foreground">This space has no task system: the new session remembers this one, and parking makes a plain task.</p>
           )}
           <label className="flex flex-col gap-1.5">
             <span className={LABEL}>Project</span>

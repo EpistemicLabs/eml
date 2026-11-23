@@ -6,16 +6,15 @@ import type { TaskCommand, TaskCommandStore } from './task-commands.js'
 
 /**
  * Apply a sort of a drifted session (domain/sort.ts plans it): link, create and close as the rows say,
- * each with a journal entry, and one entry on the session's task that sums it up. Only where the task
- * system is on: sorting means putting topics next to the session's task. Kept in the task commands'
- * file under its operation id, so a retry does the work once.
+ * each with a journal entry, and one entry on the session's task that sums it up. Only for a session
+ * with a task: sorting means putting topics next to it. Kept in the task commands' file under its
+ * operation id, so a retry does the work once.
  */
 
 export interface SortSessionDeps {
   store: TaskCommandStore
   session(sessionId: string): SessionFacts | null
   space(ledgerSpaceId: string | null): BrainSpace
-  taskSystem(space: BrainSpace): boolean
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   changed(): void
   now(): number
@@ -46,7 +45,7 @@ export function createSortSession(deps: SortSessionDeps) {
       const facts = deps.session(input.sessionId)
       if (!facts) return { ok: false, refusal: 'unknown_session' }
       const space = deps.space(facts.spaceId)
-      if (!deps.taskSystem(space) || !facts.taskId) return { ok: false, refusal: 'no_task' }
+      if (!facts.taskId) return { ok: false, refusal: 'no_task' }
       const brain = deps.brain(space)
       if (!brain) return { ok: false, refusal: 'no_brain' }
       const sourceId = facts.taskId

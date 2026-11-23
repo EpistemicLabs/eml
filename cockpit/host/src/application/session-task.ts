@@ -1,13 +1,13 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.js'
+import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
 import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
 
 /**
- * Task system, phase 1 (note task-system-phase-1-build-plan): every session in
- * a space that switched it on works on a brain task.
+ * Task system, phase 1 (note task-system-phase-1-build-plan): every session
+ * works on a brain task, in every space.
  *
  *   - At session start (task-hook.ts → POST /api/session-task) a session
  *     without a task gets one: a placeholder named after the session. A
@@ -18,8 +18,8 @@ import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
  *     takes that name, unless the session already renamed the task.
  *   - Every start, the session reads its task and the handoff it ends with.
  *
- * Off (a shared space, an unconfirmed one, or the switch off): no task is
- * created and the hook prints nothing — the session runs as before.
+ * In a shared space each member's cockpit acts for its own sessions only: the
+ * tasks it creates and reads are those of its ledger's sessions.
  */
 
 export interface SessionTaskDeps {
@@ -111,11 +111,11 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
 }
 
 export interface SessionTask {
-  /** The context a session's start hook prints; empty when the task system is off for it. Creates the task when there is none. */
+  /** The context a session's start hook prints; empty for an unknown session or a space without a bound agent. Creates the task when there is none. */
   context(sessionId: string): Promise<string>
   /** The session named itself: a placeholder task takes the name. */
   named(sessionId: string, title: string): Promise<void>
-  /** Before an idle stop: the prompt asking for the handoff, or null (task system off, no task, or unattended: it hands off every turn). */
+  /** Before an idle stop: the prompt asking for the handoff, or null (no brain, no task, or unattended: it hands off every turn). */
   handoffBeforeStop(sessionId: string): string | null
 }
 
@@ -130,7 +130,6 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
     const entry = deps.ledger.get(sessionId)
     if (!entry) return null
     const space = deps.spaces.resolve(entry.spaceId)
-    if (!taskSystemOn(space)) return null
     const brain = deps.brain(space)
     return brain ? { entry, brain } : null
   }
@@ -193,7 +192,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       }
       if (!taskId) return ''
       let task = await t.brain.get(`/engram/${taskId}`) as Task
-      // A session that has a name already (it named itself before the task system was on) lends it now.
+      // A session that has a name already (it named itself before its task was made) lends it now.
       const name = t.entry.title ?? t.entry.agentTitle
       if (name && task.title && PLACEHOLDER.test(task.title) && deps.ledger.get(sessionId)?.taskAuto) {
         await rename(task, name, sessionId, t.brain)

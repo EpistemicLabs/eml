@@ -75,7 +75,7 @@ describe('next-step check', () => {
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
   const setup = (tasks: Record<string, Record<string, unknown>>, opts: {
-    space?: { taskSystem: boolean; shared: boolean }
+    space?: { shared: boolean }
     jobs?: ReturnType<typeof job>[]
     watched?: boolean
     delivers?: boolean
@@ -89,7 +89,7 @@ describe('next-step check', () => {
     const quiet: string[] = []
     const state = { watched: opts.watched ?? false }
     const check = mod.createNextStepCheck({
-      ledger, spaces: { resolve: () => (opts.space ?? { taskSystem: true, shared: false }) as never }, brain: () => brain,
+      ledger, spaces: { resolve: () => (opts.space ?? { shared: false }) as never }, brain: () => brain,
       owner: 'lasse', log: () => {},
       jobsOf: () => opts.jobs ?? [],
       runStartedAt: () => RUN,
@@ -134,15 +134,13 @@ describe('next-step check', () => {
     expect(brain.posts).toEqual([])
   })
 
-  it('does nothing in a space with the task system off, nor in a shared one', async () => {
-    for (const space of [{ taskSystem: false, shared: false }, { taskSystem: true, shared: true }]) {
-      const { ledger, brain, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { space })
-      ledger.recordSpawn('w1-4', null, 'bp-eml', 'claude', true, 't1')
-      await check.turnEnded('w1-4')
-      await check.turnEnded('w1-4')
-      expect(delivered).toEqual([])
-      expect(brain.posts).toEqual([])
-    }
+  it('checks this cockpit\'s own workers in a shared space too', async () => {
+    const { ledger, brain, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { space: { shared: true } })
+    ledger.recordSpawn('w1-4', null, 'bp-eml', 'claude', true, 't1')
+    await check.turnEnded('w1-4')
+    expect(delivered).toEqual([`w1-4: ${mod.NEXT_STEP_PROMPT}`])
+    await check.turnEnded('w1-4')
+    expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', why: mod.NO_NEXT_STEP })
   })
 
   it('never checks the user\'s own sessions or closed tasks', async () => {

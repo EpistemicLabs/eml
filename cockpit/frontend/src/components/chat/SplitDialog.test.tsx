@@ -7,13 +7,13 @@ import { CreatedMarker, MessageActions, OfferCard, SplitMarker } from './SplitPa
 import { createdTaskOfTool, groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
 
 let draftStatus = 200;
-let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], taskSystem: true, hasTask: true };
+let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], hasTask: true };
 const posts: Array<{ url: string; body: Record<string, unknown> }> = [];
 
 beforeEach(() => {
   posts.length = 0;
   draftStatus = 200;
-  context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], taskSystem: true, hasTask: true };
+  context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], hasTask: true };
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
     posts.push({ url, body });
@@ -74,17 +74,12 @@ describe('the split dialog', () => {
     expect((screen.getByRole('button', { name: 'Split off' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('offers no sub-task without a task, and no relation where the task system is off', async () => {
+  it('offers no sub-task without a task', async () => {
     context = { ...context, hasTask: false };
     render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);
     await screen.findByDisplayValue('Media viewer');
     expect(screen.queryByRole('radio', { name: /Sub-task/ })).toBeNull();
-    cleanup();
-    context = { ...context, taskSystem: false };
-    render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);
-    await screen.findByDisplayValue('Media viewer');
-    expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
-    expect(screen.getByText(/no task system/)).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /Spun off/ })).toBeTruthy();
   });
 
   it('takes the agent\'s own draft without asking for another, and finds its project by name', async () => {
@@ -103,19 +98,20 @@ describe('the dialog while the brief is written', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       posts.push({ url, body });
-      if (body.contextOnly) return new Response(JSON.stringify({ context: { ...context, taskSystem: false } }), { status: 200 });
+      if (body.contextOnly) return new Response(JSON.stringify({ context: { ...context, hasTask: false } }), { status: 200 });
       await new Promise<void>((resolve) => { finishDraft = resolve; });
-      return new Response(JSON.stringify({ title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal.', context: { ...context, taskSystem: false } }), { status: 200 });
+      return new Response(JSON.stringify({ title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal.', context: { ...context, hasTask: false } }), { status: 200 });
     }));
     render(<SplitDialog sessionId="s1" projectId="p-ui" onClose={() => {}} onDone={() => {}} />);
     expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
-    expect(await screen.findByText(/no task system/)).toBeTruthy();
+    expect(await screen.findByRole('radio', { name: /Spun off/ })).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: /Sub-task/ })).toBeNull();
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('');
     expect(screen.getByTestId('brief-spinner').getAttribute('class')).toContain('animate-spin');
     finishDraft();
     await screen.findByDisplayValue('Media viewer');
     expect(screen.queryByTestId('brief-spinner')).toBeNull();
-    expect(screen.queryByRole('radio', { name: /Spun off/ })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /Sub-task/ })).toBeNull();
   });
 });
 

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createSortSession } from '../src/application/sort-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
 
-function setup(opts: { taskSystem?: boolean; taskId?: string | null; failOnce?: string } = {}) {
+function setup(opts: { taskId?: string | null; failOnce?: string } = {}) {
   let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   let next = 0
@@ -13,7 +13,6 @@ function setup(opts: { taskSystem?: boolean; taskId?: string | null; failOnce?: 
     store: new TaskCommandStore(join(mkdtempSync(join(tmpdir(), 'sort-')), 'task-commands.json')),
     session: (id) => (id === 's1' ? { spaceId: null, title: 'Session review', taskId: opts.taskId === undefined ? 't-root' : opts.taskId } : null),
     space: () => ({ id: 'main' }) as never,
-    taskSystem: () => opts.taskSystem ?? true,
     brain: () => ({
       get: async () => ({ title: 'session-review-ui', scope: 'project.ui' }),
       post: async (path: string, body: Record<string, unknown>) => { if (failing && path === failing) { failing = undefined; throw new Error('brain went away') } posts.push([path, body]); return path === '/engram/task' ? { id: `t-new-${++next}` } : {} },
@@ -60,8 +59,7 @@ describe('applying a sort', () => {
     expect(posts.filter(([p]) => p === '/engram/task')).toHaveLength(1)
   })
 
-  it('needs the task system and a task on the session', async () => {
-    expect(await setup({ taskSystem: false }).sort.apply({ opId: 'a', sessionId: 's1', rows: [] })).toEqual({ ok: false, refusal: 'no_task' })
+  it('needs a task on the session', async () => {
     expect(await setup({ taskId: null }).sort.apply({ opId: 'b', sessionId: 's1', rows: [] })).toEqual({ ok: false, refusal: 'no_task' })
     expect(await setup().sort.apply({ opId: 'c', sessionId: 'nope', rows: [] })).toEqual({ ok: false, refusal: 'unknown_session' })
   })

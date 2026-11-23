@@ -32,11 +32,11 @@ import { TasksCard } from './TasksCard';
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null, updatedAt: null,
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, onBoard: true, sessionIds: [], working: false, nextRunAt: null, ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
 });
 const board = (): Board => ({
   at: '', viewer: 'me',
-  spaces: [{ id: 'main', name: 'Main', taskSystem: true, agents: [] }],
+  spaces: [{ id: 'main', name: 'Main', agents: [] }],
   projects: [{ spaceId: 'main', id: 'ui', name: 'EML UI/UX', goal: null }],
   tasks: [
     task('session-review-ui', { sessionIds: ['s-root'] }),

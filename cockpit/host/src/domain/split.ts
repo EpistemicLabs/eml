@@ -5,9 +5,8 @@
  * the journal says where it came up). When decides whether a session starts now or the task waits in
  * Plan. This file plans the change; application/split-session.ts carries it out and keeps it undoable.
  *
- * Where the task system is off (a shared space), sessions have no task: starting now writes nothing to
- * the brain (the new session only remembers the one it came from), and parking makes one ordinary task
- * that holds the brief.
+ * A session without a task: starting now writes nothing to the brain (the new session only remembers
+ * the one it came from), and parking makes one ordinary task that holds the brief.
  */
 
 import { displayTitleOf, kebabTitle } from './task-title.js'
@@ -20,10 +19,9 @@ export const SPLIT_WHENS: readonly SplitWhen[] = ['now', 'park']
 export interface SplitSource {
   sessionId: string
   sessionTitle: string
-  /** The session's task; null where the task system is off or the session has none. */
+  /** The session's task; null when it has none. */
   taskId: string | null
   taskTitle: string | null
-  taskSystem: boolean
 }
 
 export interface SplitRequest {
@@ -55,7 +53,7 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   if (!anchor || !brief) return { ok: false, refusal: 'invalid' }
   const display = displayTitleOf(title)
   const named = display ? { display_title: display } : {}
-  const hasTask = source.taskSystem && source.taskId !== null
+  const hasTask = source.taskId !== null
   const from = `${source.taskTitle ?? source.taskId} (session ${source.sessionTitle})`
 
   // Onto a task that exists: nothing new is made and its place stays; its journal says where it came up again.

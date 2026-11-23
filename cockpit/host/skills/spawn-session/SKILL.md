@@ -72,8 +72,8 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
   handoff, or when the user asked to watch this worker.
 - `--provider`: optional, `claude`, `codex` or `qwen` — the agent CLI the worker runs with. Leave it out
   unless the user asked for a specific one; the worker then uses the cockpit's default.
-- `--task <task id>`, `--step` or `--new-task "<title>"`: optional, for spaces with the
-  cockpit's task system (your start context then names your task). `--task` makes the worker
+- `--task <task id>`, `--step` or `--new-task "<title>"`: optional, for the cockpit's
+  task system (your start context names your task). `--task` makes the worker
   work on that brain task — for handed-out work, the customer's or topic's open task (look for
   it first with eml_list / eml_recall). `--new-task` creates the task and puts the worker on it
   in one go, when none exists yet: `--in <project>` picks its brain project (the customer's,

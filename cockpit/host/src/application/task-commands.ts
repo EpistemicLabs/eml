@@ -141,8 +141,6 @@ export interface TaskCommandsDeps {
   space(spaceId: string): BrainSpace | undefined
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   agentsOf(space: BrainSpace): Promise<string[]>
-  /** The task system is on in the space. */
-  runner(space: BrainSpace): boolean
   createJob(space: BrainSpace, task: BrainTask, spec: ScheduleSpec, prompt: string): Promise<{ jobId: string } | { error: string }>
   /** A space's board changed. */
   changed(spaceId: string): void
@@ -178,7 +176,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   const plan = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, taskId: string, req: HandOverRequest) => {
     const task = await taskOf(brain, taskId)
     if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
-    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space), runner: deps.runner(space) })
+    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space) })
     return planned.ok ? { ok: true as const, task, plan: planned.plan } : planned
   }
 

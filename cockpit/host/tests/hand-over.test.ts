@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { planHandOver, planUndo, type HandOverTask } from '../src/domain/hand-over.js'
 
-const ctx = { agents: ['atlas', 'motti'], runner: true }
+const ctx = { agents: ['atlas', 'motti'] }
 const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', status: 'active', owner: 'lasse', ...patch })
 
 describe('planning a hand-over', () => {
@@ -80,7 +80,6 @@ describe('planning a hand-over', () => {
     ['a closed task', task({ status: 'resolved' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx, 'task_closed'],
     ['an agent of another space', task(), { mode: 'now', delegate: 'scout', checkpoint: 'after' }, ctx, 'delegate_not_in_space'],
     ['no checkpoint', task(), { mode: 'now', delegate: 'atlas' }, ctx, 'checkpoint_required'],
-    ['a space without a runner', task(), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, { ...ctx, runner: false }, 'space_has_no_runner'],
     ['schedule without a time', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after' }, ctx, 'schedule_required'],
     ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'desk_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {

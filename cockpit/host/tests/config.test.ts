@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expectOwnerOnly } from './helpers/owner-only.js'
@@ -45,6 +45,16 @@ describe('cockpit config writes', () => {
     })
     // Back to the shape the other tests build on.
     await config.writeCockpitConfig({ token: 't', onboarding: 'done', mainName: 'Work', spaces: [{ token: 'u', name: 'Privat' }] })
+  })
+
+  it('reads a config that still names a task system switch, and drops it on the next write', async () => {
+    writeFileSync(join(home, 'config'), JSON.stringify({
+      token: 't', mainTaskSystem: true, spaces: [{ token: 'u', name: 'Privat', taskSystem: true }, { token: 'v' }],
+    }))
+    expect(await config.readCockpitConfig()).toEqual({ token: 't', spaces: [{ token: 'u', name: 'Privat' }, { token: 'v' }] })
+    await config.updateCockpitConfig((c) => c && { ...c, mainName: 'Work' })
+    const written = readFileSync(join(home, 'config'), 'utf8')
+    expect(written).not.toContain('askSystem')
   })
 
   it('leaves the file as it is when the change returns null', async () => {

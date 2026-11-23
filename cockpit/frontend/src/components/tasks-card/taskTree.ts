@@ -1,7 +1,7 @@
 // The tasks card's model: for each project with a session open on the desk, the trees those sessions
-// belong to. In a space with the task system on, a tree is tasks from the origin task down (a sub-task
-// under its parent, a spun-off task under the task it came from) with each task's sessions; elsewhere
-// it is the sessions themselves, each under the session that started it. Pure, so the rules (where a
+// belong to. A tree is tasks from the origin task down (a sub-task under its parent, a spun-off task
+// under the task it came from) with each task's sessions; a session without a task is a tree of
+// sessions, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
 // without a browser.
 import { hueOf, OPEN_STATUSES, taskName, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
@@ -68,7 +68,7 @@ export interface TreeSection {
 }
 
 export interface TreeInput {
-  board: Pick<Board, 'tasks' | 'lineage' | 'spaces' | 'projects'> | null;
+  board: Pick<Board, 'tasks' | 'lineage' | 'projects'> | null;
   sessions: AllSession[];
   desk: DeskSession[];
   projects: ProjectName[];
@@ -104,7 +104,6 @@ const taskKey = (spaceId: string, id: string) => `${spaceId}/${id}`;
 
 export function buildTaskTree(input: TreeInput): TreeSection[] {
   const { board, desk } = input;
-  const taskSpaces = new Set((board?.spaces ?? []).filter((s) => s.taskSystem).map((s) => s.id));
   const deskIds = new Map(desk.map((d) => [d.sessionId, d]));
   const live = input.sessions.filter((s) => !s.archivedAt || deskIds.has(s.id));
   const sessionById = new Map(live.map((s) => [s.id, s]));
@@ -188,7 +187,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
     };
   };
 
-  // ---- session trees (no task system, or a session without a task) ----
+  // ---- session trees (a session without a task) ----
   const sessionChildren = (s: AllSession) => live.filter((k) => k.parentSessionId === s.id && k.id !== s.id);
   const deskInSession = new Map<string, boolean>();
   const sessionHoldsDesk = (s: AllSession, depth = 0): boolean => {
@@ -238,7 +237,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
   for (const d of desk) {
     const s = sessionById.get(d.sessionId);
     if (!s) continue;
-    const hasTask = Boolean(s.taskId && taskSpaces.has(s.spaceId));
+    const hasTask = Boolean(s.taskId && board);
     const task = hasTask ? tasks.get(taskKey(s.spaceId, s.taskId!)) : undefined;
     // Its task is not on the board yet (just made): it shows once the board has it, never as a bare session meanwhile.
     if (hasTask && !task) continue;

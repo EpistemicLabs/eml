@@ -42,7 +42,7 @@ describe('project lead', () => {
     ledger.recordSpawn('lead-1', 'pane', 'bp-website', 'claude')
     const posts: unknown[] = []
     const tasks = createSessionTask({
-      ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never },
+      ledger, spaces: { resolve: () => ({ shared: false }) as never },
       brain: () => ({ get: async () => ({}), post: async (...a: unknown[]) => { posts.push(a); return { id: 'x' } } }),
     })
     expect(await tasks.context('lead-1')).toBe('')

@@ -1,14 +1,21 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace } from '../brain-space.js'
+import type { BrainSpace } from '../brain-space.js'
+import { runsHere, type OwnedTask } from '../domain/task-owner.js'
 
 /**
  * Cycles (decision cockpit-task-views-follow-linear-model): one cycle per
  * calendar week (Monday to Sunday, the user's time zone) across all projects
- * of a space with the task system on. A cycle is a brain subject
+ * of a space. A cycle is a brain subject
  * (cycle-<year>-w<week>); a task is in the cycle when it carries the subject.
  * When a new week starts, the cockpit makes its subject, moves what was left
  * open in the last cycle into it (the task keeps the old subject too, so the
  * rollovers can be counted) and closes the last one.
+ *
+ * In a shared space every member's cockpit does this for the tasks its own
+ * member owns (domain/task-owner.ts). The other member's cockpit may have made
+ * the week already, so it carries this member's open tasks of the last cycle
+ * that lack the current subject on every check, and writes only when there is
+ * something to carry or the last cycle is still open.
  */
 
 export interface Cycle {
@@ -47,11 +54,13 @@ export function cycleOf(now: Date, timeZone: string, offset = 0): Cycle {
 /** How many cycles a task was carried through: its cycle subjects but one. */
 export const rollovers = (subjects: string[] = []) => Math.max(0, subjects.filter((s) => s.startsWith('cycle-')).length - 1)
 
-interface Task { id: string; subjects?: string[] }
+interface Task extends OwnedTask { id: string; subjects?: string[] }
 
 export interface CyclesDeps {
   spaces: { list(): BrainSpace[] }
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post' | 'put'> | null
+  /** This cockpit's member (the config handle): in a shared space only their tasks are carried. */
+  me: string
   timeZone(): string
   log(line: string): void
   now?: () => Date
@@ -60,28 +69,40 @@ export interface CyclesDeps {
 export function createCycles(deps: CyclesDeps) {
   const now = () => deps.now?.() ?? new Date()
 
+  /** A cycle subject with its status; null when the brain has none by that name. */
+  const subjectOf = (brain: Pick<EmlApi, 'get'>, id: string) =>
+    brain.get(`/object/subject/${id}`).then((found) => ((found as { object?: { status?: string } }).object ?? {}), () => null)
+
   /** The space's current cycle exists; what the last one left open moved into it. */
   const ensureSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post' | 'put'>) => {
     const current = cycleOf(now(), deps.timeZone())
-    const exists = await brain.get(`/object/subject/${current.id}`).then(() => true, () => false)
-    if (exists) return
-    await brain.post('/object/subject', { name: current.id, description: `Cycle, week ${current.week}: ${current.from} to ${current.to}.` })
+    const exists = await subjectOf(brain, current.id) !== null
+    // A local space is this cockpit's alone: once the week is made, its carry-over is done.
+    if (exists && space.shared === false) return
+    if (!exists) {
+      await brain.post('/object/subject', { name: current.id, description: `Cycle, week ${current.week}: ${current.from} to ${current.to}.` })
+        .catch(async (err) => {
+          // In a shared space the other member's cockpit may have made it a moment earlier.
+          if (await subjectOf(brain, current.id) === null) throw err
+        })
+    }
     const last = cycleOf(now(), deps.timeZone(), -1)
     let moved = 0
     for (const status of ['planned', 'active']) {
       const open = await brain.get('/list', { type: 'task', subject: last.id, status, limit: 500 }).catch(() => ({ engrams: [] })) as { engrams?: Task[] }
       for (const task of open.engrams ?? []) {
+        if (task.subjects?.includes(current.id) || !runsHere(space.shared, task, deps.me)) continue
         await brain.post(`/task/${task.id}/track`, { subjects: [...new Set([...(task.subjects ?? []), current.id])] })
         moved += 1
       }
     }
-    await brain.put(`/object/subject/${last.id}`, { status: 'closed' }).catch(() => { /* no last cycle */ })
-    deps.log(`[cycles] ${space.name}: ${current.id} started, ${moved} task(s) carried over from ${last.id}`)
+    const lastSubject = await subjectOf(brain, last.id)
+    if (lastSubject && lastSubject.status !== 'closed') await brain.put(`/object/subject/${last.id}`, { status: 'closed' })
+    if (!exists || moved > 0) deps.log(`[cycles] ${space.name}: ${current.id}${exists ? '' : ' started'}, ${moved} task(s) carried over from ${last.id}`)
   }
 
   const ensure = async () => {
     for (const space of deps.spaces.list()) {
-      if (!taskSystemOn(space)) continue
       const brain = deps.brain(space)
       if (!brain) continue
       await ensureSpace(space, brain).catch((err) => deps.log(`[cycles] ${space.name}: ${(err as Error).message}`))

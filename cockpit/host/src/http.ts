@@ -903,7 +903,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     return true
   }
 
-  // A session's task at start, from its task hook (task-hook.ts); empty where the task system is off.
+  // A session's task at start, from its task hook (task-hook.ts).
   if (resource === 'session-task' && !id && method === 'POST') {
     const caller = req.headers['x-cockpit-session']
     if (req.headers['x-cockpit-token'] !== deps.spawnToken || typeof caller !== 'string') {

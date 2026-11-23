@@ -182,7 +182,7 @@ export function writeSpaceFiles(
   // command, so its own output limit, on every source (startup, resume,
   // compact, clear). It brings the session's project, so the reminder drops
   // its guess from the working directory. The task hook (task-hook.ts) a third:
-  // the session's task, in a space with the task system on.
+  // the session's task.
   fs.writeFileSync(
     settings,
     JSON.stringify({

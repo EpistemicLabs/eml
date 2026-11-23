@@ -206,6 +206,17 @@ text, members, invites), `POST …/invites {role?}` (member or owner, chosen at 
 asks the server which spaces are shared and discards an empty brain no config token holds
 (`team-space.ts`).
 
+**The task system runs in every space**, local and shared, with no switch: every session works on a
+brain task, the task board shows every space's tasks, and the runner, the router, the next-step check
+and the weekly cycles run in each space. In a shared space each member's cockpit works for its own
+member, so two cockpits never act on the same task: the router, the next-step check and a session's
+task act only for this cockpit's own sessions, and the background work acts only on the tasks this
+member owns — the first person in `assignee_ids`, else the task's author (`ingested_by`), compared
+with the config `handle` (`domain/task-owner.ts`). The runner starts only this member's ready steps;
+the cycles carry over only this member's open tasks into the new week, also when the other member's
+cockpit made the week first, and close the last week once. A space whose sharing the host could not
+confirm yet counts as shared.
+
 **Moving a project into a shared space.** On a project's page in the Brain tab of a local space,
 "Move to shared space…" opens the one dialog of the move: the shared space to move into, and the
 plan the brain server makes for it — the project with its sub-projects, how many engrams, journal
