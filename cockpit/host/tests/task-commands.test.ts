@@ -9,7 +9,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 type Task = { id: string; status: string; scope?: string; title?: string; properties: Record<string, unknown>; relations?: Array<{ source_id: string; target_id: string; relation: string }> }
 
-function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {}) {
+function world(tasks: Task[], opts: { bound?: string[] } = {}) {
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
   const brain = {
@@ -34,14 +34,13 @@ function world(tasks: Task[], opts: { runner?: boolean; bound?: string[] } = {})
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const jobs: Array<{ taskId: string; spec: unknown; prompt: string }> = []
   const changed: string[] = []
-  const space = { id: 'main', name: 'Main', taskSystem: true, shared: false }
+  const space = { id: 'main', name: 'Main', shared: false }
   const store = new TaskCommandStore(join(dir, `${Math.random()}.json`))
   const deps: TaskCommandsDeps = {
     store,
     space: (id) => (id === 'main' ? (space as never) : undefined),
     brain: () => brain,
     agentsOf: async () => ['atlas', 'motti'],
-    runner: () => opts.runner ?? true,
     createJob: async (_space, task, spec, prompt) => { jobs.push({ taskId: task.id, spec, prompt }); return { jobId: `job-${jobs.length}` } },
     changed: (spaceId) => changed.push(spaceId),
     now: () => clock.now,
@@ -134,8 +133,6 @@ describe('hand over', () => {
     expect(await go('missing')).toEqual({ ok: false, refusal: 'unknown_task' })
     expect(await go('done')).toEqual({ ok: false, refusal: 'task_closed' })
     expect(await go('t1', 'scout')).toEqual({ ok: false, refusal: 'delegate_not_in_space' })
-    expect(await world([owned('t1')], { runner: false }).commands.submit({ opId: 'x', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } }))
-      .toEqual({ ok: false, refusal: 'space_has_no_runner' })
     expect(await w.commands.submit({ opId: 'y', kind: 'hand_over', spaceId: 'other', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } }))
       .toEqual({ ok: false, refusal: 'unknown_space' })
   })

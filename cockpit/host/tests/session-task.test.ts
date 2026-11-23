@@ -52,7 +52,7 @@ describe('session task', () => {
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const setup = (space: { taskSystem: boolean; shared: boolean | null }, brain = fakeBrain()) => {
+  const setup = (space: { shared: boolean | null }, brain = fakeBrain()) => {
     const ledger = new mods.SessionLedger()
     const spaces = { resolve: () => space as never }
     const tasks = mods.createSessionTask({ ledger, spaces, brain: () => brain, now: () => new Date('2026-11-17T10:00:00Z') })
@@ -61,7 +61,7 @@ describe('session task', () => {
   const id = (n: number) => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`
 
   it('gives a session without a task a placeholder task in its project, once, and tells it the handoff', async () => {
-    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false })
+    const { ledger, brain, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(1), null, 'bp-eml', 'claude')
     const [first, second] = await Promise.all([tasks.context(id(1)), tasks.context(id(1))])
     expect(brain.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
@@ -75,7 +75,7 @@ describe('session task', () => {
   })
 
   it('gives a worker a task of its own that notes who started it, a step only when asked, and global for a project the brain does not know', async () => {
-    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false }, fakeBrain(['global', 'project.eml']))
+    const { ledger, brain, tasks } = setup({ shared: false }, fakeBrain(['global', 'project.eml']))
     ledger.recordSpawn(id(2), null, 'bp-eml', 'claude', false, 'parent-task')
     ledger.setAgentTitle(id(2), 'Email Lord')
     ledger.expectParent(id(3), id(2))
@@ -97,7 +97,7 @@ describe('session task', () => {
   it('keeps a task the session was started with, and does not mark it as created by the cockpit', async () => {
     const brain = fakeBrain()
     brain.tasks.set('given', { id: 'given', title: 'homepage-v4b', content: 'Build it.', status: 'active', properties: { stage: 'implementation' } })
-    const { ledger, tasks } = setup({ taskSystem: true, shared: false }, brain)
+    const { ledger, tasks } = setup({ shared: false }, brain)
     ledger.recordSpawn(id(14), null, 'bp-eml', 'claude', false, 'given')
     const text = await tasks.context(id(14))
     expect(brain.posts).toHaveLength(0)
@@ -110,7 +110,7 @@ describe('session task', () => {
     const brain = fakeBrain()
     brain.tasks.set('weekly', { id: 'weekly', title: 'weekly-report', content: 'Write it.', status: 'active', properties: {} })
     const ledger = new mods.SessionLedger()
-    const tasks = mods.createSessionTask({ ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, jobTask: (jobId) => (jobId === 'job-1' ? 'weekly' : null) })
+    const tasks = mods.createSessionTask({ ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, jobTask: (jobId) => (jobId === 'job-1' ? 'weekly' : null) })
     ledger.recordSpawn(id(7), null, 'bp-eml', 'claude', true)
     ledger.setJobId(id(7), 'job-1')
     expect(await tasks.context(id(7))).toContain('**weekly-report** · weekly')
@@ -118,19 +118,16 @@ describe('session task', () => {
     expect(ledger.get(id(7))!.taskId).toBe('weekly')
   })
 
-  it('does nothing in a shared, an unconfirmed or a switched-off space', async () => {
-    for (const space of [{ taskSystem: true, shared: true }, { taskSystem: true, shared: null }, { taskSystem: false, shared: false }]) {
-      const { ledger, brain, tasks } = setup(space)
-      ledger.recordSpawn(id(5), null, 'bp-eml', 'claude')
-      expect(await tasks.context(id(5))).toBe('')
-      await tasks.named(id(5), 'Some work')
-      expect(brain.posts).toHaveLength(0)
-      expect(ledger.get(id(5))!.taskId).toBeNull()
-    }
+  it('gives a session its task in a shared space too', async () => {
+    const { ledger, brain, tasks } = setup({ shared: true })
+    ledger.recordSpawn(id(5), null, 'bp-eml', 'claude')
+    expect(await tasks.context(id(5))).toContain('### Handoff')
+    expect(brain.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
+    expect(ledger.get(id(5))!.taskId).not.toBeNull()
   })
 
   it('names the placeholder after the session, and leaves a task the session renamed itself', async () => {
-    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false })
+    const { ledger, brain, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(6), null, 'bp-eml', 'claude')
     await tasks.context(id(6))
     await tasks.named(id(6), 'Größe der Seite prüfen')
@@ -143,7 +140,7 @@ describe('session task', () => {
   })
 
   it('names the placeholder at start when the session had its name before its task', async () => {
-    const { ledger, brain, tasks } = setup({ taskSystem: true, shared: false })
+    const { ledger, brain, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(8), null, 'bp-eml', 'claude')
     ledger.setAgentTitle(id(8), 'Email Lord')
     const text = await tasks.context(id(8))
@@ -155,7 +152,7 @@ describe('session task', () => {
   })
 
   it('asks only an attended session for its handoff before an idle stop, and tells it not to end every reply with one', async () => {
-    const { ledger, tasks } = setup({ taskSystem: true, shared: false })
+    const { ledger, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(9), null, 'bp-eml', 'claude')
     ledger.recordSpawn('worker-1', null, 'bp-eml', 'claude', true)
     const own = await tasks.context(id(9))
@@ -172,7 +169,7 @@ describe('session task', () => {
     const brain = fakeBrain()
     brain.tasks.set('t-dw', { id: 't-dw', title: 'acme-rescue', content: 'Win Acme back.', status: 'active', properties: { goal: 'Kim confirmed the cancellation is withdrawn' } })
     brain.tasks.set('t-none', { id: 't-none', title: 'other', content: 'Other work.', status: 'active', properties: {} })
-    const { ledger, tasks } = setup({ taskSystem: true, shared: false }, brain)
+    const { ledger, tasks } = setup({ shared: false }, brain)
     ledger.recordSpawn('worker-dw', null, 'bp-eml', 'claude', true, 't-dw')
     ledger.recordSpawn(id(8), null, 'bp-eml', 'claude', false, 't-none')
     const worker = await tasks.context('worker-dw')

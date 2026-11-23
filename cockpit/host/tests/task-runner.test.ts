@@ -44,7 +44,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space = { taskSystem: true, shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean } = {}) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean } = {}) => {
     const brain = brainOf(list)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -118,9 +118,8 @@ describe('task runner', () => {
     expect(started).toHaveLength(1)
   })
 
-  it('does nothing where the task system is off, and keeps a step planned when it cannot start', async () => {
+  it('keeps a step planned when it cannot start', async () => {
     const steps: T[] = [{ id: 'plan', status: 'active' }, { id: 's', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' }]
-    expect((await run(steps, { taskSystem: true, shared: true, name: 'EML' })).started).toEqual([])
     const refused = await run(steps, undefined, () => 'project bp-eml is not in space Main')
     expect(refused.brain.posts).toEqual([])
     expect(refused.logs.at(-1)).toContain('not started')

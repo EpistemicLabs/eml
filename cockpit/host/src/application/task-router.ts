@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.js'
+import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { parseHandoff, type Handoff } from '../domain/handoff.js'
 import { needsAnswer } from '../domain/session-attention.js'
 import type { WaitKind } from '../domain/task-turn.js'
@@ -8,7 +8,7 @@ import type { SessionLedger } from '../session-ledger.js'
 
 /**
  * The router (decision one-router-for-steps-and-jobs): when a session's turn
- * ends in a space with the task system on, it decides whose turn it is and
+ * ends, it decides whose turn it is and
  * writes that into the session's task.
  *
  *   - The session's handoff (domain/handoff.ts) goes into the task's history.
@@ -101,7 +101,6 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const entry = deps.ledger.get(sessionId)
     if (!entry?.taskId) return
     const space = deps.spaces.resolve(entry.spaceId)
-    if (!taskSystemOn(space)) return
     const brain = deps.brain(space)
     if (!brain) return
 
@@ -145,7 +144,6 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
         const entry = deps.ledger.get(sessionId)
         if (!entry?.taskId) return
         const space = deps.spaces.resolve(entry.spaceId)
-        if (!taskSystemOn(space)) return
         const brain = deps.brain(space)
         if (!brain) return
         const task = await brain.get(`/engram/${entry.taskId}`) as Task

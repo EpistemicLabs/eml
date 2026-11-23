@@ -36,8 +36,8 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
 }
 
 function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands'] } ) {
-  const main = { id: 'main', name: 'Main', taskSystem: true, shared: false }
-  const ebisu = { id: 'ebisu', name: 'Ebisu', taskSystem: false, shared: false }
+  const main = { id: 'main', name: 'Main', shared: false }
+  const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
@@ -59,7 +59,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
-  it('puts every open task of a task-system space in its turn and counts Needs you once', async () => {
+  it('puts every open task in its turn and counts Needs you once', async () => {
     const { board } = setup({
       main: [
         mine('asked', { delegate: 'atlas', waiting_on: { who: 'lasse', kind: 'question', why: 'Count it?', since: '2026-11-19T09:30:00Z' } }),
@@ -74,7 +74,7 @@ describe('the task board', () => {
     })
     const model = await board.refresh()
     const turn = (id: string) => model.tasks.find((t) => t.id === id)
-    expect(turn('asked')).toMatchObject({ turn: 'needs_you', group: 'asked', onBoard: true, spaceName: 'Main', project: 'acme' })
+    expect(turn('asked')).toMatchObject({ turn: 'needs_you', group: 'asked', spaceName: 'Main', project: 'acme' })
     expect(turn('review')?.turn).toBe('review')
     expect(turn('working')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
     expect(turn('at-nine')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-20T01:00:00Z' })
@@ -82,15 +82,15 @@ describe('the task board', () => {
     expect(turn('closed')?.turn).toBe('done')
     expect(model.counts).toEqual({ needsYou: 2, inbox: 2 })
     expect(model.inbox.map((i) => [i.kind, i.taskId])).toEqual([['question', 'asked'], ['review', 'review']])
-    expect(model.spaces).toEqual([{ id: 'main', name: 'Main', taskSystem: true, agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', taskSystem: false, agents: [] }])
+    expect(model.spaces).toEqual([{ id: 'main', name: 'Main', agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }])
     expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
   })
 
-  it('shows other spaces in Plan only: not on the board, not in the counts', async () => {
+  it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {
     const { board } = setup({ main: [], other: [mine('portfolio', {}, 'planned')] })
     const model = await board.refresh()
-    expect(model.tasks).toEqual([expect.objectContaining({ id: 'portfolio', spaceId: 'ebisu', onBoard: false, turn: 'needs_you' })])
-    expect(model.counts.needsYou).toBe(0)
+    expect(model.tasks).toEqual([expect.objectContaining({ id: 'portfolio', spaceId: 'ebisu', turn: 'needs_you' })])
+    expect(model.counts.needsYou).toBe(1)
   })
 
   it('reports turn changes since the last refresh as events, newest first', async () => {
@@ -132,11 +132,11 @@ describe('the task board', () => {
     expect(task('step')).toMatchObject({ parentId: 'spun', originId: null, rel: 'sub' })
   })
 
-  it('asks the brain for origins only in spaces with the task system on', async () => {
+  it('asks every space\'s brain for origins', async () => {
     const { board, brains } = setup({ main: [mine('a')], other: [mine('b', {}, 'planned')] })
     await board.refresh()
     expect(brains.get('main')!.queries.every((q) => q.with_origin === 'true')).toBe(true)
-    expect(brains.get('ebisu')!.queries.some((q) => 'with_origin' in q)).toBe(false)
+    expect(brains.get('ebisu')!.queries.every((q) => q.with_origin === 'true')).toBe(true)
   })
 
   it('fetches the closed ancestors of a task with a session, so its tree reaches its origin', async () => {

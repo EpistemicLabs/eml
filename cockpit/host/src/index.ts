@@ -39,7 +39,7 @@ import { getFreePort } from './ports.js'
 import { TurnTracker, type TurnEvent } from './turn-state.js'
 import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
-import { BrainSpaces, openBrainSpace, sessionSpaceOf, taskSystemOn, type BrainSpace } from './brain-space.js'
+import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
@@ -259,7 +259,6 @@ async function main() {
     upgrade: upgradeStateOf(row?.id ?? 'main', config?.agent),
     main: true,
     color: config?.mainColor,
-    taskSystem: config?.mainTaskSystem === true,
     url: server.baseUrl,
     token: config?.token ?? brain.token,
     turnHookConfig: CLAUDE_TURN_HOOK_CONFIG,
@@ -272,7 +271,7 @@ async function main() {
     const extraRow = brainForLocalToken(extra.token)
     if (!extraRow) { log('space: a configured token matches no brain — skipped'); continue }
     spaces.add(openBrainSpace({
-      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color, taskSystem: extra.taskSystem === true,
+      id: extraRow.id, name: extra.name ?? extraRow.name, agent: extra.agent ?? null, upgrade: upgradeStateOf(extraRow.id, extra.agent), main: false, color: extra.color,
       url: server.baseUrl, token: extra.token, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, mcpUrl, hooksUrl, ownRuntime: agents.expectsRuntime(extra.agent),
       plugins: pluginFiles(extraRow.id),
     }))
@@ -358,7 +357,7 @@ async function main() {
     },
     deliver: (sessionId, text) => chat.deliver(sessionId, text),
   }, request)
-  // Task system: every session of a space that switched it on works on a brain task (application/session-task.ts).
+  // Task system: every session works on a brain task (application/session-task.ts).
   const taskBrain = (space: BrainSpace) => {
     const agent = boundAgent({ agents }, space)
     return 'refused' in agent ? null : sessionClient(space, agent)
@@ -561,9 +560,8 @@ async function main() {
     if (!entry) return null
     // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
     const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
-    // In a task-system space a job belongs to the task its maker works on.
-    const taskId = taskSystemOn(spaces.resolve(entry.spaceId)) && entry.taskId ? entry.taskId : null
-    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId, ...facts }
+    // A job belongs to the task its maker works on.
+    return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId: entry.taskId, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
   const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)
@@ -712,7 +710,6 @@ async function main() {
       const found = await taskBrain(space)?.get('/object/agent').catch(() => null) as { objects?: Array<{ id: string }> } | null
       return (found?.objects ?? []).map((a) => a.id)
     },
-    runner: (space) => taskSystemOn(space),
     createJob: async (space, task, spec, prompt) => {
       const brainProject = task.scope.startsWith('project.') ? task.scope.slice('project.'.length) : null
       if (!brainProject) return { error: `the task has no project to run in (scope ${task.scope})` }
@@ -761,7 +758,6 @@ async function main() {
     store: taskCommandStore,
     session: splitSessionFacts,
     space: (spaceId) => spaces.resolve(spaceId),
-    taskSystem: (space) => taskSystemOn(space),
     brain: taskBrain,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
@@ -794,7 +790,7 @@ async function main() {
       const entry = ledger.get(sessionId)
       if (!entry) return null
       const space = spaces.resolve(entry.spaceId)
-      const task = taskSystemOn(space) && entry.taskId
+      const task = entry.taskId
         ? await taskBrain(space)?.get(`/engram/${entry.taskId}`).catch(() => null) as { title?: string } | null | undefined
         : null
       return {
@@ -802,8 +798,7 @@ async function main() {
         taskTitle: task?.title ?? null,
         projects: space.registry.list().filter((p) => !p.hidden).map((p) => ({ id: p.projectId, name: p.displayName, brainProjectId: p.brainProjectId })),
         openTasks: await openTasksOf(space),
-        taskSystem: taskSystemOn(space),
-        hasTask: taskSystemOn(space) && entry.taskId !== null,
+        hasTask: entry.taskId !== null,
       }
     },
     complete: async (sessionId, prompt) => {
@@ -821,7 +816,6 @@ async function main() {
     store: taskCommandStore,
     session: splitSessionFacts,
     space: (spaceId) => spaces.resolve(spaceId),
-    taskSystem: (space) => taskSystemOn(space),
     brain: taskBrain,
     brainProject: (space, projectId) => {
       const project = space.registry.get(projectId)
@@ -867,7 +861,7 @@ async function main() {
     host.listen(hostPort, '127.0.0.1', resolve)
   })
   log(`cockpit: ${url}`)
-  // The week's cycle in each task-system space; checked hourly, the week turns at the user's midnight.
+  // The week's cycle in each space; checked hourly, the week turns at the user's midnight.
   cycles.every(60 * 60_000)
   // Sessions kept running for Remote Control come back without a browser,
   // once the host answers their hooks.

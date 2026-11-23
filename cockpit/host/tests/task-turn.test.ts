@@ -3,7 +3,7 @@ import { coverageOf, isImportant, turnOf, urgencyOf, waitKind, type LiveFacts, t
 
 const NOW = Date.parse('2026-11-19T10:00:00Z')
 const task = (patch: Partial<TaskFacts> = {}): TaskFacts => ({ status: 'active', owner: 'lasse', parentActive: null, depsResolved: true, ...patch })
-const live = (patch: Partial<LiveFacts> = {}): LiveFacts => ({ working: false, sessions: 0, nextRunAt: null, runner: true, ...patch })
+const live = (patch: Partial<LiveFacts> = {}): LiveFacts => ({ working: false, sessions: 0, nextRunAt: null, ...patch })
 const turn = (t: Partial<TaskFacts> = {}, l: Partial<LiveFacts> = {}) => turnOf(task(t), live(l), 'lasse', NOW)
 
 describe('whose turn a task is', () => {
@@ -20,7 +20,6 @@ describe('whose turn a task is', () => {
     ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['it waits for the task it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', depsResolved: false }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['delegated without a checkpoint', { delegate: 'atlas', status: 'planned' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],
-    ['delegated in a space without a runner', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, { runner: false }, { turn: 'needs_you', group: 'nobody', reason: 'no_runner' }],
     ['a delegated step whose parent is not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', parentActive: false }, {}, { turn: 'needs_you', group: 'parent' }],
     ['delegated without a checkpoint, in progress', { delegate: 'atlas', status: 'active' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],
     ['the owner\'s own task', {}, {}, { turn: 'needs_you', group: 'own' }],
@@ -69,7 +68,6 @@ describe('coverage: does anything move an important task without the owner', () 
     expect(cover({ status: 'planned' }, {}, 3)).toEqual({ ok: false, group: 'blocked', reason: 'steps_wait', steps: 3 })
     expect(cover({ waitingOn: { who: 'kim', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
     expect(cover({ delegate: 'atlas', status: 'planned' })).toEqual({ ok: false, group: 'idle', reason: 'no_checkpoint' })
-    expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned' }, { runner: false })).toEqual({ ok: false, group: 'idle', reason: 'no_runner' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after' })).toEqual({ ok: false, group: 'stopped', reason: 'stopped' })
     expect(cover({ owner: undefined })).toEqual({ ok: false, group: 'owner', reason: 'no_owner' })
     expect(cover({ due: '2026-11-24' })).toEqual({ ok: false, group: 'due' })

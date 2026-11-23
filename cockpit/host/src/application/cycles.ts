@@ -1,10 +1,10 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace } from '../brain-space.js'
+import type { BrainSpace } from '../brain-space.js'
 
 /**
  * Cycles (decision cockpit-task-views-follow-linear-model): one cycle per
  * calendar week (Monday to Sunday, the user's time zone) across all projects
- * of a space with the task system on. A cycle is a brain subject
+ * of a space. A cycle is a brain subject
  * (cycle-<year>-w<week>); a task is in the cycle when it carries the subject.
  * When a new week starts, the cockpit makes its subject, moves what was left
  * open in the last cycle into it (the task keeps the old subject too, so the
@@ -81,7 +81,6 @@ export function createCycles(deps: CyclesDeps) {
 
   const ensure = async () => {
     for (const space of deps.spaces.list()) {
-      if (!taskSystemOn(space)) continue
       const brain = deps.brain(space)
       if (!brain) continue
       await ensureSpace(space, brain).catch((err) => deps.log(`[cycles] ${space.name}: ${(err as Error).message}`))

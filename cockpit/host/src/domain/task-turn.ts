@@ -17,7 +17,7 @@ export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'sto
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
 export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner'
 
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_runner' | 'no_owner'
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner'
 
 export interface WaitingOn {
   who: string
@@ -53,8 +53,6 @@ export interface LiveFacts {
   sessions: number
   /** The next run of one of its jobs, if any. */
   nextRunAt: string | null
-  /** The task's space has a runner (the task system is on there). */
-  runner: boolean
 }
 
 export interface TurnResult {
@@ -89,7 +87,6 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   if (w && w.who) return { turn: 'waiting_on_others' }
   if (task.delegate) {
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: 'at_time' }
-    if (!live.runner) return { turn: 'needs_you', group: 'nobody', reason: 'no_runner' }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
     // The runner starts planned tasks only. One in progress is the open session's, between its turns,
     // or nobody's once its session is gone.

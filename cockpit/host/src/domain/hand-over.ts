@@ -36,7 +36,6 @@ export type HandOverRefusal =
   | 'task_closed'
   | 'delegate_not_in_space'
   | 'checkpoint_required'
-  | 'space_has_no_runner'
   | 'schedule_required'
   | 'desk_required'
 
@@ -60,15 +59,12 @@ export interface HandOverPlan {
 export interface HandOverContext {
   /** The agents of the task's space. */
   agents: string[]
-  /** The task system is on in the task's space, so a runner and jobs start the delegate. */
-  runner: boolean
 }
 
 const CHECKPOINTS = new Set(['before', 'after', 'none'])
 
 export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: HandOverContext): { ok: true; plan: HandOverPlan } | { ok: false; refusal: HandOverRefusal } {
   if (task.status === 'resolved' || task.status === 'invalidated') return { ok: false, refusal: 'task_closed' }
-  if (!ctx.runner) return { ok: false, refusal: 'space_has_no_runner' }
   if (!ctx.agents.includes(req.delegate)) return { ok: false, refusal: 'delegate_not_in_space' }
   if (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint)) return { ok: false, refusal: 'checkpoint_required' }
   if (req.mode === 'schedule' && !req.schedule) return { ok: false, refusal: 'schedule_required' }

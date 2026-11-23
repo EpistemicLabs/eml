@@ -37,7 +37,6 @@ export interface SplitSessionDeps {
   store: TaskCommandStore
   session(sessionId: string): SessionFacts | null
   space(ledgerSpaceId: string | null): BrainSpace
-  taskSystem(space: BrainSpace): boolean
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The brain project of a registry project of the space; undefined when the space has no such project. */
   brainProject(space: BrainSpace, projectId: string): string | null | undefined
@@ -93,9 +92,8 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const space = deps.space(facts.spaceId)
       const brainProject = deps.brainProject(space, input.projectId)
       if (brainProject === undefined) return { ok: false, refusal: 'unknown_project' }
-      const taskSystem = deps.taskSystem(space)
       const brain = deps.brain(space)
-      const sourceTask = taskSystem ? facts.taskId : null
+      const sourceTask = facts.taskId
       const source = sourceTask && brain ? await taskOf(brain, sourceTask) : null
       // A folder project has no brain project: the new task goes where the session's task is.
       const scope = brainProject ? `project.${brainProject}` : source?.scope ?? 'global'
@@ -106,7 +104,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
         existingTask = { id: input.existingTaskId, title: found.title ?? input.existingTaskId }
       }
       const planned = planSplit(
-        { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: source?.title ?? null, taskSystem },
+        { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: source?.title ?? null },
         { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope, ...(existingTask ? { existing: existingTask } : {}) },
       )
       if (!planned.ok) return planned

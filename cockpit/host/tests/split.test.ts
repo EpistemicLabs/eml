@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { planSplit, type SplitSource } from '../src/domain/split.js'
 
-const withTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: 't-root', taskTitle: 'session-review-ui', taskSystem: true }
-const noTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: null, taskTitle: null, taskSystem: false }
+const withTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: 't-root', taskTitle: 'session-review-ui' }
+const noTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: null, taskTitle: null }
 const request = { title: 'Media viewer', brief: 'Goal: open files in the cockpit.', scope: 'project.ui' }
 
 describe('splitting off a topic', () => {

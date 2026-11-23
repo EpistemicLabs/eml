@@ -39,11 +39,11 @@ const deps = {
     },
   },
   brief: {
-    context: async (sessionId: string, title?: string) => (sessionId === 'nope' ? null : { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true, title: title ?? null }),
+    context: async (sessionId: string, title?: string) => (sessionId === 'nope' ? null : { projects: [{ id: 'p-ui', name: 'UI' }], hasTask: true, title: title ?? null }),
     write: async (sessionId: string, upTo?: string) => {
       if (sessionId === 'nope') return { ok: false, reason: 'unknown_session' }
-      if (sessionId === 'broken') return { ok: false, reason: 'failed', message: 'not signed in', context: { projects: [], taskSystem: false, hasTask: false } }
-      return { ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: `Goal: files (${upTo ?? 'end'}).` }, context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true } }
+      if (sessionId === 'broken') return { ok: false, reason: 'failed', message: 'not signed in', context: { projects: [], hasTask: false } }
+      return { ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: `Goal: files (${upTo ?? 'end'}).` }, context: { projects: [{ id: 'p-ui', name: 'UI' }], hasTask: true } }
     },
   },
 } as unknown as TasksApiDeps
@@ -116,10 +116,10 @@ describe('task board routes', () => {
   })
 
   it('drafts a split brief up to a picked message, and says why when it cannot', async () => {
-    expect(await post('/api/v1/sessions/s1/split-brief', { upTo: 'u2' })).toEqual({ status: 200, body: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: files (u2).', context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true } } })
+    expect(await post('/api/v1/sessions/s1/split-brief', { upTo: 'u2' })).toEqual({ status: 200, body: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: 'Goal: files (u2).', context: { projects: [{ id: 'p-ui', name: 'UI' }], hasTask: true } } })
     expect((await post('/api/v1/sessions/nope/split-brief', {})).status).toBe(404)
-    expect(await post('/api/v1/sessions/s1/split-brief', { contextOnly: true, title: 'Media viewer' })).toEqual({ status: 200, body: { context: { projects: [{ id: 'p-ui', name: 'UI' }], taskSystem: true, hasTask: true, title: 'Media viewer' } } })
-    expect(await post('/api/v1/sessions/broken/split-brief', {})).toMatchObject({ status: 502, body: { error: { code: 'brief_failed', retry: true }, context: { taskSystem: false } } })
+    expect(await post('/api/v1/sessions/s1/split-brief', { contextOnly: true, title: 'Media viewer' })).toEqual({ status: 200, body: { context: { projects: [{ id: 'p-ui', name: 'UI' }], hasTask: true, title: 'Media viewer' } } })
+    expect(await post('/api/v1/sessions/broken/split-brief', {})).toMatchObject({ status: 502, body: { error: { code: 'brief_failed', retry: true }, context: { hasTask: false } } })
   })
 
   it('applies a sort of a drifted session, and refuses rows it cannot read', async () => {

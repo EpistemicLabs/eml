@@ -75,7 +75,7 @@ describe('task router', () => {
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const setup = (task: Record<string, unknown>, space = { taskSystem: true, shared: false }) => {
+  const setup = (task: Record<string, unknown>, space: { shared: boolean } = { shared: false }) => {
     const ledger = new SessionLedger()
     const brain = fakeBrain(task)
     const logs: string[] = []
@@ -149,7 +149,7 @@ describe('task router', () => {
     const ledger = new SessionLedger()
     const brain = fakeBrain({ id: 't9', status: 'resolved', properties: {} })
     const r = router.createTaskRouter({
-      ledger, spaces: { resolve: () => ({ taskSystem: true, shared: false }) as never }, brain: () => brain, owner: 'lasse',
+      ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, owner: 'lasse',
       finished: (id) => finished.push(id), log: () => {},
     })
     ledger.recordSpawn('s10', null, 'bp-eml', 'claude', true, 't9')
@@ -160,7 +160,7 @@ describe('task router', () => {
     expect(brain.posts).toHaveLength(0)
   })
 
-  it('changes nothing without a handoff or status, for a closed task, or where the task system is off', async () => {
+  it('changes nothing without a handoff or status, or for a closed task, and routes in a shared space too', async () => {
     const plain = setup({ id: 't5', status: 'active', properties: {} })
     plain.ledger.recordSpawn('s6', null, 'bp-eml', 'claude', false, 't5')
     await plain.r.turnEnded('s6', 'Just chatting.')
@@ -171,10 +171,10 @@ describe('task router', () => {
     await closed.r.turnEnded('s7', HANDOFF)
     expect(closed.brain.posts).toHaveLength(0)
 
-    const shared = setup({ id: 't7', status: 'active', properties: {} }, { taskSystem: true, shared: true })
+    const shared = setup({ id: 't7', status: 'active', properties: {} }, { shared: true })
     shared.ledger.recordSpawn('s8', null, 'bp-eml', 'claude', false, 't7')
     await shared.r.turnEnded('s8', HANDOFF)
-    expect(shared.brain.posts).toHaveLength(0)
+    expect(shared.brain.posts).toHaveLength(1)
   })
 
   it('keeps only the question, and clears a wait when the user answers the session that set it', async () => {

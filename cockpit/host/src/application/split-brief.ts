@@ -116,8 +116,6 @@ export interface SplitContext {
   openTasks: OpenTask[]
   /** The open task the topic most likely already has; null when none fits. */
   matchTaskId: string | null
-  /** The session's space has the task system on. */
-  taskSystem: boolean
   /** The session works on a task (a sub-task needs one). */
   hasTask: boolean
 }
@@ -132,7 +130,7 @@ export interface SplitBriefDeps {
 }
 
 function contextOf(facts: Omit<SplitContext, 'matchTaskId'>, title?: string): SplitContext {
-  return { projects: facts.projects, taskSystem: facts.taskSystem, hasTask: facts.hasTask, openTasks: facts.openTasks, matchTaskId: title ? matchTask(title, facts.openTasks) : null }
+  return { projects: facts.projects, hasTask: facts.hasTask, openTasks: facts.openTasks, matchTaskId: title ? matchTask(title, facts.openTasks) : null }
 }
 
 export function createSplitBrief(deps: SplitBriefDeps) {

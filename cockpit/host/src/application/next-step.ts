@@ -1,12 +1,12 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace, type BrainSpaces } from '../brain-space.js'
+import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { needsAnswer } from '../domain/session-attention.js'
 import type { SessionLedger } from '../session-ledger.js'
 
 /**
  * The next-step check (decision agent-schedules-own-follow-ups-cockpit-guarantees):
  * the agent decides whether and when to check again; the cockpit only makes
- * sure no delegated task goes silent. In a space with the task system on, when
+ * sure no delegated task goes silent. When
  * a worker's turn ended and its task is still open, the task needs at least
  * one next trigger:
  *
@@ -130,7 +130,6 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     // Only delegated work: a worker on a task in the brain; the user's own sessions and project leads are theirs.
     if (!entry?.worker || !entry.taskId || entry.leadOf || entry.archivedAt) return
     const space = deps.spaces.resolve(entry.spaceId)
-    if (!taskSystemOn(space)) return
     const brain = deps.brain(space)
     if (!brain) return
     // The user is in the conversation: theirs to steer; a nudge from before it is void.

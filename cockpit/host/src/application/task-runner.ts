@@ -1,11 +1,10 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { taskSystemOn, type BrainSpace } from '../brain-space.js'
+import type { BrainSpace } from '../brain-space.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
- * The runner (note task-system-phase-1-build-plan, M3): in a space with the
- * task system on, it starts the plan steps that are ready, each in a session
- * of its own.
+ * The runner (note task-system-phase-1-build-plan, M3): in every space it
+ * starts the plan steps that are ready, each in a session of its own.
  *
  * A task is ready when:
  *   - it is planned, has a delegate (the agent that works on it) and a
@@ -136,7 +135,6 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
 
   const tickOnce = async () => {
     for (const space of deps.spaces.list()) {
-      if (!taskSystemOn(space)) continue
       const brain = deps.brain(space)
       if (!brain) continue
       try {

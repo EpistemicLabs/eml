@@ -41,7 +41,7 @@ describe('cycles', () => {
       async put(path: string, body: Record<string, unknown>) { calls.push(`PUT ${path} ${JSON.stringify(body)}`); return {} },
     }
     const cycles = mod.createCycles({
-      spaces: { list: () => [{ taskSystem: true, shared: false, name: 'Main' } as never] }, brain: () => brain,
+      spaces: { list: () => [{ shared: false, name: 'Main' } as never] }, brain: () => brain,
       timeZone: () => 'UTC', log: () => {}, now: () => new Date('2026-11-18T10:00:00Z'),
     })
     await cycles.ensure()

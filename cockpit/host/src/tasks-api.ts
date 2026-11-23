@@ -54,7 +54,6 @@ const MESSAGES: Record<CommandRefusal, string> = {
   task_closed: 'The task is closed.',
   delegate_not_in_space: 'That agent does not work in this space.',
   checkpoint_required: 'Pick a checkpoint: before, after or none.',
-  space_has_no_runner: 'The task system is off in this space, so nothing would start the agent.',
   schedule_required: 'Pick when the agent starts.',
   desk_required: 'Pick the desk to open the session in.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
@@ -190,7 +189,7 @@ export async function handleTasksApi(
     if (result.ok) json(res, 200, { opId: result.command.opId, ...result.command.sort })
     else {
       const [status, message] = result.refusal === 'unknown_session' ? [404, 'No such session.']
-        : result.refusal === 'no_task' ? [409, 'Sorting needs the task system and a task on the session.']
+        : result.refusal === 'no_task' ? [409, 'Sorting needs a task on the session.']
           : result.refusal === 'in_flight' ? [409, 'This sort is still running.']
             : [503, 'The space has no brain to write to right now.']
       json(res, status, { error: { code: result.refusal, message, retry: result.refusal === 'no_brain' || result.refusal === 'in_flight' } })

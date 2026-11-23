@@ -210,7 +210,7 @@ class CodexProvider implements AgentProvider {
           SessionStart: [
             eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
             eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
-            // The session's task, in a space with the task system on (task-hook.ts).
+            // The session's task (task-hook.ts).
             entry(taskHookCommand(), { ...TASK_HOOK_OPTIONS, additionalContextLimit: BOOT_CONTEXT_LIMIT }),
           ],
           UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],

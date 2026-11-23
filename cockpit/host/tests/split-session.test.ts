@@ -5,13 +5,15 @@ import { join } from 'node:path'
 import { createSplitSession, SPLIT_UNDO_MS, type SessionFacts, type SplitInput } from '../src/application/split-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
 
-function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null; failOnce?: string } = {}) {
+const noTask: SessionFacts = { spaceId: null, title: 'Session review', taskId: null }
+
+function setup(opts: { session?: SessionFacts | null; failOnce?: string } = {}) {
   let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   const spawned: Array<Record<string, unknown>> = []
   const ended: string[] = []
   const clock = { now: Date.parse('2026-11-22T10:00:00Z') }
-  const space = { id: 'main', name: 'Main', taskSystem: opts.taskSystem ?? true, shared: false }
+  const space = { id: 'main', name: 'Main', shared: false }
   const brain = {
     async get(path: string) {
       if (path === '/engram/t-root') return { id: 't-root', title: 'session-review-ui', scope: 'project.ui', status: 'active' }
@@ -29,7 +31,6 @@ function setup(opts: { taskSystem?: boolean; session?: SessionFacts | null; fail
     store: new TaskCommandStore(join(mkdtempSync(join(tmpdir(), 'split-')), 'task-commands.json')),
     session: (id) => (id === 's1' ? (opts.session === undefined ? { spaceId: null, title: 'Session review', taskId: 't-root' } : opts.session) : null),
     space: () => space as never,
-    taskSystem: (s) => (s as unknown as typeof space).taskSystem,
     brain: () => brain as never,
     brainProject: (_s, projectId) => (projectId === 'p-ui' ? 'ui' : projectId === 'p-folder' ? null : undefined),
     spawn: (input) => { spawned.push({ ...input, space: undefined }); return 's-new' },
@@ -90,8 +91,8 @@ describe('splitting off from a session', () => {
     expect(second).toEqual({ ok: false, refusal: 'in_flight' })
   })
 
-  it('without the task system, starting now writes nothing to the brain', async () => {
-    const { split, posts, spawned } = setup({ taskSystem: false })
+  it('from a session without a task, starting now writes nothing to the brain', async () => {
+    const { split, posts, spawned } = setup({ session: noTask })
     const answer = await split.submit(input())
     expect(answer.ok && answer.command.split).toMatchObject({ createdTaskId: null, spawnedSessionId: 's-new', sourceTaskId: null })
     expect(posts).toEqual([])
@@ -101,7 +102,7 @@ describe('splitting off from a session', () => {
   it('refuses an unknown session or project, and a sub-task without a task', async () => {
     expect(await setup().split.submit(input({ sessionId: 'nope' }))).toEqual({ ok: false, refusal: 'unknown_session' })
     expect(await setup().split.submit(input({ projectId: 'p-other' }))).toEqual({ ok: false, refusal: 'unknown_project' })
-    expect(await setup({ taskSystem: false }).split.submit(input({ relation: 'sub' }))).toEqual({ ok: false, refusal: 'sub_needs_task' })
+    expect(await setup({ session: noTask }).split.submit(input({ relation: 'sub' }))).toEqual({ ok: false, refusal: 'sub_needs_task' })
   })
 
   it('undo ends the new session and drops the task, within its window', async () => {
