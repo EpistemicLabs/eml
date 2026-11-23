@@ -52,10 +52,13 @@ export function Tree({ label, children, className }: { label: string; children: 
           if (expanded === 'false') row.querySelector<HTMLElement>(':scope > [data-tree-row] [data-tree-toggle]')?.click();
           else if (expanded === 'true') focusRow(tree, row.querySelector<HTMLElement>(`:scope > [role="group"] ${ITEM}`) ?? undefined);
           return true;
-        case 'ArrowLeft':
-          if (expanded === 'true') row.querySelector<HTMLElement>(':scope > [data-tree-row] [data-tree-toggle]')?.click();
+        case 'ArrowLeft': {
+          // A row that can't fold (no toggle) goes to its parent, like a folded one.
+          const toggle = row.querySelector<HTMLElement>(':scope > [data-tree-row] [data-tree-toggle]');
+          if (expanded === 'true' && toggle) toggle.click();
           else focusRow(tree, row.parentElement?.closest<HTMLElement>(ITEM) ?? undefined);
           return true;
+        }
         case 'Enter':
         case ' ':
           row.querySelector<HTMLElement>(':scope > [data-tree-row]')?.click();
@@ -84,17 +87,20 @@ export function Tree({ label, children, className }: { label: string; children: 
 export type TreeLine = 'solid' | 'dashed';
 
 /**
- * One row and the rows under it; a row with children has its fold arrow at its end. `expanded` is left out for a row without children. `line` is how it
+ * One row and the rows under it; a row with children has its fold arrow at its end (none when `foldable` is
+ * false: its children always show). `expanded` is left out for a row without children. `line` is how it
  * hangs from its parent row; a top-level row has none. `content` is the row itself (no buttons inside:
  * the row is the control).
  */
 export function TreeItem({
-  content, label, expanded, onToggle, onSelect, selected = false, line, children,
+  content, label, expanded, foldable = true, onToggle, onSelect, selected = false, line, children,
 }: {
   content: ReactNode;
   /** The row's accessible name when its content says more than the name (an icon's title, say). */
   label?: string;
   expanded?: boolean;
+  /** False: the children always show and the row has no fold arrow. */
+  foldable?: boolean;
   onToggle?: () => void;
   onSelect?: () => void;
   selected?: boolean;
@@ -103,13 +109,14 @@ export function TreeItem({
 }) {
   const depth = useContext(Depth);
   const hasChildren = expanded !== undefined;
+  const open = hasChildren && (expanded || !foldable);
   return (
     <li
       role="treeitem"
       tabIndex={-1}
       aria-level={depth}
       aria-label={label}
-      aria-expanded={hasChildren ? expanded : undefined}
+      aria-expanded={hasChildren ? open : undefined}
       aria-selected={selected}
       className={cn(
         'relative outline-none [&:focus-visible>[data-tree-row]]:outline-2 [&:focus-visible>[data-tree-row]]:outline-offset-(--focus-offset) [&:focus-visible>[data-tree-row]]:outline-ring',
@@ -132,7 +139,7 @@ export function TreeItem({
         )}
       >
         {content}
-        {hasChildren && (
+        {hasChildren && foldable && (
           <span
             data-tree-toggle
             aria-hidden
@@ -143,7 +150,7 @@ export function TreeItem({
           </span>
         )}
       </div>
-      {hasChildren && expanded && children && (
+      {open && children && (
         <ul role="group" className="ml-(--tree-trunk) flex flex-col">
           <Depth.Provider value={depth + 1}>{children}</Depth.Provider>
         </ul>

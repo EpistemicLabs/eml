@@ -83,7 +83,7 @@ export interface TreeInput {
   stateOfSession(session: AllSession): NodeState;
 }
 
-type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
+export type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
   Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId'>>;
 
 /** A tree deeper than this is a loop in the data, not a real tree. */

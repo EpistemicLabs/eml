@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import { engramQuery, useAddTaskEntry } from "@/lib/queries";
@@ -275,10 +276,37 @@ function formatAt(iso: string): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-/** The task's append-only journal, newest first, under a one-line composer. */
-export function TaskJournal({ engram, relationHref }: { engram: Engram; relationHref: (otherId: string) => string }) {
+/** A folded journal's time: the clock today, the day before that. */
+function shortAt(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/**
+ * The one line a folded journal shows: the newest note (the server's change entries only restate a field),
+ * a leading Markdown heading as its label ("### Handoff" → "Handoff"), the rest on one line.
+ */
+export function journalGist(entries: Array<Pick<TaskEntry, "kind" | "text">>): { head: string | null; text: string } | null {
+  const note = entries.find((e) => e.kind === "note" && e.text.trim());
+  if (!note) return null;
+  const lines = note.text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const heading = /^#{1,6}\s+(.+)$/.exec(lines[0] ?? "");
+  const rest = (heading ? lines.slice(1) : lines).join(" · ").replace(/^Result:\s*/, "");
+  return { head: heading ? heading[1] : null, text: rest };
+}
+
+/**
+ * The task's append-only journal, newest first, under a one-line composer. `foldable`: it starts folded to
+ * one line (count, newest time, the newest note's gist) and opens on a click; folded again for each task.
+ */
+export function TaskJournal({ engram, relationHref, foldable = false }: { engram: Engram; relationHref: (otherId: string) => string; foldable?: boolean }) {
   // newest first: where the task stands is the latest entry
   const entries: TaskEntry[] = (engram.entries ?? []).filter((e) => e.kind === "note" || e.kind === "change").reverse();
+  const [open, setOpen] = useState(!foldable);
+  const gist = journalGist(entries);
   const add = useAddTaskEntry();
   const brain = useWritable();
   const [text, setText] = useState("");
@@ -296,13 +324,41 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
   }
 
   return (
-    <BrainCard className="px-4 py-3">
-      <CardTitle>
-        Journal{" "}
-        <span className="font-normal tracking-normal normal-case">
-          · {entries.length} {entries.length === 1 ? "entry" : "entries"}, newest first
-        </span>
-      </CardTitle>
+    <BrainCard className={foldable ? "px-1.5 py-1.5" : "px-4 py-3"}>
+      {foldable ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`journal-${engram.id}`}
+          onClick={() => setOpen((o) => !o)}
+          className={cn("grid min-h-(--target-comfortable) w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-lg px-1.5 py-1 text-left hover:bg-muted", FOCUS)}
+        >
+          <ChevronRight aria-hidden className={cn("size-3.5 text-muted-foreground transition-transform duration-(--duration-fast)", open && "rotate-90")} />
+          <span className="flex min-w-0 flex-col">
+            <span className={LABEL}>
+              Journal{" "}
+              <span className="font-normal tracking-normal normal-case">
+                · {entries.length} {entries.length === 1 ? "entry" : "entries"}{open ? ", newest first" : ""}
+              </span>
+            </span>
+            {!open && gist && (
+              <span className="line-clamp-2 text-ui text-muted-foreground">
+                {gist.head && <b className="font-medium text-foreground">{gist.head}: </b>}{gist.text}
+              </span>
+            )}
+          </span>
+          {entries[0] && <time dateTime={entries[0].at} title={formatAt(entries[0].at)} className="whitespace-nowrap text-caption tabular-nums text-muted-foreground">newest {shortAt(entries[0].at)}</time>}
+        </button>
+      ) : (
+        <CardTitle>
+          Journal{" "}
+          <span className="font-normal tracking-normal normal-case">
+            · {entries.length} {entries.length === 1 ? "entry" : "entries"}, newest first
+          </span>
+        </CardTitle>
+      )}
+      {open && (
+      <div id={`journal-${engram.id}`} className={foldable ? "px-2.5 pt-2 pb-1.5" : undefined}>
       <form onSubmit={submit} className="mb-3 flex flex-wrap gap-2">
         <input
           aria-label="New journal entry"
@@ -376,6 +432,8 @@ export function TaskJournal({ engram, relationHref }: { engram: Engram; relation
             );
           })}
         </ol>
+      )}
+      </div>
       )}
     </BrainCard>
   );
