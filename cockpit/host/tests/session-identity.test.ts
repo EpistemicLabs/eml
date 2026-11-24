@@ -150,13 +150,13 @@ describe('session identity', () => {
       ledger.archive(id)
     }
     ledger.setRuntime('s-chat', 'sdk')
-    ledger.setAttention('s-term', { kind: 'question', reason: 'Which one?' })
-    ledger.setAttention('s-chat', { kind: 'question', reason: 'Which one?' })
+    ledger.setAttention('s-term', { kind: 'done', reason: 'Rescheduled' })
+    ledger.setAttention('s-chat', { kind: 'done', reason: 'Rescheduled' })
     hook('s-term', { id: 'term-id', state: 'working' })
     hook('s-chat', { id: 'chat-id', state: 'working' })
     expect(ledger.get('s-term')).toMatchObject({ attention: null, archivedAt: null })
     // A chat session is settled by its own messages (chat-bridge.ts).
-    expect(ledger.get('s-chat')?.attention?.kind).toBe('question')
+    expect(ledger.get('s-chat')?.attention?.kind).toBe('done')
     expect(ledger.get('s-chat')?.archivedAt).not.toBeNull()
   })
 
