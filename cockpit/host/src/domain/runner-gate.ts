@@ -6,11 +6,47 @@ import { requestOpen, type DelegationFields } from './delegation.js'
  * task board both ask this one function, so the board never says "next in line" for a task the runner skips.
  *
  * The checks come in the order a person needs the reason: something that is not runner work at all first, then a
- * wait on someone, a hold, the tree (parent, depends_on), the cap, and last that the task runs on another member's
- * cockpit. Every check has to pass for a start, so the order only picks which reason is named.
+ * wait on someone, a hold, the tree (parent, depends_on), then that the task runs on another member's cockpit (this
+ * cockpit's cap says nothing about it), the cap, and last a task outside a project. Every check has to pass for a
+ * start, so the order only picks which reason is named.
  */
 
 export const MAX_RUNNING = 5
+
+/**
+ * How long a task the runner just started holds its slot without a working session: its session may not be in its
+ * first turn yet, and the runner must not start a sixth task in that gap.
+ */
+export const START_GRACE_MS = 60 * 1000
+
+/** What a task's slot reads beside the task: whether a session works on it right now, and when its newest run started. */
+export interface SlotFacts {
+  /** One of this cockpit's sessions on it is in a turn, or another cockpit's run on it is working (domain/runs.ts). */
+  working: boolean
+  /** When the newest run on it started (epoch ms), or null. */
+  startedAt: number | null
+}
+
+/**
+ * Whether a task takes one of the runner's MAX_RUNNING slots. The runner and the task board both count with it, so
+ * the board's "n of 5" is the runner's. A slot is an agent at work for this cockpit: an active task this cockpit runs
+ * (domain/task-owner.ts runsHere) with a working session, or one whose run started within START_GRACE_MS. A task that
+ * waits on an answer or a review, waits on its job's next run, or belongs to another member holds none.
+ */
+export function holdsSlot(task: OwnedTask & { status: string }, facts: SlotFacts, here: { shared: boolean | null; me: string; now: number }): boolean {
+  if (task.status !== 'active' || !runsHere(here.shared, task, here.me)) return false
+  return facts.working || (facts.startedAt !== null && here.now - facts.startedAt < START_GRACE_MS)
+}
+
+/** The newest of several start times (epoch ms or ISO strings), or null when none is known. */
+export function newestStart(...starts: Array<number | string | null | undefined>): number | null {
+  const ms = starts.map((at) => (typeof at === 'string' ? Date.parse(at) : at ?? NaN)).filter(Number.isFinite)
+  return ms.length ? Math.max(...ms) : null
+}
+
+/** A task in the space's standalone cap group: no parent, and a delegate with a checkpoint (steps count per parent). */
+export const isStandaloneRunnerTask = (task: { parent_id?: string | null; properties?: { checkpoint?: string; delegate?: string } | null }): boolean =>
+  !task.parent_id && Boolean(task.properties?.checkpoint && task.properties.delegate)
 
 /** A task one of the runner's checks reads: the task, its parent and its depends_on steps as the brain has them. */
 export interface GateTask extends OwnedTask {
@@ -33,7 +69,7 @@ export interface GateInput {
   parent?: { id: string; task: GateTask | null }
   /** Its depends_on steps in order; null for one the brain could not give. */
   deps: Array<{ id: string; task: GateTask | null }>
-  /** Active tasks in its cap group (its parent's steps, or the space's standalone delegated tasks) that hold a slot. */
+  /** Tasks in its cap group (its parent's steps, or the space's standalone delegated tasks) that hold a slot (holdsSlot). */
   running: number
   /** In a shared space (or one whose sharing is not confirmed yet), each member's cockpit starts only its member's tasks. */
   shared: boolean | null
@@ -86,8 +122,8 @@ export function runnerBlock(input: GateInput): RunnerBlock | null {
     const first = open[0]
     return { kind: 'depends', stepId: first.id, title: first.task ? nameOf(first.task) : null, status: first.task?.status ?? null, more: open.length - 1 }
   }
+  if (!runsHere(input.shared, task, input.me)) return { kind: 'other_member', owner: ownerOf(task) }
   if (input.running >= MAX_RUNNING) return { kind: 'cap', running: input.running, max: MAX_RUNNING, standalone: input.parent === undefined }
   if (!task.scope.startsWith('project.')) return { kind: 'no_project', scope: task.scope }
-  if (!runsHere(input.shared, task, input.me)) return { kind: 'other_member', owner: ownerOf(task) }
   return null
 }

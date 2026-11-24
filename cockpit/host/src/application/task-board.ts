@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
-import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
+import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
@@ -181,6 +181,8 @@ export interface TaskBoardDeps {
   runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
   /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
   runnerHeld?(taskId: string): boolean
+  /** When the runner last started the task (application/task-runner.ts startedAt), before its run is in the brain. */
+  runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
   ledgerSessionsOn?(taskId: string): string[]
   now(): number
@@ -455,11 +457,20 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         if (!fetched.has(id)) fetched.set(id, (brain.get(`/engram/${encodeURIComponent(id)}`) as Promise<GateTask & { type?: string }>).then((t) => t ?? null).catch(() => null))
         return fetched.get(id)!
       }
-      // The runner's cap groups: a parent's active steps, and the space's standalone delegated tasks, that hold a slot.
-      const holdsSlot = (r: Row) => r.status === 'active' && !deps.nextRunOf(r.id)
-      const runningIn = (parentId: string | null) => parentId
-        ? rows.filter((r) => r.parent_id === parentId && holdsSlot(r)).length
-        : rows.filter((r) => !r.parent_id && r.properties?.checkpoint && r.properties.delegate && holdsSlot(r)).length
+      // The runner's cap groups: a parent's steps, and the space's standalone delegated tasks, that hold a slot, counted as
+      // the runner counts them (domain/runner-gate.ts holdsSlot).
+      // Counted once per space: per parent, and under null for the standalone group.
+      const slots = new Map<string | null, number>()
+      for (const r of rows) {
+        const group = r.parent_id ?? (isStandaloneRunnerTask(r) ? null : undefined)
+        if (group === undefined || r.status !== 'active') continue
+        const held = holdsSlot(r, {
+          working: liveFactsOf(deps.sessionsOn(r.id), runs.get(r.id) ?? [], null, now).working,
+          startedAt: newestStart(deps.runnerStartedAt?.(r.id), lastStarts.get(r.id)),
+        }, { shared: space.shared, me: deps.viewer, now })
+        if (held) slots.set(group, (slots.get(group) ?? 0) + 1)
+      }
+      const runningIn = (parentId: string | null) => slots.get(parentId) ?? 0
       const blockOf = async (row: Row): Promise<RunnerBlock | null> => {
         const parentId = row.parent_id ?? null
         return runnerBlock({
