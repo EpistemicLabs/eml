@@ -261,6 +261,8 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || (entry.attention === null && attention === null)) return
     entry.attention = attention && { ...attention, at: new Date().toISOString() }
+    // It asks for someone again: back in the lists, even if it had been archived (done does not).
+    if (attention && attention.kind !== 'done') entry.archivedAt = null
     if (attention?.reason) entry.lastStatus = { kind: attention.kind, reason: attention.reason, at: entry.attention!.at }
     this.persist()
   }

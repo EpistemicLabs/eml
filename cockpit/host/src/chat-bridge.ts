@@ -17,7 +17,7 @@ import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, missingSummary, shouldAskForStatus, type WorkerStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
 
@@ -115,6 +115,8 @@ interface ChatEntry {
   turnEnded: (() => void) | null
   /** Background shells and subagents still running: they end with the process. */
   backgroundTasks: Set<string>
+  /** Of those, the subagents: a turn that ends while they run is not the session's stop (stillRunning). */
+  runningAgents: Set<string>
   lastActivity: number
   /** Being closed: a message now would go down with the process. */
   closing: boolean
@@ -557,7 +559,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -694,7 +696,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -747,7 +749,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -838,6 +840,8 @@ export class ChatBridge {
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
       },
       onTurnEnding: () => {
+        // Its subagents still run: they wake it again, and that turn says how it stands.
+        if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
         if (ask) {
           entry.askedStatus = true
@@ -876,6 +880,8 @@ export class ChatBridge {
       case 'agent_task':
         if (event.status === 'running') entry.backgroundTasks.add(event.taskId)
         else if (event.status) entry.backgroundTasks.delete(event.taskId)
+        if (event.kind === 'agent_task' && event.status === 'running') entry.runningAgents.add(event.taskId)
+        else if (event.status) entry.runningAgents.delete(event.taskId)
         break
       case 'text':
         if (entry.status) entry.textAfterStatus += event.text
@@ -886,6 +892,17 @@ export class ChatBridge {
         entry.turnEnded?.()
         // A closing session's turn is settled by close(): cut off by a host going down, over otherwise.
         if (!entry.closing) this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
+        // Its subagents still run: no stop yet. No flag, no result, no handoff to route,
+        // no next-step check, nothing archived; the turn they wake starts over.
+        if (event.reason !== 'interrupted' && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })) {
+          entry.turnText = ''
+          entry.declared = false
+          entry.askedStatus = false
+          entry.status = null
+          entry.textAfterStatus = ''
+          entry.askedSummary = false
+          break
+        }
         const attention = attentionAfterTurn({
           worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,
         })
@@ -914,6 +931,7 @@ export class ChatBridge {
         entry.active = false
         entry.openRequests.clear()
         entry.backgroundTasks.clear()
+        entry.runningAgents.clear()
         entry.turnEnded?.()
         // No Stop hook comes after a crash, so nothing else would end its turn state.
         if (!event.expected) {

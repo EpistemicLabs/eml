@@ -385,6 +385,48 @@ describe('ChatBridge', () => {
     expect(worker.onTurnEnding()).toMatch(/closing summary/)
   })
 
+  it('a worker whose turn ends while its subagents run is not asked, flagged or handed off until they are back', () => {
+    const done: string[] = []
+    const { bridge, runtimes, ledgerEntries } = setup({ turnDone: (_id, text) => done.push(text) })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const runtime = runtimes[0]
+    const worker = runtime.start.worker!
+    const attention = () => (ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention
+    runtime.emit({ kind: 'agent_task', taskId: 'a1', toolId: null, description: 'grade batch 1', agentType: null, status: 'running', background: true })
+    runtime.emit({ kind: 'agent_task', taskId: 'a2', toolId: null, description: 'grade batch 2', agentType: null, status: 'running', background: true })
+    runtime.emit({ kind: 'agent_task', taskId: 'a1', status: 'completed' })
+    // A background shell alone would not hold it: only subagents do.
+    runtime.emit({ kind: 'shell_task', taskId: 'sh1', status: 'running' })
+    runtime.emit({ kind: 'text', blockId: 'b1', text: 'Waiting on batch 2.' })
+    expect(worker.onTurnEnding()).toBeNull()
+    runtime.emit({ kind: 'turn_end', reason: 'success' })
+    expect(attention()).toBeFalsy()
+    expect(done).toEqual([])
+
+    // The subagent wakes it: that turn is judged on its own and handed off.
+    runtime.emit({ kind: 'agent_task', taskId: 'a2', status: 'completed' })
+    expect(worker.onTurnEnding()).toContain('session_status')
+    worker.report('review', 'Report ready')
+    runtime.emit({ kind: 'text', blockId: 'b2', text: 'Report is ready to check.' })
+    expect(worker.onTurnEnding()).toBeNull()
+    runtime.emit({ kind: 'turn_end', reason: 'success' })
+    expect(attention()).toEqual({ kind: 'review', reason: 'Report ready' })
+    expect(done).toEqual(['Report is ready to check.'])
+  })
+
+  it('a worker that asks the user while its subagents run stops as usual', () => {
+    const done: string[] = []
+    const { bridge, runtimes, ledgerEntries } = setup({ turnDone: (_id, text) => done.push(text) })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const runtime = runtimes[0]
+    runtime.emit({ kind: 'agent_task', taskId: 'a1', toolId: null, description: 'research', agentType: null, status: 'running', background: true })
+    runtime.start.worker!.report('question', 'A or B?')
+    runtime.emit({ kind: 'text', blockId: 'b1', text: 'Which one: A or B?' })
+    runtime.emit({ kind: 'turn_end', reason: 'success' })
+    expect((ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toEqual({ kind: 'question', reason: 'A or B?' })
+    expect(done).toEqual(['Which one: A or B?'])
+  })
+
   it('a worker that says done stays listed without a turn held open', async () => {
     const worker = setup()
     worker.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })

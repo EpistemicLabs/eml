@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attentionAfterTurn, missingSummary, shouldAskForStatus } from '../src/domain/session-attention.js'
+import { attentionAfterTurn, missingSummary, shouldAskForStatus, stillRunning } from '../src/domain/session-attention.js'
 
 describe('shouldAskForStatus', () => {
   const quiet = { worker: true, clients: 0, declared: false, asked: false }
@@ -58,5 +58,19 @@ describe('missingSummary', () => {
   it('asks once, and not without a status', () => {
     expect(missingSummary({ status: 'done', textAfter: '', asked: true })).toBeNull()
     expect(missingSummary({ status: null, textAfter: '', asked: false })).toBeNull()
+  })
+})
+
+describe('stillRunning', () => {
+  it('a turn that ends while its subagents run, asking nobody, is no stop', () => {
+    expect(stillRunning({ agents: 2, status: null })).toBe(true)
+    expect(stillRunning({ agents: 1, status: 'done' })).toBe(true)
+  })
+
+  it('without subagents, or when it asks someone, it is a stop', () => {
+    expect(stillRunning({ agents: 0, status: null })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'question' })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'review' })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'failed' })).toBe(false)
   })
 })
