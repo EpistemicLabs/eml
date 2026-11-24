@@ -27,7 +27,7 @@ describe('runs as the board and the runner read them', () => {
   it('joins this host\'s sessions with the open runs of sessions it does not have; a stale run counts, but does not work', () => {
     const runs = [run('mine', 'idle', T0, 'lasse'), run('theirs', 'running', T0 - 1000)]
     expect(liveFactsOf([{ sessionId: 'mine', working: false }], runs, null, T0)).toEqual({ working: true, sessions: 2, nextRunAt: null })
-    expect(liveFactsOf([], [run('old', 'running', T0 - STALE_MS - 1)], 'x', T0)).toEqual({ working: false, sessions: 1, nextRunAt: 'x' })
+    expect(liveFactsOf([], [run('old', 'running', T0 - STALE_MS - 1)], 'x', T0)).toEqual({ working: false, sessions: 1, nextRunAt: 'x', stale: true })
     expect(liveFactsOf([], [run('gone', 'ended', T0)], null, T0)).toEqual({ working: false, sessions: 0, nextRunAt: null })
   })
 

@@ -169,8 +169,11 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
       if (t) answered(await reviewDone(t), 'Closed as reviewed.');
     } else {
+      // Parking puts the snooze on the task's wait in the brain, so it holds on every device and for every member.
       const times = snoozeTimes(Date.now());
-      answered(await snooze(a.item, a.until === 'tomorrow' ? times.tomorrow : times.monday), `Snoozed to ${a.until === 'tomorrow' ? 'tomorrow 09:00' : 'Monday 09:00'}.`);
+      const until = a.until === 'tomorrow' ? times.tomorrow : a.until === 'monday' ? times.monday : a.until;
+      const said = a.until === 'tomorrow' ? 'Parked until tomorrow 09:00.' : a.until === 'monday' ? 'Parked until Monday 09:00.' : a.until === 'open' ? 'Parked with no date: bring it back from Parked.' : 'Brought back.';
+      answered(await snooze(a.item, until), said);
     }
   }, [answered, byId]);
 

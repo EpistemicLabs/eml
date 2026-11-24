@@ -188,14 +188,16 @@ describe('the task board', () => {
     expect(posts[0].body).toMatchObject({ mode: 'now', delegate: 'atlas' });
   });
 
-  it('snoozes an Inbox item to tomorrow 09:00', async () => {
+  it('parks an Inbox item until tomorrow 09:00, or with no date', async () => {
     setTaskView('inbox');
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Snooze to tomorrow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Park until tomorrow' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/asked/snooze'));
     const until = new Date(String(posts[0].body.until));
     expect([until.getHours(), until.getMinutes()]).toEqual([9, 0]);
     expect(posts[0].body.key).toBe('task:asked@x');
+    fireEvent.click(await screen.findByRole('button', { name: 'Park, no date' }));
+    await waitFor(() => expect(posts[1]?.body.until).toBe('open'));
   });
 
   it('counts a session shown in the task panel as seen, as on its desk', async () => {
