@@ -8,6 +8,7 @@ import { APP_DIR, COCKPIT_HOME, HOST_ROOT } from './paths.js'
 import { platform } from './infrastructure/platform/index.js'
 import { SERVICE_ENV } from './domain/autostart.js'
 import { FS_RETRY, renameWithRetry } from './fs-retry.js'
+import { compareVersions, isAppVersion, isPrerelease, isUpdateChannel, minorOf, type UpdateChannel } from './domain/app-version.js'
 
 /**
  * The cockpit's own updater (decisions app-update-flow, cockpit-update-source).
@@ -18,7 +19,9 @@ import { FS_RETRY, renameWithRetry } from './fs-retry.js'
  *   <home>/app/update.json                             current/previous, last check, last result
  *
  * Releases come from GitHub Releases (tag v<X.Y.Z>; assets: the eml-cockpit and
- * mcp-server tarballs + SHA256SUMS). Nothing installs on its own: the host only
+ * mcp-server tarballs + SHA256SUMS). The channel picks which: stable (the
+ * default) takes GitHub's latest release, which is never a pre-release; alpha
+ * takes the highest of the releases and pre-releases (v<X.Y.Z>-alpha.<N>). Nothing installs on its own: the host only
  * checks; the user clicks Update. An update downloads and verifies both
  * tarballs, installs them into their own version folder, switches `current` in
  * one rename and exits — the service starts the new version, whose brain server
@@ -36,7 +39,6 @@ const API = (process.env.EML_COCKPIT_UPDATE_API || 'https://api.github.com').rep
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 const FIRST_CHECK_DELAY_MS = 60 * 1000
 const LOCK_STALE_MS = 15 * 60 * 1000
-const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 const VERSIONS_DIR = path.join(APP_DIR, 'versions')
 const CURRENT_LINK = path.join(APP_DIR, 'current')
@@ -56,6 +58,7 @@ export interface UpdateResult {
 }
 
 interface UpdateState {
+  channel: UpdateChannel
   previous: string | null
   /** Where the last check got its token from ('gh' is only known after a check). */
   tokenSource: 'file' | 'gh' | 'none'
@@ -70,6 +73,7 @@ interface UpdateState {
 export interface AppUpdateStatus {
   /** This host runs from <home>/app/versions/<v> — only then can it update itself. */
   managed: boolean
+  channel: UpdateChannel
   current: string
   previous: string | null
   latest: UpdateState['latest']
@@ -83,22 +87,9 @@ export interface AppUpdateStatus {
   busy: boolean
 }
 
-const DEFAULT_STATE: UpdateState = { previous: null, tokenSource: 'none', skipVersion: null, lastCheckAt: null, latest: null, lastError: null, lastResult: null }
+const DEFAULT_STATE: UpdateState = { channel: 'stable', previous: null, tokenSource: 'none', skipVersion: null, lastCheckAt: null, latest: null, lastError: null, lastResult: null }
 
 // --- versions -----------------------------------------------------------------
-
-export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1
-  }
-  return 0
-}
-
-function minorOf(v: string): string {
-  return v.split('.').slice(0, 2).join('.')
-}
 
 /** This host's own version. */
 export function ownVersion(): string {
@@ -115,7 +106,7 @@ function managedVersion(): string | null {
   try {
     const versions = fs.realpathSync(VERSIONS_DIR)
     const rel = path.relative(versions, fs.realpathSync(HOST_ROOT)).split(path.sep)
-    if (rel.length === 3 && VERSION_RE.test(rel[0]) && rel[1] === 'node_modules' && rel[2] === 'eml-cockpit') return rel[0]
+    if (rel.length === 3 && isAppVersion(rel[0]) && rel[1] === 'node_modules' && rel[2] === 'eml-cockpit') return rel[0]
   } catch { /* no app dir */ }
   return null
 }
@@ -128,7 +119,8 @@ export function isManaged(): boolean {
 
 function readState(): UpdateState {
   try {
-    return { ...DEFAULT_STATE, ...(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as Partial<UpdateState>) }
+    const state = { ...DEFAULT_STATE, ...(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as Partial<UpdateState>) }
+    return isUpdateChannel(state.channel) ? state : { ...state, channel: DEFAULT_STATE.channel }
   } catch {
     return { ...DEFAULT_STATE }
   }
@@ -188,7 +180,7 @@ export function writeGithubToken(token: unknown): string | null {
 }
 
 interface ReleaseAsset { name: string; url: string; size: number }
-interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[]; body: string }
+export interface Release { version: string; url: string; publishedAt: string | null; assets: ReleaseAsset[]; body: string }
 
 /** One release's "What's new" bullets, for the notes shown after an update. */
 export interface ReleaseNotes { version: string; url: string; highlights: string[] }
@@ -230,7 +222,7 @@ async function githubJson(pathname: string, token: string | null): Promise<unkno
 function parseRelease(raw: unknown): Release {
   const r = raw as { tag_name?: string; html_url?: string; published_at?: string | null; assets?: Array<{ name: string; url: string; size: number }>; body?: string | null }
   const version = (r.tag_name ?? '').replace(/^v/, '')
-  if (!VERSION_RE.test(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z`)
+  if (!isAppVersion(version)) throw new Error(`release tag '${r.tag_name}' is not vX.Y.Z or vX.Y.Z-pre`)
   return {
     version,
     url: r.html_url ?? '',
@@ -265,12 +257,13 @@ export function extractReleaseHighlights(body: string): string[] {
 
 /**
  * The notes of the releases an update went through: after `from`, up to and
- * including `to`, newest first. Read on demand when the user opens them after
+ * including `to`, newest first; pre-releases only on the alpha channel. Read on demand when the user opens them after
  * an update; nothing is stored. Releases are listed newest first, so the pages
  * stop at the first one at or below `from`.
  */
 export async function releaseNotesBetween(from: string, to: string): Promise<ReleaseNotes[]> {
-  if (!VERSION_RE.test(from) || !VERSION_RE.test(to)) throw new Error('from and to must be X.Y.Z')
+  if (!isAppVersion(from) || !isAppVersion(to)) throw new Error('from and to must be X.Y.Z or X.Y.Z-pre')
+  const withPrereleases = readState().channel === 'alpha'
   const { token } = await githubToken()
   const notes: ReleaseNotes[] = []
   for (let page = 1; ; page++) {
@@ -278,7 +271,7 @@ export async function releaseNotesBetween(from: string, to: string): Promise<Rel
     const list = await res.json() as Array<{ draft?: boolean; prerelease?: boolean }>
     let reachedFrom = false
     for (const raw of list) {
-      if (raw.draft || raw.prerelease) continue
+      if (raw.draft || (raw.prerelease && !withPrereleases)) continue
       let release: Release
       try { release = parseRelease(raw) } catch { continue /* not a vX.Y.Z tag */ }
       if (compareVersions(release.version, from) <= 0) reachedFrom = true
@@ -287,6 +280,25 @@ export async function releaseNotesBetween(from: string, to: string): Promise<Rel
     if (reachedFrom || !/rel="next"/.test(res.headers.get('link') ?? '')) break
   }
   return notes.sort((a, b) => compareVersions(b.version, a.version))
+}
+
+/**
+ * The newest release the channel offers. Stable asks GitHub for its latest
+ * release. Alpha takes the highest version among the newest 100 releases,
+ * pre-releases included, drafts and tags that are no version left out.
+ */
+export async function findLatestRelease(channel: UpdateChannel, token: string | null): Promise<Release> {
+  if (channel === 'stable') return parseRelease(await githubJson(`/repos/${REPO}/releases/latest`, token))
+  const list = await githubJson(`/repos/${REPO}/releases?per_page=100`, token) as Array<{ draft?: boolean }>
+  let newest: Release | null = null
+  for (const raw of list) {
+    if (raw.draft) continue
+    let release: Release
+    try { release = parseRelease(raw) } catch { continue /* not a version tag */ }
+    if (!newest || compareVersions(release.version, newest.version) > 0) newest = release
+  }
+  if (!newest) throw new Error(`No release found for ${REPO}.`)
+  return newest
 }
 
 async function download(asset: ReleaseAsset, dest: string, token: string | null): Promise<void> {
@@ -433,7 +445,8 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   const state = readState()
   const current = ownVersion()
   const managed = isManaged()
-  const latest = state.latest
+  // A check that was still running when the user switched to stable may have stored an alpha build.
+  const latest = state.channel === 'stable' && state.latest && isPrerelease(state.latest.version) ? null : state.latest
   const previousInstalled = !!state.previous && fs.existsSync(path.join(VERSIONS_DIR, state.previous, 'node_modules', 'eml-cockpit'))
   let rollbackBlocked: string | null = null
   if (previousInstalled && state.previous && minorOf(state.previous) !== minorOf(current) && compareVersions(state.previous, current) < 0) {
@@ -441,6 +454,7 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   }
   return {
     managed,
+    channel: state.channel,
     current,
     previous: previousInstalled ? state.previous : null,
     latest,
@@ -456,13 +470,13 @@ export function readAppUpdateStatus(): AppUpdateStatus {
   }
 }
 
-/** Ask GitHub for the newest release. Records the result; never installs. */
+/** Ask GitHub for the newest release of the channel. Records the result; never installs. */
 export async function checkForUpdate(): Promise<AppUpdateStatus> {
   if (!isManaged()) return readAppUpdateStatus()
   try {
     const { token, source } = await githubToken()
     writeState({ tokenSource: source })
-    const release = parseRelease(await githubJson(`/repos/${REPO}/releases/latest`, token))
+    const release = await findLatestRelease(readState().channel, token)
     writeState({
       lastCheckAt: new Date().toISOString(),
       latest: { version: release.version, url: release.url, publishedAt: release.publishedAt },
@@ -474,15 +488,25 @@ export async function checkForUpdate(): Promise<AppUpdateStatus> {
   return readAppUpdateStatus()
 }
 
+/**
+ * Switch the update channel. The release found on the other channel is
+ * forgotten; the next check finds this channel's.
+ */
+export function setUpdateChannel(channel: unknown): string | null {
+  if (!isUpdateChannel(channel)) return 'The update channel is stable or alpha.'
+  writeState({ channel, latest: null })
+  return null
+}
+
 /** True when v<version> is another schema minor than the running one: installing it migrates the brains (brain schema N ↔ release v0.N). */
 export function changesBrainSchema(version: unknown): boolean {
-  return typeof version === 'string' && VERSION_RE.test(version) && minorOf(version) !== minorOf(ownVersion())
+  return isAppVersion(version) && minorOf(version) !== minorOf(ownVersion())
 }
 
 /** Install release v<version> and restart into it. */
 export async function applyUpdate(version: unknown): Promise<{ restarting: boolean; status: AppUpdateStatus }> {
   if (!isManaged()) throw new Error('This cockpit runs from source — update it with git, not the updater.')
-  if (typeof version !== 'string' || !VERSION_RE.test(version)) throw new Error('version must be X.Y.Z')
+  if (!isAppVersion(version)) throw new Error('version must be X.Y.Z or X.Y.Z-pre')
   const current = ownVersion()
   if (compareVersions(version, current) <= 0) throw new Error(`v${version} is not newer than the running v${current}`)
   await withLock(async () => {
