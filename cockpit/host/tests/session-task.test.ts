@@ -106,6 +106,20 @@ describe('session task', () => {
     expect(ledger.get(id(14))!.taskAuto).toBeUndefined()
   })
 
+  it('tells a step its parent\'s name and goal, and leaves out a parent it cannot read', async () => {
+    const brain = fakeBrain()
+    brain.tasks.set('rescue', { id: 'rescue', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: { display_title: 'Keep Acme as a customer', goal: 'Acme renewed.' } })
+    brain.tasks.set('step', { id: 'step', title: 'acme-call-notes', content: 'Sum up the call.', status: 'active', properties: {}, relations: [{ relation: 'part_of', source_id: 'step', target_id: 'rescue' }] })
+    brain.tasks.set('orphan', { id: 'orphan', title: 'lost-step', content: 'A step.', status: 'active', properties: {}, relations: [{ relation: 'part_of', source_id: 'orphan', target_id: 'gone' }] })
+    const { ledger, tasks } = setup({ shared: false }, brain)
+    ledger.recordSpawn(id(15), null, 'bp-eml', 'claude', true, 'step')
+    expect(await tasks.context(id(15))).toContain('Step of **Keep Acme as a customer** (rescue). Parent goal: Acme renewed.')
+    ledger.recordSpawn(id(16), null, 'bp-eml', 'claude', true, 'orphan')
+    const orphan = await tasks.context(id(16))
+    expect(orphan).toContain('**lost-step** · orphan')
+    expect(orphan).not.toContain('Step of')
+  })
+
   it('gives a job\'s session the job\'s task', async () => {
     const brain = fakeBrain()
     brain.tasks.set('weekly', { id: 'weekly', title: 'weekly-report', content: 'Write it.', status: 'active', properties: {} })
