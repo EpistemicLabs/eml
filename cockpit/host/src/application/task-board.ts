@@ -444,7 +444,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           coverage: coverageOf(facts, live, deps.viewer, now, stepsWaiting),
           urgency: urgencyOf(facts, live, deps.viewer, now),
           important: isImportant(facts, live, deps.viewer, now),
-          sessionIds: sessions.map((s) => s.sessionId),
+          // A closed task's sessions are put away (the router archives them as it closes): its chat still shows.
+          sessionIds: CLOSED_STATUSES.has(row.status) ? deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId) : sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
           ...(() => {

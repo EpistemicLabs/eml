@@ -175,12 +175,16 @@ describe('session identity', () => {
     const ledger = new SessionLedger()
     const providers = new ProviderRegistry({ providerOf: (id) => ledger.get(id)?.provider, providers: [fakeProvider(false)] })
     const answered: string[] = []
-    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns: new TurnTracker(), answered: (id) => answered.push(id) }, named, payload)
+    const wrote: string[] = []
+    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns: new TurnTracker(), answered: (id) => answered.push(id), userWrote: (id) => wrote.push(id) }, named, payload)
     ledger.recordSpawn('s-task', null, 'p1', 'claude', false, 't1')
     ledger.recordSpawn('s-free', null, 'p1', 'claude')
     hook('s-task', { id: 'task-id', state: 'working' })
     hook('s-free', { id: 'free-id', state: 'working' })
+    hook('s-task', { id: 'task-id', state: 'done' })
     expect(answered).toEqual(['s-task'])
+    // Every typed prompt is the user's writing: a closed task it works on reopens first (task-commands reopenByWriting).
+    expect(wrote).toEqual(['s-task', 's-free'])
   })
 
   it('passes hooks without a turn state on as notes', () => {

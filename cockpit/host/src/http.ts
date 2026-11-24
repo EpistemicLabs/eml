@@ -146,6 +146,8 @@ export interface HostDeps {
   turnEnded?: (sessionId: string, text: string) => void
   /** Task system: the user answered a session, or it was archived — its wait on the task is over. */
   answered?: (sessionId: string) => void
+  /** Task system: the user typed a prompt into a session's terminal — a closed task it works on reopens first. */
+  userWrote?: (sessionId: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
   /** The task board and its commands (tasks-api.ts); absent: no task system. */
@@ -1200,6 +1202,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
           ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
           ...(deps.answered ? { answered: deps.answered } : {}),
+          ...(deps.userWrote ? { userWrote: deps.userWrote } : {}),
         },
         typeof named === 'string' && named ? named : null,
         await readJson(req),
