@@ -5,6 +5,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, type HandOverTask, type ScheduleSpec } from '../domain/hand-over.js'
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
+import type { DelegationFields } from '../domain/delegation.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
@@ -164,7 +165,18 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; waiting_on?: WaitingOn; display_title?: string }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waiting_on?: WaitingOn; display_title?: string }
+}
+
+/**
+ * v0.23: a reopened task starts nothing on its own: a delegation keeps its agent and checkpoint but loses a request
+ * that never ran, so only a new Delegate now starts it. The fields a reopen writes besides its status.
+ */
+const reopenPatch = (task: BrainTask): Record<string, unknown> => {
+  const d = task.properties?.delegation
+  if (!d?.requested_at) return {}
+  const { requested_at: _request, ...rest } = d
+  return { delegation: rest }
 }
 
 type Relation = { source_id: string; target_id: string; relation: string }
@@ -210,6 +222,7 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
   waitingOn: t.properties?.waiting_on,
+  ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
 })
 
 export function createTaskCommands(deps: TaskCommandsDeps) {
@@ -235,9 +248,10 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
 
   /**
    * Work on it now ended once every session opened on the task since is put away (or none opened
-   * within TOGETHER_GRACE_MS). The agent was there to work with the owner, not alone: its delegation
-   * is released with a journal line, so the runner never starts it on its own, and the board
-   * offers "Hand to <agent>". A later hand-over replaced it: nothing to release.
+   * within TOGETHER_GRACE_MS). The agent was there to work with the owner, not alone, and Work on it now
+   * wrote no delegation (v0.23), so this only records the release: the board offers "Hand to <agent>".
+   * A delegate still on the task (set by an older cockpit) is released with a journal line. A later
+   * hand-over replaced it: nothing to release.
    */
   const releaseTogether = async (now: number) => {
     if (!deps.sessionsSince) return
@@ -277,7 +291,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   const plan = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, taskId: string, req: HandOverRequest) => {
     const task = await taskOf(brain, taskId)
     if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
-    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space) })
+    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space), now: iso(deps.now()) })
     return planned.ok ? { ok: true as const, task, plan: planned.plan } : planned
   }
 
@@ -473,7 +487,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           const reason = current.reason ? ` Why: ${current.reason}` : ''
           // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
           const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
-          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
           const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
           current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
           if (items.length > 0) {
@@ -534,7 +548,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${checked.message ?? checked.refusal}`).catch(() => {})
           return 'refused'
         }
-        await track(brain, taskId, { status: 'active', waiting_on: null }, 'Reopened by writing in its chat.')
+        await track(brain, taskId, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
         deps.changed(spaceId)
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopened by writing in its chat`)
         return 'reopened'

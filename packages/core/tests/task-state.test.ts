@@ -261,6 +261,10 @@ describe('the run object', () => {
     expect((readObject(eml, 'run', { status: 'ended' }) as Array<{ id: string }>).map(r => r.id)).toEqual(['b'])
     expect(() => readObject(eml, 'run', { status: 'gone' })).toThrow('status for run is one of running, idle, ended.')
     expect(eml.runs.list({ task_id: 'other' })).toEqual([])
+    // the newest run of each task, whatever its state
+    createObject(eml, 'run', { id: 'c', task_id: taskId, member: 'juno', origin: 'user', driver: 'human', started_at: '2026-11-23T13:00:00Z', state: 'ended' }, juno())
+    expect((readObject(eml, 'run', { latest: true }) as Array<{ id: string }>).map(r => r.id)).toEqual(['c'])
+    expect(() => readObject(eml, 'project', { latest: true })).toThrow('for runs only')
   })
 })
 

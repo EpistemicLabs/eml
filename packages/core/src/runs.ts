@@ -50,6 +50,17 @@ export class RunStore {
     return !!this.db.prepare('SELECT 1 FROM runs WHERE id = ?').get(id)
   }
 
+  /**
+   * The newest run of each task (by started_at, then id), whatever its state: what a task's delegation request is
+   * checked against (a request is open while no run started after it). One row per task that ever had a run.
+   */
+  latestPerTask(): Run[] {
+    return this.db.prepare(`
+      SELECT * FROM runs r WHERE NOT EXISTS (
+        SELECT 1 FROM runs n WHERE n.task_id = r.task_id AND (n.started_at > r.started_at OR (n.started_at = r.started_at AND n.id > r.id))
+      ) ORDER BY started_at DESC, id ASC`).all() as Run[]
+  }
+
   /** The runs of a state (default: every one not ended), optionally of one task; newest start first, then by id. */
   list(opts: { state?: RunState, task_id?: string } = {}): Run[] {
     const where: string[] = [opts.state ? 'state = ?' : "state != 'ended'"]

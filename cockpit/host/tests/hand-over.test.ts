@@ -1,25 +1,27 @@
 import { describe, it, expect } from 'vitest'
 import { planHandOver, planUndo, type HandOverTask } from '../src/domain/hand-over.js'
 
-const ctx = { agents: ['atlas', 'motti'] }
+const NOW = '2026-11-24T10:00:00.000Z'
+const ctx = { agents: ['atlas', 'motti'], now: NOW }
 const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', status: 'active', owner: 'lasse', ...patch })
 
 describe('planning a hand-over', () => {
-  it('delegate now: sets delegate and checkpoint, keeps the owner, journals it', () => {
+  it('delegate now: writes the delegation with its request, keeps the owner, journals it', () => {
     const r = planHandOver(task({ status: 'planned' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.plan.patch).toEqual({ delegate: 'atlas', checkpoint: 'after' })
+    expect(r.plan.patch).toEqual({ delegation: { agent: 'atlas', checkpoint: 'after', requested_at: NOW } })
     expect(r.plan.patch).not.toHaveProperty('assignee_ids')
     expect(r.plan.journal).toBe('Handed to atlas with checkpoint after; the owner stays.')
     expect(r.plan.job).toBeUndefined()
     expect(r.plan.session).toBeUndefined()
   })
 
-  it('delegate now on an active task puts it back to planned, so the runner starts it', () => {
+  it('delegate now on an active task leaves its status alone: the request starts it (status moves forward only)', () => {
     const r = planHandOver(task({ status: 'active' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
-    expect(r.plan.patch.status).toBe('planned')
+    expect(r.plan.patch).not.toHaveProperty('status')
+    expect(r.plan.patch.delegation?.requested_at).toBe(NOW)
     const planned = planHandOver(task({ status: 'planned' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!planned.ok) throw new Error(planned.refusal)
     expect(planned.plan.patch).not.toHaveProperty('status')
@@ -63,17 +65,24 @@ describe('planning a hand-over', () => {
     const once = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx)
     if (!once.ok) throw new Error(once.refusal)
     expect(once.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' })
+    // the job starts it: no request for the runner
+    expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
     expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-20T09:00 (Asia/Singapore) with checkpoint after; the owner stays.')
     const weekly = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Singapore' } }, ctx)
     if (!weekly.ok) throw new Error(weekly.refusal)
     expect(weekly.plan.job).toEqual({ cron: '0 9 * * 1', timeZone: 'Asia/Singapore' })
   })
 
-  it('work on it now: a session in the chosen desk', () => {
-    const r = planHandOver(task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' }, ctx)
+  it('work on it now: a session in the chosen desk, no delegation, a planned task moves to active', () => {
+    const r = planHandOver(task(), { mode: 'together', delegate: 'atlas', desk: 'Customers' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
     expect(r.plan.session).toEqual({ desk: 'Customers' })
+    expect(r.plan.patch).toEqual({})
     expect(r.plan.journal).toBe('Working on it with atlas in desk Customers; the owner stays.')
+    const delegated = planHandOver(task({ status: 'planned', delegation: { agent: 'motti', checkpoint: 'after', requested_at: NOW } }), { mode: 'together', delegate: 'atlas', desk: 'Customers' }, ctx)
+    if (!delegated.ok) throw new Error(delegated.refusal)
+    expect(delegated.plan.patch).toEqual({ delegation: null, status: 'active' })
+    expect(delegated.plan.journal).toBe('Working on it with atlas in desk Customers; the owner stays. motti is no longer delegated, so it does not go on alone meanwhile.')
   })
 
   it.each([
@@ -82,18 +91,21 @@ describe('planning a hand-over', () => {
     ['no checkpoint', task(), { mode: 'now', delegate: 'atlas' }, ctx, 'checkpoint_required'],
     ['schedule without a time', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after' }, ctx, 'schedule_required'],
     ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'desk_required'],
+    ['schedule without a checkpoint', task(), { mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx, 'checkpoint_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {
     expect(planHandOver(t, req as never, c)).toEqual({ ok: false, refusal })
   })
 })
 
 describe('planning the undo', () => {
-  it('puts delegate, checkpoint and the open question back and journals it', () => {
+  it('puts the delegation, the open question and the status back and journals it', () => {
     const before = task({ checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'question', why: 'Which list?' } })
     expect(planUndo(before)).toEqual({
-      patch: { delegate: null, checkpoint: 'before', waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'active' },
+      patch: { delegation: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'active' },
       journal: 'Hand-over undone; the task is back as it was.',
     })
-    expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegate: 'motti', checkpoint: null, waiting_on: null, status: 'planned' })
+    expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegation: { agent: 'motti' }, waiting_on: null, status: 'planned' })
+    const delegation = { agent: 'motti', checkpoint: 'after', requested_at: NOW, schedule: { cron: '0 9 * * 1' } }
+    expect(planUndo(task({ delegate: 'motti', checkpoint: 'after', delegation })).patch.delegation).toEqual(delegation)
   })
 })
