@@ -981,7 +981,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
         const wanted = id ?? q.id
         // v0.21: a shared brain's users are its members (core spacePeople)
-        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync), latest: q.latest === 'true' })
+        const latest = q.latest === undefined ? undefined : q.latest === 'true' ? true : Number(q.latest)
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync), latest })
         if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
         return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
       }

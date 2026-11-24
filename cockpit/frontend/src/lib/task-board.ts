@@ -73,6 +73,8 @@ export interface BoardTask {
   schedule?: TaskSchedule;
   /** Its open runs, on this cockpit and the other members'; missing when none, or from an older host. */
   runs?: BoardRun[];
+  /** Its ended sessions, newest first (at most ten), on every member's cockpit; missing when none. */
+  earlierRuns?: EarlierRun[];
   pending?: { opId: string; kind: string; undoUntil: string };
   /** Reopened on the board: decisions and notes that closed with it and come back only through the chat. */
   reopenedWith?: ReopenItem[];
@@ -262,6 +264,26 @@ export interface BoardRun {
   lastActivityAt: string | null;
   /** This cockpit's own session: it can be opened here. */
   here: boolean;
+}
+
+/** An ended session on a task (host EarlierRun): this cockpit's can be reopened, another member's is shown only. */
+export interface EarlierRun {
+  id: string;
+  member: string;
+  agent: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  result: string | null;
+  here: boolean;
+}
+
+/** How a session ended, in words. */
+const ENDED_HOW: Record<string, string> = { finished: 'finished', put_away: 'put away', failed: 'failed', crashed: 'stopped with the cockpit' };
+
+/** An earlier session in one line: agent · when · how it ended · its result line. */
+export function earlierRunLine(run: EarlierRun, now: number): string {
+  return [agentName(run.agent ?? undefined), when(run.startedAt, now), ENDED_HOW[run.endReason ?? ''] ?? 'ended', run.result].filter(Boolean).join(' · ');
 }
 
 export interface HandOverInput {

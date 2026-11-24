@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, earlierRunLine, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -268,5 +268,13 @@ describe('the task panel logic (v0.23)', () => {
     expect(cardTime(task({ turn: 'agent_working', group: undefined, runs }), NOW)?.label).toBe(`last activity ${when(at(2), NOW)}`);
     expect(cardTime(task({ turn: 'agent_working', group: undefined, runs: [runs[0]] }), NOW)?.label).toBe(`last activity ${when(at(30), NOW)}`);
     expect(cardTime(task({ turn: 'agent_working', group: undefined, updatedAt: at(90) }), NOW)?.label).toBe(`last activity ${when(at(90), NOW)}`);
+  });
+});
+
+describe('an earlier session in one line', () => {
+  it('says the agent, when, how it ended and its result line', () => {
+    const run = { id: 'r', member: 'lasse', agent: 'atlas', startedAt: new Date(NOW - DAY_MS).toISOString(), endedAt: null, endReason: 'finished', result: '4 mails need you', here: true };
+    expect(earlierRunLine(run, NOW)).toBe(`Atlas · ${when(run.startedAt, NOW)} · finished · 4 mails need you`);
+    expect(earlierRunLine({ ...run, endReason: 'crashed', result: null }, NOW)).toBe(`Atlas · ${when(run.startedAt, NOW)} · stopped with the cockpit`);
   });
 });

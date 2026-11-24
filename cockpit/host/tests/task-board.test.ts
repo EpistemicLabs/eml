@@ -72,6 +72,20 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('sends a task\'s ended sessions, newest first, with how they ended and whose they were', async () => {
+    const ended = (id: string, member: string, started: string, reason: string, result: string | null) =>
+      ({ id, task_id: 'r', member, agent: member === 'lasse' ? 'atlas' : 'motti', state: 'ended', started_at: started, ended_at: started, end_reason: reason, result })
+    const { board } = setup({
+      main: [mine('r', { delegate: 'atlas' })],
+      runs: [ended('mon', 'lasse', '2026-11-16T08:00:00.000Z', 'finished', '4 mails need you'), ended('tue', 'dominik', '2026-11-17T08:00:00.000Z', 'crashed', null)],
+    })
+    const t = (await board.refresh()).tasks.find((x) => x.id === 'r')!
+    expect(t.earlierRuns).toEqual([
+      { id: 'mon', member: 'lasse', agent: 'atlas', startedAt: '2026-11-16T08:00:00.000Z', endedAt: '2026-11-16T08:00:00.000Z', endReason: 'finished', result: '4 mails need you', here: true },
+      { id: 'tue', member: 'dominik', agent: 'motti', startedAt: '2026-11-17T08:00:00.000Z', endedAt: '2026-11-17T08:00:00.000Z', endReason: 'crashed', result: null, here: false },
+    ])
+  })
+
   it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {
     const { board } = setup({
       main: [mine('m', { goal: 'Orders sync both ways', delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } })],

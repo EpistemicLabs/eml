@@ -58,11 +58,11 @@ export function requestOpen(task: DelegatedTask, lastRunStartedAt: string | null
   return !Number.isFinite(started) || started < requested
 }
 
-/** The newest run's start per task, from GET /object/run?latest=true. */
+/** The newest run's start per task, from GET /object/run?latest=… (newest first per task: the first one wins). */
 export function lastStartsOf(objects: ReadonlyArray<Record<string, unknown>>): Map<string, string> {
   const starts = new Map<string, string>()
   for (const o of objects) {
-    if (typeof o.task_id === 'string' && typeof o.started_at === 'string') starts.set(o.task_id, o.started_at)
+    if (typeof o.task_id === 'string' && typeof o.started_at === 'string' && !starts.has(o.task_id)) starts.set(o.task_id, o.started_at)
   }
   return starts
 }

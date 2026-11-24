@@ -264,6 +264,9 @@ describe('the run object', () => {
     // the newest run of each task, whatever its state
     createObject(eml, 'run', { id: 'c', task_id: taskId, member: 'juno', origin: 'user', driver: 'human', started_at: '2026-11-23T13:00:00Z', state: 'ended' }, juno())
     expect((readObject(eml, 'run', { latest: true }) as Array<{ id: string }>).map(r => r.id)).toEqual(['c'])
+    // a number: the newest n runs of each task, newest first per task
+    expect((readObject(eml, 'run', { latest: 2 }) as Array<{ id: string }>).map(r => r.id)).toEqual(['c', 'b'])
+    expect(() => readObject(eml, 'run', { latest: 51 })).toThrow('whole number from 1 to 50')
     expect(() => readObject(eml, 'project', { latest: true })).toThrow('for runs only')
   })
 })
