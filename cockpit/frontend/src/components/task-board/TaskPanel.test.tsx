@@ -190,14 +190,26 @@ describe('the task panel on the task state model (v0.23)', () => {
     </QueryClientProvider></MemoryRouter>,
   );
 
-  it('lists the sessions on it, a silent one first, with whose cockpit and the result line', () => {
-    show(task({ turn: 'agent_working', group: undefined, delegate: 'atlas', runs: [
-      { id: 'a', member: 'lasse', agent: 'atlas', state: 'idle', lastActivityAt: new Date(NOW - 60_000).toISOString(), result: 'Draft ready.', here: true },
+  it('shows another member\'s session as a tab named by its state and cockpit; the question is one short Waiting on line', () => {
+    show(task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'Which address? · Which tone? · One job or several?' }, runs: [
       { id: 'b', member: 'dominik', agent: 'motti', state: 'stale', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString(), result: null, here: false },
     ] }));
-    const items = screen.getByLabelText('Sessions on it').querySelectorAll('li');
-    expect(items[0].textContent).toMatch(/^Motti · silent, may have crashed · on Dominik's cockpit · last activity/);
-    expect(items[1].textContent).toMatch(/^Atlas · between turns · last activity .*Draft ready\.$/);
+    expect(screen.getByLabelText('Sessions on it').textContent).toBe("Motti · silent · Dominik's cockpit");
+    expect(screen.getByText('You · 3 questions from Atlas')).toBeTruthy();
+    // asked, with its session gone: no Run/Schedule row, but a way to answer
+    expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Work on it now' })).toBeTruthy();
+  });
+
+  it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
+    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
+    expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run Atlas now' })).toBeTruthy();
+    expect(screen.getByText('repeats on weekdays at 08:00')).toBeTruthy();
+    cleanup();
+    show(task({ turn: 'review', group: undefined, delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: done' } }));
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toContain('Looks good, done');
+    expect(screen.queryByRole('button', { name: 'Run Atlas now' })).toBeNull();
   });
 
   it('says a mission works until its goal, offers Change schedule and Park for the viewer\'s wait', () => {
@@ -205,8 +217,10 @@ describe('the task panel on the task state model (v0.23)', () => {
     const onPark = vi.fn();
     show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', goal: 'Orders sync both ways', nextRunAt: new Date(NOW + DAY_MS).toISOString(),
       waitingOn: { who: 'lasse', kind: 'question', why: 'Which warehouse?', since: new Date(NOW - 60_000).toISOString() } }), { onHandOver, onPark });
-    expect(screen.getByText(/until the goal is reached · next check/)).toBeTruthy();
-    expect(screen.getByText('Orders sync both ways')).toBeTruthy();
+    expect(screen.getByText('until the goal is reached')).toBeTruthy();
+    expect(screen.getByText(/^· next check /)).toBeTruthy();
+    // the goal sits under the title
+    expect(screen.getByLabelText('Goal').textContent).toBe('GoalOrders sync both ways');
     expect(screen.getByText(/You · Which warehouse\?/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Change schedule…' }));
     expect(onHandOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' }), 'schedule');

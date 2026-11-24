@@ -135,9 +135,10 @@ describe('the task board', () => {
     fireEvent.click(await screen.findByText('Acme cancellation rescue'));
     const sheet = await screen.findByRole('dialog');
     await waitFor(() => expect(document.activeElement?.id).toBe('task-board-title'));
-    expect(within(sheet).getByText('Needs you · Atlas asks')).toBeTruthy();
-    // No session on it in this fixture: the box says how to answer instead of offering Reply.
+    // The question is the Waiting on line; with no session on it in this fixture, the panel says how to answer.
+    expect(within(sheet).getByText('Waiting on')).toBeTruthy();
     expect(within(sheet).getByText(/Its session is gone/)).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Work on it now' })).toBeTruthy();
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
@@ -182,7 +183,7 @@ describe('the task board', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/hand-over'));
     expect(posts[0].body).toMatchObject({ mode: 'schedule', schedule: { session: 'resume', untilGoal: true } });
-    expect(posts[0].body.schedule.at).toMatch(/T09:00$/);
+    expect((posts[0].body as { schedule: { at: string } }).schedule.at).toMatch(/T09:00$/);
   });
 
   it('offers to hand a task to the agent Work on it now released, with that agent chosen', async () => {

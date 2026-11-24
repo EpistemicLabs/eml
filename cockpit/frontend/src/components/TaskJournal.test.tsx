@@ -49,3 +49,12 @@ describe('TaskJournal foldable', () => {
     expect(screen.queryByRole('button', { name: /Journal/ })).toBeNull();
   });
 });
+
+describe('the folded journal line', () => {
+  it('shows the newest note that is not a handoff (the panel\'s Now line already has it); only handoffs: the newest', () => {
+    const note = (text: string) => ({ kind: 'note' as const, text });
+    expect(journalGist([note('### Handoff\nResult: waiting'), note('Atlas scheduled its next check for Thu 10:00.')]))
+      .toEqual({ head: null, text: 'Atlas scheduled its next check for Thu 10:00.' });
+    expect(journalGist([note('### Handoff\nResult: waiting'), note('### Handoff\nResult: older')])).toEqual({ head: 'Handoff', text: 'waiting' });
+  });
+});

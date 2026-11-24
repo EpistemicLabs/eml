@@ -287,10 +287,12 @@ function shortAt(iso: string, now = new Date()): string {
 
 /**
  * The one line a folded journal shows: the newest note (the server's change entries only restate a field),
- * a leading Markdown heading as its label ("### Handoff" → "Handoff"), the rest on one line.
+ * a leading Markdown heading as its label ("### Handoff" → "Handoff"), the rest on one line. A handoff is
+ * already the panel's "Now" line, so the newest note that is not one wins; a journal of handoffs only shows its newest.
  */
 export function journalGist(entries: Array<Pick<TaskEntry, "kind" | "text">>): { head: string | null; text: string } | null {
-  const note = entries.find((e) => e.kind === "note" && e.text.trim());
+  const notes = entries.filter((e) => e.kind === "note" && e.text.trim());
+  const note = notes.find((e) => !/^#{1,6}\s+handoff\b/i.test(e.text.trim())) ?? notes[0];
   if (!note) return null;
   const lines = note.text.split("\n").map((l) => l.trim()).filter(Boolean);
   const heading = /^#{1,6}\s+(.+)$/.exec(lines[0] ?? "");
