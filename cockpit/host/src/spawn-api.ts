@@ -156,7 +156,10 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
  */
 const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g
 
-export function requestSessionTitle(deps: Pick<SpawnDeps, 'ledger' | 'sessionNamed'>, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string } } {
+/** What the agent of a session with a task learns when it names itself: the name lives on the task. */
+export const TASKED_TITLE_NOTE = 'This session goes by its task\'s name; the title names the task only while it has none. Rename the task with eml_track_task display_title.'
+
+export function requestSessionTitle(deps: Pick<SpawnDeps, 'ledger' | 'sessionNamed'>, sessionId: unknown, body: Record<string, unknown>): SpawnOutcome | { status: 200; payload: { title: string; note?: string } } {
   const fail = (status: number, code: string, message: string): SpawnOutcome => ({ status, payload: { error: { code, message } } })
   // Control characters and bidi overrides would let a title disguise itself in the sidebar.
   const title = typeof body.title === 'string'
@@ -169,7 +172,7 @@ export function requestSessionTitle(deps: Pick<SpawnDeps, 'ledger' | 'sessionNam
   // has no name yet (session-task.ts named), and is not kept as the session's own.
   if (!known.taskId) deps.ledger.setAgentTitle(sessionId as string, title)
   deps.sessionNamed?.(sessionId as string, title)
-  return { status: 200, payload: { title } }
+  return { status: 200, payload: known.taskId ? { title, note: TASKED_TITLE_NOTE } : { title } }
 }
 
 const DELIVERY_STATUS: Record<DeliveryOutcome, number> = { delivered: 200, resumed: 200, busy: 409, unknown: 404, refused: 403, running: 409 }

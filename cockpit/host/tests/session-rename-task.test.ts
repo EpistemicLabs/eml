@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { EmlApiError } from '@engramprotocol/mcp-server'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-session-rename-task-test-'))
@@ -100,22 +101,36 @@ describe('a session called by its task', () => {
     expect(byId.get('plain')).toBe('First prompt')
   })
 
-  it('renames the task when the session is renamed, and answers with the task\'s new name', async () => {
+  it('renames the task when the session is renamed, answers with the task\'s new name, and keeps no second copy', async () => {
+    ledger.update('tasked', { title: 'A name from before' })
     const before = refreshes
     const res = await patch('tasked', { title: '  Check   the stock  ' })
     expect(res.status).toBe(200)
     expect(renames.at(-1)).toEqual(['tasked', 'Check the stock'])
     expect(refreshes).toBe(before + 1)
     expect(((await res.json()) as { session: { summary: string } }).session.summary).toBe('Check the stock')
+    expect(ledger.get('tasked')!.title).toBeNull()
   })
 
-  it('leaves the session as it was when the brain refuses the name', async () => {
-    const title = ledger.get('tasked')!.title
-    refuse = new Error('brain down')
-    const res = await patch('tasked', { title: 'Another name' })
-    expect(res.status).toBe(502)
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('TASK_RENAME_FAILED')
-    expect(ledger.get('tasked')!.title).toBe(title)
+  it('leaves the session as it was when the brain refuses, and says whether trying again can help', async () => {
+    ledger.update('tasked', { title: 'Kept' })
+    const cases: Array<[Error, number, string]> = [
+      [new EmlApiError(0, null, 'POST /task/task-1/track → network: refused'), 502, 'BRAIN_UNAVAILABLE'],
+      [new EmlApiError(503, null, 'POST /task/task-1/track → 503: busy'), 502, 'BRAIN_UNAVAILABLE'],
+      [new EmlApiError(404, null, 'POST /task/task-1/track → 404: engram not found'), 404, 'TASK_NOT_FOUND'],
+      [new EmlApiError(400, null, 'POST /task/task-1/track → 400: Invalid engram'), 422, 'TASK_NAME_REFUSED'],
+      [new Error('anything else'), 502, 'BRAIN_UNAVAILABLE'],
+    ]
+    for (const [err, status, code] of cases) {
+      refuse = err
+      const res = await patch('tasked', { title: 'Another name' })
+      expect(res.status).toBe(status)
+      const { error } = (await res.json()) as { error: { code: string; message: string } }
+      expect(error.code).toBe(code)
+      // the brain's own wording stays inside the host
+      expect(error.message).not.toContain('/task/')
+      expect(ledger.get('tasked')!.title).toBe('Kept')
+    }
   })
 
   it('renames a session without a task on its own', async () => {

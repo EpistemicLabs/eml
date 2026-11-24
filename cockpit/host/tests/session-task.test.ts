@@ -172,6 +172,11 @@ describe('session task', () => {
     // a named task keeps its anchor; a lowercase word still becomes the name
     expect(await tasks.renamed(id(21), 'pagesize')).toBe(true)
     expect(brain.posts.at(-1)!.body).toEqual({ display_title: 'pagesize', text: 'Renamed from its session\'s heading in the cockpit.' })
+    // the same name again writes nothing
+    const posts = brain.posts.length
+    brain.tasks.set('t1', { ...brain.tasks.get('t1'), properties: { display_title: 'pagesize' } })
+    expect(await tasks.renamed(id(21), 'pagesize')).toBe(true)
+    expect(brain.posts).toHaveLength(posts)
     // a session without a task has nothing to rename
     ledger.recordSpawn(id(22), null, 'bp-eml', 'claude')
     expect(await tasks.renamed(id(22), 'Anything')).toBe(false)

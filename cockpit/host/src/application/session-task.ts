@@ -1,4 +1,4 @@
-import type { EmlApi } from '@engramprotocol/mcp-server'
+import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
@@ -144,10 +144,21 @@ export interface SessionTask {
   context(sessionId: string): Promise<string>
   /** The session named itself: a placeholder task takes the name. */
   named(sessionId: string, title: string): Promise<void>
-  /** The user renamed the session: its task takes the name, with a journal entry. False when the session has no task here; throws when the brain refuses. */
+  /** The user renamed the session: its task takes the name, with one journal entry per change. False when the session has no task here; throws when the brain refuses (renameRefusal maps it). */
   renamed(sessionId: string, title: string): Promise<boolean>
   /** Before an idle stop: the prompt asking for the handoff, or null (no brain, no task, or unattended: it hands off every turn). */
   handoffBeforeStop(sessionId: string): string | null
+}
+
+/**
+ * Why a session's rename did not reach its task, as the page gets it: whether trying again can help, and nothing of
+ * the brain's own wording. Nothing was changed in any of these cases.
+ */
+export function renameRefusal(err: unknown): { status: number; code: string; message: string } {
+  const status = err instanceof EmlApiError ? err.status : 0
+  if (status === 404) return { status: 404, code: 'TASK_NOT_FOUND', message: 'The session\'s task no longer exists. Nothing was changed.' }
+  if (status >= 400 && status < 500) return { status: 422, code: 'TASK_NAME_REFUSED', message: 'The brain does not take this name for the task. Nothing was changed.' }
+  return { status: 502, code: 'BRAIN_UNAVAILABLE', message: 'The brain did not answer. Nothing was changed; try again.' }
 }
 
 export const HANDOFF_BEFORE_STOP = 'The cockpit is about to stop this session because nobody has used it for a while. Before it does, write your handoff block now (### Handoff with Result, Checked · Claimed, Decided, Next, Questions). Put anything only the user can answer under Questions as [lasse]. Nothing else; the session stops after this reply.'
@@ -243,6 +254,8 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       const task = await t.brain.get(`/engram/${t.entry.taskId}`) as Task
       // A placeholder also loses its anchor, so the session's own naming no longer counts it as unnamed.
       const anchor = isPlaceholder(task) ? kebabTitle(title) : null
+      // The same name again (a second click, a retry after a timeout) writes nothing.
+      if (!anchor && task.properties?.display_title === display) return true
       await t.brain.post(`/task/${task.id}/track`, { display_title: display, ...(anchor ? { title: anchor } : {}), text: 'Renamed from its session\'s heading in the cockpit.' })
       return true
     },

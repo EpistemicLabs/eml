@@ -92,7 +92,8 @@ describe('session title', () => {
     it('keeps no title of its own for a session with a task: the task carries the name', async () => {
       ledger.recordSpawn('s-tasked', null, 'p1', 'codex', false, 'task-1', null, true)
       const outcome = await request({ kind: 'session-title', session: 's-tasked', title: 'Another name', token: TOKEN })
-      expect(outcome).toEqual({ status: 200, payload: { title: 'Another name' } })
+      expect(outcome.status).toBe(200)
+      expect(outcome.payload).toEqual({ title: 'Another name', note: expect.stringContaining('eml_track_task display_title') })
       expect(ledger.get('s-tasked')?.agentTitle).toBeNull()
     })
 

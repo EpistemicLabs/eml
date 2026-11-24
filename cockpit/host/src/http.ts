@@ -11,7 +11,7 @@ import { handlePushApi, type PushApiDeps } from './push-api.js'
 import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
-import type { SessionTask } from './application/session-task.js'
+import { renameRefusal, type SessionTask } from './application/session-task.js'
 import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
@@ -1353,17 +1353,21 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const body = await readJson(req)
       // A session with a task is called by its task: renaming the session renames the task (decision task-owns-the-name).
       // A brain that refuses the name leaves both as they were.
+      // The task is then the only one holding the name: the session's own title is cleared, not kept as a second copy.
       const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''
+      let taskNamed = false
       if (title && deps.bridge.ledger.get(id)?.taskId && deps.sessionTask) {
         try {
-          if (await deps.sessionTask.renamed(id, title)) await deps.tasks?.board.refresh().catch(() => {})
+          taskNamed = await deps.sessionTask.renamed(id, title)
         } catch (err) {
-          json(res, 502, { error: { code: 'TASK_RENAME_FAILED', message: `The task could not be renamed: ${(err as Error).message}` } })
+          const refusal = renameRefusal(err)
+          json(res, refusal.status, { error: { code: refusal.code, message: refusal.message } })
           return true
         }
+        if (taskNamed) await deps.tasks?.board.refresh().catch(() => {})
       }
       const entry = deps.bridge.ledger.update(id, {
-        title: typeof body.title === 'string' ? body.title : undefined,
+        title: taskNamed ? null : typeof body.title === 'string' ? body.title : undefined,
         pinned: typeof body.isPinned === 'boolean' ? body.isPinned : undefined,
       })
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
