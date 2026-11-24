@@ -79,13 +79,16 @@ function checkAssignees(eml: EML, command: { name: CommandName, input: unknown }
 
 /**
  * A task's delegate is one agent of the brain (spacePeople's agents, or the writer's own
- * agent). Checked where the write is authored, like assignee_ids, never on replay.
+ * agent), whether written flat (delegate) or as delegation.agent (v0.23). Checked where the
+ * write is authored, like assignee_ids, never on replay.
  */
 function checkDelegate(eml: EML, command: { name: CommandName, input: unknown }, env: Env, sync: Sync | undefined): void {
   const input = command.input as Record<string, unknown> | null
-  const delegate = command.name === 'engram.create' ? (input?.properties as Record<string, unknown> | undefined)?.delegate
-    : command.name === 'task.track' ? input?.delegate
+  const fields = command.name === 'engram.create' ? input?.properties as Record<string, unknown> | undefined
+    : command.name === 'task.track' ? input ?? undefined
     : undefined
+  const delegation = fields?.delegation as Record<string, unknown> | null | undefined
+  const delegate = fields?.delegate ?? (delegation && typeof delegation === 'object' ? delegation.agent : undefined)
   if (typeof delegate !== 'string') return
   const agents = new Set(spacePeople(eml, spaceMembers(sync)).agents.map(a => a.id))
   if (env.actor.agent) agents.add(env.actor.agent)

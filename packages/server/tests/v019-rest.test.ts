@@ -180,6 +180,12 @@ describe('v0.19 REST', () => {
       const typo = await post(`/task/${task.body.id}/track`, { delegate: 'atlass', text: 'typo' })
       expect(typo.status).toBe(400)
       expect(typo.body.error).toBe('Invalid engram: delegate names "atlass", who is not an agent of this brain. Agents: default (eml_read_object object=agent).')
+      // v0.23: the agent of a delegation is checked the same way, on track and on create
+      const asDelegation = await post(`/task/${task.body.id}/track`, { delegation: { agent: 'atlass', checkpoint: 'after' } })
+      expect(asDelegation.status).toBe(400)
+      expect(asDelegation.body.error).toContain('delegate names "atlass", who is not an agent of this brain')
+      const createdWithDelegation = await create(validTask({ title: 'rest-delegation-create', properties: { delegation: { agent: 'atlass' } } }))
+      expect(createdWithDelegation.status).toBe(400)
       const created = await create(validTask({ title: 'rest-delegate-create', properties: { delegate: 'atlass' } }))
       expect(created.status).toBe(400)
       expect((await get('/list?type=task&delegate=default')).body.engrams.map((e: { id: string }) => e.id)).toEqual([task.body.id])
