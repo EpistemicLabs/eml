@@ -65,7 +65,7 @@ describe('files', () => {
         { sessionId: 's1', title: 'Older', projectId: 'p', spaceId: null, lastActivity: before },
         { sessionId: 'old', title: 'Old', projectId: 'p', spaceId: null, lastActivity: '2020-01-01T00:00:00.000Z' },
       ],
-      replyTexts: async (id) => { reads += 1; return id === 'old' ? ['data.csv'] : [`Here: ${dir}/data.csv`, 'and missing.md'] },
+      replyTexts: async (id) => { reads += 1; return id === 'old' ? ['data.csv'] : ['Here: out/../data.csv', 'and missing.md'] },
     }
     const recent = createRecentFiles(deps)
     const files = await recent()
