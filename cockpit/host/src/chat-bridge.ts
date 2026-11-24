@@ -824,6 +824,15 @@ export class ChatBridge {
     entry.ceiling = memory.place(entry.sessionId, pid, session) ? { limits: session, kills: memory.oomKills(entry.sessionId) } : null
   }
 
+  /** A new turn starts with nothing said yet: how it stands, and whether it was asked for it. */
+  private resetTurnStatus(entry: ChatEntry): void {
+    entry.declared = false
+    entry.askedStatus = false
+    entry.status = null
+    entry.textAfterStatus = ''
+    entry.askedSummary = false
+  }
+
   private reporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
     return {
       onPrompt: () => {
@@ -901,11 +910,7 @@ export class ChatBridge {
         // no next-step check, nothing archived; the turn they wake starts over.
         if (event.reason !== 'interrupted' && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })) {
           entry.turnText = ''
-          entry.declared = false
-          entry.askedStatus = false
-          entry.status = null
-          entry.textAfterStatus = ''
-          entry.askedSummary = false
+          this.resetTurnStatus(entry)
           break
         }
         const attention = attentionAfterTurn({
@@ -974,11 +979,7 @@ export class ChatBridge {
     })
     entry.lastActivity = Date.now()
     // A new turn: whoever it waited for has answered.
-    entry.declared = false
-    entry.askedStatus = false
-    entry.status = null
-    entry.textAfterStatus = ''
-    entry.askedSummary = false
+    this.resetTurnStatus(entry)
     const asked = this.ctx.ledger.get(entry.sessionId)
     if (asked?.attention || asked?.taskId) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
