@@ -77,6 +77,8 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
         if (wanted) mirrored.add(taskId)
         else mirrored.delete(taskId)
       } catch (err) {
+        // Looked at again after RECHECK_MS, not every sync: a job whose task is gone would log every minute.
+        known.set(taskId, { schedule: wanted, at: now })
         deps.log(`[schedule] task ${taskId.slice(0, 8)}: ${(err as Error).message}`)
       }
     }

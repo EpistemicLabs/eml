@@ -97,6 +97,14 @@ describe('the schedule mirror', () => {
     expect(brain.posts.at(-1)!.body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T09:00:00.000Z' })
   })
 
+  it('a job whose task is gone is looked at again only after a while, not at every sync', async () => {
+    const brain = brainOf({})
+    const { mirror } = setup(brain, [job({ taskId: 'gone' })])
+    await mirror.sync()
+    await mirror.sync()
+    expect(brain.reads()).toBe(1)
+  })
+
   it('a task without a delegation gets one for the space\'s agent, without a checkpoint or a request; a closed task is left alone', async () => {
     const brain = brainOf({ t1: { status: 'planned', properties: {} }, t2: { status: 'resolved', properties: {} } })
     const { mirror } = setup(brain, [job(), job({ id: 'j2', taskId: 't2' })])
