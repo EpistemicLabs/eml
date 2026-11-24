@@ -242,6 +242,13 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onDrop={async (t) => answered(await closeTask(t), 'Closed: not needed.')}
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onContinue={continueFrom}
+      onPark={async (t, until) => {
+        // The task's waits on the viewer that began when its newest one did (the same key the Inbox parks by).
+        const times = snoozeTimes(Date.now());
+        const item = { key: `task:${t.id}@${t.waitingOn?.since ?? ''}`, kind: 'question' as const, space: t.spaceId, title: t.title, text: '', since: t.waitingOn?.since ?? '', taskId: t.id };
+        answered(await snooze(item, until === 'tomorrow' ? times.tomorrow : until === 'monday' ? times.monday : 'open'),
+          until === 'open' ? 'Parked with no date: bring it back from the Inbox\'s Parked fold.' : `Parked until ${until === 'tomorrow' ? 'tomorrow' : 'Monday'} 09:00.`);
+      }}
       onClose={closePanel}
     />
   ) : sessionOnly ? (

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, repeatsText, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -207,5 +207,35 @@ describe('continueMode', () => {
   it('offers neither on someone else\'s task', () => {
     expect(continueMode({ owner: 'dominik', closedAt: at(NOW) }, 'lasse', NOW)).toBeNull();
     expect(continueMode({ closedAt: at(NOW) }, 'lasse', NOW)).toEqual({ primary: 'reopen', reopen: true });
+  });
+});
+
+describe('the task state screens (v0.23)', () => {
+  const run = (patch: Partial<NonNullable<BoardTask['runs']>[number]>) => ({ id: 'r', member: 'dominik', agent: 'motti', state: 'running' as const, lastActivityAt: new Date(NOW - 3 * 60_000).toISOString(), result: null, here: false, ...patch });
+
+  it('says whose cockpit works on a task, and when a run went silent', () => {
+    expect(cardLine(task({ turn: 'agent_working', group: undefined, delegate: 'atlas', runs: [run({})] }), NOW)).toBe("Motti is working on it, on Dominik's cockpit.");
+    expect(cardLine(task({ turn: 'agent_working', group: undefined, delegate: 'atlas', runs: [run({ here: true, agent: 'atlas' })] }), NOW)).toBe('Atlas is working on it.');
+    expect(cardLine(task({ turn: 'agent_working', group: 'stale', delegate: 'atlas', runs: [run({ state: 'stale', agent: 'atlas' })] }), NOW)).toMatch(/^Atlas has been silent since .*It may have crashed: open it or run it again\.$/);
+  });
+
+  it('names a mission, a routine and work that starts later', () => {
+    const at = new Date(NOW + DAY_MS).toISOString();
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', nextRunAt: at }), NOW)).toMatch(/^Until the goal is reached\. Atlas checks again /);
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: at, schedule: { cron: '0 8 * * 1-5' } }), NOW)).toMatch(/^Repeats on weekdays at 08:00\. Next /);
+    expect(repeatsText({ cron: '30 9 * * 1' })).toBe('Repeats every Monday at 09:30');
+    expect(repeatsText({ cron: '0 7 1 * *' })).toBe('Repeats (0 7 1 * *)');
+  });
+
+  it('groups Needs you and Agent scheduled by the new groups, and keeps working tasks next to the Stale group', () => {
+    const cols = columns([
+      task({ id: 'f', group: 'failed', reason: 'stopped' }), task({ id: 'a', group: 'asked' }),
+      task({ id: 'm', turn: 'agent_scheduled', group: 'mission' }), task({ id: 'r', turn: 'agent_scheduled', group: 'routine' }), task({ id: 'l', turn: 'agent_scheduled', group: 'at_time' }),
+      task({ id: 'w', turn: 'agent_working', group: undefined }), task({ id: 's', turn: 'agent_working', group: 'stale' }),
+    ]);
+    expect(cols.find((c) => c.turn === 'needs_you')!.groups.map((g) => g.group)).toEqual(['asked', 'failed']);
+    expect(cols.find((c) => c.turn === 'agent_scheduled')!.groups.map((g) => g.group)).toEqual(['mission', 'routine', 'at_time']);
+    const working = cols.find((c) => c.turn === 'agent_working')!;
+    expect([working.tasks.map((t) => t.id).sort(), working.groups.map((g) => g.group)]).toEqual([['s', 'w'], ['stale']]);
   });
 });

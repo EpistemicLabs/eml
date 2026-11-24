@@ -11,7 +11,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardRun, type BoardTask, cardLine, repeatsText, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -51,7 +51,11 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue }: {
+/** Runs by what needs attention: one gone silent first, then working, then waiting between turns. */
+const RUN_ORDER: Record<BoardRun['state'], number> = { stale: 0, running: 1, idle: 2 };
+const RUN_STATE: Record<BoardRun['state'], string> = { stale: 'silent, may have crashed', running: 'working', idle: 'between turns' };
+
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue, onPark }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -71,6 +75,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onReopen: (task: BoardTask, reason: string) => void;
   /** Writing in a closed task's chat: reopen it with the message, or start a follow-up. False: the text stays in the input. */
   onContinue: (task: BoardTask, text: string, how: ContinueHow, restore: () => void) => Promise<boolean>;
+  /** Park the viewer's wait on the task: until tomorrow or Monday 09:00, or with no date. */
+  onPark?: (task: BoardTask, until: 'tomorrow' | 'monday' | 'open') => void;
 }) {
   const [reason, setReason] = useState('');
   const { hrefFor, go } = useEngramPanel();
@@ -194,9 +200,56 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <dt className={LABEL}>Delegate</dt>
               <dd className="m-0 flex flex-wrap items-center gap-2">
                 {task.delegate ? <AgentBadge handle={task.delegate} /> : <span className="text-muted-foreground">not delegated</span>}
-                {task.nextRunAt && <span className="text-ui text-muted-foreground">next {when(task.nextRunAt, now)}</span>}
+                {task.group === 'mission'
+                  ? <span className="text-ui text-muted-foreground">until the goal is reached{task.nextRunAt ? ` · next check ${when(task.nextRunAt, now)}` : ''}</span>
+                  : task.group === 'routine'
+                    ? <span className="text-ui text-muted-foreground">{repeatsText(task.schedule).toLowerCase()}{task.nextRunAt ? ` · next ${when(task.nextRunAt, now)}` : ''}</span>
+                    : task.nextRunAt && <span className="text-ui text-muted-foreground">next {when(task.nextRunAt, now)}</span>}
               </dd>
+              {task.goal && (
+                <>
+                  <dt className={LABEL}>Goal</dt>
+                  <dd className="m-0 text-ui">{task.goal}</dd>
+                </>
+              )}
+              {task.waitingOn && !closed && (
+                <>
+                  <dt className={LABEL}>Waiting on</dt>
+                  <dd className="m-0 text-ui">
+                    {task.waitingOn.who === board.viewer ? 'You' : task.waitingOn.who}{task.waitingOn.why ? ` · ${task.waitingOn.why}` : ''}
+                    {task.waitingOn.since && <span className="tabular-nums text-muted-foreground"> · since {when(task.waitingOn.since, now)}</span>}
+                  </dd>
+                </>
+              )}
             </dl>
+            {!closed && ((onPark && task.waitingOn?.who === board.viewer && task.turn !== 'parked') || task.nextRunAt || task.schedule) && (
+              <div className="flex flex-wrap gap-2">
+                {onPark && task.waitingOn?.who === board.viewer && task.turn !== 'parked' && (
+                  <Menu label="Park this task's wait" align="start" items={[
+                    { label: 'Park until tomorrow', onSelect: () => onPark(task, 'tomorrow') },
+                    { label: 'Park until Monday', onSelect: () => onPark(task, 'monday') },
+                    { label: 'Park, no date', onSelect: () => onPark(task, 'open') },
+                  ]}>Park…</Menu>
+                )}
+                {(task.nextRunAt || task.schedule) && <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'schedule')}>Change schedule…</button>}
+              </div>
+            )}
+            {task.runs && task.runs.length > 0 && (
+              <div aria-label="Sessions on it" className="flex flex-col gap-1 rounded-xl border border-border px-3 py-2.5">
+                <div className={LABEL}>Sessions on it</div>
+                <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-ui">
+                  {[...task.runs].sort((a, b) => RUN_ORDER[a.state] - RUN_ORDER[b.state]).map((r) => (
+                    <li key={r.id} className="flex flex-col">
+                      <span>
+                        <b className={cn('font-medium', r.state === 'stale' && HUE.stopped.ink)}>{agentName(r.agent ?? task.delegate)} · {RUN_STATE[r.state]}</b>
+                        <span className="text-muted-foreground">{r.here ? '' : ` · on ${agentName(r.member)}'s cockpit`}{r.lastActivityAt ? ` · last activity ${when(r.lastActivityAt, now)}` : ''}</span>
+                      </span>
+                      {r.result && <span className="text-muted-foreground">{r.result}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {asked ? (
               <div className={cn('rounded-xl border px-3 py-2.5', HUE.you.tint, HUE.you.edge)}>

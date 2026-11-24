@@ -182,3 +182,34 @@ describe('the task panel', () => {
     });
   });
 });
+
+describe('the task panel on the task state model (v0.23)', () => {
+  const show = (t: BoardTask, handlers: { onHandOver?: () => void; onPark?: (task: BoardTask, until: string) => void } = {}) => render(
+    <MemoryRouter><QueryClientProvider client={client}>
+      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
+    </QueryClientProvider></MemoryRouter>,
+  );
+
+  it('lists the sessions on it, a silent one first, with whose cockpit and the result line', () => {
+    show(task({ turn: 'agent_working', group: undefined, delegate: 'atlas', runs: [
+      { id: 'a', member: 'lasse', agent: 'atlas', state: 'idle', lastActivityAt: new Date(NOW - 60_000).toISOString(), result: 'Draft ready.', here: true },
+      { id: 'b', member: 'dominik', agent: 'motti', state: 'stale', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString(), result: null, here: false },
+    ] }));
+    const items = screen.getByLabelText('Sessions on it').querySelectorAll('li');
+    expect(items[0].textContent).toMatch(/^Motti · silent, may have crashed · on Dominik's cockpit · last activity/);
+    expect(items[1].textContent).toMatch(/^Atlas · between turns · last activity .*Draft ready\.$/);
+  });
+
+  it('says a mission works until its goal, offers Change schedule and Park for the viewer\'s wait', () => {
+    const onHandOver = vi.fn();
+    const onPark = vi.fn();
+    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', goal: 'Orders sync both ways', nextRunAt: new Date(NOW + DAY_MS).toISOString(),
+      waitingOn: { who: 'lasse', kind: 'question', why: 'Which warehouse?', since: new Date(NOW - 60_000).toISOString() } }), { onHandOver, onPark });
+    expect(screen.getByText(/until the goal is reached · next check/)).toBeTruthy();
+    expect(screen.getByText('Orders sync both ways')).toBeTruthy();
+    expect(screen.getByText(/You · Which warehouse\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Change schedule…' }));
+    expect(onHandOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' }), 'schedule');
+    expect(screen.getByRole('button', { name: /Park this task's wait/ })).toBeTruthy();
+  });
+});

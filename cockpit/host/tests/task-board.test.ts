@@ -85,7 +85,8 @@ describe('the task board', () => {
       ],
     })
     const model = await board.refresh()
-    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-23T09:00:00.000Z' })
+    // a repeat rule is a routine; the board carries the schedule for the card
+    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'routine', nextRunAt: '2026-11-23T09:00:00.000Z', schedule: { cron: '0 9 * * 1' } })
     expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
   })
 
@@ -112,6 +113,10 @@ describe('the task board', () => {
     expect(byId.get('stale')).toMatchObject({ turn: 'agent_working', working: false })
     expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
     expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
+    // the open runs go to the card and the panel: whose, their state, and whether they are this cockpit's
+    expect(byId.get('elsewhere')!.runs).toEqual([{ id: 'r1', member: 'dominik', agent: 'motti', state: 'running', lastActivityAt: '2026-11-19T09:55:00.000Z', result: null, here: false }])
+    expect(byId.get('stale')!.runs![0].state).toBe('stale')
+    expect(byId.get('ended')!.runs).toBeUndefined()
     expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })
   })
 

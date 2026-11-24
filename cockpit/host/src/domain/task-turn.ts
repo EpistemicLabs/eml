@@ -18,7 +18,7 @@ export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'outside'
 export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'outside']
 
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked' | 'stale'
+export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale'
 
 export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped'
 
@@ -65,6 +65,15 @@ export interface LiveFacts {
   nextRunAt: string | null
   /** A run on it says running but nothing happened in it for an hour (domain/runs.ts STALE_MS): its host may be gone. */
   stale?: boolean
+  /** The schedule nextRunAt comes from (a job's here, else the delegation's): a repeat rule is a routine, a one-time check that resumes is a mission. */
+  schedule?: { at?: string; cron?: string; session?: 'new' | 'resume' } | null
+}
+
+/** Agent scheduled, by what its schedule is: a routine repeats, a mission checks back until its goal, anything else starts later. */
+function scheduledGroup(live: LiveFacts): TurnGroup {
+  if (live.schedule?.cron) return 'routine'
+  if (live.schedule?.session === 'resume') return 'mission'
+  return 'at_time'
 }
 
 export interface TurnResult {
@@ -99,10 +108,11 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   if (w && w.who === viewer && kind === 'review') return { turn: 'review' }
   if (live.working) return { turn: 'agent_working' }
   if (live.stale && !(w && w.who === viewer)) return { turn: 'agent_working', group: 'stale' }
-  if (w && w.who === viewer) return kind === 'stopped' ? { turn: 'needs_you', group: 'nobody', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
+  // A failed run is its own group in Needs you: the agent stopped and someone has to run it again or change the plan.
+  if (w && w.who === viewer) return kind === 'stopped' ? { turn: 'needs_you', group: 'failed', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
   if (w && w.who) return { turn: 'waiting_on_others' }
   if (task.delegate) {
-    if (live.nextRunAt) return { turn: 'agent_scheduled', group: 'at_time' }
+    if (live.nextRunAt) return { turn: 'agent_scheduled', group: scheduledGroup(live) }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
     // The runner starts planned tasks only. One in progress is the open session's, between its turns,
     // or nobody's once its session is gone. Sessions are only known on this machine: in a shared space
