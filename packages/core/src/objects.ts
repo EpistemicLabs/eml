@@ -160,12 +160,14 @@ function scopeCount(eml: EML, scope: string): number {
  * or closed ones only with a status filter. With id: one object with all its
  * fields, or null.
  */
-export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[], latest?: boolean } = {}): unknown {
+export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[], latest?: boolean | number } = {}): unknown {
   assertObject(object)
-  // v0.23: the newest run of each task, whatever its state (runs.ts latestPerTask); runs only.
-  if (opts.latest) {
+  // v0.23: the newest runs of each task, whatever their state (runs.ts latestPerTask); runs only. true is one per task.
+  if (opts.latest !== undefined && opts.latest !== false) {
     if (object !== 'run') throw new Error('Invalid object: latest lists the newest run of each task; it is for runs only.')
-    return eml.runs.latestPerTask()
+    const n = opts.latest === true ? 1 : opts.latest
+    if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error('Invalid object: latest is true or a whole number from 1 to 50 (runs per task).')
+    return eml.runs.latestPerTask(n)
   }
   // An entity list can be narrowed by kind (person · org · asset); the other objects have none.
   if (opts.kind !== undefined) {

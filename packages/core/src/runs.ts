@@ -51,14 +51,15 @@ export class RunStore {
   }
 
   /**
-   * The newest run of each task (by started_at, then id), whatever its state: what a task's delegation request is
-   * checked against (a request is open while no run started after it). One row per task that ever had a run.
+   * The newest `perTask` runs of each task (by started_at, then id), whatever their state, newest first per task: the
+   * first is what a task's delegation request is checked against (a request is open while no run started after it),
+   * the rest are the task's earlier sessions.
    */
-  latestPerTask(): Run[] {
-    return this.db.prepare(`
-      SELECT * FROM runs r WHERE NOT EXISTS (
-        SELECT 1 FROM runs n WHERE n.task_id = r.task_id AND (n.started_at > r.started_at OR (n.started_at = r.started_at AND n.id > r.id))
-      ) ORDER BY started_at DESC, id ASC`).all() as Run[]
+  latestPerTask(perTask: number): Run[] {
+    return (this.db.prepare(`
+      SELECT * FROM (
+        SELECT r.*, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC, id DESC) AS nth FROM runs r
+      ) WHERE nth <= ? ORDER BY task_id, nth`).all(perTask) as Array<Run & { nth: number }>).map(({ nth: _nth, ...run }) => run)
   }
 
   /** The runs of a state (default: every one not ended), optionally of one task; newest start first, then by id. */

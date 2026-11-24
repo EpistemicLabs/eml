@@ -11,7 +11,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -85,7 +85,10 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     .sort((a, b) => SESSION_ORDER[stateOf(a.id)] - SESSION_ORDER[stateOf(b.id)] || String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
   const remote = (task.runs ?? []).filter((r) => !r.here && !task.sessionIds.includes(r.id));
   const [pick, setPick] = useState<string | null>(sessionId ?? null);
-  const current = own.find((s) => s.id === pick) ?? own[0];
+  const [showEarlier, setShowEarlier] = useState(false);
+  const earlier = task.earlierRuns ?? [];
+  // An earlier session of this cockpit opens its chat again; it is put away, so it is not among the open ones.
+  const current = own.find((s) => s.id === pick) ?? sessions.find((s) => s.id === pick && earlier.some((r) => r.id === s.id)) ?? own[0];
   useSeenWhileShown(current?.id ?? null);
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
   const hue = hueOf(task);
@@ -250,8 +253,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
         </section>
 
         <section aria-label="Session" id={CHAT_ID} className="flex min-h-0 min-w-0 flex-col">
-          {(own.length > 1 || remote.length > 0) && (
-            <div aria-label="Sessions on it" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+          {(own.length > 1 || remote.length > 0 || earlier.length > 0) && (
+            <div aria-label="Sessions on it" className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
               {own.map((s) => (
                 <button key={s.id} type="button" onClick={() => setPick(s.id)} aria-pressed={s.id === current?.id} title={sessionDisplayName(s)}
                   className={cn('max-w-56 shrink-0 truncate rounded-md px-2 py-1 tabular-nums text-ui text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>
@@ -264,7 +267,31 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                   {agentName(r.agent ?? task.delegate)} · {sessionState(task, r.id, false, r)} · {agentName(r.member)}'s cockpit
                 </span>
               ))}
+              {earlier.length > 0 && (
+                <button type="button" aria-expanded={showEarlier} onClick={() => setShowEarlier((v) => !v)}
+                  className={cn('ml-auto shrink-0 rounded-md px-2 py-1 text-ui text-muted-foreground hover:text-foreground', FOCUS)}>
+                  {earlier.length} earlier session{earlier.length === 1 ? '' : 's'} {showEarlier ? '▾' : '▸'}
+                </button>
+              )}
             </div>
+          )}
+          {showEarlier && earlier.length > 0 && (
+            <ul aria-label="Earlier sessions" className="m-0 flex max-h-48 shrink-0 list-none flex-col gap-0.5 overflow-y-auto border-b border-border px-2 py-1.5 text-ui">
+              {earlier.map((r) => {
+                const line = earlierRunLine(r, now);
+                const opens = r.here && sessions.some((s) => s.id === r.id);
+                return (
+                  <li key={r.id}>
+                    {opens ? (
+                      <button type="button" aria-pressed={current?.id === r.id} onClick={() => setPick(r.id)}
+                        className={cn('w-full truncate rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>{line}</button>
+                    ) : (
+                      <span className="block truncate px-2 py-1 text-muted-foreground">{line}{r.here ? '' : ` · on ${agentName(r.member)}'s cockpit`}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
           {current ? (
             <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} {...(closed ? { composer: composer || <ClosedNote task={task} pending={Boolean(task.pending)} /> } : {})} />

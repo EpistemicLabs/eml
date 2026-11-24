@@ -29,6 +29,8 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
 export interface BoardTask {
   /** v0.23: its schedule (a job's here, else the delegation's) and its open runs. */
   schedule?: ScheduleFields
+  /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
+  earlierRuns?: EarlierRun[]
   /** What has to be true for it to be done (the task's goal). */
   goal?: string
   runs?: BoardRun[]
@@ -255,6 +257,35 @@ export interface BoardRun {
   here: boolean
 }
 
+/** How many ended sessions of a task the board sends. */
+export const EARLIER_RUNS = 10
+
+/** An ended session on a task: whose, when, how it ended and its last result line; this member's can be reopened here. */
+export interface EarlierRun {
+  id: string
+  member: string
+  agent: string | null
+  startedAt: string | null
+  endedAt: string | null
+  endReason: string | null
+  result: string | null
+  here: boolean
+}
+
+/** The ended runs per task from the newest runs the brain listed (newest first per task). */
+function earlierRunsByTask(objects: ReadonlyArray<Record<string, unknown>>, viewer: string): Map<string, EarlierRun[]> {
+  const byTask = new Map<string, EarlierRun[]>()
+  for (const r of runsOf(objects)) {
+    if (r.state !== 'ended') continue
+    const o = r as RunFacts & { ended_at?: string | null; end_reason?: string | null }
+    const list = byTask.get(r.task_id) ?? []
+    if (list.length >= EARLIER_RUNS) continue
+    list.push({ id: r.id, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
+    byTask.set(r.task_id, list)
+  }
+  return byTask
+}
+
 /** The task's open runs for the board, running first, then by last activity (the panel orders its tabs by attention). */
 function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: string }>, viewer: string, now: number): BoardRun[] {
   const localIds = new Set(local.map((s) => s.sessionId))
@@ -409,7 +440,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
       // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
-      const lastStarts = lastStartsOf(((await brain.get('/object/run', { latest: 'true' }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [])
+      // The newest runs of each task: the first is what a delegation request is checked against, the ended ones are its earlier sessions.
+      const latestRuns = ((await brain.get('/object/run', { latest: String(EARLIER_RUNS + 1) }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
+      const lastStarts = lastStartsOf(latestRuns)
+      const earlier = earlierRunsByTask(latestRuns, deps.viewer)
 
       // What the runner's checks read: the space's tasks, and any the lists left out fetched once by id.
       const byId = new Map(rows.map((r) => [r.id, r as GateTask]))
@@ -508,6 +542,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             const list = boardRuns(runs.get(row.id) ?? [], sessions, deps.viewer, now)
             return list.length ? { runs: list } : {}
           })(),
+          ...(earlier.get(row.id)?.length ? { earlierRuns: earlier.get(row.id) } : {}),
           ...(() => {
             // Work on it now released an agent, or a delegation was never handed over (v0.23: no request, no schedule).
             const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)

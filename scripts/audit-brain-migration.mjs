@@ -119,15 +119,15 @@ function sizes(db, file) {
   return { file: statSync(file).size + wal, op_log: pages.op_log ?? 0, op_snapshots: pages.op_snapshots ?? 0 }
 }
 
-/** From 21 on: the migrated log verifies and its last entry is the checkpoint of the current schema. */
-function liveLogProblems(file) {
+/** From 21 on: the log verifies, and after a step its last entry is the checkpoint of the current schema. */
+function liveLogProblems(file, stepped) {
   const db = new Database(file, { readonly: true })
   try {
     const result = verify(db)
     const problems = result.ok ? [] : [`the op log does not verify: ${JSON.stringify(result).slice(0, 300)}`]
     const last = db.prepare('SELECT payload FROM op_log ORDER BY seq DESC LIMIT 1').get()
     const payload = last ? JSON.parse(last.payload) : null
-    if (payload?.call !== 'brain.checkpoint' || payload.schema !== CURRENT_BRAIN_SCHEMA_VERSION) {
+    if (stepped && (payload?.call !== 'brain.checkpoint' || payload.schema !== CURRENT_BRAIN_SCHEMA_VERSION)) {
       problems.push(`the op log does not end in the checkpoint of schema ${CURRENT_BRAIN_SCHEMA_VERSION} (last: ${payload?.call} at ${payload?.schema})`)
     }
     return problems
@@ -210,7 +210,7 @@ try {
       if (f.out_of_rowid_order > 0) problems.push(`${t}.ord: ${f.out_of_rowid_order} rows out of rowid order`)
     }
   } else {
-    problems.push(...liveLogProblems(copy))
+    problems.push(...liveLogProblems(copy, before.schema < after.schema))
     for (const [t, f] of Object.entries(ord)) {
       if (f.rows > 0 && f.distinct_ord !== f.rows) problems.push(`${t}.ord repeats a value`)
     }

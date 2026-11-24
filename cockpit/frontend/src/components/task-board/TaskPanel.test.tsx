@@ -212,6 +212,25 @@ describe('the task panel on the task state model (v0.23)', () => {
     expect([...screen.getByLabelText('Sessions on it').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Atlas · needs input', 'Atlas · idle']);
   });
 
+  it('folds the earlier sessions: its own reopen their chat, another member\'s is a row', () => {
+    const at = new Date(NOW - DAY_MS).toISOString();
+    const put = { id: 'old', spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: 'old', createdAt: at, lastActivity: at, readAt: null, resultAt: null, attention: null, archivedAt: at } as never;
+    render(
+      <MemoryRouter><QueryClientProvider client={client}>
+        <TaskPanel task={task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', earlierRuns: [
+          { id: 'old', member: 'lasse', agent: 'atlas', startedAt: at, endedAt: at, endReason: 'finished', result: '4 mails need you', here: true },
+          { id: 'theirs', member: 'dominik', agent: 'motti', startedAt: at, endedAt: at, endReason: 'finished', result: null, here: false },
+        ] })} board={board(parent)} now={NOW} sessions={[put]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+      </QueryClientProvider></MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /2 earlier sessions/ }));
+    const list = screen.getByLabelText('Earlier sessions');
+    expect(list.textContent).toContain("Motti · ");
+    expect(list.textContent).toContain("on Dominik's cockpit");
+    fireEvent.click(screen.getByRole('button', { name: /Atlas · .* · finished · 4 mails need you/ }));
+    expect(screen.getByTestId('session-chat')).toBeTruthy();
+  });
+
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
     show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();

@@ -337,6 +337,14 @@ describe('v0.19 REST', () => {
       const latest = await get('/object/run?latest=true')
       expect(latest.status).toBe(200)
       expect(latest.body.objects.filter((r: { task_id: string }) => r.task_id === task.body.id).map((r: { id: string }) => r.id)).toEqual(['rest-run-new'])
+      // a number: the newest n runs of each task, newest first; anything else is refused
+      const two = await get('/object/run?latest=2')
+      expect(two.body.objects.filter((r: { task_id: string }) => r.task_id === task.body.id).map((r: { id: string }) => r.id)).toEqual(['rest-run-new', 'rest-run-old'])
+      for (const bad of ['0', 'abc', '51']) {
+        const r = await get(`/object/run?latest=${bad}`)
+        expect(r.status, bad).toBe(400)
+        expect(r.body.error).toContain('whole number from 1 to 50')
+      }
       const refused = await get('/object/project?latest=true')
       expect(refused.status).toBe(400)
       expect(refused.body.error).toContain('for runs only')
