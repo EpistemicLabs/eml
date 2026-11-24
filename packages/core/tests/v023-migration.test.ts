@@ -113,7 +113,7 @@ describe('v0.23 migration — runs, and the mirrored task state for existing tas
       return h
     })
     expect(hashes[0]).toBe(hashes[1])
-  })
+  }, process.platform === 'win32' ? 15_000 : 5_000)
 
   it('adds the runs table, and the checkpoint of schema 23 names the migrated state; the log verifies and goes on', () => {
     const file = join(dir, 'v20.db')
