@@ -62,7 +62,7 @@ function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id:
 const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('hand over', () => {
-  it('waits out the undo window, then writes delegate, checkpoint and the journal once', async () => {
+  it('waits out the undo window, then writes the delegation with its request and the journal once', async () => {
     const w = world([owned('t1')])
     const r = await w.commands.submit({ opId: 'op-1', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
     expect(r).toMatchObject({ ok: true, command: { state: 'pending', undoUntil: new Date(w.clock.now + UNDO_WINDOW_MS).toISOString() } })
@@ -73,7 +73,8 @@ describe('hand over', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
     await w.commands.tick()
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegate: 'atlas', checkpoint: 'after', text: 'Handed to atlas with checkpoint after; the owner stays.' } }])
+    // requested when it is applied: the runner's trigger; the status is left alone
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: new Date(w.clock.now).toISOString() }, text: 'Handed to atlas with checkpoint after; the owner stays.' } }])
     expect(w.commands.held('t1')).toBe(false)
     expect(w.changed).toContain('main')
   })
@@ -110,7 +111,8 @@ describe('hand over', () => {
     expect(r).toMatchObject({ ok: true, command: { carriedQuestion: 'Count it?' } })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toMatchObject({ waiting_on: null, status: 'planned' })
+    expect(w.posts[0].body).toMatchObject({ waiting_on: null })
+    expect(w.posts[0].body).not.toHaveProperty('status')
     expect(w.posts[0].body.text).toContain('Handed over with the open question: "Count it?"')
     expect(w.commands.briefOf('t1')).toContain('Count it?')
   })
@@ -125,14 +127,15 @@ describe('hand over', () => {
     expect(w.posts[0].body.text).toMatch(/^Scheduled atlas for 2026-11-20T09:00/)
   })
 
-  it('work on it now happens at once, with the brief for the session the page opens; undo puts the task back', async () => {
+  it('work on it now happens at once, writes no delegation, with the brief for the session the page opens; undo puts the task back', async () => {
     const w = world([owned('t1', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } })])
     const r = await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' } })
     expect(r).toMatchObject({ ok: true, command: { state: 'applied', brief: expect.stringContaining('Which list?') } })
-    expect(w.posts[0].body).toMatchObject({ delegate: 'atlas', waiting_on: null })
+    expect(w.posts[0].body).toMatchObject({ status: 'active', waiting_on: null })
+    expect(w.posts[0].body).not.toHaveProperty('delegation')
     expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
-    expect(w.posts[1].body).toEqual({ delegate: null, checkpoint: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
+    expect(w.posts[1].body).toEqual({ delegation: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
   })
 
   it('refuses what cannot be handed over, with a reason', async () => {
@@ -201,6 +204,15 @@ describe('looks good, snooze, close', () => {
 })
 
 describe('reopen', () => {
+  it('a reopen drops a delegation request, so nothing starts without a new Delegate now (v0.23)', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-19T09:00:00.000Z' }
+    const w = world([owned('t1', { delegate: 'atlas', checkpoint: 'after', delegation }, 'resolved')])
+    await w.commands.submit({ opId: 'op-rq', kind: 'reopen', spaceId: 'main', taskId: 't1' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts[0].body).toEqual({ status: 'active', waiting_on: null, delegation: { agent: 'atlas', checkpoint: 'after' }, text: 'Reopened on the task board by the owner.' })
+  })
+
   it('reopens a closed task as active after the window: wait cleared, delegate and checkpoint kept, nothing started', async () => {
     const w = world([owned('t1', { delegate: 'atlas', checkpoint: 'after', waiting_on: { who: 'lasse', kind: 'review' } }, 'resolved')])
     const r = await w.commands.submit({ opId: 'op-r', kind: 'reopen', spaceId: 'main', taskId: 't1', reason: 'Lasse found a bug' })
@@ -293,10 +305,11 @@ describe('work on it now ends (B2)', () => {
   }
   const workOnItNow = { mode: 'together' as const, delegate: 'atlas', checkpoint: 'after', desk: 'Main' }
 
-  it('holds the runner off while the session is open, then releases the agent with a journal line once it is put away', async () => {
+  it('holds the runner off while the session is open, then records the release once it is put away (no delegation to clear)', async () => {
     const w = together()
     await w.commands.submit({ opId: 'op-tg', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
-    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
+    expect(w.byId.get('t1')!.properties.delegate).toBeUndefined()
+    expect(w.byId.get('t1')!.properties.delegation).toBeUndefined()
     expect(w.commands.together('t1')).toBe(true)
     // Before the page opened the pane, and while it is open: nothing is released.
     await w.commands.tick()
@@ -308,12 +321,12 @@ describe('work on it now ends (B2)', () => {
 
     pane.archived = true
     await w.commands.tick()
-    expect(w.posts.at(-1)).toEqual({ path: '/task/t1/track', body: { delegate: null, checkpoint: null, text: 'Worked on it together with atlas; the session was put away, so atlas is released and does not go on alone. Hand it to atlas to let it go on.' } })
-    expect(w.byId.get('t1')!.properties.delegate).toBeUndefined()
+    // Work on it now wrote no delegation, so nothing is written on its end; the board offers "Hand to atlas".
+    expect(w.posts).toHaveLength(1)
     expect(w.commands.together('t1')).toBe(false)
     expect(w.commands.releasedAgent('t1')).toBe('atlas')
     await w.commands.tick()
-    expect(w.posts).toHaveLength(2)
+    expect(w.posts).toHaveLength(1)
   })
 
   it('releases it when no session ever opened, after the grace time', async () => {
@@ -338,8 +351,8 @@ describe('work on it now ends (B2)', () => {
     w.later(UNDO_WINDOW_MS + 1)
     pane.archived = true
     await w.commands.tick()
-    expect(w.byId.get('t1')!.properties).toMatchObject({ delegate: 'atlas', checkpoint: 'after' })
-    expect(w.posts.some((p) => p.body.delegate === null)).toBe(false)
+    expect(w.byId.get('t1')!.properties.delegation).toMatchObject({ agent: 'atlas', checkpoint: 'after' })
+    expect(w.posts.some((p) => p.body.delegation === null || p.body.delegate === null)).toBe(false)
     expect(w.commands.delegatedAt('t1')).toBe(new Date(Date.parse('2026-11-19T10:00:00Z') + 60_000).toISOString())
     expect(w.commands.releasedAgent('t1')).toBeNull()
   })

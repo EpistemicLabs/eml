@@ -1,4 +1,5 @@
 import { ownerOf, runsHere, type OwnedTask } from './task-owner.js'
+import { requestOpen, type DelegationFields } from './delegation.js'
 
 /**
  * Whether the runner (application/task-runner.ts) starts a delegated task now, and if not, why. The runner and the
@@ -20,6 +21,7 @@ export interface GateTask extends OwnedTask {
   properties?: (OwnedTask['properties'] & {
     checkpoint?: string
     delegate?: string
+    delegation?: DelegationFields | null
     display_title?: string
     waiting_on?: { who?: string; kind?: string; why?: string } | Record<string, string>
   }) | null
@@ -43,10 +45,12 @@ export interface GateInput {
   held?: boolean
   /** A job of its own will start it at a set time. */
   scheduled?: boolean
+  /** When the newest run on the task started (any state), or null: a request is open while no run started after it. */
+  lastRunStartedAt?: string | null
 }
 
 export type RunnerBlock =
-  /** Not runner work: not planned, or without a delegate or a checkpoint. */
+  /** Not runner work: closed, without a delegation with a checkpoint, or no open request (domain/delegation.ts). */
   | { kind: 'not_runner_work' }
   | { kind: 'waiting'; who: string }
   | { kind: 'scheduled' }
@@ -68,7 +72,7 @@ const nameOf = (t: GateTask) => t.properties?.display_title ?? t.title ?? null
 export function runnerBlock(input: GateInput): RunnerBlock | null {
   const { task } = input
   const props = task.properties ?? {}
-  if (task.status !== 'planned' || !props.delegate || !props.checkpoint) return { kind: 'not_runner_work' }
+  if (!requestOpen(task, input.lastRunStartedAt ?? null)) return { kind: 'not_runner_work' }
   const who = (props.waiting_on as { who?: string } | undefined)?.who
   if (who) return { kind: 'waiting', who }
   if (input.scheduled) return { kind: 'scheduled' }

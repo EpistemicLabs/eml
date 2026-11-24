@@ -9,14 +9,14 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
-function brainOf(list: T[]) {
+function brainOf(list: T[], runs: Array<Record<string, unknown>> = []) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -26,6 +26,7 @@ function brainOf(list: T[]) {
     posts,
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/list') return { engrams: list.filter((t) => t.status === query?.status).map(view) }
+      if (path === '/object/run') return { objects: query?.latest ? runs : runs.filter((r) => r.state !== 'ended') }
       const t = byId.get(path.slice('/engram/'.length))
       if (!t) throw new Error('not found')
       return view(t)
@@ -178,6 +179,51 @@ describe('task runner', () => {
   })
 })
 
+describe('the delegation request (v0.23)', () => {
+  let mod: Mod
+  beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
+  const REQUESTED = '2026-11-24T10:00:00.000Z'
+  const runnerOf = (brain: ReturnType<typeof brainOf>, started: string[]) => mod.createTaskRunner({
+    spaces: { list: () => [{ shared: false, name: 'Main' } as never] }, brain: () => brain, me: 'lasse', log: () => {},
+    start: (_space, step) => { started.push(step.id); return null },
+  })
+
+  it('starts an active task with an open request once, without setting its status back or forward', async () => {
+    const list: T[] = [{ id: 'a', status: 'active', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: REQUESTED } }]
+    const brain = brainOf(list)
+    const started: string[] = []
+    const runner = runnerOf(brain, started)
+    await runner.tick()
+    await runner.tick()
+    expect(started).toEqual(['a'])
+    expect(brain.posts).toEqual([{ path: '/task/a/track', body: { text: 'Started by the task runner.' } }])
+  })
+
+  it('a run that started after the request has handled it; one from before has not', async () => {
+    const task = (id: string): T => ({ id, status: 'active', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: REQUESTED } })
+    const brain = brainOf([task('handled'), task('open')], [
+      { id: 'r1', task_id: 'handled', member: 'lasse', state: 'ended', started_at: '2026-11-24T10:00:05.000Z' },
+      { id: 'r2', task_id: 'open', member: 'lasse', state: 'ended', started_at: '2026-11-24T09:59:00.000Z' },
+    ])
+    const started: string[] = []
+    await runnerOf(brain, started).tick()
+    expect(started).toEqual(['open'])
+  })
+
+  it('takes the old signal for one release (planned, delegate and checkpoint, no request); never a delegation without a checkpoint or a scheduled one', async () => {
+    const brain = brainOf([
+      { id: 'old-signal', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } },
+      { id: 'no-checkpoint', status: 'planned', delegate: 'atlas', delegation: { agent: 'atlas' } },
+      { id: 'scheduled', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', schedule: { cron: '0 8 * * *' } } },
+      { id: 'active-no-request', status: 'active', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } },
+    ])
+    const started: string[] = []
+    await runnerOf(brain, started).tick()
+    expect(started).toEqual(['old-signal'])
+    expect(brain.posts[0].body).toEqual({ status: 'active', text: 'Started by the task runner.' })
+  })
+})
+
 describe('the owner\'s own session and Delegate now (B3)', () => {
   type Busy = typeof import('../src/domain/runner-busy.js')
   let busy: Busy
@@ -206,7 +252,9 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
     const commands = createTaskCommands({
       store: new TaskCommandStore(join(home, 'b3-commands.json')), space: () => ({ id: 'main', name: 'Main', shared: false }) as never,
       brain: () => ({ get: brain.get, post: async (path: string, body: Record<string, unknown>) => {
-        const t = list[0]; for (const [k, v] of Object.entries(body)) if (k === 'delegate') t.delegate = v as string; else if (k === 'checkpoint') t.checkpoint = v as string
+        // As core mirrors it: the delegation sets the flat fields too.
+        const t = list[0]; const d = body.delegation as { agent: string; checkpoint?: string } | undefined
+        if (d) { t.delegation = d; t.delegate = d.agent; t.checkpoint = d.checkpoint }
         return brain.post(path, body)
       } }),
       agentsOf: async () => ['atlas'], createJob: async () => ({ jobId: 'j' }), changed: () => {}, now: () => now, log: () => {},
@@ -214,7 +262,8 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
     await commands.submit({ opId: 'op-b3', kind: 'hand_over', spaceId: 'main', taskId: 'own-task', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
     now += UNDO_WINDOW_MS + 1
     await commands.tick()
-    expect(list[0]).toMatchObject({ status: 'planned', delegate: 'atlas', checkpoint: 'after' })
+    // the status stays active (it moves forward only); the request starts it
+    expect(list[0]).toMatchObject({ status: 'active', delegate: 'atlas', checkpoint: 'after', delegation: { requested_at: expect.any(String) } })
 
     const started: string[] = []
     const { createTaskRunner } = await import('../src/application/task-runner.js')

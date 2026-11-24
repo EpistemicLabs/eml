@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
@@ -223,6 +224,7 @@ interface Row {
     assignee_ids?: string[]
     delegate?: string
     checkpoint?: string
+    delegation?: DelegationFields
     priority?: string
     due_date?: string
     depends_on?: string[]
@@ -308,11 +310,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on, ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
-      const { status, waiting_on, ...fields } = planned.plan.patch
-      const next: Row['properties'] = { ...props, ...fields } as Row['properties']
-      if (waiting_on === null) delete next!.waiting_on
+      const { status, waiting_on, delegation } = planned.plan.patch
+      const next = { ...props } as NonNullable<Row['properties']>
+      // The flat fields follow the delegation, as core keeps them (packages/core task-state.ts).
+      if (delegation === null) { delete next.delegation; delete next.delegate; delete next.checkpoint }
+      if (delegation) { next.delegation = delegation; next.delegate = delegation.agent; if (delegation.checkpoint) next.checkpoint = delegation.checkpoint; else delete next.checkpoint }
+      if (waiting_on === null) delete next.waiting_on
       return { ...row, ...(status ? { status } : {}), properties: next }
     }
     return row
@@ -365,6 +370,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
+      // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
+      const lastStarts = lastStartsOf(((await brain.get('/object/run', { latest: 'true' }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [])
 
       // What the runner's checks read: the space's tasks, and any the lists left out fetched once by id.
       const byId = new Map(rows.map((r) => [r.id, r as GateTask]))
@@ -388,7 +395,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
         })
       }
 
@@ -412,7 +419,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           // The board loads every open task, so a parent it does not hold is closed.
           parentActive: row.parent_id ? statusOf.get(row.parent_id) === 'active' : null,
         }
-        if (row.status === 'planned' && props.delegate && props.checkpoint) facts.runner = await blockOf(row)
+        if (requestOpen(row, lastStarts.get(row.id) ?? null)) {
+          facts.requested = true
+          facts.runner = await blockOf(row)
+        }
         const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id), now)
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue

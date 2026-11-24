@@ -43,6 +43,8 @@ export interface TaskFacts {
   closedAt?: string
   /** null: no parent. false: its parent is not active, so the runner won't start it. */
   parentActive: boolean | null
+  /** Its delegation has an open request (domain/delegation.ts): the runner is to start it, whatever its status. */
+  requested?: boolean
   /**
    * For a planned delegated task: why the runner does not start it (domain/runner-gate.ts runnerBlock), null when it
    * would. Left out, the task counts as next in line.
@@ -96,7 +98,7 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
     // The runner starts planned tasks only. One in progress is the open session's, between its turns,
     // or nobody's once its session is gone. Sessions are only known on this machine: in a shared space
     // the delegate may work on the owner's machine, so for anyone else it is the owner's.
-    if (task.status === 'active') {
+    if (task.status === 'active' && !task.requested) {
       if (live.sessions > 0) return { turn: 'agent_working' }
       if (task.owner && task.owner !== viewer) return { turn: 'waiting_on_others' }
       return { turn: 'needs_you', group: 'nobody', reason: 'stopped' }

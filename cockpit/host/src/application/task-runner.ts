@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -9,9 +10,11 @@ import { projectIdForBrain } from '../project-registry.js'
  * starts the plan steps that are ready, each in a session of its own.
  *
  * A task is ready when:
- *   - it is planned, has a delegate (the agent that works on it) and a
- *     checkpoint (before · after · none), so plain tasks and legacy tasks are
- *     never started (decision task-assignee-owner-and-agent-delegate);
+ *   - it has a delegation with a checkpoint (before · after · none) and an
+ *     open request: no run on it started after delegation.requested_at
+ *     (domain/delegation.ts). Its status is planned or active: it never goes
+ *     back to planned to start again. For one release a planned task with a
+ *     delegate and a checkpoint but no request (the old signal) starts too;
  *   - as a step (a sub-task), its parent task is active (a parked plan does
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
@@ -23,7 +26,8 @@ import { projectIdForBrain } from '../project-registry.js'
  *   - its parent has fewer than MAX_RUNNING steps active; standalone tasks
  *     run at most MAX_RUNNING at a time per space.
  * The checks live in domain/runner-gate.ts, which the task board asks too, so the board names the same reason.
- * Starting it marks it active, so it starts once. Its session gets the task
+ * Starting it marks a planned one active; the request counts as started here
+ * at once and in the brain once the session's run is written. Its session gets the task
  * from its first hook: checkpoint before prepares and asks before it acts,
  * after acts and hands the result over for review, none runs to the end.
  * Ticks every interval and when a turn ended.
@@ -58,7 +62,7 @@ interface Task {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -102,6 +106,9 @@ export interface TaskRunner {
 
 export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
   let running: Promise<void> | null = null
+  /** Per task, the request this runner started a session for: once, even before the session's run is in the brain. */
+  const startedFor = new Map<string, string>()
+  const requestOf = (t: Task) => t.properties?.delegation?.requested_at ?? `planned:${t.id}`
 
   const runSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>) => {
     const tasks = new Map<string, Promise<Task | null>>()
@@ -109,14 +116,17 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       if (!tasks.has(id)) tasks.set(id, (brain.get(`/engram/${id}`, { with_relations: 'true' }) as Promise<Task>).catch(() => null))
       return tasks.get(id)!
     }
-    const listed = await brain.get('/list', { type: 'task', status: 'planned', limit: 200 }) as { engrams?: Task[] }
+    // A delegation's request starts a task whatever its status (domain/delegation.ts): planned and active ones are candidates.
+    const [planned, active] = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: 200 }) as Promise<{ engrams?: Task[] }>))
+    const listed = { engrams: [...(planned.engrams ?? []), ...(active.engrams ?? [])] }
+    const lastStarts = lastStartsOf(((await brain.get('/object/run', { latest: 'true' }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [])
     // The space's open runs, read once per tick: a working run of another member's session holds its task (domain/runs.ts).
     const runs = openRunsByTask(runsOf(((await brain.get('/object/run').catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []))
-    const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate)
+    const candidates = (listed.engrams ?? []).filter((t) => requestOpen(t, lastStarts.get(t.id) ?? null) && startedFor.get(t.id) !== requestOf(t))
     const started = new Map<string, number>()
     for (const candidate of candidates) {
       const step = await get(candidate.id)
-      if (!step || step.status !== 'planned') continue
+      if (!step || !requestOpen(step, lastStarts.get(step.id) ?? null)) continue
       const parentId = parentOf(step)
       // A standalone task with a checkpoint runs on its own; its cap is per space.
       const group = parentId ?? STANDALONE
@@ -139,6 +149,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         deps: await Promise.all(dependsOn.map(async (id) => ({ id, task: await get(id) }))),
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
+        lastRunStartedAt: lastStarts.get(step.id) ?? null,
         busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id), scheduled: deps.scheduled?.(step.id),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
@@ -151,7 +162,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         deps.log(`[runner] step ${step.id.slice(0, 8)} not started: ${problem}`)
         continue
       }
-      await brain.post(`/task/${step.id}/track`, { status: 'active', text: 'Started by the task runner.' })
+      // Its run is written once the session runs (application/run-records.ts); until then this request counts as started here.
+      startedFor.set(step.id, requestOf(step))
+      await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: 'Started by the task runner.' })
       started.set(group, started.get(group)! + 1)
       deps.log(`[runner] started step ${step.id.slice(0, 8)} ${title} (checkpoint ${step.properties?.checkpoint})`)
     }
