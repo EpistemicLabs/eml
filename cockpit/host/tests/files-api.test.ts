@@ -44,7 +44,7 @@ describe('files', () => {
   it('resolves home and relative paths', () => {
     expect(resolveRef('~/x.md', null)).toBe(path.join(os.homedir(), 'x.md'))
     expect(resolveRef('x.md', null)).toBeNull()
-    expect(resolveRef('sub/x.md', '/work')).toBe('/work/sub/x.md')
+    expect(resolveRef('sub/x.md', path.resolve('/work'))).toBe(path.resolve('/work', 'sub/x.md'))
   })
 
   it('stats only existing regular files of a known kind', () => {

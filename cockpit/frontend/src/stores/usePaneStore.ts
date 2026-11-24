@@ -331,7 +331,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     title: typeof e.title === 'string' && e.title.trim() ? e.title : undefined,
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
-    filePath: typeof e.filePath === 'string' && e.filePath.startsWith('/') ? e.filePath : undefined,
+    filePath: typeof e.filePath === 'string' && /^(\/|[A-Za-z]:[\\/])/.test(e.filePath) ? e.filePath : undefined,
     brainView: parseBrainView(e.brainView),
     repositoryView: parseRepositoryView(e.repositoryView),
     shellId: typeof e.shellId === 'string' && e.shellId ? e.shellId : undefined,
