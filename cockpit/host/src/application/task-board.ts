@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
+import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
@@ -163,8 +164,8 @@ export interface TaskBoardDeps {
   releasedAgent?(taskId: string): string | null
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
-  /** The runner's busy check: a session works on the task already (index.ts shares it with the runner). */
-  runnerBusy?(taskId: string): boolean
+  /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
+  runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
   /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
   runnerHeld?(taskId: string): boolean
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
@@ -362,6 +363,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       // What a task's facts read of the others: open and resolved ones, as before closed tasks were listed.
       const statusOf = new Map(rows.filter((r) => r.status === 'planned' || r.status === 'active' || r.status === 'resolved').map((r) => [r.id, r.status]))
       const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
+      // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
+      const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
 
       // What the runner's checks read: the space's tasks, and any the lists left out fetched once by id.
       const byId = new Map(rows.map((r) => [r.id, r as GateTask]))
@@ -385,7 +388,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id) ?? false, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
         })
       }
 
@@ -410,7 +413,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           parentActive: row.parent_id ? statusOf.get(row.parent_id) === 'active' : null,
         }
         if (row.status === 'planned' && props.delegate && props.checkpoint) facts.runner = await blockOf(row)
-        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
+        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id), now)
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
