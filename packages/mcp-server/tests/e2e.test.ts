@@ -246,6 +246,16 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       const handed = await call('eml_track_task', { task_id: t.id, delegate: 'mcp', checkpoint: 'after', text: 'handed to the agent' })
       expect(handed.isError).toBeFalsy()
       expect(jsonOf(handed).properties.delegate).toBe('mcp')
+      // v0.23: completing delegate + checkpoint hands the task over: the delegation carries the request
+      expect(jsonOf(handed).properties.delegation).toMatchObject({ agent: 'mcp', checkpoint: 'after' })
+      expect(jsonOf(handed).properties.delegation.requested_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      const requested = jsonOf(handed).properties.delegation.requested_at
+      // changing only the checkpoint of a handed-over task keeps the request as it was
+      const tightened = await call('eml_track_task', { task_id: t.id, checkpoint: 'before' })
+      expect(jsonOf(tightened).properties.delegation).toEqual({ agent: 'mcp', checkpoint: 'before', requested_at: requested })
+      // a delegate without a checkpoint is no hand-over
+      const half = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'half-handed' })))
+      expect(jsonOf(await call('eml_track_task', { task_id: half.id, delegate: 'mcp' })).properties.delegation).toEqual({ agent: 'mcp' })
       const other = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'not-handed-over' })))
       const listed = textOf(await call('eml_list', { type: 'task', delegate: 'mcp' }))
       expect(listed).toContain(t.id)
@@ -310,13 +320,11 @@ describe('eml-mcp-server E2E (built server + MCP client via stdio)', () => {
       expect(ghost.isError).toBe(true)
     })
 
-    it('eml_create_task + eml_track_task carry the intent (set on create, changed and cleared on track)', async () => {
-      const t = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'why-task', intent: 'users see X' })))
-      expect(t.properties.intent).toBe('users see X')
-      const changed = await call('eml_track_task', { task_id: t.id, intent: 'users see X sooner' })
-      expect(changed.isError).toBeFalsy()
-      expect(jsonOf(changed).properties.intent).toBe('users see X sooner')
-      expect(jsonOf(await call('eml_track_task', { task_id: t.id, intent: null })).properties.intent).toBeUndefined()
+    it('eml_create_task and eml_track_task take no intent or blockers any more (v0.23: intent is part of the goal; a wait comes from the handoff)', async () => {
+      expect((await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'why-task', intent: 'users see X' }))).isError).toBe(true)
+      const t = jsonOf(await call('eml_create_task', validTaskArgs({ scope: 'project.eml', title: 'why-task' })))
+      expect((await call('eml_track_task', { task_id: t.id, intent: 'users see X sooner' })).isError).toBe(true)
+      expect((await call('eml_track_task', { task_id: t.id, blockers: ['vendor'] })).isError).toBe(true)
     })
 
     it('eml_create_task supersedes: open sub-tasks banner points to eml_track_task parent_id', async () => {
