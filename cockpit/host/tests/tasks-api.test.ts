@@ -119,6 +119,15 @@ describe('task board routes', () => {
     expect(refreshed).toBeGreaterThan(0)
   })
 
+  it('carries how a scheduled agent goes on: until the goal in the same session, or a routine in new sessions; refuses other values', async () => {
+    await post('/api/v1/tasks/asked/hand-over', { opId: 'op-goal', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true } })
+    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ at: '2026-11-20T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true })
+    await post('/api/v1/tasks/asked/hand-over', { opId: 'op-routine', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' } })
+    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' })
+    expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'later' } })).status).toBe(400)
+    expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad2', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: 'yes' } })).status).toBe(400)
+  })
+
   it('takes review, snooze and close; refuses with a code to branch on', async () => {
     expect((await post('/api/v1/tasks/t1/review', { opId: 'op-2', spaceId: 'main' })).status).toBe(202)
     expect((await post('/api/v1/tasks/t1/snooze', { opId: 'op-3', spaceId: 'main', key: 'task:t1@s', until: '2026-11-20T01:00:00Z' })).status).toBe(202)

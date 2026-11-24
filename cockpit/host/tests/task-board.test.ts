@@ -36,7 +36,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -54,6 +54,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     viewer: 'lasse',
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
     nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
+    scheduleOf: (taskId) => (opts.schedules?.[taskId] as never) ?? null,
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
@@ -71,6 +72,16 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {
+    const { board } = setup({
+      main: [mine('m', { goal: 'Orders sync both ways', delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } })],
+      jobs: { m: '2026-11-20T09:00:00.000Z' },
+      schedules: { m: { at: '2026-11-20T09:00:00.000Z', session: 'resume' } },
+    })
+    const t = (await board.refresh()).tasks.find((x) => x.id === 'm')!
+    expect(t).toMatchObject({ goal: 'Orders sync both ways', schedule: { at: '2026-11-20T09:00:00.000Z', session: 'resume' }, group: 'mission' })
+  })
+
   it('offers "Hand to <agent>" for a delegated task that was never handed over, in Needs you', async () => {
     const { board } = setup({ main: [mine('never', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }, 'planned')] })
     const model = await board.refresh()
@@ -114,7 +125,7 @@ describe('the task board', () => {
     expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
     expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
     // the open runs go to the card and the panel: whose, their state, and whether they are this cockpit's
-    expect(byId.get('elsewhere')!.runs).toEqual([{ id: 'r1', member: 'dominik', agent: 'motti', state: 'running', lastActivityAt: '2026-11-19T09:55:00.000Z', result: null, here: false }])
+    expect(byId.get('elsewhere')!.runs).toEqual([{ id: 'r1', member: 'dominik', agent: 'motti', state: 'running', lastActivityAt: '2026-11-19T09:55:00.000Z', here: false }])
     expect(byId.get('stale')!.runs![0].state).toBe('stale')
     expect(byId.get('ended')!.runs).toBeUndefined()
     expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })

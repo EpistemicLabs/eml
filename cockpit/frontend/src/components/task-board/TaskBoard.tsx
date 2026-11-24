@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, closeTask, closedAsTask, type ContinueHow, continueTask, followUpTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, followUpTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
@@ -164,16 +164,20 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     answered(answer, `Opened in desk ${input.desk}.`, () => { if (paneId) removePane(paneId); });
   }, [answered, spaces]);
 
+  // Parking puts the snooze on the task's wait in the brain, so it holds on every device and for every member.
+  const park = useCallback(async (item: InboxItem, when: 'tomorrow' | 'monday' | 'open' | 'now') => {
+    const times = snoozeTimes(Date.now());
+    const until = when === 'tomorrow' ? times.tomorrow : when === 'monday' ? times.monday : when;
+    const said = when === 'tomorrow' ? 'Parked until tomorrow 09:00.' : when === 'monday' ? 'Parked until Monday 09:00.' : when === 'open' ? 'Parked with no date: bring it back from the Inbox\'s Parked fold.' : 'Brought back.';
+    answered(await snooze(item, until), said);
+  }, [answered]);
+
   const onInboxAction = useCallback(async (a: InboxAction) => {
     if (a.kind === 'review') {
       const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
       if (t) answered(await reviewDone(t), 'Closed as reviewed.');
     } else {
-      // Parking puts the snooze on the task's wait in the brain, so it holds on every device and for every member.
-      const times = snoozeTimes(Date.now());
-      const until = a.until === 'tomorrow' ? times.tomorrow : a.until === 'monday' ? times.monday : a.until;
-      const said = a.until === 'tomorrow' ? 'Parked until tomorrow 09:00.' : a.until === 'monday' ? 'Parked until Monday 09:00.' : a.until === 'open' ? 'Parked with no date: bring it back from Parked.' : 'Brought back.';
-      answered(await snooze(a.item, until), said);
+      await park(a.item, a.until);
     }
   }, [answered, byId]);
 
@@ -243,11 +247,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onContinue={continueFrom}
       onPark={async (t, until) => {
-        // The task's waits on the viewer that began when its newest one did (the same key the Inbox parks by).
-        const times = snoozeTimes(Date.now());
-        const item = { key: `task:${t.id}@${t.waitingOn?.since ?? ''}`, kind: 'question' as const, space: t.spaceId, title: t.title, text: '', since: t.waitingOn?.since ?? '', taskId: t.id };
-        answered(await snooze(item, until === 'tomorrow' ? times.tomorrow : until === 'monday' ? times.monday : 'open'),
-          until === 'open' ? 'Parked with no date: bring it back from the Inbox\'s Parked fold.' : `Parked until ${until === 'tomorrow' ? 'tomorrow' : 'Monday'} 09:00.`);
+        // The task's Inbox item as the host keyed it; a wait the Inbox does not list (a stop, someone outside) by the task alone.
+        const item = board.inbox.find((i) => i.taskId === t.id && i.space === t.spaceId) ?? board.snoozed.find((i) => i.taskId === t.id)
+          ?? { key: `task:${t.id}@`, kind: 'question' as const, space: t.spaceId, title: t.title, text: '', since: '', taskId: t.id };
+        await park(item, until);
       }}
       onClose={closePanel}
     />

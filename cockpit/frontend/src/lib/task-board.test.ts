@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, repeatsText, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -237,5 +237,36 @@ describe('the task state screens (v0.23)', () => {
     expect(cols.find((c) => c.turn === 'agent_scheduled')!.groups.map((g) => g.group)).toEqual(['mission', 'routine', 'at_time']);
     const working = cols.find((c) => c.turn === 'agent_working')!;
     expect([working.tasks.map((t) => t.id).sort(), working.groups.map((g) => g.group)]).toEqual([['s', 'w'], ['stale']]);
+  });
+});
+
+describe('the task panel logic (v0.23)', () => {
+  const run = (state: 'running' | 'idle' | 'stale') => ({ id: 's1', member: 'lasse', agent: 'atlas', state, lastActivityAt: new Date(NOW - 60_000).toISOString(), here: true });
+
+  it('names a session by what it needs: the task waits on it, put away, silent, working, idle', () => {
+    const asked = task({ waitingOn: { who: 'lasse', kind: 'question', session_id: 's1' } });
+    expect(sessionState(asked, 's1', false, run('running'))).toBe('needs input');
+    expect(sessionState(task({ waitingOn: { who: 'lasse', kind: 'review', session_id: 's1' } }), 's1', false, undefined)).toBe('review');
+    expect(sessionState(task(), 's1', true, run('running'))).toBe('done');
+    expect(sessionState(task(), 's1', false, run('stale'))).toBe('silent');
+    expect(sessionState(task(), 's1', false, run('running'))).toBe('working');
+    expect(sessionState(task(), 's1', false, undefined)).toBe('idle');
+  });
+
+  it('says whose move it is in one line, and offers what the state calls for', () => {
+    expect(waitingLine(task({ delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'A? · B?' } }), 'lasse')).toBe('You · 2 questions from Atlas');
+    expect(waitingLine(task({ waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' } }), 'lasse')).toBe('kim · reply to the offer');
+    expect(panelActions(task({ group: 'asked' }), true)).toEqual([]);
+    expect(panelActions(task({ group: 'asked', delegate: 'atlas' }), false)).toEqual(['together', 'run_now']);
+    expect(panelActions(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString() }), true)).toEqual(['run_now', 'together']);
+    expect(panelActions(task({ group: 'own' }), true)).toEqual(['delegate_now', 'schedule', 'together']);
+  });
+
+  it('times a working card by its last activity: a running run first, then any run, then the task', () => {
+    const at = (min: number) => new Date(NOW - min * 60_000).toISOString();
+    const runs = [{ ...run('idle'), id: 'a', lastActivityAt: at(30) }, { ...run('running'), id: 'b', lastActivityAt: at(2) }];
+    expect(cardTime(task({ turn: 'agent_working', group: undefined, runs }), NOW)?.label).toBe(`last activity ${when(at(2), NOW)}`);
+    expect(cardTime(task({ turn: 'agent_working', group: undefined, runs: [runs[0]] }), NOW)?.label).toBe(`last activity ${when(at(30), NOW)}`);
+    expect(cardTime(task({ turn: 'agent_working', group: undefined, updatedAt: at(90) }), NOW)?.label).toBe(`last activity ${when(at(90), NOW)}`);
   });
 });

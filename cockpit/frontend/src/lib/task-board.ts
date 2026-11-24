@@ -260,7 +260,6 @@ export interface BoardRun {
   agent: string | null;
   state: 'running' | 'idle' | 'stale';
   lastActivityAt: string | null;
-  result: string | null;
   /** This cockpit's own session: it can be opened here. */
   here: boolean;
 }
@@ -722,3 +721,46 @@ export async function startTaskSession(task: { id: string; spaceId: string }, op
     return { kind: 'unknown' };
   }
 }
+
+// ---- the task panel ----
+
+/** A session's state as its tab names it, most in need of the viewer first (decision task-sessions-listed-by-attention). */
+export type SessionState = 'needs input' | 'review' | 'silent' | 'working' | 'idle' | 'done';
+export const SESSION_ORDER: Record<SessionState, number> = { 'needs input': 0, review: 1, silent: 2, working: 3, idle: 4, done: 5 };
+
+/** What a session on the task is doing, from the task's wait on it, its run, and whether it is put away. */
+export function sessionState(task: BoardTask, sessionId: string, archived: boolean, run: BoardRun | undefined): SessionState {
+  if (task.waitingOn?.session_id === sessionId) return task.waitingOn.kind === 'review' ? 'review' : 'needs input';
+  if (archived) return 'done';
+  if (run?.state === 'stale') return 'silent';
+  if (run?.state === 'running') return 'working';
+  return 'idle';
+}
+
+/** "Waiting on" in one short line: whose move it is, a question count when the agent asked several, and since when. */
+export function waitingLine(task: BoardTask, viewer: string): string {
+  const w = task.waitingOn;
+  if (!w) return '';
+  const who = w.who === viewer ? 'You' : w.who;
+  const parts = (w.why ?? '').split(' · ').filter(Boolean);
+  if (w.who === viewer && w.kind === 'question' && parts.length > 1) return `${who} · ${parts.length} questions from ${agentName(task.delegate)}`;
+  if (w.who === viewer && w.kind === 'review') return `${who} · a result to review`;
+  return w.why ? `${who} · ${w.why}` : who;
+}
+
+/** The actions a task's state calls for: none while an agent asks (the chat answers), Hand to after Work on it now, … */
+export function panelActions(task: BoardTask, hasSession: boolean): Array<'looks_good' | 'hand_to' | 'run_now' | 'delegate_now' | 'schedule' | 'together'> {
+  // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
+  if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
+  if (task.turn === 'review') return ['looks_good'];
+  if (task.handTo) return ['hand_to', 'schedule', 'together'];
+  if (task.turn === 'agent_working' && task.group !== 'stale') return ['together'];
+  if (task.turn === 'parked') return [];
+  if (task.delegate) {
+    // Scheduled: the Delegate line changes the schedule; run it now or work on it.
+    if (task.nextRunAt || task.schedule) return ['run_now', 'together'];
+    return ['run_now', 'schedule', 'together'];
+  }
+  return ['delegate_now', 'schedule', 'together'];
+}
+

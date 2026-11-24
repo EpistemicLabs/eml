@@ -2,7 +2,7 @@
 // An open question is never dropped: the dialog says so, and the host carries it into the brief.
 import { useState } from 'react';
 
-import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, PRIMARY, RadioCard } from '@/shared/view/ui';
+import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, LINK, PRIMARY, RadioCard } from '@/shared/view/ui';
 import { agentName, type BoardTask, type HandOverInput, type HandOverMode, snoozeTimes, taskName } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 
@@ -136,8 +136,9 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                     )}
                     {then === 'goal' && (
                       <p className="m-0 text-caption text-muted-foreground">
-                        {task.goal ? <>Goal: {task.goal} </> : <>The task has no goal yet: {agentName(agent)} proposes one. </>}
-                        {agentName(agent)} checks the goal each time it wakes up. If it isn't reached, it sets its own next check and says why.
+                        {task.goal
+                          ? <>Goal: {task.goal} {agentName(agent)} checks the goal each time it wakes up. If it isn't reached, it sets its own next check and says why.</>
+                          : <>The task has no goal yet: set one first (say in the chat what has to be true), then schedule it until the goal is reached.</>}
                       </p>
                     )}
                   </div>
@@ -164,7 +165,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                 ) : (
                   <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 text-body">
                     <span>{checkpoint}: {CHECKPOINTS[checkpoint]}</span>
-                    <button type="button" onClick={() => setChoosing(true)} className={cn('min-h-(--target-min) text-ui text-mark-ink underline underline-offset-2', FOCUS)}>change</button>
+                    <button type="button" onClick={() => setChoosing(true)} className={LINK}>change</button>
                   </div>
                 )}
               </div>
@@ -198,7 +199,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
         </div>
         <footer className="flex justify-end gap-2 border-t border-border px-5 pb-4 pt-3">
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
-          <button type="button" className={PRIMARY} onClick={submit} disabled={!agent && mode !== 'together'}>{go}</button>
+          <button type="button" className={PRIMARY} onClick={submit} disabled={(!agent && mode !== 'together') || (mode === 'schedule' && then === 'goal' && !task.goal)}>{go}</button>
         </footer>
       </DialogContent>
     </Dialog>

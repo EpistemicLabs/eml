@@ -2,36 +2,9 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
-import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
-import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
+import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
-import type { ScheduleFields } from '../domain/delegation.js'
-import { isStale } from '../domain/runs.js'
-
-/** A run as the board shows it: whose, its state, when it was last active, its result line, and whether it is this cockpit's. */
-export interface BoardRun {
-  id: string
-  member: string
-  agent: string | null
-  state: 'running' | 'idle' | 'stale'
-  lastActivityAt: string | null
-  result: string | null
-  here: boolean
-}
-
-/** The task's open runs for the board: needs-attention order is the panel's; here, running first, then by last activity. */
-function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: string }>, viewer: string, now: number): BoardRun[] {
-  const localIds = new Set(local.map((s) => s.sessionId))
-  return runs
-    .filter((r) => r.state !== 'ended')
-    .map((r) => ({
-      id: r.id, member: r.member, agent: r.agent ?? null,
-      state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
-      lastActivityAt: r.last_activity_at ?? null, result: r.result ?? null,
-      here: localIds.has(r.id) || r.member === viewer,
-    }))
-    .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
-}
 import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -270,6 +243,30 @@ interface Row {
     outcome?: string
     stage?: string
   }
+}
+
+/** A run as the board shows it: whose, its state, when it was last active, and whether it is this cockpit's. */
+export interface BoardRun {
+  id: string
+  member: string
+  agent: string | null
+  state: 'running' | 'idle' | 'stale'
+  lastActivityAt: string | null
+  here: boolean
+}
+
+/** The task's open runs for the board, running first, then by last activity (the panel orders its tabs by attention). */
+function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: string }>, viewer: string, now: number): BoardRun[] {
+  const localIds = new Set(local.map((s) => s.sessionId))
+  return runs
+    .filter((r) => r.state !== 'ended')
+    .map((r) => ({
+      id: r.id, member: r.member, agent: r.agent ?? null,
+      state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
+      lastActivityAt: r.last_activity_at ?? null,
+      here: localIds.has(r.id) || r.member === viewer,
+    }))
+    .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
 }
 
 export function createTaskBoard(deps: TaskBoardDeps) {

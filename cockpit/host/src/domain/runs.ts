@@ -3,8 +3,7 @@
  *
  * A run is one session on a task, as its member's cockpit knows it. The host writes one per session on a task
  * (application/run-records.ts) when something happens in it — the start, each turn's start and end, the end, a crash
- * found at a restart — and every member's board and runner read them, so "who works on this right now" no longer lives
- * only in one cockpit's session ledger. There is no heartbeat and no lease: only the owner's cockpit runs a task, so
+ * found at a restart — and every member's board and runner read them, so each knows who works on a task right now. There is no heartbeat and no lease: only the owner's cockpit runs a task, so
  * nobody takes one over. A run that says running but has had no activity for STALE_MS reads as stale, not working.
  * The local ledger stays the source for this host's own sessions.
  */

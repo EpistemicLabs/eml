@@ -3,6 +3,8 @@ import { cn } from '@/lib/utils';
 
 export const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring';
 export const LABEL = 'text-caption font-semibold uppercase tracking-label text-muted-foreground';
+/** An action inline in a line of text: underlined in the mark ink, a full touch target tall. */
+export const LINK = cn('min-h-(--target-min) text-ui text-mark-ink underline underline-offset-2', FOCUS);
 export const MINI = cn('inline-flex min-h-(--target-min) items-center rounded-md border border-border bg-card px-2 text-ui text-muted-foreground hover:bg-background hover:text-foreground', FOCUS);
 /** A text field, text area or select: on the card, its edge strong enough to find (3:1). */
 export const FIELD = cn(

@@ -61,6 +61,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   task_closed: 'The task is closed.',
   delegate_not_in_space: 'That agent does not work in this space.',
   checkpoint_required: 'Pick a checkpoint: before, after or none.',
+  goal_required: 'The task has no goal yet: set one before the agent keeps at it until the goal is reached.',
   schedule_required: 'Pick when the agent starts.',
   desk_required: 'Pick the desk to open the session in.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
@@ -124,13 +125,20 @@ function answer(json: Json, res: http.ServerResponse, result: Submitted): void {
   })
 }
 
-function schedule(body: Record<string, unknown>): ScheduleSpec | undefined {
+/**
+ * A hand-over's schedule: one time or a repeat rule in a zone, and how each run goes on — session new or resume,
+ * untilGoal true when the agent keeps at it until the task's goal. 'invalid' when one of those is not its shape.
+ */
+function schedule(body: Record<string, unknown>): ScheduleSpec | undefined | 'invalid' {
   const s = body.schedule as Record<string, unknown> | undefined
   const timeZone = str(s?.timeZone)
   if (!s || !timeZone) return undefined
+  if (s.session !== undefined && s.session !== 'new' && s.session !== 'resume') return 'invalid'
+  if (s.untilGoal !== undefined && typeof s.untilGoal !== 'boolean') return 'invalid'
+  const how = { ...(s.session ? { session: s.session as 'new' | 'resume' } : {}), ...(s.untilGoal ? { untilGoal: true } : {}) }
   const at = str(s.at), cron = str(s.cron)
-  if (at && !cron) return { at, timeZone }
-  if (cron && !at) return { cron, timeZone }
+  if (at && !cron) return { at, timeZone, ...how }
+  if (cron && !at) return { cron, timeZone, ...how }
   return undefined
 }
 
@@ -306,7 +314,9 @@ export async function handleTasksApi(
         const mode = str(body.mode) as HandOverMode | undefined
         const delegate = str(body.delegate)
         if (!mode || !HAND_OVER_MODES.includes(mode) || !delegate) { refuse(json, res, 'invalid', 'mode (now · schedule · together) and delegate are required'); return true }
-        input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: schedule(body), desk: str(body.desk) } }
+        const spec = schedule(body)
+        if (spec === 'invalid') { refuse(json, res, 'invalid', 'schedule.session is new or resume, schedule.untilGoal true or false'); return true }
+        input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: spec, desk: str(body.desk) } }
       } else if (verb === 'review' || verb === 'close') {
         input = { ...base, kind: verb, taskId }
       } else if (verb === 'reopen') {
