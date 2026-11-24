@@ -8,7 +8,7 @@ import type { Board, BoardTask } from '@/lib/task-board';
 
 const live = vi.hoisted(() => ({ sessions: [] as unknown[], seen: [] as string[][] }));
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: live.sessions, queued: [], refresh: () => {} }) }));
-vi.mock('@/components/ui/session-chat', () => ({ SessionChat: ({ sessionId }: { sessionId: string }) => <div data-testid="session-chat">{sessionId}</div> }));
+vi.mock('@/components/ui/session-chat', () => ({ SessionChat: ({ sessionId, composer }: { sessionId: string; composer?: React.ReactNode }) => <div data-testid="session-chat">{sessionId}{composer}</div> }));
 vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useTurnStore: () => ({ turns: { s1: { state: 'done', since: 'x' } }, seen: {} }),
@@ -335,5 +335,59 @@ describe('the Unread fold', () => {
     } finally {
       delete (window as { matchMedia?: unknown }).matchMedia;
     }
+  });
+
+  describe('a done task\'s chat', () => {
+    const doneBoard = (extra: BoardTask[] = []): Board => ({ ...board(), tasks: [...board().tasks, task({ id: 'done', title: 'build-unread-fold', status: 'resolved', turn: 'done', group: undefined, sessionIds: ['s1'] }), ...extra] });
+    const serve = (current: () => Board, undoUntil: () => string) => vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(current()), { status: 200 });
+      if (init?.method === 'POST') {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.includes('/undo')) return new Response(JSON.stringify({ state: 'undone' }), { status: 200 });
+        return new Response(JSON.stringify({ opId: 'op-1', state: 'pending', undoUntil: undoUntil() }), { status: 202 });
+      }
+      return new Response('{}', { status: 404 });
+    }));
+    beforeEach(() => { live.sessions = [{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: iso(1) }]; });
+
+    it('Send reopens it with the message and offers Undo, which puts the text back', async () => {
+      serve(() => doneBoard(), () => new Date(Date.now() + 8000).toISOString());
+      mount();
+      fireEvent.click(await screen.findByText('Build unread fold'));
+      const box = await screen.findByRole('textbox', { name: 'Continue… (reopens the task)' });
+      fireEvent.change(box, { target: { value: 'One more fix' } });
+      fireEvent.keyDown(box, { key: 'Enter' });
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/done/reopen', body: expect.objectContaining({ spaceId: 'main', message: 'One more fix' }) }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Reopened: its session gets your message once Undo is over.'));
+      await act(async () => { fireEvent.click(within(status).getByRole('button', { name: 'Undo' })); });
+      await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
+      await waitFor(() => expect((screen.getByRole('textbox', { name: 'Continue… (reopens the task)' }) as HTMLTextAreaElement).value).toBe('One more fix'));
+    });
+
+    it('As follow-up opens the new task once the board has it, not an older follow-up', async () => {
+      let tasks = doneBoard([task({ id: 'older', title: 'older-follow-up', originId: 'done', updatedAt: iso(60 * 24) })]);
+      serve(() => tasks, () => new Date(Date.now() - 1).toISOString());
+      mount();
+      fireEvent.click(await screen.findByText('Build unread fold'));
+      const box = await screen.findByRole('textbox', { name: 'Continue… (reopens the task)' });
+      fireEvent.change(box, { target: { value: 'Now the phone layout' } });
+      fireEvent.keyDown(box, { key: 'Enter', altKey: true });
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/done/follow-up', body: expect.objectContaining({ message: 'Now the phone layout' }) }));
+      expect(screen.getByRole('heading', { name: 'Build unread fold' })).toBeTruthy();
+      tasks = { ...tasks, tasks: [...tasks.tasks, task({ id: 'new', title: 'follow-up-build-unread-fold', originId: 'done', updatedAt: new Date().toISOString() })] };
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Follow up build unread fold' })).toBeTruthy(), { timeout: 4000 });
+    });
+
+    it('the ⋯ menu\'s Not needed closes an open task with Undo', async () => {
+      serve(() => board(), () => new Date(Date.now() + 8000).toISOString());
+      mount();
+      fireEvent.click(await screen.findByText('Demo meeting prep'));
+      fireEvent.click(await screen.findByRole('button', { name: 'More task actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Not needed' }));
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/close'));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Closed: not needed.'));
+    });
   });
 });

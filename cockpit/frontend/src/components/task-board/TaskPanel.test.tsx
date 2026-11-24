@@ -5,12 +5,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 
 import type { Board, BoardTask } from '@/lib/task-board';
+import { DAY_MS } from '@/lib/time';
 
 // The journal shows or hides with its engram's load; that is what moved the Related block's copies in.
 const live = vi.hoisted(() => ({ engram: undefined as unknown }));
 vi.mock('@/lib/queries', () => ({ useEngram: () => ({ data: live.engram }) }));
 vi.mock('@/components/task-sections', () => ({ TaskJournal: () => <div>journal</div> }));
-vi.mock('@/components/ui/session-chat', () => ({ SessionChat: () => null }));
+vi.mock('@/components/ui/session-chat', () => ({ SessionChat: ({ composer }: { composer?: React.ReactNode }) => <div data-testid="session-chat">{composer}</div> }));
 
 import { TaskPanel } from './TaskPanel';
 
@@ -58,7 +59,6 @@ describe('the task panel', () => {
       );
       return onReopen;
     };
-    const DAY = 24 * 60 * 60 * 1000;
     const input = () => screen.getByRole('textbox', { name: /Continue…|What should the follow-up do/ });
 
     it('keeps an input under its chat: Enter reopens with the message, ⌥Enter starts a follow-up', async () => {
@@ -87,7 +87,7 @@ describe('the task panel', () => {
     });
 
     it('makes a follow-up the main way after 7 days, and the only one for a replaced task; none for someone else\'s', () => {
-      show(closed({ status: 'resolved', closedAt: new Date(NOW - 8 * DAY).toISOString() }));
+      show(closed({ status: 'resolved', closedAt: new Date(NOW - 8 * DAY_MS).toISOString() }));
       expect(screen.getByRole('button', { name: /^Start follow-up/ })).toBeTruthy();
       expect(screen.getByRole('button', { name: /Reopen & send/ })).toBeTruthy();
       cleanup();
@@ -122,6 +122,24 @@ describe('the task panel', () => {
       show(closed({ blocked: 'parent_closed', parentId: 'gone' }));
       expect(screen.queryByRole('button', { name: 'Reopen' })).toBeNull();
       expect(screen.getByText(/reopen the parent first/)).toBeTruthy();
+    });
+
+    it('under its session\'s chat: the input for the owner; for someone else\'s task or one being reopened, a note', () => {
+      const withSession = (patch: Partial<BoardTask>, viewer = 'lasse') => render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={closed({ status: 'resolved', sessionIds: ['s1'], ...patch })} board={{ ...board(parent), viewer, closed: [] }} now={NOW} spaces={[]}
+            sessions={[{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: new Date(NOW).toISOString() } as never]}
+            onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      withSession({});
+      expect(screen.getByTestId('session-chat').querySelector('textarea')).toBeTruthy();
+      cleanup();
+      withSession({ owner: 'dominik' });
+      expect(screen.getByTestId('session-chat').textContent).toContain('Only its owner (dominik) can go on with this task.');
+      cleanup();
+      withSession({ pending: { opId: 'op', kind: 'reopen', undoUntil: new Date(NOW + 8000).toISOString() } });
+      expect(screen.getByTestId('session-chat').textContent).toContain('Reopening…');
     });
 
     it('lists, once reopened, what closed with it for the chat', () => {

@@ -34,6 +34,7 @@ export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'reopen'
 
 /** The longest message a closed task's chat takes for Send or As follow-up. */
 export const MESSAGE_MAX = 20_000
+const MESSAGE_RULE = `Write a message of at most ${MESSAGE_MAX} characters.`
 
 export interface CommandInput {
   opId: string
@@ -266,6 +267,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     }
   }
 
+  /** Only a task's owner may reopen it or start a follow-up of it; null when the viewer may. */
+  const ownerRefusal = (task: BrainTask, action: string): { ok: false; refusal: CommandRefusal; message: string } | null => {
+    const owner = task.properties?.assignee_ids?.[0]
+    return deps.viewer && owner && owner !== deps.viewer ? { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can ${action}.` } : null
+  }
+
   /** Check a hand-over against the task as it is now and plan it. */
   const plan = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, taskId: string, req: HandOverRequest) => {
     const task = await taskOf(brain, taskId)
@@ -283,8 +290,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     const task = await brain.get(`/engram/${taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
     if (!task) return { ok: false, refusal: 'unknown_task' }
     if (OPEN.has(task.status)) return { ok: false, refusal: 'task_open' }
-    const owner = task.properties?.assignee_ids?.[0]
-    if (deps.viewer && owner && owner !== deps.viewer) return { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can reopen this task.` }
+    const refused = ownerRefusal(task, 'reopen this task')
+    if (refused) return refused
     const relations = task.relations ?? []
     for (const r of relations.filter((r) => r.relation === 'supersedes' && r.target_id === task.id)) {
       const successor = await taskOf(brain, r.source_id)
@@ -357,18 +364,19 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
 
     if (input.kind === 'reopen') {
       if (!input.taskId) return { ok: false, refusal: 'invalid' }
-      if (input.message !== undefined && (!input.message.trim() || input.message.length > MESSAGE_MAX)) return { ok: false, refusal: 'invalid' }
+      if (input.message !== undefined && (!input.message.trim() || input.message.length > MESSAGE_MAX)) return { ok: false, refusal: 'invalid', message: MESSAGE_RULE }
       const checked = await checkReopen(brain, input.taskId)
       if (!checked.ok) return checked
       return { ok: true, command: save(base) }
     }
 
     if (input.kind === 'follow_up') {
-      if (!input.taskId || !input.message?.trim() || input.message.length > MESSAGE_MAX) return { ok: false, refusal: 'invalid' }
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      if (!input.message?.trim() || input.message.length > MESSAGE_MAX) return { ok: false, refusal: 'invalid', message: MESSAGE_RULE }
       const task = await taskOf(brain, input.taskId)
       if (!task) return { ok: false, refusal: 'unknown_task' }
-      const owner = task.properties?.assignee_ids?.[0]
-      if (deps.viewer && owner && owner !== deps.viewer) return { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can start a follow-up here.` }
+      const refused = ownerRefusal(task, 'start a follow-up of this task')
+      if (refused) return refused
       return { ok: true, command: save(base) }
     }
     return { ok: false, refusal: 'invalid' }
@@ -455,20 +463,27 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'reopen') {
-        const checked = await checkReopen(brain, command.taskId!)
-        if (!checked.ok) return fail(checked.message ?? checked.refusal)
-        const steps = checked.closedSteps ? ` ${checked.closedSteps} closed step${checked.closedSteps === 1 ? '' : 's'} stay closed.` : ''
-        const reason = command.reason ? ` Why: ${command.reason}` : ''
-        // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
-        const how = command.message ? `Reopened by writing in its chat: "${firstLine(command.message)}".` : 'Reopened on the task board by the owner.'
-        const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
-        const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
-        if (items.length > 0) {
-          const list = items.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')
-          await track(brain, checked.task.id, {}, `Closed with the task and not back yet: ${list}. They come back through the chat on the owner's yes (eml_update status active).`)
+        // Each part is recorded as it is done, so a retry after a crash goes on where it stopped: the message
+        // is keyed on the reopened task, not on this run making the change (service-design, retries).
+        let current = command
+        if (!current.reopened) {
+          const checked = await checkReopen(brain, current.taskId!)
+          if (!checked.ok) return fail(checked.message ?? checked.refusal)
+          const steps = checked.closedSteps ? ` ${checked.closedSteps} closed step${checked.closedSteps === 1 ? '' : 's'} stay closed.` : ''
+          const reason = current.reason ? ` Why: ${current.reason}` : ''
+          // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
+          const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
+          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
+          current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
+          if (items.length > 0) {
+            const list = items.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')
+            await track(brain, checked.task.id, {}, `Closed with the task and not back yet: ${list}. They come back through the chat on the owner's yes (eml_update status active).`)
+              .catch((err: Error) => deps.log(`[commands] ${current.opId.slice(0, 8)} reopen: listing what closed with it failed: ${err.message}`))
+          }
         }
-        const continued = command.message ? await continueIn(command.spaceId, checked.task.id, command.message) : undefined
-        save({ ...command, state: 'applied', reopened: { items, closedSteps: checked.closedSteps }, ...(continued ? { continued } : {}) })
+        const continued = current.message && !current.continued ? await continueIn(current.spaceId, current.taskId!, current.message) : current.continued
+        save({ ...current, state: 'applied', ...(continued ? { continued } : {}) })
       } else if (command.kind === 'follow_up') {
         const followUp = await makeFollowUp(brain, command)
         if (!followUp) return fail('its task is gone')

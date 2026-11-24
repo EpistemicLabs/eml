@@ -424,9 +424,19 @@ describe('send in a closed task\'s chat', () => {
     expect(refused.store.get('op-f')).toMatchObject({ state: 'applied', continued: { how: 'failed' } })
   })
 
-  it('refuses an empty or oversized message, and keeps the reopen rules', async () => {
+  it('after a crash between the reopen and the delivery, the retry still gives the message once', async () => {
+    const w = chatWorld([owned('t1', {}, 'active')])
+    // As the store holds it when the host died right after the reopen was recorded.
+    w.store.put({ opId: 'op-c', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'go on', createdAt: '', undoUntil: new Date(w.clock.now - 1).toISOString(), state: 'pending', reopened: { items: [], closedSteps: 0 } }, w.clock.now)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.delivered).toEqual([{ sessionId: 's-newest', text: 'go on' }])
+    expect(w.store.get('op-c')).toMatchObject({ state: 'applied', continued: { how: 'delivered' } })
+  })
+
+  it('refuses an empty or oversized message with what to change, and keeps the reopen rules', async () => {
     const w = chatWorld([owned('t1', {}, 'resolved'), { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } }])
-    expect(await w.commands.submit({ opId: 'a', kind: 'reopen', spaceId: 'main', taskId: 't1', message: '  ' })).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await w.commands.submit({ opId: 'a', kind: 'reopen', spaceId: 'main', taskId: 't1', message: '  ' })).toMatchObject({ ok: false, refusal: 'invalid', message: expect.stringContaining(`at most ${MESSAGE_MAX}`) })
     expect(await w.commands.submit({ opId: 'b', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'x'.repeat(MESSAGE_MAX + 1) })).toMatchObject({ ok: false, refusal: 'invalid' })
     expect(await w.commands.submit({ opId: 'c', kind: 'reopen', spaceId: 'main', taskId: 'theirs', message: 'hi' })).toMatchObject({ ok: false, refusal: 'not_owner' })
   })

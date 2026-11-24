@@ -123,6 +123,15 @@ describe('task board routes', () => {
       .toEqual({ status: 403, body: { error: { code: 'not_owner', message: 'Only its owner (dominik) can reopen this task.', retry: false } } })
   })
 
+  it('takes a reopen with a message from the task\'s chat, and a follow-up with its brief', async () => {
+    expect((await post('/api/v1/tasks/t9/reopen', { opId: 'op-m', spaceId: 'main', message: 'One more fix' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-m', spaceId: 'main', kind: 'reopen', taskId: 't9', message: 'One more fix' })
+    expect((await post('/api/v1/tasks/t9/follow-up', { opId: 'op-f', spaceId: 'main', message: 'Now the phone layout' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-f', spaceId: 'main', kind: 'follow_up', taskId: 't9', message: 'Now the phone layout' })
+    expect((await post('/api/v1/tasks/t9/follow-up', { opId: 'op-f2', spaceId: 'main' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-f2', spaceId: 'main', kind: 'follow_up', taskId: 't9' })
+  })
+
   it('undoes, or says it is too late', async () => {
     expect(await post('/api/v1/commands/op-1/undo', {})).toEqual({ status: 200, body: { state: 'undone' } })
     expect((await post('/api/v1/commands/late/undo', {})).body.error.code).toBe('undo_expired')
