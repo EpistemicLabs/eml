@@ -965,6 +965,16 @@ async function main() {
         },
       },
       channelBridge: bridgeFiles(),
+      replyTexts: async (sessionId) => {
+        const entry = ledger.get(sessionId)
+        if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+        const space = spaces.resolve(entry.spaceId)
+        const projectPath = space.registry.get(entry.projectId)?.path
+        if (!projectPath) return null
+        const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
+        const events = await sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
+        return events ? events.flatMap((event) => (event.kind === 'text' ? [event.text] : [])) : null
+      },
       push: { store: pushStore, notifier: pushNotifier },
       jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
     },

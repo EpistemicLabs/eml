@@ -53,6 +53,7 @@ import { isLocalRequest, requestGate } from './remote-access.js'
 import { claudeLoginStatus, clearClaudeLogin, invalidateAccountCache, writeAgentPatch, writeClaudeLogin } from './infrastructure/providers/claude/login.js'
 import { createBackup, listBackups, readBrainInfo, revealBrainFile } from './brain-info.js'
 import { PasteImageError, pastedImageFile, savePastedImage } from './paste-images.js'
+import { createRecentFiles, handleFilesApi, type FilesDeps } from './files-api.js'
 import { acknowledgeUpdateStatus, readUpdateStatus } from './update-status.js'
 import { applyUpdate, changesBrainSchema, checkForUpdate, readAppUpdateStatus, releaseNotesBetween, rollbackUpdate, setUpdateChannel, writeGithubToken } from './app-update.js'
 import { handleAccountApi } from './account.js'
@@ -159,6 +160,8 @@ export interface HostDeps {
   jobContract?: JobContractDeps
   /** The channel bridge's draft routes for the page; absent, /api/bridge is not served. */
   channelBridge?: BridgeApiDeps
+  /** The agent's reply texts in a session's transcript, for the files ⌘K finds (files-api.ts); absent, none are found. */
+  replyTexts?: (sessionId: string) => Promise<string[] | null>
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -683,6 +686,32 @@ async function createSharedSpace(deps: HostDeps, body: Record<string, unknown>):
   return { status: existing ? 200 : 201, body: { space: spaceView(space), team: result.answer.body } }
 }
 
+// The media viewer's files (files-api.ts): one per host, so the recent-files cache lives as long as it.
+const filesApis = new WeakMap<HostDeps, { deps: FilesDeps; recent: ReturnType<typeof createRecentFiles> }>()
+function filesApiOf(deps: HostDeps): { deps: FilesDeps; recent: ReturnType<typeof createRecentFiles> } {
+  const known = filesApis.get(deps)
+  if (known) return known
+  const files: FilesDeps = {
+    cwdOf: (sessionId) => {
+      const entry = deps.bridge.ledger.get(sessionId)
+      if (!entry) return null
+      const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
+      return entry.workdir ?? project?.path ?? null
+    },
+    recentSessions: () => deps.bridge.ledger.list()
+      .map((entry) => {
+        const owner = deps.spaces.resolve(entry.spaceId)
+        const view = sessionView(deps, entry.projectId ? owner.registry.get(entry.projectId) : undefined, entry)
+        return { sessionId: entry.sessionId, title: view.summary || 'Session', projectId: entry.projectId, spaceId: owner.id, lastActivity: view.lastActivity }
+      })
+      .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity)),
+    replyTexts: (sessionId) => deps.replyTexts?.(sessionId) ?? Promise.resolve(null),
+  }
+  const api = { deps: files, recent: createRecentFiles(files) }
+  filesApis.set(deps, api)
+  return api
+}
+
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps): Promise<boolean> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const method = req.method ?? 'GET'
@@ -695,6 +724,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
   if (deps.tasks && await handleTasksApi(req, res, deps.tasks, url.pathname, method, json, readJson)) return true
   if (deps.push && await handlePushApi(req, res, deps.push, url, method, json, readJson)) return true
+  if (url.pathname === '/api/file' || url.pathname.startsWith('/api/files/')) {
+    const files = filesApiOf(deps)
+    if (await handleFilesApi(req, res, files.deps, files.recent, url, method, json, readJson)) return true
+  }
 
   // v0.19: the model a cockpit session runs on, for the EML MCP server's
   // provenance stamp (it calls this per write, /model can switch mid-session).
