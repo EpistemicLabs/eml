@@ -4,7 +4,7 @@ import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-boa
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; latest_note?: { text: string; at: string } | null; properties?: Record<string, unknown> }
 
 /** A brain with listed tasks and, by id only, tasks the lists leave out (closed long ago). */
-function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true) {
+function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true, runs: Array<Record<string, unknown>> = []) {
   const queries: Array<Record<string, unknown>> = []
   const fetched: string[] = []
   return {
@@ -13,6 +13,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
     fetched,
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/object/agent') return { objects: agents.map((id) => ({ id, name: id })) }
+      if (path === '/object/run') return { objects: runs }
       if (path === '/object/project') return { objects: projects }
       if (path === '/list') {
         queries.push(query ?? {})
@@ -35,10 +36,10 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
-  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
+  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(opts.other ?? [], [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   const deps: TaskBoardDeps = {
@@ -53,7 +54,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     now: () => clock.now,
     log: (line) => { opts.log?.push(line) },
     ...(opts.head ? { head: opts.head } : {}),
-    runnerBusy: (taskId) => opts.busy?.includes(taskId) ?? false,
+    runnerBusy: (taskId, runs) => (opts.busy?.includes(taskId) ?? false) || (runs ?? []).some((r) => r.state === 'running'),
     runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
   }
@@ -64,6 +65,32 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work (step 3)', async () => {
+    const run = (id: string, task_id: string, state: string, at: string) => ({ id, task_id, member: 'dominik', agent: 'motti', state, last_activity_at: at })
+    const delegated = { delegate: 'atlas', checkpoint: 'after' }
+    const { board } = setup({
+      main: [mine('elsewhere', delegated), mine('between-turns', delegated), mine('stale', delegated), mine('ended', delegated), mine('local', delegated), mine('queued', delegated, 'planned')],
+      working: ['local'],
+      runs: [
+        run('r1', 'elsewhere', 'running', '2026-11-19T09:55:00.000Z'),
+        run('r2', 'between-turns', 'idle', '2026-11-19T09:00:00.000Z'),
+        run('r3', 'stale', 'running', '2026-11-19T08:30:00.000Z'),
+        run('r4', 'ended', 'ended', '2026-11-19T09:59:00.000Z'),
+        // this host's own session on it: counted once, from the ledger
+        { ...run('s0', 'local', 'idle', '2026-11-19T09:59:00.000Z'), member: 'lasse' },
+        run('r5', 'queued', 'running', '2026-11-19T09:59:00.000Z'),
+      ],
+    })
+    const model = await board.refresh()
+    const byId = new Map(model.tasks.map((t) => [t.id, t]))
+    expect(byId.get('elsewhere')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: [] })
+    expect(byId.get('between-turns')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('stale')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
+    expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
+    expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })
+  })
+
   it('gives a task closed in the Done window its put-away sessions, so its chat shows; an open task only its live ones', async () => {
     const { board } = setup({
       main: [mine('just-done', {}, 'resolved'), mine('open')],

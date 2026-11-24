@@ -1,6 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, runnerBlock } from '../domain/runner-gate.js'
+import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -37,8 +38,8 @@ export interface TaskRunnerDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** This cockpit's member (the config handle): in a shared space it starts only their steps. */
   me: string
-  /** A session works on this task already (a worker started on it by hand or by a session). */
-  busy?(taskId: string): boolean
+  /** A session works on this task already (a worker started on it by hand or by a session), here or in another member's run. */
+  busy?(taskId: string, runs: readonly RunFacts[]): boolean
   /** Its hand-over can still be undone: nothing starts until the undo window is over. */
   held?(taskId: string): boolean
   /** A job of the task will start it at a set time. */
@@ -109,6 +110,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       return tasks.get(id)!
     }
     const listed = await brain.get('/list', { type: 'task', status: 'planned', limit: 200 }) as { engrams?: Task[] }
+    // The space's open runs, read once per tick: a working run of another member's session holds its task (domain/runs.ts).
+    const runs = openRunsByTask(runsOf(((await brain.get('/object/run').catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []))
     const candidates = (listed.engrams ?? []).filter((t) => t.properties?.checkpoint && t.properties.delegate)
     const started = new Map<string, number>()
     for (const candidate of candidates) {
@@ -136,7 +139,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         deps: await Promise.all(dependsOn.map(async (id) => ({ id, task: await get(id) }))),
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
-        busy: deps.busy?.(step.id), held: deps.held?.(step.id), scheduled: deps.scheduled?.(step.id),
+        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id), scheduled: deps.scheduled?.(step.id),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
       if (block) continue

@@ -90,6 +90,9 @@ import { createSortSession } from './application/sort-session.js'
 import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
+import { createRunRecords, type RunRecords } from './application/run-records.js'
+import { runsBlockRunner, type RunFacts } from './domain/runs.js'
+import { parseHandoff } from './domain/handoff.js'
 import { projectIdForBrain } from './project-registry.js'
 
 /**
@@ -391,11 +394,18 @@ async function main() {
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
   // The task board asks the same two checks, so it names the reason the runner skips a task.
-  const runnerBusy = (taskId: string) => sessionsBlockRunner(
-    ledger.list().filter((e) => e.taskId === taskId).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
-    taskCommands?.delegatedAt(taskId) ?? null,
-  )
+  // A working run of a session this cockpit does not have holds it too: someone works on it elsewhere (domain/runs.ts).
+  const runnerBusy = (taskId: string, runs: readonly RunFacts[] = []) => {
+    const own = ledger.list().filter((e) => e.taskId === taskId)
+    return sessionsBlockRunner(
+      own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
+      taskCommands?.delegatedAt(taskId) ?? null,
+    ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)), Date.now())
+  }
   // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.
+  const lastResults = new Map<string, string>()
+  // Set once the turns and the session runtimes exist; turnEnded pokes it.
+  let runRecords: RunRecords = { sync: async () => {}, poke: () => {}, every: () => () => {} }
   const runnerHeld = (taskId: string) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
@@ -443,6 +453,10 @@ async function main() {
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => {
+    // The run keeps the result line of the session's last handoff (application/run-records.ts).
+    const result = parseHandoff(text)?.result
+    if (result) lastResults.set(sessionId, result)
+    runRecords.poke()
     void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
@@ -699,6 +713,26 @@ async function main() {
 
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
+
+  // Synced run records: one per session on a task, written when something happens in it (application/run-records.ts).
+  runRecords = createRunRecords({
+    spaces: () => spaces.list(),
+    brain: taskBrain,
+    me: owner,
+    sessions: () => ledger.list().map((e) => ({
+      sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, createdAt: e.createdAt,
+      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId,
+    })),
+    turnOf: (sessionId) => turns.get(sessionId)?.state,
+    processRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
+    resultOf: (sessionId) => lastResults.get(sessionId) ?? null,
+    agentOf: (space) => space.agent,
+    log,
+  })
+  turns.on('turn', () => runRecords.poke())
+  // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
+  setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
+  runRecords.every(RUN_SYNC_MS)
 
   // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
   const taskBoard = createTaskBoard({
@@ -973,6 +1007,9 @@ async function main() {
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
+// Run records: a sync writes only what changed; the first waits for the sessions a restart brings back.
+const RUN_SYNC_MS = 60_000
+const RUN_FIRST_SYNC_MS = 30_000
 /** Pending task board commands are applied once their undo window is over. */
 const TASK_COMMAND_TICK_MS = 1000
 /**
