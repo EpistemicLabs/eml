@@ -329,6 +329,19 @@ describe('v0.19 REST', () => {
   })
 
   describe('/object/:object', () => {
+    it('v0.23: latest=true lists the newest run of each task; for other objects it is refused', async () => {
+      const task = await create(validTask({ title: 'rest-latest-run' }))
+      const run = (id: string, started_at: string) => post('/object/run', { id, task_id: task.body.id, member: 'bootstrap', origin: 'user', driver: 'human', started_at, state: 'ended' })
+      expect((await run('rest-run-old', '2026-11-24T08:00:00.000Z')).status).toBe(201)
+      expect((await run('rest-run-new', '2026-11-24T09:00:00.000Z')).status).toBe(201)
+      const latest = await get('/object/run?latest=true')
+      expect(latest.status).toBe(200)
+      expect(latest.body.objects.filter((r: { task_id: string }) => r.task_id === task.body.id).map((r: { id: string }) => r.id)).toEqual(['rest-run-new'])
+      const refused = await get('/object/project?latest=true')
+      expect(refused.status).toBe(400)
+      expect(refused.body.error).toContain('for runs only')
+    })
+
     it('project: create, read one and the list, update with diff, archive sets ended_at; 404s; unknown field', async () => {
       const c = await post('/object/project', { name: 'Rest Project', goal: 'test', metadata: { repo: 'x/y' } })
       expect(c.status).toBe(201)

@@ -195,7 +195,8 @@ describe('run records', () => {
     turns.set('s1', 'working')
     await records.sync()
     expect(brain.writes.map((w) => `${w.method} ${w.path} ${JSON.stringify(w.body.state)}`)).toEqual([
-      'POST /object/run "running"', 'PUT /object/run/s1 "running"', 'POST /object/run "idle"',
+      // s1's run is found by its id and resumed, never created twice; s9's task is not in the brain
+      'PUT /object/run/s1 "running"', 'POST /object/run "idle"',
     ])
     expect(logs).toEqual([expect.stringContaining('no run for session s9')])
 
@@ -203,7 +204,16 @@ describe('run records', () => {
     await records.sync()
     expect(brain.writes.at(-1)).toEqual({ method: 'PUT', path: '/object/run/s1', body: { state: 'ended', end_reason: 'finished' } })
     await records.sync()
-    expect(brain.writes.filter((w) => w.method === 'POST')).toHaveLength(2)
+    expect(brain.writes.filter((w) => w.method === 'POST')).toHaveLength(1)
+  })
+
+  it('looks a session\'s run up before creating it: another member\'s run with that id is refused, not overwritten', async () => {
+    const brain = brainOf(['t1'], [{ id: 's1', task_id: 't1', member: 'dominik', state: 'ended' }])
+    const { records, processes, logs } = setup(brain, [session('s1', 't1')])
+    processes.add('s1')
+    await records.sync()
+    expect(brain.writes).toEqual([])
+    expect(logs).toEqual([expect.stringContaining('belongs to dominik')])
   })
 
   it('a brain without runs (before schema 23) gets no writes', async () => {

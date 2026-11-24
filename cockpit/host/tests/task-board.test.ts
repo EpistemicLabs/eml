@@ -71,7 +71,13 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
-  it('shows a schedule another member\'s cockpit mirrored into the delegation as scheduled, with its next run (step 6)', async () => {
+  it('offers "Hand to <agent>" for a delegated task that was never handed over, in Needs you', async () => {
+    const { board } = setup({ main: [mine('never', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }, 'planned')] })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'never')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'not_handed_over', handTo: 'atlas' })
+  })
+
+  it('shows a schedule another member\'s cockpit mirrored into the delegation as scheduled, with its next run', async () => {
     const { board } = setup({
       main: [
         mine('theirs-weekly', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', session: 'new' } } }),
@@ -83,7 +89,7 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
   })
 
-  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work (step 3)', async () => {
+  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work', async () => {
     const run = (id: string, task_id: string, state: string, at: string) => ({ id, task_id, member: 'dominik', agent: 'motti', state, last_activity_at: at })
     const delegated = { delegate: 'atlas', checkpoint: 'after' }
     const { board } = setup({

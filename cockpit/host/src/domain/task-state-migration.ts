@@ -3,12 +3,11 @@ import type { Wait } from './task-waits.js'
 import { waitsOf } from './task-waits.js'
 
 /**
- * The migration of existing tasks to the task state model (brain schema 23; model section 9, decision
- * task-state-migration-rules). The brain's own migration (v0.23_migrate.sql) did the mechanical part: delegation from
+ * The migration of existing tasks to the task state model (brain schema 23; decision task-state-migration-rules). The brain's own migration (v0.23_migrate.sql) did the mechanical part: delegation from
  * delegate and checkpoint (never with a request), waits from waiting_on. This plans what needs the cockpit's rules,
  * per task, and lists it as a dry run before anything is written:
  *
- *   - a delegate without a checkpoint (the planned tasks Lasse confirmed) → delegation { agent, checkpoint: after }
+ *   - a delegate without a checkpoint → delegation { agent, checkpoint: after }
  *     without a request: nothing starts; the board offers "Hand to <agent>";
  *   - a checkpoint without a delegate → cleared;
  *   - a planned task with a delegate and a checkpoint, no request and no schedule — one the runner starts today →

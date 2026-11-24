@@ -145,8 +145,13 @@ export async function handleTasksApi(
       return true
     }
     const answer = method === 'GET' ? await deps.migration.dryRun(spaceId) : await deps.migration.run(spaceId)
-    if (answer.ok) json(res, 200, answer)
-    else refuse(json, res, answer.refusal)
+    if (!answer.ok) {
+      if (answer.refusal === 'in_flight') json(res, 409, { error: { code: 'in_flight', message: answer.message, retry: true } })
+      else refuse(json, res, answer.refusal)
+    } else if ('failed' in answer && answer.failed.length > 0) {
+      // Part of it failed: a retry plans again and writes what is left.
+      json(res, 502, { error: { code: 'migration_failed', message: `${answer.failed.length} change(s) failed; run it again to write the rest.`, retry: true }, ...answer })
+    } else json(res, 200, answer)
     return true
   }
 

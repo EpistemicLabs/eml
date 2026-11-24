@@ -734,7 +734,7 @@ async function main() {
   turns.on('turn', () => runRecords.poke())
   // A task's schedule lives in the brain: this cockpit's jobs mirror their timing into it (application/schedule-mirror.ts).
   const scheduleMirror = createScheduleMirror({
-    spaces: () => spaces.list(), brain: taskBrain, jobs: () => jobStore.list(), agentOf: (space) => space.agent, now: () => Date.now(), log,
+    spaces: () => spaces.list(), brain: taskBrain, jobs: () => jobStore.list(), agentOf: (space) => space.agent, me: owner, now: () => Date.now(), log,
   })
   setTimeout(() => { void scheduleMirror.sync() }, RUN_FIRST_SYNC_MS).unref?.()
   scheduleMirror.every(RUN_SYNC_MS)

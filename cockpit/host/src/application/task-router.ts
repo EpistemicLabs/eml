@@ -152,7 +152,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       // A closed task waits on nobody.
       if (closed) return waits.length > 0 ? waitsBody([]) : null
       // A status the session gave before the task was reopened belongs to the closed task: it must not
-      // put a wait on the reopened one (seen on 4df3b729, where an old review wait came back).
+      // put a wait on the reopened one.
       const reopened = reopenedAt(task as { entries?: Array<{ kind?: string; at?: string; text?: string }> })
       if (attention && reopened && attention.at < reopened) {
         attention = null

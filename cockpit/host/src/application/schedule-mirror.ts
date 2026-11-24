@@ -11,7 +11,7 @@ import { sameSchedule, scheduleOfJobs } from '../domain/task-schedule.js'
  * Per task with a job here: the schedule its jobs give it (the running job due first). It is written when it differs
  * from what the task has; a task none of whose jobs has a time left loses its schedule. A task without a delegation
  * gets one for the space's agent (no checkpoint, no request: the job starts it, not the runner). Only tasks with a job on
- * this cockpit are touched — another member's schedules are theirs. The brain is read only when a task's schedule here
+ * this cockpit and owned by its member (or by nobody) are touched — another member's schedules are theirs. The brain is read only when a task's schedule here
  * changed since the last sync, or every RECHECK_MS.
  */
 
@@ -22,6 +22,8 @@ export interface ScheduleMirrorDeps {
   jobs(): Job[]
   /** The agent the space's sessions run as. */
   agentOf(space: BrainSpace): string | null
+  /** This cockpit's member: it writes the schedule only of the tasks it owns, so a schedule has one writer. */
+  me: string
   now(): number
   log(line: string): void
 }
@@ -31,7 +33,7 @@ const RECHECK_MS = 10 * 60 * 1000
 interface Task {
   id: string
   status: string
-  properties?: { delegation?: DelegationFields; delegate?: string; checkpoint?: string }
+  properties?: { delegation?: DelegationFields; delegate?: string; checkpoint?: string; assignee_ids?: string[] }
 }
 
 export interface ScheduleMirror {
@@ -60,6 +62,14 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
       try {
         const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as Task
         if (task.status !== 'planned' && task.status !== 'active') { known.set(taskId, { schedule: wanted, at: now }); mirrored.delete(taskId); continue }
+        // One writer per schedule: the owner's cockpit (the first person in assignee_ids). Another member's job on the
+        // task runs on that member's cockpit but leaves the shared schedule to the owner's.
+        const owner = task.properties?.assignee_ids?.[0]
+        if (owner && owner !== deps.me) {
+          if (!seen) deps.log(`[schedule] task ${taskId.slice(0, 8)} is ${owner}'s: its schedule is theirs to write, not this cockpit's`)
+          known.set(taskId, { schedule: wanted, at: now })
+          continue
+        }
         const d = task.properties?.delegation ?? (task.properties?.delegate ? { agent: task.properties.delegate, ...(task.properties.checkpoint ? { checkpoint: task.properties.checkpoint } : {}) } : undefined)
         const current = d?.schedule ?? null
         if (!sameSchedule(current, wanted)) {

@@ -1,5 +1,5 @@
 /**
- * Synced run records (brain schema 23, task state model step 3).
+ * Synced run records (brain schema 23).
  *
  * A run is one session on a task, as its member's cockpit knows it. The host writes one per session on a task
  * (application/run-records.ts) when something happens in it — the start, each turn's start and end, the end, a crash

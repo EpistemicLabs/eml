@@ -76,6 +76,12 @@ describe('what a card says', () => {
     expect(hueOf(task())).toBe('you');
     expect(hueOf(task({ group: 'nobody' }))).toBe('stopped');
     expect(hueOf(task({ turn: 'agent_working', group: undefined }))).toBe('agent');
+    expect(hueOf(task({ turn: 'agent_working', group: 'stale' }))).toBe('stopped');
+  });
+
+  it('says when a parked task comes back, or that it has no date', () => {
+    expect(coverageText(task({ turn: 'parked', coverage: { ok: true, how: 'parked' } }), NOW)).toBe('parked until you bring it back');
+    expect(coverageText(task({ turn: 'parked', coverage: { ok: true, how: 'parked', at: new Date(NOW + 86_400_000).toISOString() } }), NOW)).toMatch(/^parked · back /);
   });
 
   it('reads anchors as titles', () => {

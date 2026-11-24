@@ -68,7 +68,7 @@ describe('the schedule mirror', () => {
     const clock = { now: NOW }
     const mirror = createScheduleMirror({
       spaces: () => [{ id: 'main', name: 'Main', main: true } as never], brain: () => brain, jobs: () => jobs,
-      agentOf: () => 'atlas', now: () => clock.now, log: () => {},
+      agentOf: () => 'atlas', me: 'lasse', now: () => clock.now, log: () => {},
     })
     return { mirror, clock }
   }
@@ -95,6 +95,13 @@ describe('the schedule mirror', () => {
     jobs.length = 0
     await mirror.sync()
     expect(brain.posts.at(-1)!.body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T09:00:00.000Z' })
+  })
+
+  it('writes the schedule only of a task its member owns: another member\'s task keeps one writer', async () => {
+    const brain = brainOf({ theirs: { status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'motti' } } } })
+    const { mirror } = setup(brain, [job({ taskId: 'theirs' })])
+    await mirror.sync()
+    expect(brain.posts).toEqual([])
   })
 
   it('a job whose task is gone is looked at again only after a while, not at every sync', async () => {
