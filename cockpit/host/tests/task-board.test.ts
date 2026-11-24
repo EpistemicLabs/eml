@@ -43,7 +43,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -70,6 +70,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     ...(opts.head ? { head: opts.head } : {}),
     runnerBusy: (taskId, runs) => (opts.busy?.includes(taskId) ?? false) || (runs ?? []).some((r) => r.state === 'running'),
     runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
+    runnerStartedAt: (taskId) => opts.started?.[taskId] ?? null,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
   }
   const board = createTaskBoard(deps)
@@ -277,6 +278,35 @@ describe('the task board', () => {
     const of = (id: string) => model.tasks.find((t) => t.id === id)!
     expect(of('queued')).toMatchObject({ turn: 'agent_scheduled', group: 'blocked', runner: { kind: 'cap', running: 5, max: 5, standalone: true } })
     expect(of('theirs')).toMatchObject({ turn: 'agent_scheduled', group: 'runner', runner: { kind: 'other_member', owner: 'dominik' } })
+  })
+
+  it('counts a slot as the runner does: tasks waiting on an answer and another member\'s tasks hold none, a fresh start does', async () => {
+    const theirs = (id: string): Row => ({ id, status: 'active', properties: { assignee_ids: ['dominik'], delegate: 'motti', checkpoint: 'after' } })
+    const own = (id: string, props: Record<string, unknown> = {}) => mine(id, { delegate: 'atlas', checkpoint: 'after', ...props })
+    const { board } = setup({
+      main: [],
+      other: [
+        own('now-plan', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which view?' } }),
+        theirs('grok'), theirs('audit'), theirs('t1'), theirs('dupes'),
+        mine('follow-up', { delegate: 'atlas', checkpoint: 'after' }, 'planned'),
+      ],
+      working: ['grok'],
+    })
+    const of = (model: Awaited<ReturnType<typeof board.refresh>>, id: string) => model.tasks.find((t) => t.id === id)!
+    const model = await board.refresh()
+    expect(of(model, 'follow-up')).toMatchObject({ turn: 'agent_scheduled', group: 'runner' })
+    expect(of(model, 'follow-up').runner).toBeUndefined()
+
+    // Four working own tasks and one the runner started a moment ago fill the cap; past the grace its slot frees.
+    const working = ['w-1', 'w-2', 'w-3', 'w-4'].map((id) => own(id))
+    const filled = setup({
+      main: [...working, own('fresh'), mine('queued', { delegate: 'atlas', checkpoint: 'after' }, 'planned')],
+      working: working.map((w) => w.id),
+      started: { fresh: Date.parse('2026-11-19T09:59:50Z') },
+    })
+    expect(of(await filled.board.refresh(), 'queued')).toMatchObject({ group: 'blocked', runner: { kind: 'cap', running: 5, max: 5 } })
+    filled.clock.now += 60_000
+    expect(of(await filled.board.refresh(), 'queued').runner).toBeUndefined()
   })
 
   it('reads the turn from the most urgent of a task\'s waits, and lists each wait on the viewer in the Inbox', async () => {

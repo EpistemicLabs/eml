@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -45,8 +45,8 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean } = {}) => {
-    const brain = brainOf(list)
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean } = {}, runs: Array<Record<string, unknown>> = []) => {
+    const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
     const runner = mod.createTaskRunner({
@@ -106,7 +106,7 @@ describe('task runner', () => {
       { id: 'taken', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
       { id: 'free-1', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
       { id: 'free-2', status: 'planned', checkpoint: 'none', delegate: 'atlas' },
-    ], undefined, () => null, (id) => id === 'taken')
+    ], undefined, () => null, (id) => id === 'taken', { working: (id) => id.startsWith('running-') })
     expect(started.map((s) => s.id)).toEqual(['free-1'])
   })
 
@@ -138,8 +138,72 @@ describe('task runner', () => {
       { id: 'r4', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
       { id: 's1', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
       { id: 's2', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
-    ])
+    ], undefined, () => null, () => false, { working: (id) => id.startsWith('r') })
     expect(started).toHaveLength(1)
+  })
+
+  describe('slots: only a task this cockpit runs with a session working on it holds one', () => {
+    const active = (id: string, extra: Partial<T> = {}): T => ({ id, status: 'active', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'], ...extra })
+
+    it('frees the slot of an own task that waits on its owner\'s answer or review', async () => {
+      const { started } = await run([
+        active('asked', { waiting_on: { who: 'lasse', kind: 'question' } }),
+        active('review', { waiting_on: { who: 'lasse', kind: 'review' } }),
+        active('w-1'), active('w-2'), active('w-3'),
+        { id: 'free', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
+      ], undefined, () => null, () => false, { working: (id) => id.startsWith('w-') })
+      expect(started.map((s) => s.id)).toEqual(['free'])
+    })
+
+    it('gives another member\'s tasks in a shared space no slot, even while their run works on the other cockpit', async () => {
+      const theirs = (id: string): T => ({ id, status: 'active', checkpoint: 'after', delegate: 'motti', assignee_ids: ['dominik'] })
+      const now = new Date().toISOString()
+      const { started } = await run([
+        active('now-plan', { waiting_on: { who: 'lasse', kind: 'question' } }),
+        theirs('grok'), theirs('audit'), theirs('t1'), theirs('dupes'),
+        { id: 'follow-up', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
+      ], { shared: true, name: 'EML' }, () => null, () => false, { working: (id) => id === 'grok' },
+      [{ id: 'run-grok', task_id: 'grok', member: 'dominik', state: 'running', started_at: '2026-01-01T00:00:00.000Z', last_activity_at: now }])
+      expect(started.map((s) => s.id)).toEqual(['follow-up'])
+    })
+
+    it('counts own tasks with a working session, and lets "Run now" on an active task start below the cap', async () => {
+      const working = ['w-1', 'w-2', 'w-3', 'w-4', 'w-5'].map((id) => active(id))
+      const queued: T = { id: 'queued', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] }
+      expect((await run([...working, queued], undefined, () => null, () => false, { working: (id) => id.startsWith('w-') })).started).toEqual([])
+      // Run Atlas now on an active task: a new request; four working tasks leave a slot.
+      const rerun = active('rerun', { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-06-01T00:00:00.000Z' } })
+      const { started } = await run([...working.slice(0, 4), active('idle-1'), rerun], undefined, () => null, () => false, { working: (id) => id.startsWith('w-') })
+      expect(started.map((s) => s.id)).toEqual(['rerun'])
+    })
+
+    it('keeps the slot of a task it just started until its session works or START_GRACE_MS passed', async () => {
+      vi.useFakeTimers({ now: Date.parse('2026-11-24T12:00:00.000Z') })
+      try {
+        const list: T[] = [
+          active('w-1'), active('w-2'), active('w-3'), active('w-4'),
+          { id: 'first', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
+          { id: 'second', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
+        ]
+        const brain = brainOf(list)
+        const started: string[] = []
+        const runner = mod.createTaskRunner({
+          spaces: { list: () => [{ shared: false, name: 'Main' } as never] }, brain: () => brain, me: 'lasse', log: () => {},
+          working: (id) => id.startsWith('w-'),
+          start: (_space, step) => { started.push(step.id); return null },
+        })
+        await runner.tick()
+        expect(started).toEqual(['first'])
+        expect(runner.startedAt('first')).toBe(Date.now())
+        await runner.tick()
+        expect(started).toEqual(['first'])
+        vi.advanceTimersByTime(61_000)
+        await runner.tick()
+        expect(started).toEqual(['first', 'second'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('in a shared or unconfirmed space starts only the steps this member owns: first assignee, else author', async () => {

@@ -95,7 +95,7 @@ import { createScheduleMirror } from './application/schedule-mirror.js'
 import { scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
-import { runsBlockRunner, type RunFacts } from './domain/runs.js'
+import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
 import { projectIdForBrain } from './project-registry.js'
 
@@ -411,9 +411,13 @@ async function main() {
   // Set once the turns and the session runtimes exist; turnEnded pokes it.
   let runRecords: RunRecords = { sync: async () => {}, poke: () => {}, every: () => () => {} }
   const runnerHeld = (taskId: string) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false
+  // What holds one of the runner's slots: a session in a turn on the task, here or in another cockpit's run (domain/runs.ts).
+  const taskSessions = (taskId: string) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
+    .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' }))
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
+    working: (taskId, runs) => liveFactsOf(taskSessions(taskId), runs, null, Date.now()).working,
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: runnerHeld,
     brief: (taskId) => taskCommands?.briefOf(taskId),
@@ -749,8 +753,7 @@ async function main() {
     spaces: () => spaces.list(),
     brain: taskBrain,
     viewer: owner,
-    sessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
-      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
+    sessionsOn: taskSessions,
     nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
       .map((job) => job.nextRunAt!).sort()[0] ?? null,
     scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
@@ -760,6 +763,7 @@ async function main() {
     reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
     ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
     runnerBusy, runnerHeld,
+    runnerStartedAt: (taskId) => taskRunner.startedAt(taskId),
     now: () => Date.now(),
     log,
     // The space's log head, straight from its brain (brain GET /head): what the board watches to refresh live.

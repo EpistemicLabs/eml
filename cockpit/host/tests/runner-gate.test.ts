@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MAX_RUNNING, runnerBlock, type GateInput, type GateTask } from '../src/domain/runner-gate.js'
+import { MAX_RUNNING, START_GRACE_MS, holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateInput, type GateTask } from '../src/domain/runner-gate.js'
 
 const t = (id: string, status: string, props: GateTask['properties'] = {}, extra: Partial<GateTask> = {}): GateTask =>
   ({ id, status, scope: 'project.eml', title: id, properties: props, ...extra })
@@ -73,5 +73,49 @@ describe('the runner gate', () => {
     expect(gate({ task: ready({ waiting_on: { who: 'kim' } }), held: true, running: 9 })).toMatchObject({ kind: 'waiting' })
     expect(gate({ parent: { id: 'p', task: t('p', 'planned') }, deps: [{ id: 'a', task: t('a', 'planned') }] })).toMatchObject({ kind: 'parent' })
     expect(gate({ deps: [{ id: 'a', task: t('a', 'planned') }], running: 9 })).toMatchObject({ kind: 'depends' })
+  })
+
+  it('names another member\'s task before the cap: this cockpit\'s slots say nothing about it', () => {
+    const theirs = ready({ assignee_ids: ['dominik'] })
+    expect(gate({ task: theirs, shared: true, running: MAX_RUNNING })).toEqual({ kind: 'other_member', owner: 'dominik' })
+  })
+})
+
+describe('holdsSlot', () => {
+  const now = Date.parse('2026-11-24T12:00:00.000Z')
+  const here = { shared: true, me: 'lasse', now }
+  const own = { status: 'active', properties: { assignee_ids: ['lasse'] } }
+  const idle = { working: false, startedAt: null }
+
+  it('is held by an own active task with a working session', () => {
+    expect(holdsSlot(own, { working: true, startedAt: null }, here)).toBe(true)
+  })
+
+  it('is not held by an own task without a working session: waiting on an answer, a review, or a job', () => {
+    expect(holdsSlot(own, idle, here)).toBe(false)
+    expect(holdsSlot(own, { working: false, startedAt: now - START_GRACE_MS }, here)).toBe(false)
+  })
+
+  it('is held for START_GRACE_MS after its run started, before its session works', () => {
+    expect(holdsSlot(own, { working: false, startedAt: now - START_GRACE_MS + 1 }, here)).toBe(true)
+  })
+
+  it('is not held by another member\'s task in a shared or unconfirmed space, even while it works', () => {
+    const theirs = { status: 'active', properties: { assignee_ids: ['dominik'] } }
+    expect(holdsSlot(theirs, { working: true, startedAt: now }, here)).toBe(false)
+    expect(holdsSlot(theirs, { working: true, startedAt: now }, { ...here, shared: null })).toBe(false)
+    expect(holdsSlot(theirs, { working: true, startedAt: null }, { ...here, shared: false })).toBe(true)
+  })
+
+  it('is not held by a task that is not active', () => {
+    expect(holdsSlot({ ...own, status: 'planned' }, { working: true, startedAt: now }, here)).toBe(false)
+  })
+
+  it('reads the newest start and the standalone group', () => {
+    expect(newestStart(null, undefined)).toBeNull()
+    expect(newestStart(now - 5, new Date(now).toISOString(), 'not a date')).toBe(now)
+    expect(isStandaloneRunnerTask({ properties: { checkpoint: 'after', delegate: 'atlas' } })).toBe(true)
+    expect(isStandaloneRunnerTask({ parent_id: 'plan', properties: { checkpoint: 'after', delegate: 'atlas' } })).toBe(false)
+    expect(isStandaloneRunnerTask({ properties: { delegate: 'atlas' } })).toBe(false)
   })
 })
