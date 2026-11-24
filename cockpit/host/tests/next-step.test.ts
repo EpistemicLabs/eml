@@ -87,18 +87,19 @@ describe('next-step check', () => {
     const delivered: string[] = []
     const waited: string[] = []
     const quiet: string[] = []
-    const state = { watched: opts.watched ?? false }
+    const state = { watched: opts.watched ?? false, seenAt: '', working: false, now: new Date('2026-11-19T10:00:00Z') }
     const check = mod.createNextStepCheck({
       ledger, spaces: { resolve: () => (opts.space ?? { shared: false }) as never }, brain: () => brain,
       owner: 'lasse', log: () => {},
       jobsOf: () => opts.jobs ?? [],
       runStartedAt: () => RUN,
-      working: () => false,
+      working: () => state.working,
       watched: () => state.watched,
+      seen: (_id, since) => state.seenAt !== '' && state.seenAt >= since,
       deliver: async (id, text) => { delivered.push(`${id}: ${text}`); return opts.delivers ?? true },
       waiting: (id) => waited.push(id),
       quiet: (id) => quiet.push(id),
-      now: () => new Date('2026-11-19T10:00:00Z'),
+      now: () => state.now,
     })
     return { ledger, brain, check, delivered, waited, quiet, state }
   }
@@ -151,11 +152,10 @@ describe('next-step check', () => {
     expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ who: 'lasse', why: mod.NO_NEXT_STEP })])
   })
 
-  it('never checks the user\'s own sessions or closed tasks', async () => {
-    const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} }, t2: { id: 't2', status: 'resolved', properties: {} } })
-    ledger.recordSpawn('own-5', null, 'bp-eml', 'claude', false, 't1')
+  it('never prompts a worker on a closed task', async () => {
+    const { ledger, check, delivered } = setup({ t2: { id: 't2', status: 'resolved', properties: {} } })
     ledger.recordSpawn('closed-5', null, 'bp-eml', 'claude', true, 't2')
-    for (const id of ['own-5', 'closed-5']) await check.turnEnded(id)
+    await check.turnEnded('closed-5')
     expect(delivered).toEqual([])
   })
 
@@ -219,5 +219,93 @@ describe('next-step check', () => {
     undelegated.ledger.recordSpawn('w3-9', null, 'bp-eml', 'claude', true, 'p')
     await undelegated.check.turnEnded('w3-9')
     expect(undelegated.delivered).toHaveLength(1)
+  })
+
+  const later = (state: { now: Date }, ms: number) => { state.now = new Date(state.now.getTime() + ms) }
+
+  it('asks an own chat session for its status once its silent answer stays unseen, and only once', async () => {
+    const { ledger, brain, check, delivered, waited, state } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { watched: true })
+    ledger.recordSpawn('own-10', null, 'bp-eml', 'claude', false, 't1')
+    ledger.setRuntime('own-10', 'sdk')
+    await check.turnEnded('own-10', { handoff: false, endedAt: state.now.toISOString() })
+    expect(delivered).toEqual([])
+    later(state, mod.UNSEEN_GRACE_MS - 1)
+    await check.tick()
+    expect(delivered).toEqual([])
+    later(state, 1)
+    await check.tick()
+    expect(delivered).toEqual([`own-10: ${mod.OWN_STATUS_PROMPT}`])
+    // The turn the prompt started is its answer: not checked again, and nothing waits on the user.
+    await check.turnEnded('own-10', { handoff: false, endedAt: state.now.toISOString() })
+    later(state, mod.UNSEEN_GRACE_MS)
+    await check.tick()
+    expect(delivered).toHaveLength(1)
+    expect(brain.posts).toEqual([])
+    expect(waited).toEqual([])
+    expect(ledger.get('own-10')!.attention).toBeNull()
+  })
+
+  it('leaves an own session alone that the user saw, said how it stands, or runs in a terminal', async () => {
+    const { ledger, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { watched: true })
+    for (const id of ['own-11a', 'own-11b', 'own-11c', 'own-11d']) {
+      ledger.recordSpawn(id, null, 'bp-eml', 'claude', false, 't1')
+      if (id !== 'own-11d') ledger.setRuntime(id, 'sdk')
+    }
+    ledger.setAttention('own-11b', { kind: 'question', reason: 'Shall I start?' })
+    await check.turnEnded('own-11a', { handoff: false, endedAt: state.now.toISOString() })
+    await check.turnEnded('own-11b', { handoff: false, endedAt: state.now.toISOString() })
+    await check.turnEnded('own-11c', { handoff: true, endedAt: state.now.toISOString() })
+    await check.turnEnded('own-11d', { handoff: false, endedAt: state.now.toISOString() })
+    state.seenAt = new Date(state.now.getTime() + 5_000).toISOString()
+    later(state, mod.UNSEEN_GRACE_MS)
+    await check.tick()
+    expect(delivered).toEqual([])
+  })
+
+  it('counts a read mark that came just before the turn\'s end as seen', async () => {
+    const { ledger, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { watched: true })
+    ledger.recordSpawn('own-14', null, 'bp-eml', 'claude', false, 't1')
+    ledger.setRuntime('own-14', 'sdk')
+    state.seenAt = new Date(state.now.getTime() - 2_000).toISOString()
+    await check.turnEnded('own-14', { handoff: false, endedAt: state.now.toISOString() })
+    later(state, mod.UNSEEN_GRACE_MS)
+    await check.tick()
+    expect(delivered).toEqual([])
+  })
+
+  it('waits for an own session that is in a turn again, and skips a closed task', async () => {
+    const { ledger, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: {} }, t2: { id: 't2', status: 'resolved', properties: {} } })
+    ledger.recordSpawn('own-12', null, 'bp-eml', 'claude', false, 't1')
+    ledger.recordSpawn('own-12c', null, 'bp-eml', 'claude', false, 't2')
+    ledger.setRuntime('own-12', 'sdk')
+    ledger.setRuntime('own-12c', 'sdk')
+    await check.turnEnded('own-12', { handoff: false, endedAt: state.now.toISOString() })
+    await check.turnEnded('own-12c', { handoff: false, endedAt: state.now.toISOString() })
+    later(state, mod.UNSEEN_GRACE_MS)
+    state.working = true
+    await check.tick()
+    expect(delivered).toEqual([])
+    state.working = false
+    await check.tick()
+    expect(delivered).toEqual([`own-12: ${mod.OWN_STATUS_PROMPT}`])
+  })
+
+  it('checks a worker left open in a pane once its answer stays unseen, not while the user has seen it', async () => {
+    const seenOne = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { watched: true })
+    seenOne.ledger.recordSpawn('w1-13', null, 'bp-eml', 'claude', true, 't1')
+    await seenOne.check.turnEnded('w1-13')
+    seenOne.state.seenAt = seenOne.state.now.toISOString()
+    later(seenOne.state, mod.UNSEEN_GRACE_MS)
+    await seenOne.check.tick()
+    expect(seenOne.delivered).toEqual([])
+
+    const unseen = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { watched: true })
+    unseen.ledger.recordSpawn('w2-13', null, 'bp-eml', 'claude', true, 't1')
+    await unseen.check.turnEnded('w2-13')
+    await unseen.check.tick()
+    expect(unseen.delivered).toEqual([])
+    later(unseen.state, mod.UNSEEN_GRACE_MS)
+    await unseen.check.tick()
+    expect(unseen.delivered).toEqual([`w2-13: ${mod.NEXT_STEP_PROMPT}`])
   })
 })

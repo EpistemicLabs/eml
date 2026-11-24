@@ -425,9 +425,9 @@ export function startingMode(chosen: string | null, setting: string): string {
 }
 
 const STATUS_TOOL = 'session_status'
-const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, whenever someone has to act; this is how people learn you need them. '
+export const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, whenever someone has to act; this is how people learn you need them. '
   + 'Call it first, then write your closing reply: the person reads that reply, never this call or your thinking. '
-  + 'done: finished, nobody needs to act. question: only a person can decide. '
+  + 'done: finished, nobody needs to act. question: only the user can decide, or your reply ends with a question for the user. '
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
   + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
 

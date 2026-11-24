@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import { ClaudeEventMapper, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { ClaudeEventMapper, STATUS_TOOL_DESCRIPTION, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -189,5 +189,11 @@ describe('toolTitle', () => {
   it('is one line of verb and target', () => {
     expect(toolTitle('Read', { file_path: '/a/b' })).toBe('Read /a/b')
     expect(toolTitle('mcp__x__y', {})).toBe('mcp__x__y')
+  })
+})
+
+describe('status tool description', () => {
+  it('tells the agent that a reply ending with a question for the user is a question', () => {
+    expect(STATUS_TOOL_DESCRIPTION).toContain('question: only the user can decide, or your reply ends with a question for the user.')
   })
 })
