@@ -44,7 +44,7 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
-import { createTaskRouter, HeldWaitStore } from './application/task-router.js'
+import { createTaskRouter } from './application/task-router.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createCycles } from './application/cycles.js'
@@ -90,6 +90,13 @@ import { createSortSession } from './application/sort-session.js'
 import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
+import { createRunRecords, type RunRecords } from './application/run-records.js'
+import { createScheduleMirror } from './application/schedule-mirror.js'
+import { scheduleOfJobs } from './domain/task-schedule.js'
+import { scheduledJobOptions } from './domain/hand-over.js'
+import { createTaskStateMigration } from './application/task-state-migration.js'
+import { runsBlockRunner, type RunFacts } from './domain/runs.js'
+import { parseHandoff } from './domain/handoff.js'
 import { projectIdForBrain } from './project-registry.js'
 
 /**
@@ -368,7 +375,7 @@ async function main() {
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
   const taskRouter = createTaskRouter({
-    ledger, spaces, brain: taskBrain, owner, log, held: new HeldWaitStore(),
+    ledger, spaces, brain: taskBrain, owner, log,
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -391,11 +398,18 @@ async function main() {
   // The runner: the plan steps that are ready start in sessions of their own (application/task-runner.ts).
   // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
   // The task board asks the same two checks, so it names the reason the runner skips a task.
-  const runnerBusy = (taskId: string) => sessionsBlockRunner(
-    ledger.list().filter((e) => e.taskId === taskId).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
-    taskCommands?.delegatedAt(taskId) ?? null,
-  )
+  // A working run of a session this cockpit does not have holds it too: someone works on it elsewhere (domain/runs.ts).
+  const runnerBusy = (taskId: string, runs: readonly RunFacts[] = []) => {
+    const own = ledger.list().filter((e) => e.taskId === taskId)
+    return sessionsBlockRunner(
+      own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
+      taskCommands?.delegatedAt(taskId) ?? null,
+    ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)), Date.now())
+  }
   // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.
+  const lastResults = new Map<string, string>()
+  // Set once the turns and the session runtimes exist; turnEnded pokes it.
+  let runRecords: RunRecords = { sync: async () => {}, poke: () => {}, every: () => () => {} }
   const runnerHeld = (taskId: string) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
@@ -443,6 +457,10 @@ async function main() {
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => {
+    // The run keeps the result line of the session's last handoff (application/run-records.ts).
+    const result = parseHandoff(text)?.result
+    if (result) lastResults.set(sessionId, result)
+    runRecords.poke()
     void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
@@ -700,6 +718,32 @@ async function main() {
   // Brain hygiene: the open space's banner offers a session (brain-hygiene.ts).
   const hygiene = new BrainHygiene({ spawns, log, isReady: () => providers.default().auth.signedIn() })
 
+  // Synced run records: one per session on a task, written when something happens in it (application/run-records.ts).
+  runRecords = createRunRecords({
+    spaces: () => spaces.list(),
+    brain: taskBrain,
+    me: owner,
+    sessions: () => ledger.list().map((e) => ({
+      sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, createdAt: e.createdAt,
+      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId,
+    })),
+    turnOf: (sessionId) => turns.get(sessionId)?.state,
+    processRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
+    resultOf: (sessionId) => lastResults.get(sessionId) ?? null,
+    agentOf: (space) => space.agent,
+    log,
+  })
+  turns.on('turn', () => runRecords.poke())
+  // A task's schedule lives in the brain: this cockpit's jobs mirror their timing into it (application/schedule-mirror.ts).
+  const scheduleMirror = createScheduleMirror({
+    spaces: () => spaces.list(), brain: taskBrain, jobs: () => jobStore.list(), agentOf: (space) => space.agent, me: owner, now: () => Date.now(), log,
+  })
+  setTimeout(() => { void scheduleMirror.sync() }, RUN_FIRST_SYNC_MS).unref?.()
+  scheduleMirror.every(RUN_SYNC_MS)
+  // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
+  setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
+  runRecords.every(RUN_SYNC_MS)
+
   // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
   const taskBoard = createTaskBoard({
     spaces: () => spaces.list(),
@@ -709,6 +753,7 @@ async function main() {
       .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
     nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
       .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
@@ -725,6 +770,20 @@ async function main() {
     },
   })
   const taskCommandStore = new TaskCommandStore()
+  // The task state migration of a space: a dry run its owner sees first, then the run (application/task-state-migration.ts).
+  const taskStateMigration = createTaskStateMigration({
+    space: (spaceId) => spaces.get(spaceId), brain: taskBrain, viewer: owner,
+    jobs: () => jobStore.list(),
+    setJobTask: (jobId, taskId) => { const job = jobStore.get(jobId); if (job) jobStore.put({ ...job, taskId, updatedAt: new Date().toISOString() }) },
+    snoozes: () => taskCommandStore.snoozes(Date.now()),
+    setSnoozes: (snoozes) => taskCommandStore.setSnoozes(snoozes),
+    heldWaitsFile: path.join(COCKPIT_HOME, 'held-waits.json'),
+    liveSessions: (spaceId) => ledger.list()
+      .filter((e) => e.taskId && !e.archivedAt && spaces.resolve(e.spaceId ?? null).id === spaceId && (chat.isRunning(e.sessionId) || bridge.isRunning(e.sessionId)))
+      .map((e) => ({ sessionId: e.sessionId, taskId: e.taskId! })),
+    now: () => Date.now(),
+    log,
+  })
   taskCommands = createTaskCommands({
     store: taskCommandStore,
     viewer: owner,
@@ -740,9 +799,12 @@ async function main() {
       const projectId = projectIdForBrain(brainProject)
       const problem = ensureTaskProject(space, projectId)
       if (problem) return { error: problem }
+      const newest = ledger.list().filter((e) => e.taskId === task.id)
+        .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null
+      const how = scheduledJobOptions(spec, { goal: task.properties?.goal }, newest)
       const answer = await jobs.handle(
-        { sessionId: null, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
-        { action: 'create', name: task.title ?? task.id, prompt, ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, task_id: task.id },
+        { sessionId: how.callerSessionId, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
+        { action: 'create', name: task.title ?? task.id, prompt, task_id: task.id, ...how.input },
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },
@@ -889,7 +951,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask, migration: taskStateMigration },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
@@ -943,6 +1005,8 @@ async function main() {
   })
   workers.start()
   jobRunner.start()
+  // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
+  void taskRouter.adoptHeldWaits()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -973,6 +1037,9 @@ async function main() {
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
+// Run records: a sync writes only what changed; the first waits for the sessions a restart brings back.
+const RUN_SYNC_MS = 60_000
+const RUN_FIRST_SYNC_MS = 30_000
 /** Pending task board commands are applied once their undo window is over. */
 const TASK_COMMAND_TICK_MS = 1000
 /**

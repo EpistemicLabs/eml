@@ -6,12 +6,12 @@ import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstac
 import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
-export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked';
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped';
+export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
+export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale';
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
-  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
+  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
 
 export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
@@ -67,6 +67,14 @@ export interface BoardTask {
   nextRunAt: string | null;
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
+  /** What has to be true for it to be done; missing when it has none. */
+  goal?: string;
+  /** When an agent works on it again (a job's here, else the delegation's); missing from an older host. */
+  schedule?: TaskSchedule;
+  /** Its open runs, on this cockpit and the other members'; missing when none, or from an older host. */
+  runs?: BoardRun[];
+  /** Its ended sessions, newest first (at most ten), on every member's cockpit; missing when none. */
+  earlierRuns?: EarlierRun[];
   pending?: { opId: string; kind: string; undoUntil: string };
   /** Reopened on the board: decisions and notes that closed with it and come back only through the chat. */
   reopenedWith?: ReopenItem[];
@@ -253,11 +261,46 @@ async function post(path: string, body: unknown): Promise<CommandAnswer> {
 }
 
 export type HandOverMode = 'now' | 'schedule' | 'together';
+/** A task's schedule (host delegation.schedule): one time or a repeat rule; each run a new session or the last one resumed. */
+export interface TaskSchedule { at?: string; cron?: string; time_zone?: string; paused?: boolean; session?: 'new' | 'resume' }
+
+/** A session working on a task, as its member's cockpit wrote it (host BoardRun). */
+export interface BoardRun {
+  id: string;
+  member: string;
+  agent: string | null;
+  state: 'running' | 'idle' | 'stale';
+  lastActivityAt: string | null;
+  /** This cockpit's own session: it can be opened here. */
+  here: boolean;
+}
+
+/** An ended session on a task (host EarlierRun): this cockpit's can be reopened, another member's is shown only. */
+export interface EarlierRun {
+  id: string;
+  member: string;
+  agent: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  result: string | null;
+  here: boolean;
+}
+
+/** How a session ended, in words. */
+const ENDED_HOW: Record<string, string> = { finished: 'finished', put_away: 'put away', failed: 'failed', crashed: 'stopped with the cockpit' };
+
+/** An earlier session in one line: agent · when · how it ended · its result line. */
+export function earlierRunLine(run: EarlierRun, now: number): string {
+  return [agentName(run.agent ?? undefined), when(run.startedAt, now), ENDED_HOW[run.endReason ?? ''] ?? 'ended', run.result].filter(Boolean).join(' · ');
+}
+
 export interface HandOverInput {
   mode: HandOverMode;
   delegate: string;
   checkpoint: 'before' | 'after' | 'none';
-  schedule?: { at?: string; cron?: string; timeZone: string };
+  /** session: each run continues the last session or starts a new one; untilGoal: the agent keeps at it until the goal is reached. */
+  schedule?: { at?: string; cron?: string; timeZone: string; session?: 'new' | 'resume'; untilGoal?: boolean };
   desk?: string;
 }
 
@@ -307,7 +350,7 @@ export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponen
 
 // ---- names and colours ----
 
-export const TURN_ORDER: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'done'];
+export const TURN_ORDER: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'parked', 'done'];
 
 export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> = {
   needs_you: { name: 'Needs you', rule: 'You have the next move: answer an agent, do your own task, or decide what happens.', hue: 'you' },
@@ -315,6 +358,7 @@ export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> =
   agent_working: { name: 'Agent working', rule: 'An agent session works on it right now.', hue: 'agent' },
   agent_scheduled: { name: 'Agent scheduled', rule: 'Delegated. An agent picks it up at a set time, when the runner has a free slot, or after the step it waits for.', hue: 'scheduled' },
   waiting_on_others: { name: 'Waiting on others', rule: 'Someone outside has the next move. An agent checks back when a job says so.', hue: 'waiting' },
+  parked: { name: 'Parked', rule: 'Its wait is snoozed: it comes back by itself at the date, on every device. Nothing runs meanwhile.', hue: 'waiting' },
   done: { name: 'Done · 24 h', rule: 'Reviewed by you, or closed in the last 24 hours.', hue: 'done' },
 };
 
@@ -323,14 +367,18 @@ export const GROUP_META: Record<TurnGroup, { name: string; hue: Hue }> = {
   own: { name: 'Your own tasks', hue: 'mark' },
   parent: { name: 'Waits for its parent', hue: 'stopped' },
   nobody: { name: 'Nobody on it', hue: 'stopped' },
-  at_time: { name: 'At a set time', hue: 'scheduled' },
+  failed: { name: 'Agent stopped', hue: 'stopped' },
+  mission: { name: 'Missions: until the goal is reached', hue: 'scheduled' },
+  routine: { name: 'Routines', hue: 'scheduled' },
+  at_time: { name: 'Starts later', hue: 'scheduled' },
   runner: { name: 'Next in line for the runner', hue: 'scheduled' },
   blocked: { name: 'Waits before it starts', hue: 'waiting' },
+  stale: { name: 'Stale: no activity for over an hour', hue: 'stopped' },
 };
 
 /** The hue of a task: its turn's, except a stopped or stuck one is red. */
 export function hueOf(task: Pick<BoardTask, 'turn' | 'group' | 'status'>): Hue {
-  if (task.group === 'nobody' || task.group === 'parent') return 'stopped';
+  if (task.group === 'nobody' || task.group === 'parent' || task.group === 'stale') return 'stopped';
   if (task.turn) return TURN_META[task.turn].hue;
   return task.status === 'active' ? 'mark' : 'waiting';
 }
@@ -400,6 +448,7 @@ export function dueLabel(due: string, now: number): string {
 const NOBODY: Record<NobodyReason, string> = {
   stopped: 'Agent stopped without a next step: continue or close.',
   no_checkpoint: 'Delegated without a checkpoint, so nothing will start it.',
+  not_handed_over: 'Delegated but not handed over yet, so nothing starts it: hand it over to let the agent start.',
   no_owner: 'Nobody owns it: claim it or drop it.',
   no_project: 'Delegated outside a project, so the runner has nowhere to start it: move it into a project.',
   step_dropped: 'Waits for a step that will never finish: change the plan.',
@@ -452,7 +501,7 @@ export function cardLine(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
   if (task.pending?.kind === 'hand_over') return `Handed to ${agent}. You can undo this for a few seconds.`;
   if (task.pending?.kind === 'review') return 'Closing as reviewed. You can undo this for a few seconds.';
-  if (task.turn === 'agent_working') return `${agent} is working on it.`;
+  if (task.turn === 'agent_working') return workingLine(task, now);
   if (task.turn === 'review') return task.waitingOn?.why?.replace(/^Review:\s*/, '') || 'The result is ready for your review.';
   if (task.reason === 'step_dropped' || task.reason === 'no_project') return runnerLine(task) ?? NOBODY[task.reason];
   if (task.reason) return NOBODY[task.reason];
@@ -463,11 +512,32 @@ export function cardLine(task: BoardTask, now: number): string {
     const who = task.waitingOn?.who ?? task.owner ?? 'someone';
     return task.nextRunAt ? `Waiting on ${who}; ${agent} checks back ${when(task.nextRunAt, now)}.` : `Waiting on ${who}.`;
   }
+  if (task.group === 'mission') return `Until the goal is reached. ${agent} checks again ${when(task.nextRunAt, now)}.`;
+  if (task.group === 'routine') return `${repeatsText(task.schedule)}. Next ${when(task.nextRunAt, now)}.`;
   if (task.group === 'at_time') return `${agent} starts ${when(task.nextRunAt, now)}.`;
   if (task.group === 'runner') return runnerLine(task) ?? `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
   if (task.handTo) return `You worked on it with ${agentName(task.handTo)}. Hand it to ${agentName(task.handTo)} to let it go on alone.`;
   return task.status === 'active' ? 'Your task, in progress.' : 'Your task.';
+}
+
+/** Who works on it and where: this cockpit's session, another member's, or one gone silent. */
+function workingLine(task: BoardTask, now: number): string {
+  const run = task.runs?.find((r) => r.state === 'running') ?? task.runs?.[0];
+  const who = agentName(run?.agent ?? task.delegate);
+  if (task.group === 'stale' && run) return `${who} has been silent since ${when(run.lastActivityAt, now)}. It may have crashed: open it or run it again.`;
+  if (run && !run.here) return `${who} is working on it, on ${agentName(run.member)}'s cockpit.`;
+  return `${who} is working on it.`;
+}
+
+/** A repeat rule in words, for the common ones the hand-over dialog makes; else the rule itself. */
+export function repeatsText(schedule: TaskSchedule | undefined): string {
+  const cron = schedule?.cron;
+  if (!cron) return 'Repeats';
+  const m = /^(\d+) (\d+) \* \* (1-5|1|\*)$/.exec(cron);
+  if (!m) return `Repeats (${cron})`;
+  const at = `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`;
+  return m[3] === '1-5' ? `Repeats on weekdays at ${at}` : m[3] === '1' ? `Repeats every Monday at ${at}` : `Repeats every day at ${at}`;
 }
 
 /**
@@ -484,6 +554,7 @@ export function cardTime(task: BoardTask, now: number): { label: string; future:
   const named = (word: string, iso: string | null | undefined, future = false) => (iso ? { label: `${word} ${when(iso, now)}`, future } : null);
   if (task.group === 'asked') return named('asked', task.waitingOn?.since);
   if (task.reason === 'stopped') return named('stopped', task.waitingOn?.since);
+  if (task.turn === 'agent_working') return named('last activity', task.runs?.find((r) => r.state === 'running')?.lastActivityAt ?? task.runs?.[0]?.lastActivityAt ?? task.updatedAt);
   if (task.turn === 'review') return named('finished', task.waitingOn?.since ?? task.updatedAt);
   if (task.turn === 'done') return named('closed', task.updatedAt);
   if (task.nextRunAt && (task.turn === 'agent_scheduled' || task.turn === 'waiting_on_others')) return named('next', task.nextRunAt, true);
@@ -499,15 +570,16 @@ export interface Column {
   groups: Array<{ group: TurnGroup; tasks: BoardTask[] }>;
 }
 
-const NEEDS_YOU_GROUPS: readonly TurnGroup[] = ['asked', 'own', 'parent', 'nobody'];
-const SCHEDULED_GROUPS: readonly TurnGroup[] = ['at_time', 'runner', 'blocked'];
+const NEEDS_YOU_GROUPS: readonly TurnGroup[] = ['asked', 'failed', 'own', 'parent', 'nobody'];
+const SCHEDULED_GROUPS: readonly TurnGroup[] = ['mission', 'routine', 'at_time', 'runner', 'blocked'];
+const WORKING_GROUPS: readonly TurnGroup[] = ['stale'];
 const latest = (t: BoardTask) => t.waitingOn?.since ?? t.updatedAt ?? '';
 
 /** The board's tasks by whose turn it is, newest first, with the groups inside Needs you and Agent scheduled. */
 export function columns(tasks: BoardTask[]): Column[] {
   return TURN_ORDER.map((turn) => {
     const list = tasks.filter((t) => t.turn === turn).sort((a, b) => latest(b).localeCompare(latest(a)));
-    const order = turn === 'needs_you' ? NEEDS_YOU_GROUPS : turn === 'agent_scheduled' ? SCHEDULED_GROUPS : [];
+    const order = turn === 'needs_you' ? NEEDS_YOU_GROUPS : turn === 'agent_scheduled' ? SCHEDULED_GROUPS : turn === 'agent_working' ? WORKING_GROUPS : [];
     const groups = order.map((group) => ({ group, tasks: list.filter((t) => t.group === group) })).filter((g) => g.tasks.length > 0);
     return { turn, tasks: list, groups };
   });
@@ -535,6 +607,7 @@ export function coverageText(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
   if (c.ok) {
     if (c.how === 'working') return `${agent} working now`;
+    if (c.how === 'parked') return c.at ? `parked · back ${when(c.at, now)}` : 'parked until you bring it back';
     if (c.how === 'checks_back') return `waiting on ${task.waitingOn?.who ?? 'someone'} · ${agent} checks ${when(c.at, now)}`;
     if (c.how === 'at_time') return `${agent} · ${when(c.at, now)}`;
     const b = task.runner;
@@ -679,3 +752,46 @@ export async function startTaskSession(task: { id: string; spaceId: string }, op
     return { kind: 'unknown' };
   }
 }
+
+// ---- the task panel ----
+
+/** A session's state as its tab names it, most in need of the viewer first (decision task-sessions-listed-by-attention). */
+export type SessionState = 'needs input' | 'review' | 'silent' | 'working' | 'idle' | 'done';
+export const SESSION_ORDER: Record<SessionState, number> = { 'needs input': 0, review: 1, silent: 2, working: 3, idle: 4, done: 5 };
+
+/** What a session on the task is doing, from the task's wait on it, its run, and whether it is put away. */
+export function sessionState(task: BoardTask, sessionId: string, archived: boolean, run: BoardRun | undefined): SessionState {
+  if (task.waitingOn?.session_id === sessionId) return task.waitingOn.kind === 'review' ? 'review' : 'needs input';
+  if (archived) return 'done';
+  if (run?.state === 'stale') return 'silent';
+  if (run?.state === 'running') return 'working';
+  return 'idle';
+}
+
+/** "Waiting on" in one short line: whose move it is, a question count when the agent asked several, and since when. */
+export function waitingLine(task: BoardTask, viewer: string): string {
+  const w = task.waitingOn;
+  if (!w) return '';
+  const who = w.who === viewer ? 'You' : w.who;
+  const parts = (w.why ?? '').split(' · ').filter(Boolean);
+  if (w.who === viewer && w.kind === 'question' && parts.length > 1) return `${who} · ${parts.length} questions from ${agentName(task.delegate)}`;
+  if (w.who === viewer && w.kind === 'review') return `${who} · a result to review`;
+  return w.why ? `${who} · ${w.why}` : who;
+}
+
+/** The actions a task's state calls for: none while an agent asks (the chat answers), Hand to after Work on it now, … */
+export function panelActions(task: BoardTask, hasSession: boolean): Array<'looks_good' | 'hand_to' | 'run_now' | 'delegate_now' | 'schedule' | 'together'> {
+  // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
+  if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
+  if (task.turn === 'review') return ['looks_good'];
+  if (task.handTo) return ['hand_to', 'schedule', 'together'];
+  if (task.turn === 'agent_working' && task.group !== 'stale') return ['together'];
+  if (task.turn === 'parked') return [];
+  if (task.delegate) {
+    // Scheduled: the Delegate line changes the schedule; run it now or work on it.
+    if (task.nextRunAt || task.schedule) return ['run_now', 'together'];
+    return ['run_now', 'schedule', 'together'];
+  }
+  return ['delegate_now', 'schedule', 'together'];
+}
+

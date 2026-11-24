@@ -1,9 +1,12 @@
 import { assertObject, checkFields } from '../objects'
 import { slugifyTag } from '../tags'
 import { slugifySubject } from '../subjects'
-import { createProject, createEntity, createTag, updateTag, createSubject, updateSubject, createUser, createAgent } from '../write/objects'
+import { createProject, createEntity, createTag, updateTag, createSubject, updateSubject, createUser, createAgent, insertRunRow } from '../write/objects'
+import { appendTaskChange } from '../write/task-binding'
+import { isoTimestamp } from '../fields'
+import type { Run } from '../runs'
 import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
-import { OBJECT_ID } from '../contract/values'
+import { OBJECT_ID, HANDLE } from '../contract/values'
 import { CommandError, inputObject, type CommandContext, type CommandModule } from './types'
 
 /** object.create — `object` names the kind (an entity has a field called kind). */
@@ -12,7 +15,7 @@ export interface ObjectCreateInput {
   fields: Record<string, unknown>
 }
 
-/** object.create — a project, entity, tag, subject, user or agent. Was createObject and the stores' create. */
+/** object.create — a project, entity, tag, subject, user, agent or run. Was createObject and the stores' create. */
 export const objectCreate: CommandModule<ObjectCreateInput, { object: unknown, created: boolean }> = {
   name: 'object.create',
   validate(input) {
@@ -35,6 +38,7 @@ export const objectCreate: CommandModule<ObjectCreateInput, { object: unknown, c
 function createObject(ctx: CommandContext, object: unknown, input: Record<string, unknown>): { object: unknown, created: boolean } {
   assertObject(object)
   checkFields(object, input, 'create')
+  if (object === 'run') return { object: createRun(ctx, input), created: true }
   if (typeof input.name !== 'string' || input.name.trim() === '') throw new Error(`Invalid object: a ${object} needs a name.`)
   const name = input.name.trim()
   const idOf = (what: string) => {
@@ -97,4 +101,51 @@ function createObject(ctx: CommandContext, object: unknown, input: Record<string
       return { object: agent, created: true }
     }
   }
+}
+
+/**
+ * v0.23: a run — one session on a task (runs.ts). Its id is the session id;
+ * task_id names a task of this brain; member is the writer's own handle
+ * (in a shared brain the op's author, so a member starts runs only for
+ * themself); origin and driver say who started it and who drives it. state
+ * defaults to running, started_at to the write's time, last_activity_at to
+ * started_at. A run created ended (a crash found late) gets ended_at, the
+ * write's time unless given. end_reason only on an ended run. The start is
+ * journaled on the task.
+ */
+function createRun(ctx: CommandContext, input: Record<string, unknown>): Run {
+  const problems: string[] = []
+  for (const k of ['id', 'task_id', 'member', 'origin', 'driver'] as const) {
+    if (typeof input[k] !== 'string' || (input[k] as string).trim() === '') problems.push(`a run needs ${k}.`)
+  }
+  if (problems.length > 0) throw new Error(`Invalid object: ${problems.join(' ')}`)
+  const id = input.id as string
+  if (!OBJECT_ID.test(id)) throw new Error('Invalid object: a run id is letters, digits, - and _ (the session id).')
+  const handle = ctx.stamp.actor.handle
+  if (handle === null) throw new Error('Invalid object: a run is written by its member — this write has no handle.')
+  if (input.member !== handle) throw new Error(`Invalid object: a run's member is the member who writes it (${handle}), not ${String(input.member)}.`)
+  if (input.agent !== undefined && input.agent !== null && !HANDLE.test(input.agent as string)) {
+    throw new Error('Invalid object: a run\'s agent is 1–63 characters of a-z, 0-9, _ and -.')
+  }
+  const task = ctx.db.prepare('SELECT type FROM engrams WHERE id = ?').get(input.task_id) as { type: string } | undefined
+  if (task?.type !== 'task') throw new Error(`Invalid object: task_id ${String(input.task_id)} is not a task of this brain.`)
+  if (ctx.eml.runs.exists(id)) throw new Error(`Invalid object: run "${id}" already exists.`)
+  const at = ctx.stamp.at
+  const ts = (k: string) => typeof input[k] === 'string' ? isoTimestamp(input[k] as string) : null
+  const state = (input.state as Run['state'] | undefined) ?? 'running'
+  if (state !== 'ended' && input.end_reason != null) throw new Error('Invalid object: end_reason is for an ended run.')
+  if (state !== 'ended' && input.ended_at != null) throw new Error('Invalid object: ended_at is for an ended run.')
+  const startedAt = ts('started_at') ?? at
+  const run: Run = {
+    id, task_id: input.task_id as string, member: handle, agent: (input.agent as string | undefined) ?? null,
+    origin: input.origin as Run['origin'], driver: input.driver as Run['driver'], state,
+    started_at: startedAt, last_activity_at: ts('last_activity_at') ?? startedAt,
+    ended_at: state === 'ended' ? (ts('ended_at') ?? at) : null,
+    end_reason: state === 'ended' ? ((input.end_reason as Run['end_reason'] | undefined) ?? null) : null,
+    result: (input.result as string | undefined) ?? null,
+    created_at: at, updated_at: at,
+  }
+  insertRunRow(ctx.db, run)
+  appendTaskChange(ctx, run.task_id, `run ${id} started (${run.origin}, ${run.driver}${run.agent ? `, ${run.agent}` : ''})${run.state === 'ended' ? ` and ended${run.end_reason ? ` (${run.end_reason})` : ''}` : ''}`)
+  return ctx.eml.runs.get(id)!
 }

@@ -182,3 +182,78 @@ describe('the task panel', () => {
     });
   });
 });
+
+describe('the task panel on the task state model (v0.23)', () => {
+  const show = (t: BoardTask, handlers: { onHandOver?: () => void; onPark?: (task: BoardTask, until: string) => void } = {}) => render(
+    <MemoryRouter><QueryClientProvider client={client}>
+      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
+    </QueryClientProvider></MemoryRouter>,
+  );
+
+  it('shows another member\'s session as a tab named by its state and cockpit; the question is one short Waiting on line', () => {
+    show(task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'Which address? · Which tone? · One job or several?' }, runs: [
+      { id: 'b', member: 'dominik', agent: 'motti', state: 'stale', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString(), here: false },
+    ] }));
+    expect(screen.getByLabelText('Sessions on it').textContent).toBe("Motti · silent · Dominik's cockpit");
+    expect(screen.getByText('You · 3 questions from Atlas')).toBeTruthy();
+    // asked, with its session gone: no Run/Schedule row, but a way to answer
+    expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Work on it now' })).toBeTruthy();
+  });
+
+  it('orders its own session tabs by attention: the one the task waits on first, named needs input', () => {
+    const session = (id: string, minutesAgo: number) => ({ id, spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: id, createdAt: new Date(NOW - 3_600_000).toISOString(), lastActivity: new Date(NOW - minutesAgo * 60_000).toISOString(), readAt: null, resultAt: null, attention: null }) as never;
+    render(
+      <MemoryRouter><QueryClientProvider client={client}>
+        <TaskPanel task={task({ group: 'asked', delegate: 'atlas', sessionIds: ['newer', 'asking'], waitingOn: { who: 'lasse', kind: 'question', why: 'Go?', session_id: 'asking' } })}
+          board={board(parent)} now={NOW} sessions={[session('newer', 1), session('asking', 30)]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+      </QueryClientProvider></MemoryRouter>,
+    );
+    expect([...screen.getByLabelText('Sessions on it').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Atlas · needs input', 'Atlas · idle']);
+  });
+
+  it('folds the earlier sessions: its own reopen their chat, another member\'s is a row', () => {
+    const at = new Date(NOW - DAY_MS).toISOString();
+    const put = { id: 'old', spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: 'old', createdAt: at, lastActivity: at, readAt: null, resultAt: null, attention: null, archivedAt: at } as never;
+    render(
+      <MemoryRouter><QueryClientProvider client={client}>
+        <TaskPanel task={task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', earlierRuns: [
+          { id: 'old', member: 'lasse', agent: 'atlas', startedAt: at, endedAt: at, endReason: 'finished', result: '4 mails need you', here: true },
+          { id: 'theirs', member: 'dominik', agent: 'motti', startedAt: at, endedAt: at, endReason: 'finished', result: null, here: false },
+        ] })} board={board(parent)} now={NOW} sessions={[put]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+      </QueryClientProvider></MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /2 earlier sessions/ }));
+    const list = screen.getByLabelText('Earlier sessions');
+    expect(list.textContent).toContain("Motti · ");
+    expect(list.textContent).toContain("on Dominik's cockpit");
+    fireEvent.click(screen.getByRole('button', { name: /Atlas · .* · finished · 4 mails need you/ }));
+    expect(screen.getByTestId('session-chat')).toBeTruthy();
+  });
+
+  it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
+    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
+    expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run Atlas now' })).toBeTruthy();
+    expect(screen.getByText('repeats on weekdays at 08:00')).toBeTruthy();
+    cleanup();
+    show(task({ turn: 'review', group: undefined, delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: done' } }));
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toContain('Looks good, done');
+    expect(screen.queryByRole('button', { name: 'Run Atlas now' })).toBeNull();
+  });
+
+  it('says a mission works until its goal, offers Change schedule and Park for the viewer\'s wait', () => {
+    const onHandOver = vi.fn();
+    const onPark = vi.fn();
+    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', goal: 'Orders sync both ways', nextRunAt: new Date(NOW + DAY_MS).toISOString(),
+      waitingOn: { who: 'lasse', kind: 'question', why: 'Which warehouse?', since: new Date(NOW - 60_000).toISOString() } }), { onHandOver, onPark });
+    expect(screen.getByText('until the goal is reached')).toBeTruthy();
+    expect(screen.getByText(/^· next check /)).toBeTruthy();
+    // the goal sits under the title
+    expect(screen.getByLabelText('Goal').textContent).toBe('GoalOrders sync both ways');
+    expect(screen.getByText(/You · Which warehouse\?/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Change schedule…' }));
+    expect(onHandOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' }), 'schedule');
+    expect(screen.getByRole('button', { name: /Park this task's wait/ })).toBeTruthy();
+  });
+});

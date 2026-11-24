@@ -83,28 +83,27 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       'NOT a task: finished work → eml_event / eml_log · a way of working → eml_rule · a state snapshot → ' +
       'eml_set_status · speculation without commitment → wait.\n\n' +
       'An agent will do the work (task system): set delegate (that agent) and checkpoint in this same call; the ' +
-      'person who owns the task stays in assignee_ids. The runner starts a task only with both.\n\n' +
+      'person who owns the task stays in assignee_ids. With both, the task is handed over at creation and the runner ' +
+      'starts it once its depends_on are done.\n\n' +
       'After this call, everything about the task goes through eml_track_task: progress, stage, status, closing, ' +
       'edits.\n\n' +
-      'Larger work: settle the intent with the user first (intent), then make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
+      'Larger work: settle the goal with the user first (goal: what will be true, for whom, and how we\'ll notice), then make the task the hub. Decisions → eml_decide(task_id, binding) · the plan → ' +
       'eml_note(task_id, binding) · sub-tasks → eml_create_task(parent_id).',
     inputSchema: z.object({
       content: content('What needs doing, 1-3 sentences, action verb first, specific enough that "done" is clear.'),
       scope: scope('Narrowest true scope: project.<id> for project work, entity.<id> for person/customer follow-ups. global is rare.'),
       title: title('Kebab-case anchor, unique enough to find the task again; not shown to people (display_title is).'),
       display_title: z.string().max(80).optional().describe('The task\'s name as a person reads it in a list: verb + object + scope, about 60 characters (at most 80), the customer or product named, the distinguishing words first; sentence case, no ending period, no ids or dates unless they are the point. Good: \"Fix missing stock answers in Acme\'s chat assistant\". Bad: \"acme-stock\", \"Stock issue\", \"Session 23 Nov\". The kebab title stays the recall anchor and is not shown.'),
-      intent: z.string().optional().describe('What will be different, for whom, once it\'s done, and how we\'ll notice. Settle it with the user; leave out for small tasks.'),
       context: z.string().optional().describe('Why it exists and how to pick it up cold.'),
-      status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started or parked · active = started. Done things are not tasks.'),
+      status: z.enum(['planned', 'active']).optional().describe('planned (default) = not started yet · active = started. Done things are not tasks.'),
       stage: z.enum(STAGES).optional().describe('ideation · planning · ready · implementation. Leave out for small tasks.'),
       priority: z.enum(PRIORITIES).optional().describe('urgent · high · normal (default) · low. Execution urgency.'),
       assignee_ids: z.array(z.string()).optional().describe('Handles of who should act — users or agents eml_read_object lists (object=user · agent). An unknown handle is refused.'),
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
-      blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
       parent_id: z.string().optional().describe('Parent task id → sub-task (part_of). Only for truly separate work; a sub-task needs a goal of its own and content a fresh session can work from alone.'),
         checkpoint: z.enum(CHECKPOINTS).optional().describe('Task system: where this step stops for its person — before (prepares, then asks before acting) · after (acts, then waits for review) · none (runs alone). Set it, together with delegate, whenever an agent can do the task: default after; before when the plan needs the user\'s OK first. The runner starts a task only when it has both. Leave both out when the person does it themselves or the user says so. Say in your reply which checkpoint and delegate you set.'),
         depends_on: z.array(z.string()).optional().describe('Task system: ids of the steps that must be done before this one starts. Steps without dependencies on each other can run at the same time.'),
-        delegate: z.string().optional().describe('Task system: the one agent that works on the task (an agent handle, e.g. atlas). The person who owns it stays in assignee_ids. Set it with a checkpoint when an agent should do the work; the cockpit\'s runner then starts it.'),
+        delegate: z.string().optional().describe('Task system: the one agent that works on the task on its own (an agent handle, e.g. atlas). The person who owns it stays in assignee_ids. Set it with a checkpoint when an agent should do the work; the cockpit\'s runner then starts it.'),
         goal: z.string().optional().describe('Task system: what has to be true for the task to be done, one checkable sentence (e.g. "the customer confirmed the cancellation is withdrawn"). Propose it for any task an agent works on; its sessions check it at every wake-up.'),
       supersedes: supersedes('Ids of tasks this one replaces. An open one is closed as superseded, and the decisions and notes bound to it (binding task) move to this task. A closed one keeps its status and is only linked.'),
       tags: tags(),

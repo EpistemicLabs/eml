@@ -205,7 +205,7 @@ export function handOverBanner(args: { delegate?: string; checkpoint?: string })
     return `⚠ checkpoint ${args.checkpoint} is set but no delegate: no agent will start this task. If an agent should do it, set delegate (eml_track_task delegate=<agent>); the owner stays in assignee_ids.`
   }
   if (args.delegate && !args.checkpoint) {
-    return `⚠ delegate ${args.delegate} is set but no checkpoint: the runner will not start this task. Set checkpoint (after by default, before when the plan needs the user's OK) with eml_track_task.`
+    return `⚠ delegate ${args.delegate} is set but no checkpoint: the task is not handed over, and the runner will not start it. Set checkpoint (after by default, before when the plan needs the user's OK) with eml_track_task.`
   }
   return null
 }
@@ -224,4 +224,28 @@ export function goalBanner(args: { goal?: string | null; checkpoint?: string | n
   const end = goal.match(ENDS_AT_PR)
   if (!end) return null
   return `⚠ goal ends at "${end[0]}", but checkpoint ${args.checkpoint} means the owner reviews the result before the task is done: an open or merged PR does not run anywhere yet. Extend the goal (eml_track_task goal): "${goal}, it runs in the owner's cockpit and they have reviewed it there."`
+}
+
+/** A task as GET /engram/:id returns it, as far as the hand-over needs it. */
+export interface TaskLike {
+  status?: string
+  properties?: { delegate?: string; checkpoint?: string; delegation?: { requested_at?: string; schedule?: unknown } }
+}
+
+/**
+ * v0.23: an agent that gives an open task a delegate and a checkpoint hands it over, as the owner's
+ * "Delegate now" does: the delegation then carries requested_at (now), and the runner starts it. Only
+ * when the call completes the pair (the task did not have both before), the task has no schedule and no
+ * open request yet. Returns the delegation to write instead of the flat fields, or null to write them as given.
+ */
+export function handOver(before: TaskLike | null, args: { delegate?: unknown; checkpoint?: unknown }, now = new Date()): Record<string, unknown> | null {
+  if (!before || (before.status !== 'planned' && before.status !== 'active')) return null
+  const old = before.properties ?? {}
+  const agent = args.delegate !== undefined ? args.delegate : old.delegate
+  const checkpoint = args.checkpoint !== undefined ? args.checkpoint : old.checkpoint
+  if (typeof agent !== 'string' || agent === '' || typeof checkpoint !== 'string') return null
+  if (old.delegate && old.checkpoint && old.delegate === agent) return null
+  const kept = old.delegate === agent ? old.delegation : undefined
+  if (kept?.schedule !== undefined || kept?.requested_at !== undefined) return null
+  return { agent, checkpoint, requested_at: now.toISOString() }
 }

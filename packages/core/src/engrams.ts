@@ -210,6 +210,10 @@ export interface TrackTaskInput {
   /** v0.22 task system: the one agent that works on the task (the owner stays in assignee_ids); null clears. */
   delegate?: string | null
   display_title?: string | null
+  /** v0.23: the hand-over as one value ({ agent, checkpoint?, mode, requested_at?, next_run_at? }); mirrors delegate and checkpoint; null clears all three. */
+  delegation?: Record<string, string> | null
+  /** v0.23: everyone the task waits on ({ id, who, kind?, why?, since?, session_id? }); waiting_on follows the most urgent; null or [] clears both. */
+  waits?: Array<Record<string, string>> | null
 }
 /** What a track takes besides the task's id and base_rev. */
 export const TRACK_TASK_KEYS: ReadonlySet<string> = new Set(Object.keys(CALL_KEYS['task.track']).filter(k => k !== 'id' && k !== 'base_rev'))

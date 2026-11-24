@@ -2,6 +2,10 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
+import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
+import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import { taskNameOf } from '../domain/task-title.js'
@@ -24,6 +28,13 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
+  /** v0.23: its schedule (a job's here, else the delegation's) and its open runs. */
+  schedule?: ScheduleFields
+  /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
+  earlierRuns?: EarlierRun[]
+  /** What has to be true for it to be done (the task's goal). */
+  goal?: string
+  runs?: BoardRun[]
   id: string
   spaceId: string
   spaceName: string
@@ -158,14 +169,16 @@ export interface TaskBoardDeps {
   sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean }>
   /** The next run of a job of the task, if any. */
   nextRunOf(taskId: string): string | null
+  /** The schedule this cockpit's jobs give the task (domain/task-schedule.ts scheduleOfJobs), if any. */
+  scheduleOf?(taskId: string): ScheduleFields | null
   snoozes(): Snooze[]
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
-  /** The runner's busy check: a session works on the task already (index.ts shares it with the runner). */
-  runnerBusy?(taskId: string): boolean
+  /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
+  runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
   /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
   runnerHeld?(taskId: string): boolean
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
@@ -223,13 +236,69 @@ interface Row {
     assignee_ids?: string[]
     delegate?: string
     checkpoint?: string
+    delegation?: DelegationFields
+    goal?: string
     priority?: string
     due_date?: string
     depends_on?: string[]
+    waits?: unknown
     waiting_on?: WaitingOn
     outcome?: string
     stage?: string
   }
+}
+
+/** A run as the board shows it: whose, its state, when it was last active, and whether it is this cockpit's. */
+export interface BoardRun {
+  id: string
+  member: string
+  agent: string | null
+  state: 'running' | 'idle' | 'stale'
+  lastActivityAt: string | null
+  here: boolean
+}
+
+/** How many ended sessions of a task the board sends. */
+export const EARLIER_RUNS = 10
+
+/** An ended session on a task: whose, when, how it ended and its last result line; this member's can be reopened here. */
+export interface EarlierRun {
+  id: string
+  member: string
+  agent: string | null
+  startedAt: string | null
+  endedAt: string | null
+  endReason: string | null
+  result: string | null
+  here: boolean
+}
+
+/** The ended runs per task from the newest runs the brain listed (newest first per task). */
+function earlierRunsByTask(objects: ReadonlyArray<Record<string, unknown>>, viewer: string): Map<string, EarlierRun[]> {
+  const byTask = new Map<string, EarlierRun[]>()
+  for (const r of runsOf(objects)) {
+    if (r.state !== 'ended') continue
+    const o = r as RunFacts & { ended_at?: string | null; end_reason?: string | null }
+    const list = byTask.get(r.task_id) ?? []
+    if (list.length >= EARLIER_RUNS) continue
+    list.push({ id: r.id, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
+    byTask.set(r.task_id, list)
+  }
+  return byTask
+}
+
+/** The task's open runs for the board, running first, then by last activity (the panel orders its tabs by attention). */
+function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: string }>, viewer: string, now: number): BoardRun[] {
+  const localIds = new Set(local.map((s) => s.sessionId))
+  return runs
+    .filter((r) => r.state !== 'ended')
+    .map((r) => ({
+      id: r.id, member: r.member, agent: r.agent ?? null,
+      state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
+      lastActivityAt: r.last_activity_at ?? null,
+      here: localIds.has(r.id) || r.member === viewer,
+    }))
+    .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
 }
 
 export function createTaskBoard(deps: TaskBoardDeps) {
@@ -308,11 +377,17 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on }, command.handOver, { agents })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
-      const { status, waiting_on, ...fields } = planned.plan.patch
-      const next: Row['properties'] = { ...props, ...fields } as Row['properties']
-      if (waiting_on === null) delete next!.waiting_on
+      const { status, waits, delegation } = planned.plan.patch
+      const next = { ...props } as NonNullable<Row['properties']>
+      // The flat fields follow the delegation, as core keeps them (packages/core task-state.ts).
+      if (delegation === null) { delete next.delegation; delete next.delegate; delete next.checkpoint }
+      if (delegation) { next.delegation = delegation; next.delegate = delegation.agent; if (delegation.checkpoint) next.checkpoint = delegation.checkpoint; else delete next.checkpoint }
+      if (waits !== undefined) {
+        next.waits = waits ?? undefined
+        next.waiting_on = urgentWaitOf({ waits: waits ?? [] })
+      }
       return { ...row, ...(status ? { status } : {}), properties: next }
     }
     return row
@@ -363,6 +438,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       // What a task's facts read of the others: open and resolved ones, as before closed tasks were listed.
       const statusOf = new Map(rows.filter((r) => r.status === 'planned' || r.status === 'active' || r.status === 'resolved').map((r) => [r.id, r.status]))
       const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
+      // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
+      const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
+      // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
+      // The newest runs of each task: the first is what a delegation request is checked against, the ended ones are its earlier sessions.
+      const latestRuns = ((await brain.get('/object/run', { latest: String(EARLIER_RUNS + 1) }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
+      const lastStarts = lastStartsOf(latestRuns)
+      const earlier = earlierRunsByTask(latestRuns, deps.viewer)
 
       // What the runner's checks read: the space's tasks, and any the lists left out fetched once by id.
       const byId = new Map(rows.map((r) => [r.id, r as GateTask]))
@@ -386,7 +468,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id) ?? false, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id) ?? nextRunOfSchedule(row.properties?.delegation?.schedule, now)),
         })
       }
 
@@ -403,15 +485,20 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           owner: props.assignee_ids?.[0],
           delegate: props.delegate,
           checkpoint: props.checkpoint,
-          waitingOn: props.waiting_on,
+          waitingOn: urgentWaitOf(props),
           priority: props.priority,
           due: props.due_date,
           closedAt: row.status === 'resolved' ? row.updated_at : undefined,
           // The board loads every open task, so a parent it does not hold is closed.
           parentActive: row.parent_id ? statusOf.get(row.parent_id) === 'active' : null,
         }
-        if (row.status === 'planned' && props.delegate && props.checkpoint) facts.runner = await blockOf(row)
-        const live: LiveFacts = { working: sessions.some((s) => s.working), sessions: sessions.length, nextRunAt: deps.nextRunOf(row.id) }
+        if (requestOpen(row, lastStarts.get(row.id) ?? null)) {
+          facts.requested = true
+          facts.runner = await blockOf(row)
+        }
+        // A job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts).
+        const schedule = deps.scheduleOf?.(row.id) ?? props.delegation?.schedule ?? null
+        const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? nextRunOfSchedule(props.delegation?.schedule, now), now), schedule }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
@@ -449,8 +536,18 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           sessionIds: CLOSED_STATUSES.has(row.status) ? deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId) : sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
+          ...(schedule ? { schedule } : {}),
+          ...(props.goal ? { goal: props.goal } : {}),
+          // Its open runs, on this cockpit and the other members', for the panel and the card (domain/runs.ts).
           ...(() => {
-            const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id) : null
+            const list = boardRuns(runs.get(row.id) ?? [], sessions, deps.viewer, now)
+            return list.length ? { runs: list } : {}
+          })(),
+          ...(earlier.get(row.id)?.length ? { earlierRuns: earlier.get(row.id) } : {}),
+          ...(() => {
+            // Work on it now released an agent, or a delegation was never handed over (v0.23: no request, no schedule).
+            const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)
+              : turn.reason === 'not_handed_over' ? facts.delegate : null
             return agent ? { handTo: agent } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
@@ -459,7 +556,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return items.length ? { reopenedWith: items } : {}
           })(),
         })
-        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
       }
       // A wait on a step names where that step stands, read from the step's own card.
       for (const t of spaceTasks) {

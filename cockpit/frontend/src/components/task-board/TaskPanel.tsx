@@ -11,9 +11,9 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -51,7 +51,7 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue, onPark }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -71,15 +71,24 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onReopen: (task: BoardTask, reason: string) => void;
   /** Writing in a closed task's chat: reopen it with the message, or start a follow-up. False: the text stays in the input. */
   onContinue: (task: BoardTask, text: string, how: ContinueHow, restore: () => void) => Promise<boolean>;
+  /** Park the viewer's wait on the task: until tomorrow or Monday 09:00, or with no date. */
+  onPark?: (task: BoardTask, until: 'tomorrow' | 'monday' | 'open') => void;
 }) {
   const [reason, setReason] = useState('');
   const { hrefFor, go } = useEngramPanel();
   const spaceKey = (id: string) => { const space = spaces.find((s) => s.id === id); return space ? paneSpaceKey(space) : null; };
   const engram = useEngram(task.id);
+  const runOf = (id: string) => task.runs?.find((r) => r.id === id);
+  const stateOf = (id: string) => sessionState(task, id, Boolean(sessions.find((s) => s.id === id)?.archivedAt), runOf(id));
+  // By what needs the viewer: a question or a review first, then a silent one, working, idle, done; newest within.
   const own = sessions.filter((s) => task.sessionIds.includes(s.id))
-    .sort((a, b) => String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
+    .sort((a, b) => SESSION_ORDER[stateOf(a.id)] - SESSION_ORDER[stateOf(b.id)] || String(b.lastActivity ?? '').localeCompare(String(a.lastActivity ?? '')));
+  const remote = (task.runs ?? []).filter((r) => !r.here && !task.sessionIds.includes(r.id));
   const [pick, setPick] = useState<string | null>(sessionId ?? null);
-  const current = own.find((s) => s.id === pick) ?? own[0];
+  const [showEarlier, setShowEarlier] = useState(false);
+  const earlier = task.earlierRuns ?? [];
+  // An earlier session of this cockpit opens its chat again; it is put away, so it is not among the open ones.
+  const current = own.find((s) => s.id === pick) ?? sessions.find((s) => s.id === pick && earlier.some((r) => r.id === s.id)) ?? own[0];
   useSeenWhileShown(current?.id ?? null);
   const project = board.projects.find((p) => p.spaceId === task.spaceId && p.id === task.project);
   const hue = hueOf(task);
@@ -96,16 +105,21 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     { label: 'Not needed', onSelect: () => onDrop(task), destructive: true },
   ];
 
-  const handOver = !closed && (
+  const actions = closed ? [] : panelActions(task, Boolean(current));
+  const handOver = actions.length > 0 && (
     <div className="flex flex-wrap gap-2">
-      {review && <button type="button" className={PRIMARY} onClick={() => onReview(task)}>Looks good, done</button>}
-      <button type="button" className={review || asked ? BUTTON : PRIMARY} onClick={() => onHandOver(task, 'now')}>
-        {task.delegate ? `Run ${agentName(task.delegate)} now` : task.handTo ? `Hand to ${agentName(task.handTo)}` : 'Delegate now'}
-      </button>
-      <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'schedule')}>Schedule…</button>
-      <button type="button" className={BUTTON} onClick={() => onHandOver(task, 'together')}>Work on it now</button>
+      {actions.map((a, i) => {
+        const cls = i === 0 ? PRIMARY : BUTTON;
+        if (a === 'looks_good') return <button key={a} type="button" className={cls} onClick={() => onReview(task)}>Looks good, done</button>;
+        if (a === 'hand_to') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Hand to {agentName(task.handTo)}</button>;
+        if (a === 'run_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Run {agentName(task.delegate)} now</button>;
+        if (a === 'delegate_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Delegate now</button>;
+        if (a === 'schedule') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'schedule')}>Schedule…</button>;
+        return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'together')}>Work on it now</button>;
+      })}
     </div>
   );
+
 
   // A closed task: how it ended, and Reopen, or why it can't be reopened here.
   const parent = task.parentId ? board.tasks.find((t) => t.id === task.parentId) ?? board.closed?.find((c) => c.id === task.parentId) : undefined;
@@ -160,6 +174,12 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               {menu.length > 0 && <Menu label="More task actions" items={menu} className="ml-auto" />}
             </div>
             <h2 id={TASK_TITLE_ID} tabIndex={-1} data-autofocus className={cn('m-0 text-display font-semibold tracking-title text-balance', FOCUS)}>{taskName(task)}</h2>
+            {task.goal && (
+              <div aria-label="Goal" className="flex flex-col gap-0.5">
+                <span className={LABEL}>Goal</span>
+                <span className="text-body">{task.goal}</span>
+              </div>
+            )}
             <details className="group text-ui text-muted-foreground">
               <summary className={cn('inline-flex cursor-pointer list-none gap-1.5', FOCUS)}>
                 <span aria-hidden className="inline-block transition-transform duration-(--duration-fast) group-open:rotate-90">›</span>
@@ -194,29 +214,37 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <dt className={LABEL}>Delegate</dt>
               <dd className="m-0 flex flex-wrap items-center gap-2">
                 {task.delegate ? <AgentBadge handle={task.delegate} /> : <span className="text-muted-foreground">not delegated</span>}
-                {task.nextRunAt && <span className="text-ui text-muted-foreground">next {when(task.nextRunAt, now)}</span>}
+                {task.group === 'mission' && <span className="text-ui text-muted-foreground">until the goal is reached</span>}
+                {task.group === 'routine' && <span className="text-ui text-muted-foreground">{repeatsText(task.schedule).toLowerCase()}</span>}
+                {task.nextRunAt && <span className="text-ui text-muted-foreground">· {task.group === 'mission' ? 'next check' : 'next'} {when(task.nextRunAt, now)}</span>}
+                {!closed && (task.nextRunAt || task.schedule) && <button type="button" className={LINK} onClick={() => onHandOver(task, 'schedule')}>Change schedule…</button>}
               </dd>
+              {task.waitingOn && !closed && (
+                <>
+                  <dt className={LABEL}>Waiting on</dt>
+                  <dd className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-ui">
+                    <span className="line-clamp-1 min-w-0">{waitingLine(task, board.viewer)}</span>
+                    {task.waitingOn.since && <span className="whitespace-nowrap tabular-nums text-muted-foreground">· since {when(task.waitingOn.since, now)}</span>}
+                    {onPark && task.waitingOn.who === board.viewer && task.turn !== 'parked' && (
+                      <Menu label="Park this task's wait" align="start" className={LINK} items={[
+                        { label: 'Park until tomorrow', onSelect: () => onPark(task, 'tomorrow') },
+                        { label: 'Park until Monday', onSelect: () => onPark(task, 'monday') },
+                        { label: 'Park, no date', onSelect: () => onPark(task, 'open') },
+                      ]}>Park…</Menu>
+                    )}
+                  </dd>
+                </>
+              )}
             </dl>
 
-            {asked ? (
-              <div className={cn('rounded-xl border px-3 py-2.5', HUE.you.tint, HUE.you.edge)}>
-                <div className={cn(LABEL, 'mb-1', HUE.you.ink)}>Needs you · {agentName(task.delegate)} asks</div>
-                <div className="text-heading">{task.waitingOn?.why}</div>
-                {task.waitingOn?.since && <div className="mt-1 tabular-nums text-caption text-muted-foreground">asked {when(task.waitingOn.since, now)}</div>}
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                  {current
-                    ? <button type="button" className={PRIMARY} onClick={focusReply}>Reply…</button>
-                    : <span className="text-ui text-muted-foreground">Its session is gone: hand the task over or work on it now to answer.</span>}
-                </div>
-              </div>
-            ) : !closed && task.group !== 'own' && !review ? (
-              // A review's result is in the chat's handoff right next to it; the chip names the state (Lasse 2026-11-23).
+            {!closed && !asked && task.group !== 'own' && !review ? (
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>
                 <div className={cn(LABEL, 'mb-1', HUE[hue].ink)}>{task.group === 'nobody' ? 'Nobody on it' : task.turn ? TURN_META[task.turn].name : task.status}</div>
                 {cardLine(task, now)}
               </div>
             ) : null}
 
+            {asked && !current && !closed && <p className="m-0 text-ui text-muted-foreground">Its session is gone: work on it now or run {agentName(task.delegate)} again to answer; the question goes along.</p>}
             {handOver}
             {reopen}
             {broughtBack}
@@ -225,15 +253,45 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
         </section>
 
         <section aria-label="Session" id={CHAT_ID} className="flex min-h-0 min-w-0 flex-col">
-          {own.length > 1 && (
-            <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+          {(own.length > 1 || remote.length > 0 || earlier.length > 0) && (
+            <div aria-label="Sessions on it" className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
               {own.map((s) => (
-                <button key={s.id} type="button" onClick={() => setPick(s.id)} aria-pressed={s.id === current?.id}
+                <button key={s.id} type="button" onClick={() => setPick(s.id)} aria-pressed={s.id === current?.id} title={sessionDisplayName(s)}
                   className={cn('max-w-56 shrink-0 truncate rounded-md px-2 py-1 tabular-nums text-ui text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>
-                  {sessionDisplayName(s)}
+                  {agentName(task.runs?.find((r) => r.id === s.id)?.agent ?? task.delegate)} · {stateOf(s.id)}
                 </button>
               ))}
+              {/* Another member's session: seen here, opened only on that member's cockpit. */}
+              {remote.map((r) => (
+                <span key={r.id} title={`On ${agentName(r.member)}'s cockpit`} className={cn('shrink-0 rounded-md px-2 py-1 text-ui text-muted-foreground', r.state === 'stale' && HUE.stopped.ink)}>
+                  {agentName(r.agent ?? task.delegate)} · {sessionState(task, r.id, false, r)} · {agentName(r.member)}'s cockpit
+                </span>
+              ))}
+              {earlier.length > 0 && (
+                <button type="button" aria-expanded={showEarlier} onClick={() => setShowEarlier((v) => !v)}
+                  className={cn('ml-auto shrink-0 rounded-md px-2 py-1 text-ui text-muted-foreground hover:text-foreground', FOCUS)}>
+                  {earlier.length} earlier session{earlier.length === 1 ? '' : 's'} {showEarlier ? '▾' : '▸'}
+                </button>
+              )}
             </div>
+          )}
+          {showEarlier && earlier.length > 0 && (
+            <ul aria-label="Earlier sessions" className="m-0 flex max-h-48 shrink-0 list-none flex-col gap-0.5 overflow-y-auto border-b border-border px-2 py-1.5 text-ui">
+              {earlier.map((r) => {
+                const line = earlierRunLine(r, now);
+                const opens = r.here && sessions.some((s) => s.id === r.id);
+                return (
+                  <li key={r.id}>
+                    {opens ? (
+                      <button type="button" aria-pressed={current?.id === r.id} onClick={() => setPick(r.id)}
+                        className={cn('w-full truncate rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted aria-pressed:bg-muted aria-pressed:text-foreground', FOCUS)}>{line}</button>
+                    ) : (
+                      <span className="block truncate px-2 py-1 text-muted-foreground">{line}{r.here ? '' : ` · on ${agentName(r.member)}'s cockpit`}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
           {current ? (
             <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} {...(closed ? { composer: composer || <ClosedNote task={task} pending={Boolean(task.pending)} /> } : {})} />
@@ -246,7 +304,6 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <b className="text-foreground">{closed ? 'No session on this task.' : 'No session on this task yet.'}</b>
               {closed ? (goOn?.primary === 'reopen' ? 'Write below to reopen it: a session starts with your message.' : null)
                 : 'Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.'}
-              {handOver}
             </div>
             {composer}
             </>

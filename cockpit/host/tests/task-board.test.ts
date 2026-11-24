@@ -4,7 +4,7 @@ import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-boa
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; latest_note?: { text: string; at: string } | null; properties?: Record<string, unknown> }
 
 /** A brain with listed tasks and, by id only, tasks the lists leave out (closed long ago). */
-function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true) {
+function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name: 'Acme', goal: 'keep the customer' }], unlisted: Row[] = [], knowsOrigin = true, runs: Array<Record<string, unknown>> = []) {
   const queries: Array<Record<string, unknown>> = []
   const fetched: string[] = []
   return {
@@ -13,6 +13,14 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
     fetched,
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/object/agent') return { objects: agents.map((id) => ({ id, name: id })) }
+      // As core answers: latest=N is the newest N runs of each task, newest first per task; else the open runs.
+      if (path === '/object/run' && query?.latest) {
+        const n = query.latest === 'true' ? 1 : Number(query.latest)
+        const byTask = new Map<string, Array<Record<string, unknown>>>()
+        for (const r of runs) byTask.set(String(r.task_id), [...(byTask.get(String(r.task_id)) ?? []), r])
+        return { objects: [...byTask.values()].flatMap((list) => [...list].sort((a, b) => String(b.started_at ?? '').localeCompare(String(a.started_at ?? ''))).slice(0, n)) }
+      }
+      if (path === '/object/run') return { objects: runs.filter((r) => r.state !== 'ended') }
       if (path === '/object/project') return { objects: projects }
       if (path === '/list') {
         queries.push(query ?? {})
@@ -35,10 +43,16 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
-  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
+  // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
+  const requested = (rows: Row[]) => rows.map((r) => {
+    const p = r.properties ?? {}
+    return r.status === 'planned' && p.delegate && p.checkpoint && !p.delegation
+      ? { ...r, properties: { ...p, delegation: { agent: p.delegate, checkpoint: p.checkpoint, requested_at: '2026-11-19T09:00:00.000Z' } } } : r
+  })
+  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(opts.main), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   const deps: TaskBoardDeps = {
@@ -47,13 +61,14 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     viewer: 'lasse',
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
     nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
+    scheduleOf: (taskId) => (opts.schedules?.[taskId] as never) ?? null,
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
     now: () => clock.now,
     log: (line) => { opts.log?.push(line) },
     ...(opts.head ? { head: opts.head } : {}),
-    runnerBusy: (taskId) => opts.busy?.includes(taskId) ?? false,
+    runnerBusy: (taskId, runs) => (opts.busy?.includes(taskId) ?? false) || (runs ?? []).some((r) => r.state === 'running'),
     runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
   }
@@ -64,6 +79,84 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('sends a task\'s ended sessions, newest first, at most ten, without the one still running', async () => {
+    const ended = (id: string, member: string, started: string, reason: string, result: string | null) =>
+      ({ id, task_id: 'r', member, agent: member === 'lasse' ? 'atlas' : 'motti', state: 'ended', started_at: started, ended_at: started, end_reason: reason, result })
+    const day = (d: number) => `2026-11-${String(d).padStart(2, '0')}T08:00:00.000Z`
+    const older = Array.from({ length: 10 }, (_, i) => ended(`old-${i + 1}`, 'lasse', day(i + 1), 'finished', null))
+    const { board } = setup({
+      main: [mine('r', { delegate: 'atlas' })],
+      runs: [...older, ended('mon', 'lasse', day(16), 'finished', '4 mails need you'), ended('tue', 'dominik', day(17), 'crashed', null),
+        { id: 'now', task_id: 'r', member: 'lasse', agent: 'atlas', state: 'running', started_at: day(18), last_activity_at: day(18) }],
+    })
+    const t = (await board.refresh()).tasks.find((x) => x.id === 'r')!
+    expect(t.earlierRuns).toHaveLength(10)
+    expect(t.earlierRuns!.slice(0, 2)).toEqual([
+      { id: 'tue', member: 'dominik', agent: 'motti', startedAt: day(17), endedAt: day(17), endReason: 'crashed', result: null, here: false },
+      { id: 'mon', member: 'lasse', agent: 'atlas', startedAt: day(16), endedAt: day(16), endReason: 'finished', result: '4 mails need you', here: true },
+    ])
+    expect(t.earlierRuns!.map((r) => r.id)).not.toContain('now')
+  })
+
+  it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {
+    const { board } = setup({
+      main: [mine('m', { goal: 'Orders sync both ways', delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } })],
+      jobs: { m: '2026-11-20T09:00:00.000Z' },
+      schedules: { m: { at: '2026-11-20T09:00:00.000Z', session: 'resume' } },
+    })
+    const t = (await board.refresh()).tasks.find((x) => x.id === 'm')!
+    expect(t).toMatchObject({ goal: 'Orders sync both ways', schedule: { at: '2026-11-20T09:00:00.000Z', session: 'resume' }, group: 'mission' })
+  })
+
+  it('offers "Hand to <agent>" for a delegated task that was never handed over, in Needs you', async () => {
+    const { board } = setup({ main: [mine('never', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }, 'planned')] })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'never')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'not_handed_over', handTo: 'atlas' })
+  })
+
+  it('shows a schedule another member\'s cockpit mirrored into the delegation as scheduled, with its next run', async () => {
+    const { board } = setup({
+      main: [
+        mine('theirs-weekly', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', session: 'new' } } }),
+        mine('paused', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', paused: true } } }),
+      ],
+    })
+    const model = await board.refresh()
+    // a repeat rule is a routine; the board carries the schedule for the card
+    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'routine', nextRunAt: '2026-11-23T09:00:00.000Z', schedule: { cron: '0 9 * * 1' } })
+    expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
+  })
+
+  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work', async () => {
+    const run = (id: string, task_id: string, state: string, at: string) => ({ id, task_id, member: 'dominik', agent: 'motti', state, last_activity_at: at })
+    const delegated = { delegate: 'atlas', checkpoint: 'after' }
+    const { board } = setup({
+      main: [mine('elsewhere', delegated), mine('between-turns', delegated), mine('stale', delegated), mine('ended', delegated), mine('local', delegated), mine('queued', delegated, 'planned')],
+      working: ['local'],
+      runs: [
+        run('r1', 'elsewhere', 'running', '2026-11-19T09:55:00.000Z'),
+        run('r2', 'between-turns', 'idle', '2026-11-19T09:00:00.000Z'),
+        run('r3', 'stale', 'running', '2026-11-19T08:30:00.000Z'),
+        run('r4', 'ended', 'ended', '2026-11-19T09:59:00.000Z'),
+        // this host's own session on it: counted once, from the ledger
+        { ...run('s0', 'local', 'idle', '2026-11-19T09:59:00.000Z'), member: 'lasse' },
+        run('r5', 'queued', 'running', '2026-11-19T09:59:00.000Z'),
+      ],
+    })
+    const model = await board.refresh()
+    const byId = new Map(model.tasks.map((t) => [t.id, t]))
+    expect(byId.get('elsewhere')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: [] })
+    expect(byId.get('between-turns')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('stale')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
+    expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
+    // the open runs go to the card and the panel: whose, their state, and whether they are this cockpit's
+    expect(byId.get('elsewhere')!.runs).toEqual([{ id: 'r1', member: 'dominik', agent: 'motti', state: 'running', lastActivityAt: '2026-11-19T09:55:00.000Z', here: false }])
+    expect(byId.get('stale')!.runs![0].state).toBe('stale')
+    expect(byId.get('ended')!.runs).toBeUndefined()
+    expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })
+  })
+
   it('names a task as the tasks card does, from open, closed and lineage tasks, and builds a board when none is there yet', async () => {
     const log: string[] = []
     const { board, brains } = setup({
@@ -184,6 +277,29 @@ describe('the task board', () => {
     const of = (id: string) => model.tasks.find((t) => t.id === id)!
     expect(of('queued')).toMatchObject({ turn: 'agent_scheduled', group: 'blocked', runner: { kind: 'cap', running: 5, max: 5, standalone: true } })
     expect(of('theirs')).toMatchObject({ turn: 'agent_scheduled', group: 'runner', runner: { kind: 'other_member', owner: 'dominik' } })
+  })
+
+  it('reads the turn from the most urgent of a task\'s waits, and lists each wait on the viewer in the Inbox', async () => {
+    const waits = [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:00:00.000Z', session_id: 's1' },
+      { id: 's2', who: 'lasse', kind: 'review', why: 'Review: draft', since: '2026-11-19T09:00:00.000Z', session_id: 's2' },
+    ]
+    const { board } = setup({
+      main: [
+        // waiting_on as an older core left it: the list wins.
+        mine('two', { delegate: 'atlas', waits, waiting_on: { who: 'lasse', kind: 'question', why: 'stale' } }),
+        mine('asked-and-handed', { waits: [waits[0], { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }] }),
+      ],
+      pending: () => [
+        { opId: 'op-h', kind: 'hand_over', spaceId: 'main', taskId: 'asked-and-handed', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } },
+      ],
+    })
+    const model = await board.refresh()
+    // v0.23: a question blocks the agent and ranks above a review
+    expect(model.tasks.find((t) => t.id === 'two')).toMatchObject({ turn: 'needs_you', group: 'asked', waitingOn: { kind: 'question', session_id: 's1' } })
+    expect(model.inbox.map((i) => [i.kind, i.sessionId]).sort()).toEqual([['question', 's1'], ['review', 's2']])
+    // The pending hand-over takes the owner's question off; the customer's wait stays.
+    expect(model.tasks.find((t) => t.id === 'asked-and-handed')).toMatchObject({ turn: 'waiting_on_others', waitingOn: { who: 'kim' } })
   })
 
   it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {

@@ -13,6 +13,7 @@ import { UserStore } from './users'
 import { EntityStore } from './entities'
 import { TagStore } from './tags'
 import { SubjectStore } from './subjects'
+import { RunStore } from './runs'
 import { type Actor, type Clock, type Env, type IdSource, systemClock, randomId, NO_ACTOR } from './env'
 
 export class EML {
@@ -23,6 +24,7 @@ export class EML {
   public entities!: EntityStore
   public tags!: TagStore
   public subjects!: SubjectStore
+  public runs!: RunStore
   private db!: Database.Database
   private ownsConnection: boolean = true
   private clock!: Clock
@@ -121,6 +123,7 @@ export class EML {
     this.entities = new EntityStore(this.db)
     this.tags = new TagStore(this.db)
     this.subjects = new SubjectStore(this.db)
+    this.runs = new RunStore(this.db)
     this.engrams = new EngramStore(
       this.db, namespace, this.projects, this.users, this.agents, this.entities,
       this.tags, this.subjects, env,
@@ -149,6 +152,8 @@ export { ProjectStore } from './projects'
 export { TagStore, slugifyTag } from './tags'
 export { REVIEWABLE_TYPES, reviewDueSql, reviewDueParams, hydrateReviewDue } from './review-due'
 export { SubjectStore, slugifySubject, hydrateEngramSubjects } from './subjects'
+export { RunStore, RUN_ORIGINS, RUN_DRIVERS, RUN_STATES, type Run, type RunState } from './runs'
+export { mostUrgentWait } from './task-state'
 export { UserStore } from './users'
 export { AgentStore } from './agents'
 export { EntityStore } from './entities'

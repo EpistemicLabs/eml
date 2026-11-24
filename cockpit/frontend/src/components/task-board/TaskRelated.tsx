@@ -38,7 +38,7 @@ export function TaskRelated({ task, board, onOpen }: { task: BoardTask; board: P
       line={lineOf(item.rel)}
       label={`${item.title}, ${item.state.label}${aside ? `, ${aside}` : ''}`}
       onSelect={() => onOpen(item)}
-      content={<TaskNodeContent state={item.state} title={item.title} muted={muted} aside={aside} />}
+      content={<TaskNodeContent state={item.state} title={item.title} muted={muted} aside={[item.state.label, aside].filter(Boolean).join(' · ')} />}
     />
   );
 
@@ -59,7 +59,7 @@ export function TaskRelated({ task, board, onOpen }: { task: BoardTask; board: P
       selected
       expanded={children.length > 0 ? true : undefined}
       foldable={false}
-      content={<TaskNodeContent state={taskState(task)} title="This task" aside={relWord(selfRel)} />}
+      content={<TaskNodeContent state={taskState(task)} title="This task" aside={[taskState(task).label, relWord(selfRel)].filter(Boolean).join(' · ')} />}
     >
       {children}
     </TreeItem>
@@ -76,7 +76,7 @@ export function TaskRelated({ task, board, onOpen }: { task: BoardTask; board: P
         onSelect={() => onOpen(o)}
         expanded
         foldable={false}
-        content={<TaskNodeContent state={o.state} title={o.title} muted={o.state.hue === 'done'} aside={direct ? (related.rel === 'sub' ? 'parent' : 'origin') : undefined} />}
+        content={<TaskNodeContent state={o.state} title={o.title} muted={o.state.hue === 'done'} aside={[o.state.label, direct ? (related.rel === 'sub' ? 'parent' : 'origin') : ''].filter(Boolean).join(' · ')} />}
       >
         {tree}
       </TreeItem>

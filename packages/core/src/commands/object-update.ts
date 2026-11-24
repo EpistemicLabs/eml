@@ -1,6 +1,10 @@
 import { assertObject, checkFields, diffOf } from '../objects'
 import { slugifyTag } from '../tags'
-import { updateProject, updateEntity, updateTag, updateSubject, updateUser, updateAgent } from '../write/objects'
+import { updateProject, updateEntity, updateTag, updateSubject, updateUser, updateAgent, updateRunRow, type RunPatch } from '../write/objects'
+import type { Run } from '../runs'
+import { appendTaskChange } from '../write/task-binding'
+import { isoTimestamp } from '../fields'
+import { HANDLE } from '../contract/values'
 import { CALL_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { CommandError, inputObject, requireText, type CommandContext, type CommandModule } from './types'
 
@@ -11,7 +15,7 @@ export interface ObjectUpdateInput {
   patch: Record<string, unknown>
 }
 
-/** object.update — a project, entity, tag, subject, user or agent. Was updateObject and the stores' update. */
+/** object.update — a project, entity, tag, subject, user, agent or run. Was updateObject and the stores' update. */
 export const objectUpdate: CommandModule<ObjectUpdateInput, { object: unknown, diff: Record<string, [unknown, unknown]> }> = {
   name: 'object.update',
   validate(input) {
@@ -79,6 +83,39 @@ function updateObject(ctx: CommandContext, object: unknown, id: string, patch: R
       const before = ctx.eml.agents.get(id)
       if (!before) return null
       const after = updateAgent(ctx, id, patch as never)!
+      return { object: after, diff: diffOf(before as never, after as never) }
+    }
+    case 'run': {
+      const before = ctx.eml.runs.get(id)
+      if (!before) return null
+      // v0.23: only the member a run names changes it — every replica refuses another member's op
+      if (ctx.stamp.actor.handle !== before.member) {
+        throw new Error(`Invalid object: only its member ${before.member} changes run ${id}.`)
+      }
+      if (typeof patch.agent === 'string' && !HANDLE.test(patch.agent)) throw new Error('Invalid object: a run\'s agent is 1–63 characters of a-z, 0-9, _ and -.')
+      // every write of a run is something that happened: it is its last activity unless the patch says when.
+      // Ending sets ended_at (the write's time unless given); a resume clears ended_at and end_reason.
+      const ts = (k: string) => typeof patch[k] === 'string' ? isoTimestamp(patch[k] as string) : undefined
+      const state = (patch.state as Run['state'] | undefined) ?? before.state
+      if (state !== 'ended' && patch.end_reason != null) throw new Error('Invalid object: end_reason is for an ended run.')
+      if (state !== 'ended' && patch.ended_at != null) throw new Error('Invalid object: ended_at is for an ended run.')
+      if (patch.last_activity_at === null) throw new Error('Invalid object: last_activity_at cannot be cleared.')
+      const ending = before.state !== 'ended' && state === 'ended'
+      const resuming = before.state === 'ended' && state !== 'ended'
+      const runPatch: RunPatch = {
+        agent: patch.agent as string | null | undefined, driver: patch.driver as never, state: patch.state as never,
+        last_activity_at: ts('last_activity_at') ?? ctx.stamp.at,
+        result: patch.result as string | null | undefined,
+        end_reason: resuming ? null : patch.end_reason as never,
+        ended_at: resuming ? null : (ts('ended_at') ?? (ending ? ctx.stamp.at : undefined)),
+      }
+      updateRunRow(ctx, id, runPatch)
+      const after = ctx.eml.runs.get(id)!
+      // its end (and a resume after it) is journaled on its task; the other states change often and are not
+      // (unless the task has left this brain since)
+      const journaled = !!ctx.db.prepare('SELECT 1 FROM engrams WHERE id = ?').get(after.task_id)
+      if (journaled && ending) appendTaskChange(ctx, after.task_id, `run ${id} ended${after.end_reason ? ` (${after.end_reason})` : ''}`)
+      if (journaled && resuming) appendTaskChange(ctx, after.task_id, `run ${id} resumed`)
       return { object: after, diff: diffOf(before as never, after as never) }
     }
   }

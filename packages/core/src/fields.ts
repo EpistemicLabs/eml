@@ -15,7 +15,7 @@ import { unknownKeys } from './contract/calls'
 // (supersedes, task_id, parent_id, from_learning, keep, review_note, …), which
 // the write paths take as their own parameters.
 
-export type FieldKind = 'text' | 'text[]' | 'enum' | 'bool' | 'date' | 'map'
+export type FieldKind = 'text' | 'text[]' | 'enum' | 'bool' | 'date' | 'map' | 'map[]'
 
 export interface FieldSpec {
   kind: FieldKind
@@ -27,6 +27,13 @@ export interface FieldSpec {
   required?: boolean
   /** text: optional, but a value must not be blank — null clears it (decision task-intent-blank-rejected). */
   notBlank?: boolean
+  /**
+   * v0.23 map · map[]: the keys an entry has, each with its own spec (text, enum or
+   * date). Without it a map is a flat map of free text keys (waiting_on, metadata).
+   */
+  keys?: Record<string, FieldSpec>
+  /** v0.23 map[]: the key whose value is unique across the list's entries. */
+  uniqueBy?: string
 }
 
 export const BINDINGS = ['task', 'standing'] as const
@@ -38,6 +45,18 @@ export const TASK_PRIORITIES = ['urgent', 'high', 'normal', 'low'] as const
 export const STAGES = TASK_STAGES
 /** v0.22 task system: where a step stops for its person (before it acts, after it acted, not at all). */
 export const CHECKPOINTS = ['before', 'after', 'none'] as const
+/**
+ * v0.23: what a wait is for, most urgent first — the order core picks waiting_on
+ * from a task's waits by (task-state.ts). A question, a go or a failed run block
+ * the agent and sort above a review, which does not; outside (someone outside
+ * has the next move) comes last.
+ */
+export const WAIT_KINDS = ['question', 'go', 'stopped', 'review', 'outside'] as const
+/** v0.23: what each firing of a task's schedule starts — a new session, or the last one resumed. */
+export const SCHEDULE_SESSIONS = ['new', 'resume'] as const
+/** v0.23: a wait parked without an end date (snoozed_until). */
+export const SNOOZED_OPEN = 'open'
+const bool = (o: Omit<FieldSpec, 'kind'> = {}): FieldSpec => ({ kind: 'bool', ...o })
 /** v0.19: the checked list (launched → released; incident and other for what the list does not cover). */
 export const CHANGE_TYPES = [
   'created', 'started', 'completed', 'released', 'deployed', 'failed', 'incident', 'paused', 'resumed', 'deleted', 'other',
@@ -107,6 +126,45 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     // v0.22: the task's name as a person reads it in a list (verb + object + scope,
     // about 60 characters). The kebab title stays the recall anchor and is not shown.
     display_title: text({ max: 80, notBlank: true }),
+    // v0.23: the hand-over to one agent as one value — the agent works on its
+    // own. requested_at is the runner's trigger (a request is open while no run
+    // started after it); schedule says when it fires again (one time or a repeat
+    // rule; the next run time is computed, not stored). delegate and checkpoint
+    // stay, and core keeps the three mirrored on every write (task-state.ts).
+    delegation: {
+      kind: 'map',
+      keys: {
+        agent: text({ required: true, notBlank: true }),
+        checkpoint: oneOf(CHECKPOINTS),
+        requested_at: date(),
+        schedule: {
+          kind: 'map',
+          keys: {
+            at: date(),
+            cron: text({ notBlank: true }),
+            time_zone: text({ notBlank: true }),
+            paused: bool(),
+            session: oneOf(SCHEDULE_SESSIONS),
+          },
+        },
+      },
+    },
+    // v0.23: everyone the task waits on, one entry per wait; core keeps waiting_on
+    // as the most urgent one (task-state.ts).
+    waits: {
+      kind: 'map[]',
+      uniqueBy: 'id',
+      keys: {
+        id: text({ required: true, notBlank: true }),
+        who: text({ required: true, notBlank: true }),
+        kind: oneOf(WAIT_KINDS),
+        why: text(),
+        since: date(),
+        session_id: text(),
+        // parked: an ISO date it comes back at, or "open" (task-state.ts checks it)
+        snoozed_until: text({ notBlank: true }),
+      },
+    },
   },
   event: {
     occurred_at: date({ required: true }),
@@ -210,12 +268,52 @@ export function fieldProblem(name: string, spec: FieldSpec, value: unknown): str
       if (typeof value !== 'string' || !isIsoDate(value)) return `${name} must be an ISO date (YYYY-MM-DD or a full timestamp).`
       return null
     case 'map':
+      if (spec.keys) return entryProblem(name, spec.keys, value)
       if (!value || typeof value !== 'object' || Array.isArray(value)
         || Object.values(value as Record<string, unknown>).some(v => typeof v !== 'string')) {
         return `${name} must be a flat map of text values.`
       }
       return null
+    case 'map[]': {
+      if (!Array.isArray(value)) return `${name} must be a list of entries.`
+      for (let i = 0; i < value.length; i++) {
+        const p = entryProblem(`${name}[${i}]`, spec.keys ?? {}, value[i])
+        if (p) return p
+      }
+      if (spec.uniqueBy) {
+        const seen = new Set<unknown>()
+        for (const entry of value as Array<Record<string, unknown>>) {
+          if (seen.has(entry[spec.uniqueBy])) return `${name}: ${spec.uniqueBy} ${String(entry[spec.uniqueBy])} occurs twice.`
+          seen.add(entry[spec.uniqueBy])
+        }
+      }
+      return null
+    }
   }
+}
+
+/**
+ * v0.23: one entry of a shaped map (or of a map[] list) against its keys: an
+ * object with only those keys, every required one there, each value as its
+ * spec says. A key is left out, not null.
+ */
+function entryProblem(name: string, keys: Record<string, FieldSpec>, value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return `${name} must be an object with ${Object.keys(keys).join(', ')}.`
+  const entry = value as Record<string, unknown>
+  const unknown = unknownKeys(entry, keys)
+  if (unknown.length > 0) return `${name} has unknown key${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} (it takes ${Object.keys(keys).join(', ')}).`
+  for (const [k, spec] of Object.entries(keys)) {
+    const v = entry[k]
+    if (v === undefined || v === null) {
+      if (v === null) return `${name}.${k} is left out, not null.`
+      if (spec.required) return `${name} needs ${k}.`
+      continue
+    }
+    const p = fieldProblem(`${name}.${k}`, spec, v)
+    if (p) return p
+    if ((spec.required || spec.notBlank) && isBlank(v)) return `${name}.${k} must not be blank.`
+  }
+  return null
 }
 
 /** True when a required text / list field has no content. */

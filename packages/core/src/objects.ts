@@ -2,6 +2,7 @@ import type { EML } from './index'
 import { slugifyTag } from './tags'
 import { fieldProblem, unknownFieldsError } from './fields'
 import { unknownKeys } from './contract/calls'
+import { RUN_ORIGINS, RUN_DRIVERS, RUN_STATES, RUN_END_REASONS, type RunState } from './runs'
 
 // --- Objects (v0.19): project · entity · tag · subject · user · agent -------------
 //
@@ -10,8 +11,9 @@ import { unknownKeys } from './contract/calls'
 // /object/<object>). Each kind takes only its own fields; an unknown field
 // errors with the list of allowed ones. v0.20: users and agents are objects too
 // (decision write-command-set); writes go through the object commands.
+// v0.23: a run — one session on a task (runs.ts); only its member writes it.
 
-export const OBJECT_KINDS = ['project', 'entity', 'tag', 'subject', 'user', 'agent'] as const
+export const OBJECT_KINDS = ['project', 'entity', 'tag', 'subject', 'user', 'agent', 'run'] as const
 export type ObjectKind = typeof OBJECT_KINDS[number]
 
 type Spec = Record<string, { kind: 'text' | 'text[]' | 'enum' | 'date' | 'map', values?: readonly string[] }>
@@ -46,11 +48,19 @@ export const OBJECT_FIELDS: Record<ObjectKind, Spec> = {
     id: { kind: 'text' }, name: { kind: 'text' }, parent_id: { kind: 'text' },
     domains: { kind: 'text[]' }, description: { kind: 'text' }, metadata: { kind: 'map' },
   },
+  run: {
+    id: { kind: 'text' }, task_id: { kind: 'text' }, member: { kind: 'text' }, agent: { kind: 'text' },
+    origin: { kind: 'enum', values: RUN_ORIGINS }, driver: { kind: 'enum', values: RUN_DRIVERS },
+    state: { kind: 'enum', values: RUN_STATES },
+    started_at: { kind: 'date' }, last_activity_at: { kind: 'date' }, ended_at: { kind: 'date' },
+    end_reason: { kind: 'enum', values: RUN_END_REASONS }, result: { kind: 'text' },
+  },
 }
 
 /** Fields that cannot be cleared or changed after create. */
 export const FIXED_ON_UPDATE: Record<ObjectKind, readonly string[]> = {
   project: ['id'], entity: ['id'], tag: [], subject: [], user: ['id'], agent: ['id'],
+  run: ['id', 'task_id', 'member', 'origin', 'started_at'],
 }
 
 export function assertObject(object: unknown): asserts object is ObjectKind {
@@ -70,7 +80,7 @@ export function checkFields(object: ObjectKind, input: Record<string, unknown>, 
   for (const [k, v] of Object.entries(input)) {
     if (v === undefined) continue
     if (v === null) {
-      if (k === 'name' || k === 'status' || k === 'kind') problems.push(`${k} cannot be cleared.`)
+      if (k === 'name' || k === 'status' || k === 'kind' || k === 'driver' || k === 'state') problems.push(`${k} cannot be cleared.`)
       continue
     }
     const p = fieldProblem(k, spec[k], v)
@@ -150,8 +160,15 @@ function scopeCount(eml: EML, scope: string): number {
  * or closed ones only with a status filter. With id: one object with all its
  * fields, or null.
  */
-export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[] } = {}): unknown {
+export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[], latest?: boolean | number } = {}): unknown {
   assertObject(object)
+  // v0.23: the newest runs of each task, whatever their state (runs.ts latestPerTask); runs only. true is one per task.
+  if (opts.latest !== undefined && opts.latest !== false) {
+    if (object !== 'run') throw new Error('Invalid object: latest lists the newest run of each task; it is for runs only.')
+    const n = opts.latest === true ? 1 : opts.latest
+    if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error('Invalid object: latest is true or a whole number from 1 to 50 (runs per task).')
+    return eml.runs.latestPerTask(n)
+  }
   // An entity list can be narrowed by kind (person · org · asset); the other objects have none.
   if (opts.kind !== undefined) {
     if (object !== 'entity') throw new Error('Invalid object: kind filters entities only.')
@@ -171,11 +188,12 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
       case 'subject': return eml.subjects.get(opts.id)
       case 'user': return spacePeople(eml, opts.members).users.find(u => u.id === opts.id) ?? null
       case 'agent': return spacePeople(eml, opts.members).agents.find(a => a.id === opts.id) ?? null
+      case 'run': return eml.runs.get(opts.id)
     }
   }
   const statuses: Record<ObjectKind, readonly string[]> = {
     project: ['active', 'paused', 'archived'], entity: ['active', 'archived'], tag: ['active', 'archived'], subject: ['active', 'closed'],
-    user: [], agent: [],
+    user: [], agent: [], run: RUN_STATES,
   }
   if (opts.status !== undefined && !statuses[object].includes(opts.status)) {
     throw new Error(statuses[object].length === 0
@@ -197,5 +215,7 @@ export function readObject(eml: EML, object: unknown, opts: { id?: string, statu
       return spacePeople(eml, opts.members).users
     case 'agent':
       return spacePeople(eml, opts.members).agents
+    case 'run':
+      return eml.runs.list(opts.status ? { state: opts.status as RunState } : {})
   }
 }

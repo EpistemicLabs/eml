@@ -180,6 +180,12 @@ describe('v0.19 REST', () => {
       const typo = await post(`/task/${task.body.id}/track`, { delegate: 'atlass', text: 'typo' })
       expect(typo.status).toBe(400)
       expect(typo.body.error).toBe('Invalid engram: delegate names "atlass", who is not an agent of this brain. Agents: default (eml_read_object object=agent).')
+      // v0.23: the agent of a delegation is checked the same way, on track and on create
+      const asDelegation = await post(`/task/${task.body.id}/track`, { delegation: { agent: 'atlass', checkpoint: 'after' } })
+      expect(asDelegation.status).toBe(400)
+      expect(asDelegation.body.error).toContain('delegate names "atlass", who is not an agent of this brain')
+      const createdWithDelegation = await create(validTask({ title: 'rest-delegation-create', properties: { delegation: { agent: 'atlass' } } }))
+      expect(createdWithDelegation.status).toBe(400)
       const created = await create(validTask({ title: 'rest-delegate-create', properties: { delegate: 'atlass' } }))
       expect(created.status).toBe(400)
       expect((await get('/list?type=task&delegate=default')).body.engrams.map((e: { id: string }) => e.id)).toEqual([task.body.id])
@@ -323,6 +329,27 @@ describe('v0.19 REST', () => {
   })
 
   describe('/object/:object', () => {
+    it('v0.23: latest=true lists the newest run of each task; for other objects it is refused', async () => {
+      const task = await create(validTask({ title: 'rest-latest-run' }))
+      const run = (id: string, started_at: string) => post('/object/run', { id, task_id: task.body.id, member: 'bootstrap', origin: 'user', driver: 'human', started_at, state: 'ended' })
+      expect((await run('rest-run-old', '2026-11-24T08:00:00.000Z')).status).toBe(201)
+      expect((await run('rest-run-new', '2026-11-24T09:00:00.000Z')).status).toBe(201)
+      const latest = await get('/object/run?latest=true')
+      expect(latest.status).toBe(200)
+      expect(latest.body.objects.filter((r: { task_id: string }) => r.task_id === task.body.id).map((r: { id: string }) => r.id)).toEqual(['rest-run-new'])
+      // a number: the newest n runs of each task, newest first; anything else is refused
+      const two = await get('/object/run?latest=2')
+      expect(two.body.objects.filter((r: { task_id: string }) => r.task_id === task.body.id).map((r: { id: string }) => r.id)).toEqual(['rest-run-new', 'rest-run-old'])
+      for (const bad of ['0', 'abc', '51']) {
+        const r = await get(`/object/run?latest=${bad}`)
+        expect(r.status, bad).toBe(400)
+        expect(r.body.error).toContain('whole number from 1 to 50')
+      }
+      const refused = await get('/object/project?latest=true')
+      expect(refused.status).toBe(400)
+      expect(refused.body.error).toContain('for runs only')
+    })
+
     it('project: create, read one and the list, update with diff, archive sets ended_at; 404s; unknown field', async () => {
       const c = await post('/object/project', { name: 'Rest Project', goal: 'test', metadata: { repo: 'x/y' } })
       expect(c.status).toBe(201)

@@ -25,7 +25,7 @@
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
  *   GET  /relations         ?engram=<id>                             → The relations with that id at either end (v0.21: also a cross-brain reference to an engram of another brain)
- *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent), or one (v0.19; kind: entities)
+ *   GET  /object/:object    ?id=&status=&kind=&latest=               → Objects of a kind (project · entity · tag · subject · user · agent · run), or one (v0.19; kind: entities; v0.23: run, latest=true the newest run of each task)
  *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
  *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)
@@ -977,11 +977,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const id = objectMatch[2] !== undefined ? decodeURIComponent(objectMatch[2]) : undefined
       if (method === 'GET') {
         const q = parseQuery(req.url)
-        if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind']))) return
+        if (rejectUnknownParams(res, q, new Set(['id', 'status', 'kind', 'latest']))) return
         // The path form (/object/:object/:id, as PUT takes it) serves like ?id=.
         const wanted = id ?? q.id
         // v0.21: a shared brain's users are its members (core spacePeople)
-        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync) })
+        const latest = q.latest === undefined ? undefined : q.latest === 'true' ? true : Number(q.latest)
+        const result = readObject(eml, object, { id: wanted, status: q.status, kind: q.kind, members: spaceMembers(sync), latest })
         if (wanted !== undefined && result === null) return json(res, 404, { error: `${object} "${wanted}" not found` })
         return json(res, 200, wanted !== undefined ? { object: result } : { count: (result as unknown[]).length, objects: result })
       }

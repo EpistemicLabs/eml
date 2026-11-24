@@ -10,7 +10,10 @@ describe('whose turn a task is', () => {
   it.each([
     ['an agent asked the owner', { waitingOn: { who: 'lasse', kind: 'question', why: 'Count the 07.11. booking?' } }, {}, { turn: 'needs_you', group: 'asked' }],
     ['a step waits for the owner\'s go', { delegate: 'atlas', checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'go' } }, {}, { turn: 'needs_you', group: 'asked' }],
-    ['an agent stopped without a next step', { delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'stopped' } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
+    ['a run failed', { delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'stopped' } }, {}, { turn: 'needs_you', group: 'failed', reason: 'stopped' }],
+    ['a routine repeats', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { cron: '0 9 * * 1' } }, { turn: 'agent_scheduled', group: 'routine' }],
+    ['a mission checks back until its goal', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { at: '2026-11-20T09:00:00Z', session: 'resume' } }, { turn: 'agent_scheduled', group: 'mission' }],
+    ['it starts later', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { at: '2026-11-20T09:00:00Z', session: 'new' } }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['an agent finished with checkpoint after', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'review' } }, {}, { turn: 'review' }],
     ['a session works on it', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress with its session open between turns', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'agent_working' }],
@@ -19,16 +22,18 @@ describe('whose turn a task is', () => {
     ['an unowned delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after', owner: undefined }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
     ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'kim@acme', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
     ['a job starts the delegate at a time', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z' }, { turn: 'agent_scheduled', group: 'at_time' }],
-    ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'agent_scheduled', group: 'runner' }],
-    ['it waits for a step it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'depends', stepId: 'pr', title: 'Open the PR', status: 'active', more: 0 } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
-    ['the step it depends on was dropped', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'depends', stepId: 'pr', title: null, status: 'invalidated', more: 0 } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'step_dropped' }],
-    ['the runner is at its cap', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'cap', running: 5, max: 5, standalone: true } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
-    ['its hand-over can still be undone', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'held' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
-    ['a session is open on it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'busy' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
-    ['the runner finds its parent not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'parent', parentId: 'p', status: 'planned' } }, {}, { turn: 'needs_you', group: 'parent' }],
-    ['it is in no project', { delegate: 'atlas', checkpoint: 'after', status: 'planned', runner: { kind: 'no_project', scope: 'global' } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_project' }],
-    ['another member\'s cockpit starts it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', owner: 'dominik', runner: { kind: 'other_member', owner: 'dominik' } }, {}, { turn: 'agent_scheduled', group: 'runner' }],
+    ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true }, {}, { turn: 'agent_scheduled', group: 'runner' }],
+    ['it waits for a step it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'depends', stepId: 'pr', title: 'Open the PR', status: 'active', more: 0 } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['the step it depends on was dropped', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'depends', stepId: 'pr', title: null, status: 'invalidated', more: 0 } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'step_dropped' }],
+    ['the runner is at its cap', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'cap', running: 5, max: 5, standalone: true } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['its hand-over can still be undone', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'held' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['a session is open on it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'busy' } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
+    ['the runner finds its parent not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'parent', parentId: 'p', status: 'planned' } }, {}, { turn: 'needs_you', group: 'parent' }],
+    ['it is in no project', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'no_project', scope: 'global' } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_project' }],
+    ['another member\'s cockpit starts it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, owner: 'dominik', runner: { kind: 'other_member', owner: 'dominik' } }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['delegated without a checkpoint', { delegate: 'atlas', status: 'planned' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],
+    ['delegated but never handed over (v0.23: no request)', { delegate: 'atlas', checkpoint: 'after', status: 'planned' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'not_handed_over' }],
+    ['a run on it went silent for over an hour', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1, stale: true }, { turn: 'agent_working', group: 'stale' }],
     ['a delegated step whose parent is not active', { delegate: 'atlas', checkpoint: 'after', status: 'planned', parentActive: false }, {}, { turn: 'needs_you', group: 'parent' }],
     ['delegated without a checkpoint, in progress', { delegate: 'atlas', status: 'active' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }],
     ['the owner\'s own task', {}, {}, { turn: 'needs_you', group: 'own' }],
@@ -50,6 +55,14 @@ describe('whose turn a task is', () => {
     expect(turn({ status: 'invalidated', closedAt: '2026-11-19T09:00:00Z' })).toBeNull()
   })
 
+  it('a parked wait parks the task for every viewer until its date; past it, the wait counts again (v0.23)', () => {
+    const asked = { who: 'lasse', kind: 'question', why: 'Which list?' }
+    expect(turn({ waitingOn: { ...asked, snoozed_until: '2026-11-20T00:00:00.000Z' } })).toEqual({ turn: 'parked' })
+    expect(turnOf(task({ waitingOn: { ...asked, snoozed_until: 'open' } }), live(), 'dominik', NOW)).toEqual({ turn: 'parked' })
+    expect(turn({ waitingOn: { ...asked, snoozed_until: '2026-11-19T09:00:00.000Z' } })).toEqual({ turn: 'needs_you', group: 'asked' })
+    expect(coverageOf(task({ waitingOn: { ...asked, snoozed_until: '2026-11-20T00:00:00.000Z' } }), live(), 'lasse', NOW)).toEqual({ ok: true, how: 'parked', at: '2026-11-20T00:00:00.000Z' })
+  })
+
   it('reads a waiting_on written before kinds existed', () => {
     expect(waitKind({ who: 'lasse', why: 'review: result ready' })).toBe('review')
     expect(waitKind({ who: 'lasse', why: 'Which price list?' })).toBe('question')
@@ -66,7 +79,7 @@ describe('coverage: does anything move an important task without the owner', () 
     expect(cover({ delegate: 'atlas' }, { nextRunAt: '2026-11-20T09:00:00Z' })).toEqual({ ok: true, how: 'at_time', at: '2026-11-20T09:00:00Z' })
     expect(cover({ delegate: 'atlas', waitingOn: { who: 'kim', kind: 'outside' } }, { nextRunAt: '2026-11-26T10:00:00Z' }))
       .toEqual({ ok: true, how: 'checks_back', at: '2026-11-26T10:00:00Z' })
-    expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned' })).toEqual({ ok: true, how: 'runner' })
+    expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true })).toEqual({ ok: true, how: 'runner' })
   })
 
   it('names what has to happen when nothing will', () => {
