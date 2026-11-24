@@ -4,6 +4,7 @@ import {
 } from '../types'
 import type { LearningState } from '../learning'
 import { validateEngramType, validateFormat, validateNoTemplateLeak } from '../validate'
+import { mirrorTaskState, requestOnCreate } from '../task-state'
 import { ORIGINS, SEED_ORIGIN, TYPE_FIELDS, validateFields, normalizeTimestampFields, normalizeAssignees, fieldProblem, unknownFieldsError, isBlank } from '../fields'
 import { CALL_KEYS, LEARNING_CREATE_KEYS, keyList, unknownFieldsText, unknownKeys } from '../contract/calls'
 import { TASK_CREATE_STATUSES } from '../contract/values'
@@ -101,6 +102,12 @@ function store(ctx: CommandContext, input: EngramInput): StoredEngram {
   validateFields(type, props, 'create', type === 'rule' && input.origin === SEED_ORIGIN ? ['agreed'] : [])
   normalizeTimestampFields(props)
   normalizeAssignees(props)
+  // v0.23: a task's delegate/checkpoint ↔ delegation and waiting_on ↔ waits start in step
+  if (type === 'task') {
+    mirrorTaskState({}, props)
+    for (const k of Object.keys(props)) if (props[k] === null) delete props[k]
+    requestOnCreate(props, ctx.stamp.at)
+  }
 
   // --- universal rules ---
   if (type !== 'log' && isBlank(input.content)) throw new Error('Invalid engram: content must not be empty.')

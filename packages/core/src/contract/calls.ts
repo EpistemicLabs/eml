@@ -1,4 +1,4 @@
-// --- The keys of every call (schema 22) --------------------------------------------
+// --- The keys of every call (schema 23) --------------------------------------------
 //
 // What the input of each command may carry: its keys, and for a nested object
 // its keys in turn. This file is the one place that says so; every command
@@ -61,6 +61,7 @@ export const CALL_KEYS = {
     intent: 'value', context: 'value', priority: 'value', assignee_ids: 'value', due_date: 'value', blockers: 'value',
     parent_id: 'value', scope: 'value', supersedes: 'value', tags: 'value', subjects: 'value',
     depends_on: 'value', checkpoint: 'value', waiting_on: 'value', goal: 'value', delegate: 'value', display_title: 'value',
+    delegation: 'value', waits: 'value',
   },
   'learning.add_evidence': { id: 'value', ...EVIDENCE_KEYS, content: 'value' },
   'engram.confirm_review': { id: 'value', text: 'value' },
