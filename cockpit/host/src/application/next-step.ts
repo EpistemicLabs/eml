@@ -24,18 +24,34 @@ import { trackWaits } from './task-waits.js'
  *
  * None: the session gets one short prompt (NEXT_STEP_PROMPT). Still none once
  * that turn ended: the task waits on the user, "Agent stopped without a next
- * step". A worker the user has open is not prompted mid-conversation; it is
- * checked again on the runner's tick once nobody watches it, and a nudge from
- * before the user looked in is void.
+ * step".
+ *
+ * Watching is seeing: a session open in a pane counts as watched only once the
+ * user has seen its answer (readAt, set when its desk is on screen in a
+ * focused window). One they have not seen for UNSEEN_GRACE_MS is checked on
+ * the runner's tick, a pane left open on a desk or not; one they saw is put
+ * off until its pane is closed, and a nudge from before they looked in is void.
+ *
+ * The user's own chat sessions on a task (desk sessions) are their conversation:
+ * no trigger is required of them. Only when a turn ended without saying how it
+ * stands (no session_status, no handoff) and its answer stays unseen for
+ * UNSEEN_GRACE_MS, the session gets one short prompt (OWN_STATUS_PROMPT), so a
+ * question it asked reaches the Inbox through session_status. The turn that
+ * prompt starts is not checked again, and nothing waits on the user when it
+ * still says nothing: the answer stays unread.
  *
  * A job's worker that ended done with only its next run ahead rescheduled
  * quietly: it leaves the lists (quiet), its handoff is the journal entry.
- * The user's own sessions are never checked. The nudge marks are in memory:
- * a restart forgets them, and the next turn starts over.
+ * The marks are in memory: a restart forgets them, and the next turn starts over.
  */
 
 export const NEXT_STEP_PROMPT = 'Your task is still open but has no next step. Set a check, ask Lasse, or hand the result over for review. Close it only when Lasse told you to.'
 export const NO_NEXT_STEP = 'Agent stopped without a next step'
+export const OWN_STATUS_PROMPT = 'Your last reply did not say how you stand, and the user has not read it yet. If it asks the user something, call session_status question with the question as the reason, then ask it again in one line. Otherwise call session_status done and reply in one line.'
+/** How long an answer stays unseen before the user counts as not watching it. */
+export const UNSEEN_GRACE_MS = 2 * 60_000
+// The read mark the page sends for an answer landing on screen can beat the turn's end to the host.
+const SEEN_SLACK_MS = 5_000
 
 export type Trigger = 'question' | 'job' | 'session' | 'step'
 
@@ -100,8 +116,10 @@ export interface NextStepDeps {
   runStartedAt(sessionId: string): string
   /** The session is in a turn now (for another session on the task, and on the tick). */
   working(sessionId: string): boolean
-  /** The user has the session open (a chat view or terminal attached). */
+  /** The session is open in a pane (a chat view or terminal attached); not that the user looks at it. */
   watched(sessionId: string): boolean
+  /** The user has seen the session since `since` (ISO time): its read mark is that new. */
+  seen(sessionId: string, since: string): boolean
   /** Send the session a message (wakes a stopped one); false when it did not arrive. */
   deliver(sessionId: string, text: string): Promise<boolean>
   /** The session is flagged for the user: it shows as a new result until seen (decision desk-dot-until-seen). */
@@ -112,10 +130,17 @@ export interface NextStepDeps {
   now?: () => Date
 }
 
+export interface TurnFacts {
+  /** The turn's reply carried a handoff block. */
+  handoff: boolean
+  /** When the turn ended (ISO time), taken before the router's write. */
+  endedAt: string
+}
+
 export interface NextStepCheck {
   /** A session's turn ended (after the router wrote its handoff). Never throws. */
-  turnEnded(sessionId: string): Promise<void>
-  /** Check the sessions put off while the user watched them. Never throws. */
+  turnEnded(sessionId: string, turn?: TurnFacts): Promise<void>
+  /** Check the sessions put off while the user watched them, or whose answer they have not seen yet. Never throws. */
   tick(): Promise<void>
 }
 
@@ -123,20 +148,61 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
   const now = () => deps.now?.() ?? new Date()
   // The session was prompted for this task; its next stop without a trigger puts the task on the user.
   const nudged = new Map<string, string>()
-  // Put off while the user had the session open.
+  // Put off while the user had the session open, or until its answer was unseen long enough.
   const later = new Set<string>()
+  // Since when the session's last answer counts as seen, and whether it said how it stands (its handoff; a status is on the ledger).
+  const ended = new Map<string, { at: string; handoff: boolean }>()
+  const seenSince = (sessionId: string, turn: { at: string }) => deps.seen(sessionId, new Date(Date.parse(turn.at) - SEEN_SLACK_MS).toISOString())
+  // An own session prompted for its status: the turn that prompt starts is not checked.
+  const askedStatus = new Set<string>()
+
+  const unseenLong = (sessionId: string) => {
+    const turn = ended.get(sessionId)
+    return Boolean(turn) && !seenSince(sessionId, turn!) && now().getTime() - Date.parse(turn!.at) >= UNSEEN_GRACE_MS
+  }
+
+  const checkOwn = async (sessionId: string, brain: Pick<EmlApi, 'get' | 'post'>, taskId: string) => {
+    const turn = ended.get(sessionId)
+    // The user wrote since (a new turn cleared the status) or it said how it stands: nothing to ask.
+    if (!turn || turn.handoff || deps.ledger.get(sessionId)?.attention) {
+      later.delete(sessionId)
+      return
+    }
+    if (seenSince(sessionId, turn)) {
+      later.delete(sessionId)
+      return
+    }
+    if (!unseenLong(sessionId)) {
+      later.add(sessionId)
+      return
+    }
+    later.delete(sessionId)
+    const task = await brain.get(`/engram/${taskId}`) as Task
+    if (task.status !== 'planned' && task.status !== 'active') return
+    askedStatus.add(sessionId)
+    const arrived = await deps.deliver(sessionId, OWN_STATUS_PROMPT).catch(() => false)
+    if (!arrived) askedStatus.delete(sessionId)
+    deps.log(`[next-step] ${sessionId.slice(0, 8)} task=${taskId.slice(0, 8)} own session said nothing, unseen: ${arrived ? 'asked for its status' : 'prompt not delivered'}`)
+  }
 
   const check = async (sessionId: string) => {
     const entry = deps.ledger.get(sessionId)
-    // Only delegated work: a worker on a task in the brain; the user's own sessions and project leads are theirs.
-    if (!entry?.worker || !entry.taskId || entry.leadOf || entry.archivedAt) return
+    // Sessions on a task in the brain; project leads are the user's.
+    if (!entry?.taskId || entry.leadOf || entry.archivedAt) {
+      later.delete(sessionId)
+      return
+    }
     const space = deps.spaces.resolve(entry.spaceId)
     const brain = deps.brain(space)
     if (!brain) return
-    // The user is in the conversation: theirs to steer; a nudge from before it is void.
-    if (deps.watched(sessionId)) {
+    // A terminal has no status tool to answer the prompt with: its question goes through the handoff.
+    if (!entry.worker) return entry.runtime === 'sdk' ? checkOwn(sessionId, brain, entry.taskId) : undefined
+    // Open in a pane: theirs to steer once they have seen it (a nudge from before is void);
+    // not seen yet, it waits out the grace, then counts as not watched.
+    if (deps.watched(sessionId) && !unseenLong(sessionId)) {
       later.add(sessionId)
-      nudged.delete(sessionId)
+      const turn = ended.get(sessionId)
+      if (!turn || seenSince(sessionId, turn)) nudged.delete(sessionId)
       return
     }
     later.delete(sessionId)
@@ -202,10 +268,19 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
   }
 
   return {
-    turnEnded: safely,
+    async turnEnded(sessionId, turn) {
+      // The answer to the status prompt: the session had its one ask.
+      if (askedStatus.delete(sessionId)) {
+        ended.delete(sessionId)
+        later.delete(sessionId)
+        return
+      }
+      ended.set(sessionId, { at: turn?.endedAt ?? now().toISOString(), handoff: turn?.handoff ?? false })
+      await safely(sessionId)
+    },
     async tick() {
       // One in a turn again is checked when that turn ends.
-      for (const sessionId of [...later]) if (!deps.watched(sessionId) && !deps.working(sessionId)) await safely(sessionId)
+      for (const sessionId of [...later]) if (!deps.working(sessionId)) await safely(sessionId)
     },
   }
 }

@@ -447,6 +447,7 @@ async function main() {
     },
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
+    seen: (sessionId, since) => (ledger.get(sessionId)?.readAt ?? '') >= since,
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
     waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
@@ -461,11 +462,12 @@ async function main() {
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
   const turnEnded = (sessionId: string, text: string) => {
+    const endedAt = new Date().toISOString()
     // The run keeps the result line of the session's last handoff (application/run-records.ts).
-    const result = parseHandoff(text)?.result
-    if (result) lastResults.set(sessionId, result)
+    const handoff = parseHandoff(text)
+    if (handoff?.result) lastResults.set(sessionId, handoff.result)
     runRecords.poke()
-    void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId)).then(() => taskRunner.tick())
+    void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
   const sessionNamed = (sessionId: string, title: string) => {
