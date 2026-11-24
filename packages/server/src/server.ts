@@ -25,7 +25,7 @@
  *   GET  /list              ?type=&scope=&limit=&search=&tag=&review_due=&subject=&binding=&task_id=&origin=&session_id= → List engrams
  *   GET  /engram/:id        ?with_relations=                         → Get single engram (v0.7; v0.19 with its entries)
  *   GET  /relations         ?engram=<id>                             → The relations with that id at either end (v0.21: also a cross-brain reference to an engram of another brain)
- *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent), or one (v0.19; kind: entities)
+ *   GET  /object/:object    ?id=&status=&kind=                       → Objects of a kind (project · entity · tag · subject · user · agent · run), or one (v0.19; kind: entities; v0.23: run)
  *   GET  /object/:object/:id                                         → One object (the path form of ?id=)
  *   POST /object/:object    { name, … }                              → Create an object (v0.19)
  *   PUT  /object/:object/:id { … }                                   → Update an object (v0.19)

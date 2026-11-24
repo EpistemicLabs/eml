@@ -93,7 +93,7 @@ export const SYSTEM_RULES: SystemRule[] = [
   {
     category: 'type-vocabulary',
     text:
-      'task (eml_create_task, then eml_track_task for everything after): open work. status: planned (not started or parked) · active (started, not finished) · resolved/invalidated (closed, with an outcome). Optional stage: ideation → planning → ready → implementation. Done things are not tasks.',
+      'task (eml_create_task, then eml_track_task for everything after): open work. status: planned (not started yet) · active (started, not finished; a parked task stays active) · resolved/invalidated (closed, with an outcome). Optional stage: ideation → planning → ready → implementation. Done things are not tasks.',
     why: 'v0.19: a task is created with eml_create_task; progress, stage, closing and edits go through eml_track_task.',
   },
   {

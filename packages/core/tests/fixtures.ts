@@ -208,6 +208,26 @@ export function writeEverything(eml: EML): void {
   const successor = writes(eml).store(validTask({ scope, title: 'successor', supersedes: [parent.id] }), juno)
   writes(eml).trackTask(successor.id, { subjects: ['launch'], priority: 'high' }, juno)
   writes(eml).trackTask(successor.id, { display_title: 'Launch the successor', text: 'named for the list' }, juno)
+  // v0.23: the hand-over as one value and the flat fields that mirror it, the waits and waiting_on, a run on the task
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'after', requested_at: '2026-11-19T09:00:00Z' }, text: 'handed over' }, ada)
+  writes(eml).trackTask(successor.id, { checkpoint: 'before' }, ada)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', requested_at: '2026-11-19T09:00:00.000Z', schedule: { cron: '0 8 * * 1-5', time_zone: 'Europe/Berlin', session: 'new' } } }, ada)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { at: '2026-11-20', session: 'resume', paused: true } }, text: 'checks again on Friday' }, juno)
+  writes(eml).trackTask(successor.id, { waits: [
+    { id: 's1', who: 'ada', kind: 'question', why: 'which one?', since: '2026-11-19T09:05:00.000Z', session_id: 's1' },
+    { id: 's2', who: 'ada', kind: 'review', why: 'please look', since: '2026-11-19T09:06:00Z', session_id: 's2', snoozed_until: '2026-11-22' },
+    { id: 's4', who: 'ada', kind: 'outside', why: 'waiting for the vendor', since: '2026-11-19T09:06:30.000Z', snoozed_until: 'open' },
+  ] }, juno)
+  writes(eml).trackTask(successor.id, { waiting_on: { who: 'ada', kind: 'go', why: 'go ahead?', since: '2026-11-19T09:07:00.000Z', session_id: 's3' } }, juno)
+  writes(eml).trackTask(successor.id, { waits: [] }, juno)
+  writes(eml).trackTask(successor.id, { delegate: 'assistant' }, ada)
+  writes(eml).trackTask(child.id, { delegation: null, text: 'taken back' }, ada)
+  createObject(eml, 'run', { id: 'session-1', task_id: successor.id, member: 'juno', agent: 'juno', origin: 'runner', driver: 'agent' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'idle', result: 'Draft ready for review.' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'ended', end_reason: 'finished' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'running', last_activity_at: '2026-11-19T09:40:00Z' }, juno)
+  updateObject(eml, 'run', 'session-1', { state: 'ended', end_reason: 'crashed', ended_at: '2026-11-19T09:50:00Z' }, juno)
+  createObject(eml, 'run', { id: 'session-2', task_id: successor.id, member: 'ada', origin: 'user', driver: 'human', state: 'idle', started_at: '2026-11-19T09:30:00.000Z' }, ada)
 
   writes(eml).update(note.id, { content: 'see [[kept]] again', tags: [], subjects: ['launch'] }, ada)
   writes(eml).update(log.id, { properties: { next: 'go on' } }, ada)

@@ -17,7 +17,13 @@ const ID = '3b241101-e2bb-4255-8caf-4136c566a962'
 
 /** The state without ord, agent and the relation brain columns (schema 21 adds them; every other value stays as it was). */
 function withoutNew(dump: StateDump): StateDump {
-  return Object.fromEntries(Object.entries(dump).map(([t, rows]) => [t, rows.map(({ ord: _o, agent: _a, source_brain: _s, target_brain: _t, ...row }) => row)]))
+  return Object.fromEntries(Object.entries(withoutLaterTables(dump)).map(([t, rows]) => [t, rows.map(({ ord: _o, agent: _a, source_brain: _s, target_brain: _t, ...row }) => row)]))
+}
+
+/** The state without the tables later schemas add (23: runs) — the state the genesis of schema 21 holds. */
+function withoutLaterTables(dump: StateDump): StateDump {
+  const { runs: _runs, ...rest } = dump
+  return rest
 }
 
 /** ord is 1, 2, … in the rows' rowid order on engrams, relations and entries. */
@@ -38,7 +44,8 @@ function read<T>(file: string, fn: (db: Database.Database) => T): T {
  * hold the brain's state. In a fresh brain it is the only entry, at the current
  * schema. A brain migrated from schema 20 got it at schema 21, and each later
  * step added its checkpoint (schema 22 changes no state row, so it names the
- * same state).
+ * same state; schema 23 adds the runs table, so its checkpoint names the state
+ * with it).
  */
 function expectGenesis(file: string, brain?: string, schema = 21): void {
   read(file, db => {
@@ -51,7 +58,10 @@ function expectGenesis(file: string, brain?: string, schema = 21): void {
     expect(g.payload_hash).toBe(sha256Hex(g.payload))
     expect(g.hash).toBe(chainHash(g.prev_hash, g.seq, g.at, g.payload_hash))
     expect(g.signature).toBeNull()
-    const state = stateHash(stateDump(db))
+    // what the genesis held: the state without what schema 23 added (no task of the fixture carries a delegate or a wait)
+    const atGenesis = schema >= 23 ? stateDump(db) : withoutLaterTables(stateDump(db))
+    const state = stateHash(atGenesis)
+    const stateAt = (step: number) => (step >= 23 ? stateHash(stateDump(db)) : state)
     const payload = JSON.parse(g.payload)
     expect(payload).toMatchObject({ schema, call: 'brain.genesis', args: { state_hash: state }, op_id: g.op_id })
     expect(payload.args.brain).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
@@ -59,15 +69,15 @@ function expectGenesis(file: string, brain?: string, schema = 21): void {
     expect(payload.provenance).toEqual({ handle: null, agent: null, ingestion_method: 'other', session_id: null, model: null, harness: null })
 
     steps.forEach((step, i) => {
-      expect(JSON.parse(log[1 + i].payload)).toMatchObject({ schema: step, call: 'brain.checkpoint', args: { seq: 1 + i, state_hash: state } })
+      expect(JSON.parse(log[1 + i].payload)).toMatchObject({ schema: step, call: 'brain.checkpoint', args: { seq: 1 + i, state_hash: stateAt(step) } })
     })
 
     const snaps = db.prepare('SELECT * FROM op_snapshots ORDER BY seq').all() as Array<Record<string, any>>
     expect(snaps.map(({ seq, schema, state_hash }) => ({ seq, schema, state_hash })))
-      .toEqual([schema, ...steps].map((schema, i) => ({ seq: 1 + i, schema, state_hash: state })))
+      .toEqual([schema, ...steps].map((step, i) => ({ seq: 1 + i, schema: step, state_hash: i === 0 ? state : stateAt(step) })))
     const snapshot = decodeSnapshot(snaps[0].data)
     expect(stateHash(snapshot)).toBe(state)
-    expect(snapshot).toEqual(JSON.parse(JSON.stringify(stateDump(db))))
+    expect(snapshot).toEqual(JSON.parse(JSON.stringify(atGenesis)))
   })
 }
 
@@ -132,7 +142,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('${ID}', 'test', 'u1', 'brains/b1.db', 20)`).run()
       const report = runForwardMigrations({ control, dataDir, clock: () => NOW })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21, 22] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21, 22, 23] })
     } finally { control.close() }
     expectGenesis(file, ID)
     read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })
