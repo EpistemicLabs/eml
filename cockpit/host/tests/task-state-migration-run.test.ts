@@ -1,0 +1,132 @@
+import { describe, it, expect, afterAll } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createTaskStateMigration, routineTitle, type TaskStateMigrationDeps } from '../src/application/task-state-migration.js'
+import type { Job } from '../src/domain/job.js'
+
+// paths.ts reads the home at import time — set it before loading the modules that use it.
+const home = mkdtempSync(join(tmpdir(), 'cockpit-migration-run-'))
+process.env.EML_COCKPIT_HOME = home
+afterAll(() => rmSync(home, { recursive: true, force: true }))
+
+const NOW = Date.parse('2026-11-24T12:00:00.000Z')
+type Task = { id: string; status: string; title: string; properties: Record<string, unknown> }
+
+const job = (patch: Partial<Job>): Job => ({
+  id: 'job-1234567890', name: 'Daily brief', kind: 'scheduled', spaceId: null, createdBy: null, createdAt: '', updatedAt: '', taskId: null, prompt: 'write the brief',
+  target: { type: 'worker', projectId: 'bp-ops' }, triggers: [{ type: 'schedule', cron: '0 8 * * 1-5', timeZone: 'UTC' }],
+  toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 0, failures: 0, ...patch,
+} as Job)
+
+function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: string; until: string }>; failOn?: string[] } = {}) {
+  const posts: Array<{ path: string; body: Record<string, unknown> }> = []
+  const byId = new Map(tasks.map((t) => [t.id, t]))
+  let snoozes = opts.snoozes ?? []
+  const jobs = opts.jobs ?? []
+  const brain = {
+    async get(path: string, query?: Record<string, unknown>) {
+      if (path === '/list' && query?.title) return { engrams: [...byId.values()].filter((t) => t.title === query.title) }
+      if (path === '/list') return { engrams: [...byId.values()].filter((t) => t.status === query?.status) }
+      throw new Error(`unexpected ${path}`)
+    },
+    async post(path: string, body: Record<string, unknown>) {
+      posts.push({ path, body })
+      if (path === '/engram/task') {
+        const made = { id: `made-${byId.size}`, status: 'active', title: body.title as string, properties: {} }
+        byId.set(made.id, made)
+        return made
+      }
+      const id = /^\/task\/([^/]+)\/track$/.exec(path)![1]
+      if (opts.failOn?.includes(id)) throw new Error('brain down')
+      const t = byId.get(id)!
+      for (const [k, v] of Object.entries(body)) if (k !== 'text') { if (v === null) delete t.properties[k]; else t.properties[k] = v }
+      return t
+    },
+  }
+  const heldWaitsFile = join(home, `held-${Math.random()}.json`)
+  const deps: TaskStateMigrationDeps = {
+    space: (id) => (id === 'main' ? ({ id: 'main', name: 'Main', main: true } as never) : undefined),
+    brain: () => brain,
+    viewer: 'lasse',
+    jobs: () => jobs,
+    setJobTask: (jobId, taskId) => { const j = jobs.find((x) => x.id === jobId); if (j) j.taskId = taskId },
+    snoozes: () => snoozes,
+    setSnoozes: (next) => { snoozes = next },
+    heldWaitsFile,
+    liveSessions: () => [],
+    now: () => NOW,
+    log: () => {},
+  }
+  return { migration: createTaskStateMigration(deps), posts, byId, jobs, snoozes: () => snoozes, heldWaitsFile }
+}
+
+const waits = [{ id: 's1', who: 'lasse', kind: 'question', why: 'Which?', since: '2026-11-23T09:00:00.000Z' }]
+
+describe('the task state migration run', () => {
+  it('the dry run writes nothing; the run writes one track call per change with its journal line', async () => {
+    const w = world([
+      { id: 'd', status: 'planned', title: 'd', properties: { assignee_ids: ['lasse'], delegate: 'atlas' } },
+      { id: 'b', status: 'active', title: 'b', properties: { assignee_ids: ['lasse'], blockers: ['vendor'] } },
+      { id: 'plain', status: 'active', title: 'plain', properties: {} },
+    ])
+    const dry = await w.migration.dryRun('main')
+    expect(dry.ok).toBe(true)
+    expect(w.posts).toEqual([])
+
+    const run = await w.migration.run('main')
+    expect(run).toMatchObject({ ok: true, written: 2, failed: [], tasksMade: 0 })
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/d/track', '/task/b/track'])
+    expect(w.posts[0].body).toEqual({
+      delegation: { agent: 'atlas', checkpoint: 'after' },
+      text: 'Task state migration (schema 23): handed to atlas with checkpoint after, not started: the board offers "Hand to atlas".',
+    })
+    // run again: the brain has the changes, so nothing is planned twice
+    await w.migration.run('main')
+    expect(w.posts.filter((p) => p.path === '/task/b/track')).toHaveLength(1)
+  })
+
+  it('collects a failed write, keeps the snooze of a task it could not park, and drops the one it moved', async () => {
+    const w = world([
+      { id: 'z', status: 'active', title: 'z', properties: { waits } },
+      { id: 'down', status: 'active', title: 'down', properties: { waits } },
+    ], {
+      failOn: ['down'],
+      snoozes: [{ key: 'task:z@2026-11-23T09:00:00.000Z', until: '2026-11-30T00:00:00.000Z' }, { key: 'task:down@2026-11-23T09:00:00.000Z', until: '2026-11-30T00:00:00.000Z' }],
+    })
+    const run = await w.migration.run('main')
+    expect(run).toMatchObject({ ok: true, written: 1, failed: [expect.stringContaining('down: brain down')] })
+    expect(w.snoozes()).toEqual([{ key: 'task:down@2026-11-23T09:00:00.000Z', until: '2026-11-30T00:00:00.000Z' }])
+  })
+
+  it('gives a job without a task one, named after the job, and finds it again on a retry instead of making a second', async () => {
+    const w = world([], { jobs: [job({})] })
+    const first = await w.migration.run('main')
+    expect(first).toMatchObject({ ok: true, tasksMade: 1 })
+    expect(w.posts[0]).toEqual({ path: '/engram/task', body: {
+      title: routineTitle(job({})), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['lasse'],
+    } })
+    expect(w.jobs[0].taskId).toBe('made-0')
+    // the job lost its task id (a response that never arrived): the retry finds the task by its title
+    w.jobs[0].taskId = null
+    const again = await w.migration.run('main')
+    expect(again).toMatchObject({ ok: true, tasksMade: 0 })
+    expect(w.jobs[0].taskId).toBe('made-0')
+    expect(w.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
+  })
+
+  it('refuses an unknown space, and a second run while one is writing', async () => {
+    const w = world([{ id: 'd', status: 'planned', title: 'd', properties: { delegate: 'atlas' } }])
+    expect(await w.migration.run('nope')).toEqual({ ok: false, refusal: 'unknown_space' })
+    const [a, b] = await Promise.all([w.migration.run('main'), w.migration.run('main')])
+    expect(a.ok).toBe(true)
+    expect(b).toMatchObject({ ok: false, refusal: 'in_flight' })
+  })
+
+  it('lists the tasks of held-waits.json in the dry run', async () => {
+    const w = world([])
+    writeFileSync(w.heldWaitsFile, JSON.stringify({ t1: [{ who: 'lasse' }], t2: [] }))
+    const dry = await w.migration.dryRun('main')
+    expect(dry.ok && dry.plan.elsewhere.heldWaits).toEqual([{ taskId: 't1', count: 1 }])
+  })
+})

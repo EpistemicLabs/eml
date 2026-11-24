@@ -469,7 +469,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           working: live.working,
           nextRunAt: live.nextRunAt,
           ...(() => {
-            const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id) : null
+            // Work on it now released an agent, or a delegation was never handed over (v0.23: no request, no schedule).
+            const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)
+              : turn.reason === 'not_handed_over' ? facts.delegate : null
             return agent ? { handTo: agent } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),

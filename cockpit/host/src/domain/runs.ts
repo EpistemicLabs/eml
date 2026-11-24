@@ -1,5 +1,5 @@
 /**
- * Synced run records (brain schema 23, task state model step 3).
+ * Synced run records (brain schema 23).
  *
  * A run is one session on a task, as its member's cockpit knows it. The host writes one per session on a task
  * (application/run-records.ts) when something happens in it — the start, each turn's start and end, the end, a crash
@@ -72,10 +72,12 @@ export function liveFactsOf(
 ): LiveFacts {
   const known = new Set(local.map((s) => s.sessionId))
   const remote = runs.filter((r) => !known.has(r.id) && r.state !== 'ended')
+  const working = local.some((s) => s.working) || remote.some((r) => isWorking(r, now))
   return {
-    working: local.some((s) => s.working) || remote.some((r) => isWorking(r, now)),
+    working,
     sessions: local.length + remote.length,
     nextRunAt,
+    ...(!working && remote.some((r) => isStale(r, now)) ? { stale: true } : {}),
   }
 }
 

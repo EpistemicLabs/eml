@@ -53,6 +53,12 @@ const deps = {
       return { ok: true, draft: { title: 'Media viewer', relation: 'spun', projectId: 'p-ui', brief: `Goal: files (${upTo ?? 'end'}).` }, context: { projects: [{ id: 'p-ui', name: 'UI' }], hasTask: true } }
     },
   },
+  migration: {
+    dryRun: async (spaceId: string) => (spaceId === 'main' ? { ok: true, report: '# dry run', plan: { changes: [] }, at: 'now' } : { ok: false, refusal: 'unknown_space' }),
+    run: async (spaceId: string) => spaceId === 'busy' ? { ok: false, refusal: 'in_flight', message: 'running' }
+      : spaceId === 'partly' ? { ok: true, written: 2, failed: ['t1: down'], tasksMade: 0, report: '' }
+        : { ok: true, written: 3, failed: [], tasksMade: 0, report: '' },
+  },
 } as unknown as TasksApiDeps
 const splits: Array<Record<string, unknown>> = []
 const sorts: Array<Record<string, unknown>> = []
@@ -79,6 +85,17 @@ const post = async (path: string, body: unknown) => {
 }
 
 describe('task board routes', () => {
+  it('serves the migration: GET is the dry run, POST the run; a partial failure says a retry helps', async () => {
+    const dry = await fetch(`${base}/api/v1/tasks/migration?spaceId=main`)
+    expect([dry.status, (await dry.json()).report]).toEqual([200, '# dry run'])
+    expect((await fetch(`${base}/api/v1/tasks/migration`)).status).toBe(400)
+    expect((await fetch(`${base}/api/v1/tasks/migration?spaceId=nowhere`)).status).toBe(404)
+    expect(await post('/api/v1/tasks/migration', { spaceId: 'main' })).toMatchObject({ status: 200, body: { ok: true, written: 3 } })
+    expect(await post('/api/v1/tasks/migration', { spaceId: 'partly' })).toMatchObject({ status: 502, body: { error: { code: 'migration_failed', retry: true }, failed: ['t1: down'] } })
+    expect(await post('/api/v1/tasks/migration', { spaceId: 'busy' })).toMatchObject({ status: 409, body: { error: { code: 'in_flight', retry: true } } })
+    expect((await post('/api/v1/tasks/migration', {})).status).toBe(400)
+  })
+
   it('serves the board', async () => {
     const r = await fetch(`${base}/api/v1/tasks/board`)
     expect(await r.json()).toEqual({ at: 'now', counts: { needsYou: 1, inbox: 0 } })

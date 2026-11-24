@@ -185,6 +185,12 @@ describe('looks good, snooze, close', () => {
     expect(await w.commands.undo('op-z')).toEqual({ ok: true })
     expect(w.byId.get('t1')!.properties.waits).toEqual(waits)
 
+    // Bring back now: until "now" takes the snooze off the wait, with its journal line
+    await w.commands.submit({ opId: 'op-z2', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2026-11-19T09:00:00.000Z', until: '2026-11-21T01:00:00Z' } })
+    await w.commands.submit({ opId: 'op-back', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2026-11-19T09:00:00.000Z', until: 'now' } })
+    expect(w.byId.get('t1')!.properties.waits).toEqual(waits)
+    expect(w.posts.at(-1)!.body.text).toBe('Unparked by the owner.')
+
     // open-ended, and refusals
     await w.commands.submit({ opId: 'op-open', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@', until: 'open' } })
     expect((w.byId.get('t1')!.properties.waits as Array<Record<string, string>>)[0].snoozed_until).toBe('open')

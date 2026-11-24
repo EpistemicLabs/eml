@@ -68,7 +68,7 @@ describe('the schedule mirror', () => {
     const clock = { now: NOW }
     const mirror = createScheduleMirror({
       spaces: () => [{ id: 'main', name: 'Main', main: true } as never], brain: () => brain, jobs: () => jobs,
-      agentOf: () => 'atlas', now: () => clock.now, log: () => {},
+      agentOf: () => 'atlas', me: 'lasse', now: () => clock.now, log: () => {},
     })
     return { mirror, clock }
   }
@@ -95,6 +95,38 @@ describe('the schedule mirror', () => {
     jobs.length = 0
     await mirror.sync()
     expect(brain.posts.at(-1)!.body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T09:00:00.000Z' })
+  })
+
+  it('writes the schedule only of a task its member owns: another member\'s task keeps one writer', async () => {
+    const brain = brainOf({ theirs: { status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'motti' } } } })
+    const { mirror } = setup(brain, [job({ taskId: 'theirs' })])
+    await mirror.sync()
+    expect(brain.posts).toEqual([])
+  })
+
+  it('keeps spaces apart: the same task id in another space neither clears nor re-reads this one', async () => {
+    const main = brainOf({})
+    const other = brainOf({ t1: { status: 'active', properties: { assignee_ids: ['lasse'], delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } } } })
+    const logs: string[] = []
+    const mirror = createScheduleMirror({
+      spaces: () => [{ id: 'main', name: 'Main', main: true } as never, { id: 'other', name: 'Other', main: false } as never],
+      brain: (space) => ((space as { id: string }).id === 'main' ? main : other), jobs: () => [job({ taskId: 't1' })],
+      agentOf: () => 'atlas', me: 'lasse', now: () => NOW, log: (l) => logs.push(l),
+    })
+    await mirror.sync()
+    await mirror.sync()
+    expect(main.reads()).toBe(1)
+    expect(other.reads()).toBe(0)
+    expect(other.posts).toEqual([])
+    expect(logs).toHaveLength(1)
+  })
+
+  it('a job whose task is gone is looked at again only after a while, not at every sync', async () => {
+    const brain = brainOf({})
+    const { mirror } = setup(brain, [job({ taskId: 'gone' })])
+    await mirror.sync()
+    await mirror.sync()
+    expect(brain.reads()).toBe(1)
   })
 
   it('a task without a delegation gets one for the space\'s agent, without a checkpoint or a request; a closed task is left alone', async () => {

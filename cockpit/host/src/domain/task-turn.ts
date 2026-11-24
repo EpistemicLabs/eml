@@ -18,9 +18,9 @@ export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'outside'
 export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'outside']
 
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked'
+export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked' | 'stale'
 
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped'
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped'
 
 export interface WaitingOn {
   who: string
@@ -63,6 +63,8 @@ export interface LiveFacts {
   sessions: number
   /** The next run of one of its jobs, if any. */
   nextRunAt: string | null
+  /** A run on it says running but nothing happened in it for an hour (domain/runs.ts STALE_MS): its host may be gone. */
+  stale?: boolean
 }
 
 export interface TurnResult {
@@ -96,6 +98,7 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   const kind = w ? waitKind(w) : null
   if (w && w.who === viewer && kind === 'review') return { turn: 'review' }
   if (live.working) return { turn: 'agent_working' }
+  if (live.stale && !(w && w.who === viewer)) return { turn: 'agent_working', group: 'stale' }
   if (w && w.who === viewer) return kind === 'stopped' ? { turn: 'needs_you', group: 'nobody', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
   if (w && w.who) return { turn: 'waiting_on_others' }
   if (task.delegate) {
@@ -110,6 +113,8 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
       return { turn: 'needs_you', group: 'nobody', reason: 'stopped' }
     }
     if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }
+    // v0.23: delegated but never handed over (no request, no schedule): nothing starts it until the owner does.
+    if (!task.requested) return { turn: 'needs_you', group: 'nobody', reason: 'not_handed_over' }
     return runnerTurn(task.runner ?? null)
   }
   if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }

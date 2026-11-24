@@ -23,7 +23,8 @@ export interface UnreadProps {
 }
 
 export type InboxAction =
-  | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' }
+  /** Park the item's wait (on every device): until tomorrow or Monday 09:00, open-ended, or bring it back now. */
+  | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' | 'open' | 'now' }
   | { kind: 'review'; item: InboxItem };
 
 const dayOf = (iso: string, now: number) => {
@@ -83,11 +84,12 @@ export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, 
             <span><b className="font-medium text-foreground">{taskName(t)}</b> · done by {t.delegate}</span>
           </div>
         ))}
-        {board.snoozed.length > 0 && <Fold label={`Snoozed · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setFold('snoozed', !showSnoozed)} />}
+        {board.snoozed.length > 0 && <Fold label={`Parked · ${board.snoozed.length}`} open={showSnoozed} onToggle={() => setFold('snoozed', !showSnoozed)} />}
         {showSnoozed && board.snoozed.map((item) => (
-          <div key={item.key} className="flex items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
-            <time className="w-16 shrink-0 tabular-nums text-caption">{when(item.until, now)}</time>
-            <span><b className="font-medium text-foreground">{readable(item.title)}</b> · back then</span>
+          <div key={item.key} className="flex flex-wrap items-baseline gap-2.5 border-t border-border px-3 py-2 text-ui text-muted-foreground">
+            <span className="w-24 shrink-0 tabular-nums text-caption">{item.until === 'open' ? 'no date' : `back ${when(item.until, now)}`}</span>
+            <b className="min-w-0 flex-1 font-medium text-foreground">{readable(item.title)}</b>
+            <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'now' })}>Bring back now</button>
           </div>
         ))}
         <UnreadFold sessions={unread.sessions} board={board} spaces={unread.spaces} now={now} open={unread.open} compact={compact} onToggle={unread.onToggle} onOpen={unread.onOpen} onMarkAllRead={unread.onMarkAllRead} />
@@ -118,8 +120,9 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
       </button>
       <span className={cn('col-start-2 flex flex-wrap justify-start gap-1.5', !compact && '@3xl:col-start-auto @3xl:self-center @3xl:justify-end')}>
         {item.kind === 'review' && <button type="button" className={MINI} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
-        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Snooze to tomorrow</button>
-        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Snooze to Monday</button>
+        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Park until tomorrow</button>
+        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Park until Monday</button>
+        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'open' })}>Park, no date</button>
       </span>
     </div>
   );

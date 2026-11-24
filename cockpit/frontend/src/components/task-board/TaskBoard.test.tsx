@@ -188,14 +188,37 @@ describe('the task board', () => {
     expect(posts[0].body).toMatchObject({ mode: 'now', delegate: 'atlas' });
   });
 
-  it('snoozes an Inbox item to tomorrow 09:00', async () => {
+  it('brings a parked item back from the Parked fold, and says when one with a date comes back', async () => {
+    const snoozed = [
+      { key: 'task:asked@x', kind: 'question', space: 'main', title: 'acme-cancellation-rescue', text: '', since: iso(5), taskId: 'asked', until: 'open' },
+      { key: 'task:other@y', kind: 'review', space: 'main', title: 'other-task', text: '', since: iso(5), taskId: 'other', until: iso(-600) },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), snoozed }), { status: 200 });
+      if (init?.method === 'POST') { posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : {} }); return new Response('{}', { status: 200 }); }
+      return new Response('{}', { status: 404 });
+    }));
     setTaskView('inbox');
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Snooze to tomorrow' }));
+    const fold = (await screen.findByText('Parked · 2')).closest('div')!
+    const toggle = fold.querySelector('button')!
+    if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+    expect(screen.getByText('no date')).toBeTruthy();
+    expect(screen.getByText(/^back /)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Bring back now' })[0]);
+    await waitFor(() => expect(posts[0]?.body).toMatchObject({ key: 'task:asked@x', until: 'now' }));
+  });
+
+  it('parks an Inbox item until tomorrow 09:00, or with no date', async () => {
+    setTaskView('inbox');
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Park until tomorrow' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/asked/snooze'));
     const until = new Date(String(posts[0].body.until));
     expect([until.getHours(), until.getMinutes()]).toEqual([9, 0]);
     expect(posts[0].body.key).toBe('task:asked@x');
+    fireEvent.click(await screen.findByRole('button', { name: 'Park, no date' }));
+    await waitFor(() => expect(posts[1]?.body.until).toBe('open'));
   });
 
   it('counts a session shown in the task panel as seen, as on its desk', async () => {

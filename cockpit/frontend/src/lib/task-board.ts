@@ -7,8 +7,8 @@ import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
-export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked';
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped';
+export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked' | 'stale';
+export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
@@ -318,11 +318,12 @@ export const GROUP_META: Record<TurnGroup, { name: string; hue: Hue }> = {
   at_time: { name: 'At a set time', hue: 'scheduled' },
   runner: { name: 'Next in line for the runner', hue: 'scheduled' },
   blocked: { name: 'Waits before it starts', hue: 'waiting' },
+  stale: { name: 'Stale: no activity for over an hour', hue: 'stopped' },
 };
 
 /** The hue of a task: its turn's, except a stopped or stuck one is red. */
 export function hueOf(task: Pick<BoardTask, 'turn' | 'group' | 'status'>): Hue {
-  if (task.group === 'nobody' || task.group === 'parent') return 'stopped';
+  if (task.group === 'nobody' || task.group === 'parent' || task.group === 'stale') return 'stopped';
   if (task.turn) return TURN_META[task.turn].hue;
   return task.status === 'active' ? 'mark' : 'waiting';
 }
@@ -392,6 +393,7 @@ export function dueLabel(due: string, now: number): string {
 const NOBODY: Record<NobodyReason, string> = {
   stopped: 'Agent stopped without a next step: continue or close.',
   no_checkpoint: 'Delegated without a checkpoint, so nothing will start it.',
+  not_handed_over: 'Delegated but not handed over yet, so nothing starts it: hand it over to let the agent start.',
   no_owner: 'Nobody owns it: claim it or drop it.',
   no_project: 'Delegated outside a project, so the runner has nowhere to start it: move it into a project.',
   step_dropped: 'Waits for a step that will never finish: change the plan.',

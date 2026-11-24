@@ -4,7 +4,7 @@ import type { TurnState } from '../domain/agent-provider.js'
 import { runOriginOf, runStateOf, runsOf, type RunEndReason, type RunState } from '../domain/runs.js'
 
 /**
- * Synced run records (task state model step 3, domain/runs.ts): this host writes a run for each of its sessions on a
+ * Synced run records (domain/runs.ts): this host writes a run for each of its sessions on a
  * task, so every member's board and runner see who works on what.
  *
  * A run is written only when something happens, never as a heartbeat (every write is an op the shared log keeps):
@@ -107,6 +107,17 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
   }
 
   const create = async (brain: Pick<EmlApi, 'get' | 'post'>, space: BrainSpace, s: RunSession & { taskId: string }, state: Exclude<RunState, 'ended'>, result: string | null) => {
+    // A run of this session may be there already (it ended before this host started): carry on with it, don't create it.
+    const found = (await brain.get(`/object/run/${encodeURIComponent(s.sessionId)}`).catch(() => null)) as { object?: Record<string, unknown> } | null
+    const existing = found?.object ? runsOf([found.object])[0] : undefined
+    if (existing) {
+      if (existing.member === deps.me && existing.task_id === s.taskId) {
+        written.set(s.sessionId, { spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
+        return false
+      }
+      refuse(s.sessionId, `run ${s.sessionId} belongs to ${existing.member} on task ${existing.task_id}`)
+      return true
+    }
     const agent = deps.agentOf(space)
     try {
       await brain.post('/object/run', {
@@ -115,18 +126,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
       })
       written.set(s.sessionId, { spaceId: space.id, taskId: s.taskId, state, result })
     } catch (err) {
-      const message = (err as Error).message
-      // Ended before this host started (so not loaded) and open again: carry on with it.
-      if (/already exists/.test(message)) {
-        const found = (await brain.get(`/object/run/${encodeURIComponent(s.sessionId)}`).catch(() => null)) as { object?: Record<string, unknown> } | Record<string, unknown> | null
-        const object = found && 'object' in found ? found.object as Record<string, unknown> : found as Record<string, unknown> | null
-        const run = object ? runsOf([object])[0] : undefined
-        if (run && run.member === deps.me && run.task_id === s.taskId) {
-          written.set(s.sessionId, { spaceId: space.id, taskId: run.task_id, state: run.state as RunState, result: run.result ?? null })
-          return false
-        }
-      }
-      refuse(s.sessionId, message)
+      refuse(s.sessionId, (err as Error).message)
     }
     return true
   }

@@ -228,6 +228,9 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
 })
 
+/** A snooze's until that brings a parked wait back now. */
+export const UNPARK = 'now'
+
 /** The task and the moment its wait began, from an Inbox key (domain/inbox.ts itemKey: task:<id>@<since>). */
 export function parkTarget(key: string): { taskId: string; since: string } | null {
   const m = /^task:([^@]+)@(.*)$/.exec(key)
@@ -395,10 +398,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       // Parking (decision task-parking-is-a-snoozed-wait): the snooze goes on the task's wait in the brain, so the
       // task shows as Parked on every device and for every member, and comes back by itself at the date.
       const snooze = input.snooze
-      if (!snooze || (snooze.until !== SNOOZED_OPEN && !Number.isFinite(Date.parse(snooze.until)))) return { ok: false, refusal: 'invalid' }
+      // until "now" brings a parked wait back (the Inbox's "Bring back now").
+      if (!snooze || (snooze.until !== SNOOZED_OPEN && snooze.until !== UNPARK && !Number.isFinite(Date.parse(snooze.until)))) return { ok: false, refusal: 'invalid' }
       const target = parkTarget(snooze.key)
       if (!target) return { ok: false, refusal: 'invalid' }
-      const parked = await park(brain, target, snooze.until)
+      if (snooze.until === UNPARK) deps.store.setSnoozes(deps.store.snoozes(now).filter((s) => s.key !== snooze.key))
+      const parked = await park(brain, target, snooze.until === UNPARK ? null : snooze.until)
       if (!parked) return { ok: false, refusal: 'unknown_task' }
       return { ok: true, command: save({ ...base, taskId: target.taskId, state: 'applied' }) }
     }
