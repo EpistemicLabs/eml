@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import { SplitDialog } from './SplitDialog';
 import { CreatedMarker, MessageActions, OfferCard, SplitMarker } from './SplitParts';
-import { createdTaskOfTool, groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
+import { createdTaskName, createdTaskOfTool, groupItems, isPaneCommand, keepItHereMessage, matchCommands, offerOfTool, SORT_LATER_MESSAGE, withPaneCommands } from './chat-state';
 
 let draftStatus = 200;
 let context = { projects: [{ id: 'p-ui', name: 'EML UI/UX' }, { id: 'p-code', name: 'EML Code' }], hasTask: true };
@@ -199,6 +199,16 @@ describe('the chat\'s split parts', () => {
     expect(createdTaskOfTool(tool)).toEqual({ taskId: id, title: 'new-mail-jobs' });
     expect(groupItems([tool])).toEqual([{ kind: 'created', id: 'c1', taskId: id, title: 'new-mail-jobs' }]);
     expect(createdTaskOfTool({ ...(tool as object), status: 'running', output: '' } as never)).toBeNull();
+  });
+
+  it('names a created task by its name on the board, else its display title, never the kebab anchor', () => {
+    const id = '0871844f-1111-4222-8333-944455556666';
+    const tool = { type: 'tool', id: 'c1', name: 'mcp__eml_brain__eml_create_task', status: 'completed', input: { title: 'new-mail-jobs', display_title: 'Run the mail jobs every morning' }, output: `{"id": "${id}"}` } as never;
+    const created = createdTaskOfTool(tool)!;
+    expect(created).toEqual({ taskId: id, title: 'new-mail-jobs', displayTitle: 'Run the mail jobs every morning' });
+    expect(createdTaskName(created, undefined)).toBe('Run the mail jobs every morning');
+    expect(createdTaskName(created, { title: 'new-mail-jobs', displayTitle: 'Renamed on the board' })).toBe('Renamed on the board');
+    expect(createdTaskName({ title: 'new-mail-jobs' }, undefined)).toBe('New mail jobs');
   });
 
   it('offers Undo on a created task while it is open, and says when it is dropped', () => {

@@ -7,6 +7,8 @@
 // 0.15.1: one name per view. A pane that holds a session and a note keeps
 // them apart — the terminal view shows (and renames) the session, the note
 // view shows (and renames) the note itself, never the other way round.
+// Task owns the name: a session with a task is called by its task (the host's
+// summary), the pane keeps no override for it, and renaming it renames the task.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useWritable } from '@/stores/useTeamStore';
 
@@ -70,6 +72,14 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   const brain = useWritable();
   const canRename = isNoteView ? Boolean(note) && brain.writable : !(projectView && pane?.sessionId);
   const sessionId = selectedSession?.id ?? pane?.sessionId ?? null;
+  // A session with a task goes by its task's name; a rename shows at once and holds until the host has it.
+  const tasked = Boolean(selectedSession?.taskId);
+  const [pendingName, setPendingName] = useState<string | null>(null);
+  const sessionSummary = (selectedSession?.summary as string | undefined) ?? '';
+  useEffect(() => {
+    if (pendingName !== null && sessionSummary === pendingName) setPendingName(null);
+  }, [pendingName, sessionSummary]);
+  useEffect(() => setPendingName(null), [sessionId]);
   // Promote a pending local override to the host at most once per
   // (sessionId, name) pair, so the effect can't loop on refreshProjects.
   const promotedRef = useRef<string | null>(null);
@@ -83,6 +93,8 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   // The current effective editable name (override wins over the stored name).
   const currentName = isNoteView
     ? (note?.title ?? '')
+    : tasked
+    ? (pendingName ?? sessionSummary)
     : (overrideTitle ?? (selectedSession ? getStoredSessionName(selectedSession) : ''));
 
   // Leaving edit mode when the pane switches session/identity avoids carrying
@@ -103,7 +115,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   // a listed session (the terminal ran and the host indexed it), push the
   // name to the session record so it also shows in the sidebar.
   useEffect(() => {
-    if (pane?.paneView !== 'terminal' || !selectedSession || !overrideTitle) return;
+    if ((pane?.paneView !== 'terminal' && pane?.paneView !== 'chat') || !selectedSession || !overrideTitle || selectedSession.taskId) return;
     if (getStoredSessionName(selectedSession) === overrideTitle) return;
     const key = `${selectedSession.id}:${overrideTitle}`;
     if (promotedRef.current === key) return;
@@ -123,6 +135,8 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
     ? (pane?.sessionId ? projectView : (overrideTitle ?? projectView))
     : isNoteView
     ? (note?.title ?? 'Notes')
+    : tasked
+    ? (pendingName ?? getSessionTitle(selectedSession!, paneLabel))
     : (overrideTitle ?? (selectedSession ? getSessionTitle(selectedSession, paneLabel) : (paneLabel || 'New Session')));
   // Brain panes show the project they are scoped to, like terminal panes do;
   // a brain-wide pane (no project) names the instance — for now there is only
@@ -155,12 +169,26 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
       if (pane?.noteId) renameNote.mutate({ id: pane.noteId, title: trimmed });
       return;
     }
+    // A session with a task: the host renames the task, every view follows; the pane keeps no name of its own.
+    if (tasked && sessionId) {
+      setPendingName(trimmed);
+      if (overrideTitle) renamePane(paneId, '');
+      try {
+        const response = await api.renameSession(sessionId, trimmed);
+        if (!response.ok) throw new Error(String(response.status));
+        window.dispatchEvent(new Event('cockpit:tasks'));
+        await refreshProjects();
+      } catch {
+        setPendingName(null);
+      }
+      return;
+    }
     // 1. Instant, persisted, always-available: store the override on the pane.
     renamePane(paneId, trimmed);
     // 2. Best-effort host rename when a session record may exist. A 404
     //    (session not spawned yet) is expected and swallowed — the promotion
     //    effect retries once the record appears.
-    if (pane?.paneView === 'terminal' && sessionId) {
+    if ((pane?.paneView === 'terminal' || pane?.paneView === 'chat') && sessionId) {
       try {
         const response = await api.renameSession(sessionId, trimmed);
         if (response.ok) await refreshProjects();

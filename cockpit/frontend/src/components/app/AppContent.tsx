@@ -16,6 +16,7 @@ import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import JobsView from '../jobs/JobsView';
 import { TaskBoard } from '../task-board/TaskBoard';
+import { taskNamesKey, useTaskBoard } from '@/lib/task-board';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import { ProjectModals } from '../projects/ProjectModals';
@@ -125,6 +126,16 @@ function AppContentInner() {
   projectsBySpaceRef.current = projectsBySpace;
   const refreshProjectsRef = React.useRef(refreshProjectsSilently);
   refreshProjectsRef.current = refreshProjectsSilently;
+  // A session with a task is called by its task: a task renamed anywhere renames its sessions in the list too.
+  const { data: taskBoard } = useTaskBoard();
+  const taskNames = taskBoard ? taskNamesKey(taskBoard) : null;
+  const seenTaskNamesRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (taskNames === null) return;
+    // The first board too: the list may have been named before the host had a board.
+    if (seenTaskNamesRef.current !== taskNames) void refreshProjectsRef.current();
+    seenTaskNamesRef.current = taskNames;
+  }, [taskNames]);
   const { data: providers } = useProviders();
   paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
   const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;
