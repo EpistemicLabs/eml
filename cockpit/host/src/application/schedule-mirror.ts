@@ -42,10 +42,12 @@ export interface ScheduleMirror {
 }
 
 export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
-  /** Per task: the schedule last found in the brain or written, and when. */
+  /** Per space and task (keyOf): the schedule last found in the brain or written, and when. */
   const known = new Map<string, { schedule: ScheduleFields | null; at: number }>()
-  /** Tasks this cockpit mirrored a schedule into: one whose jobs are all gone loses it. */
-  const mirrored = new Set<string>()
+  /** The tasks of each space this cockpit mirrored a schedule into: one whose jobs are all gone loses it. */
+  const mirrored = new Map<string, Set<string>>()
+  /** Spaces are kept apart: the same task id in two spaces' brains is two tasks. */
+  const keyOf = (space: BrainSpace, taskId: string) => `${space.id} ${taskId}`
   let running: Promise<void> | null = null
 
   const syncSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>, now: number) => {
@@ -54,20 +56,23 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
       if ((job.spaceId ?? null) !== (space.main ? null : space.id) || !job.taskId) continue
       byTask.set(job.taskId, [...(byTask.get(job.taskId) ?? []), job])
     }
-    for (const taskId of mirrored) if (!byTask.has(taskId)) byTask.set(taskId, [])
+    const mine = mirrored.get(space.id) ?? new Set<string>()
+    mirrored.set(space.id, mine)
+    for (const taskId of mine) if (!byTask.has(taskId)) byTask.set(taskId, [])
     for (const [taskId, jobs] of byTask) {
       const wanted = scheduleOfJobs(jobs)
-      const seen = known.get(taskId)
+      const key = keyOf(space, taskId)
+      const seen = known.get(key)
       if (seen && sameSchedule(seen.schedule, wanted) && now - seen.at < RECHECK_MS) continue
       try {
         const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as Task
-        if (task.status !== 'planned' && task.status !== 'active') { known.set(taskId, { schedule: wanted, at: now }); mirrored.delete(taskId); continue }
+        if (task.status !== 'planned' && task.status !== 'active') { known.set(key, { schedule: wanted, at: now }); mine.delete(taskId); continue }
         // One writer per schedule: the owner's cockpit (the first person in assignee_ids). Another member's job on the
         // task runs on that member's cockpit but leaves the shared schedule to the owner's.
         const owner = task.properties?.assignee_ids?.[0]
         if (owner && owner !== deps.me) {
           if (!seen) deps.log(`[schedule] task ${taskId.slice(0, 8)} is ${owner}'s: its schedule is theirs to write, not this cockpit's`)
-          known.set(taskId, { schedule: wanted, at: now })
+          known.set(key, { schedule: wanted, at: now })
           continue
         }
         const d = task.properties?.delegation ?? (task.properties?.delegate ? { agent: task.properties.delegate, ...(task.properties.checkpoint ? { checkpoint: task.properties.checkpoint } : {}) } : undefined)
@@ -83,12 +88,12 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
             await brain.post(`/task/${taskId}/track`, { delegation: rest, text: 'No job runs it at a time any more: its schedule is cleared.' })
           }
         }
-        known.set(taskId, { schedule: wanted, at: now })
-        if (wanted) mirrored.add(taskId)
-        else mirrored.delete(taskId)
+        known.set(key, { schedule: wanted, at: now })
+        if (wanted) mine.add(taskId)
+        else mine.delete(taskId)
       } catch (err) {
         // Looked at again after RECHECK_MS, not every sync: a job whose task is gone would log every minute.
-        known.set(taskId, { schedule: wanted, at: now })
+        known.set(key, { schedule: wanted, at: now })
         deps.log(`[schedule] task ${taskId.slice(0, 8)}: ${(err as Error).message}`)
       }
     }

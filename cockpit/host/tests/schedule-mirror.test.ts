@@ -104,6 +104,23 @@ describe('the schedule mirror', () => {
     expect(brain.posts).toEqual([])
   })
 
+  it('keeps spaces apart: the same task id in another space neither clears nor re-reads this one', async () => {
+    const main = brainOf({})
+    const other = brainOf({ t1: { status: 'active', properties: { assignee_ids: ['lasse'], delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } } } })
+    const logs: string[] = []
+    const mirror = createScheduleMirror({
+      spaces: () => [{ id: 'main', name: 'Main', main: true } as never, { id: 'other', name: 'Other', main: false } as never],
+      brain: (space) => ((space as { id: string }).id === 'main' ? main : other), jobs: () => [job({ taskId: 't1' })],
+      agentOf: () => 'atlas', me: 'lasse', now: () => NOW, log: (l) => logs.push(l),
+    })
+    await mirror.sync()
+    await mirror.sync()
+    expect(main.reads()).toBe(1)
+    expect(other.reads()).toBe(0)
+    expect(other.posts).toEqual([])
+    expect(logs).toHaveLength(1)
+  })
+
   it('a job whose task is gone is looked at again only after a while, not at every sync', async () => {
     const brain = brainOf({})
     const { mirror } = setup(brain, [job({ taskId: 'gone' })])
