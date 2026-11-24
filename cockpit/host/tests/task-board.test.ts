@@ -65,6 +65,18 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('shows a schedule another member\'s cockpit mirrored into the delegation as scheduled, with its next run (step 6)', async () => {
+    const { board } = setup({
+      main: [
+        mine('theirs-weekly', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', session: 'new' } } }),
+        mine('paused', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', paused: true } } }),
+      ],
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-23T09:00:00.000Z' })
+    expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
+  })
+
   it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work (step 3)', async () => {
     const run = (id: string, task_id: string, state: string, at: string) => ({ id, task_id, member: 'dominik', agent: 'motti', state, last_activity_at: at })
     const delegated = { delegate: 'atlas', checkpoint: 'after' }
