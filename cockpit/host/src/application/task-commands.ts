@@ -6,6 +6,7 @@ import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, typ
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import type { DelegationFields } from '../domain/delegation.js'
+import { waitsOf } from '../domain/task-waits.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
@@ -165,7 +166,7 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waiting_on?: WaitingOn; display_title?: string }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: WaitingOn; display_title?: string }
 }
 
 /**
@@ -221,7 +222,7 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   owner: t.properties?.assignee_ids?.[0],
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
-  waitingOn: t.properties?.waiting_on,
+  waits: waitsOf(t.properties),
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
 })
 
@@ -467,13 +468,13 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       } else if (command.kind === 'review') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null }, 'Looks good: the owner reviewed the result and closed the task.')
+          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null }, 'Looks good: the owner reviewed the result and closed the task.')
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'close') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null }, 'Closed on the task board by the owner: not needed.')
+          await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waits: null }, 'Closed on the task board by the owner: not needed.')
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'reopen') {
@@ -487,7 +488,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           const reason = current.reason ? ` Why: ${current.reason}` : ''
           // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
           const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
-          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const answer = await track(brain, checked.task.id, { status: 'active', waits: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
           const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
           current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
           if (items.length > 0) {
@@ -548,7 +549,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${checked.message ?? checked.refusal}`).catch(() => {})
           return 'refused'
         }
-        await track(brain, taskId, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
+        await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
         deps.changed(spaceId)
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopened by writing in its chat`)
         return 'reopened'

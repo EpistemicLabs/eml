@@ -27,6 +27,8 @@ export interface WaitingOn {
   why?: string
   since?: string
   session_id?: string
+  /** Parked until then (an ISO date) or "open" (domain/task-waits.ts). */
+  snoozed_until?: string
 }
 
 /** What the brain says about a task, read tolerantly. */

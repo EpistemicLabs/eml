@@ -27,11 +27,11 @@ describe('planning a hand-over', () => {
     expect(planned.plan.patch).not.toHaveProperty('status')
   })
 
-  it('an open question is never dropped: it goes into the journal and the brief before waiting_on clears', () => {
+  it('an open question is never dropped: it goes into the journal and the brief before its wait leaves the task', () => {
     const asked = task({ delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'Count the 07.11. booking as organic?' } })
     const r = planHandOver(asked, { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
-    expect(r.plan.patch.waiting_on).toBeNull()
+    expect(r.plan.patch.waits).toBeNull()
     expect(r.plan.carriedQuestion).toBe('Count the 07.11. booking as organic?')
     expect(r.plan.journal).toContain('Handed over with the open question: "Count the 07.11. booking as organic?"')
     expect(r.plan.brief).toContain('Count the 07.11. booking as organic?')
@@ -47,7 +47,7 @@ describe('planning a hand-over', () => {
     for (const req of requests) {
       const r = planHandOver(asked, req, ctx)
       if (!r.ok) throw new Error(r.refusal)
-      expect(r.plan.patch.waiting_on, req.mode).toBeNull()
+      expect(r.plan.patch.waits, req.mode).toBeNull()
       expect(r.plan.journal, req.mode).toContain('Which list?')
       expect(r.plan.brief, req.mode).toContain('Which list?')
     }
@@ -57,8 +57,24 @@ describe('planning a hand-over', () => {
     const outside = task({ waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' } })
     const r = planHandOver(outside, { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
-    expect(r.plan.patch).not.toHaveProperty('waiting_on')
+    expect(r.plan.patch).not.toHaveProperty('waits')
     expect(r.plan.carriedQuestion).toBeUndefined()
+  })
+
+  it('carries every open question of the owner and leaves the other waits on the task', () => {
+    const review = { id: 's2', who: 'lasse', kind: 'review', why: 'Review: draft', since: '2026-11-19T09:00:00.000Z', session_id: 's2' }
+    const outside = { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }
+    const asked = task({ waits: [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:00:00.000Z', session_id: 's1' },
+      review,
+      { id: 's3', who: 'lasse', kind: 'question', why: 'Which day?', since: '2026-11-19T08:30:00.000Z', session_id: 's3' },
+      outside,
+    ] })
+    const r = planHandOver(asked, { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
+    if (!r.ok) throw new Error(r.refusal)
+    expect(r.plan.patch.waits).toEqual([review, outside])
+    expect(r.plan.carriedQuestion).toBe('Which list? · Which day?')
+    expect(r.plan.brief).toContain('Which day?')
   })
 
   it('schedule: a job on the task at that time, once or repeating', () => {
@@ -101,10 +117,10 @@ describe('planning the undo', () => {
   it('puts the delegation, the open question and the status back and journals it', () => {
     const before = task({ checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'question', why: 'Which list?' } })
     expect(planUndo(before)).toEqual({
-      patch: { delegation: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'active' },
+      patch: { delegation: null, waits: [{ id: 'waiting_on', who: 'lasse', kind: 'question', why: 'Which list?' }], status: 'active' },
       journal: 'Hand-over undone; the task is back as it was.',
     })
-    expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegation: { agent: 'motti' }, waiting_on: null, status: 'planned' })
+    expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegation: { agent: 'motti' }, waits: null, status: 'planned' })
     const delegation = { agent: 'motti', checkpoint: 'after', requested_at: NOW, schedule: { cron: '0 9 * * 1' } }
     expect(planUndo(task({ delegate: 'motti', checkpoint: 'after', delegation })).patch.delegation).toEqual(delegation)
   })
