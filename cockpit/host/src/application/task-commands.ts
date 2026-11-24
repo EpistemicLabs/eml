@@ -168,7 +168,7 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: WaitingOn; display_title?: string }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: WaitingOn; display_title?: string; goal?: string }
 }
 
 /**

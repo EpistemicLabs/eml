@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planHandOver, planUndo, type HandOverTask } from '../src/domain/hand-over.js'
+import { planHandOver, planUndo, scheduledJobOptions, type HandOverTask } from '../src/domain/hand-over.js'
 
 const NOW = '2026-11-24T10:00:00.000Z'
 const ctx = { agents: ['atlas', 'motti'], now: NOW }
@@ -123,5 +123,17 @@ describe('planning the undo', () => {
     expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegation: { agent: 'motti' }, waits: null, status: 'planned' })
     const delegation = { agent: 'motti', checkpoint: 'after', requested_at: NOW, schedule: { cron: '0 9 * * 1' } }
     expect(planUndo(task({ delegate: 'motti', checkpoint: 'after', delegation })).patch.delegation).toEqual(delegation)
+  })
+})
+
+describe('a scheduled hand-over\'s job', () => {
+  it('starts a new worker each run by default; continues the newest session on resume; carries the goal until it is reached', () => {
+    expect(scheduledJobOptions({ at: '2026-11-25T09:00', timeZone: 'UTC' }, { goal: 'Shipped' }, 's1'))
+      .toEqual({ callerSessionId: null, input: { at: '2026-11-25T09:00', timezone: 'UTC' } })
+    expect(scheduledJobOptions({ at: '2026-11-25T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true }, { goal: 'Shipped' }, 's1'))
+      .toEqual({ callerSessionId: 's1', input: { at: '2026-11-25T09:00', timezone: 'UTC', target: 'self', goal: 'Shipped' } })
+    // resume without a session on the task yet: a new worker; until the goal without a goal: no goal
+    expect(scheduledJobOptions({ cron: '0 9 * * 1', timeZone: 'UTC', session: 'resume', untilGoal: true }, {}, null))
+      .toEqual({ callerSessionId: null, input: { cron: '0 9 * * 1', timezone: 'UTC' } })
   })
 })

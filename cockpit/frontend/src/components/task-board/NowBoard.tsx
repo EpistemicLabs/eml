@@ -29,6 +29,9 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
                 </div>
                 {col.tasks.length > 0 && <p className="m-0 mx-0.5 text-ui text-muted-foreground">{meta.rule}</p>}
                 {col.tasks.length === 0 && <Empty>{col.turn === 'agent_working' ? 'No agent is working right now.' : 'Empty.'}</Empty>}
+                {/* Tasks outside the column's groups first (an agent working), then each group. */}
+                {col.groups.length > 0 && col.tasks.filter((t) => !col.groups.some((g) => g.group === t.group))
+                  .map((t) => <Card key={t.id} task={t} now={now} viewer={board.viewer} from={originName(t, board)} onOpen={onOpen} moved={movedId === t.id} />)}
                 {col.groups.length > 0
                   ? col.groups.map((g) => (
                     <div key={g.group} className="flex flex-col gap-2">

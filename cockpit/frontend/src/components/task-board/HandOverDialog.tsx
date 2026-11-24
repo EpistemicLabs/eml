@@ -7,7 +7,9 @@ import { agentName, type BoardTask, type HandOverInput, type HandOverMode, snooz
 import { cn } from '@/lib/utils';
 
 type When = 'tomorrow' | 'monday' | 'pick';
-type Repeat = 'once' | 'weekdays' | 'mondays';
+type Repeat = 'weekdays' | 'mondays';
+/** What happens after the first run: nothing more, the agent keeps checking until the goal is reached, or it repeats. */
+type Then = 'once' | 'goal' | 'repeat';
 
 const CHECKPOINTS = {
   after: 'the agent does it, then hands you the result to review',
@@ -43,7 +45,10 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const [choosing, setChoosing] = useState(false);
   const [when, setWhen] = useState<When>('tomorrow');
   const [picked, setPicked] = useState(localStamp(times.tomorrow));
-  const [repeat, setRepeat] = useState<Repeat>('once');
+  const [then, setThen] = useState<Then>('once');
+  const [repeat, setRepeat] = useState<Repeat>('weekdays');
+  // A mission continues where it left off; a routine starts clean each time from the task's journal.
+  const [resume, setResume] = useState(true);
   const [desk, setDesk] = useState(desks[0]?.id ?? NEW_DESK);
   const [deskName, setDeskName] = useState(taskName(task));
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
@@ -51,9 +56,10 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
 
   const schedule = (): HandOverInput['schedule'] => {
     const at = when === 'pick' ? `${picked.date}T${picked.time}` : (() => { const s = localStamp(when === 'tomorrow' ? times.tomorrow : times.monday); return `${s.date}T${s.time}`; })();
-    if (repeat === 'once') return { at, timeZone };
+    const session = then === 'once' ? undefined : resume ? 'resume' as const : 'new' as const;
+    if (then !== 'repeat') return { at, timeZone, ...(session ? { session } : {}), ...(then === 'goal' ? { untilGoal: true } : {}) };
     const [hour, minute] = at.slice(11, 16).split(':').map(Number);
-    return { cron: `${minute} ${hour} * * ${repeat === 'weekdays' ? '1-5' : '1'}`, timeZone };
+    return { cron: `${minute} ${hour} * * ${repeat === 'weekdays' ? '1-5' : '1'}`, timeZone, ...(session ? { session } : {}) };
   };
 
   const submit = () => {
@@ -116,12 +122,35 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                       </div>
                     )}
                   </div>
-                  <label className="flex flex-col gap-1.5">
-                    <span className={LABEL}>Repeat</span>
-                    <select value={repeat} onChange={(e) => setRepeat(e.target.value as Repeat)} className={FIELD}>
-                      <option value="once">Once</option><option value="weekdays">Every weekday</option><option value="mondays">Every Monday</option>
-                    </select>
-                  </label>
+                  <div className="flex flex-col gap-1.5">
+                    <span className={LABEL}>Then</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {([['once', 'Once'], ['goal', 'Until the goal is reached'], ['repeat', 'Repeat…']] as Array<[Then, string]>).map(([k, label]) => (
+                        <button key={k} type="button" aria-pressed={then === k} onClick={() => { setThen(k); setResume(k !== 'repeat'); }} className={PILL}>{label}</button>
+                      ))}
+                    </div>
+                    {then === 'repeat' && (
+                      <select aria-label="Repeat" value={repeat} onChange={(e) => setRepeat(e.target.value as Repeat)} className={FIELD}>
+                        <option value="weekdays">Every weekday</option><option value="mondays">Every Monday</option>
+                      </select>
+                    )}
+                    {then === 'goal' && (
+                      <p className="m-0 text-caption text-muted-foreground">
+                        {task.goal ? <>Goal: {task.goal} </> : <>The task has no goal yet: {agentName(agent)} proposes one. </>}
+                        {agentName(agent)} checks the goal each time it wakes up. If it isn't reached, it sets its own next check and says why.
+                      </p>
+                    )}
+                  </div>
+                  {then !== 'once' && (
+                    <div className="flex flex-col gap-1.5">
+                      <span className={LABEL}>Each run</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button type="button" aria-pressed={resume} onClick={() => setResume(true)} className={PILL}>Continues the same session</button>
+                        <button type="button" aria-pressed={!resume} onClick={() => setResume(false)} className={PILL}>Starts a new session</button>
+                      </div>
+                      <p className="m-0 text-caption text-muted-foreground">The same session remembers what it already did. A new session starts clean from the task's journal.</p>
+                    </div>
+                  )}
                 </>
               )}
               <div className="flex flex-col gap-1.5">
@@ -142,7 +171,11 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
               <p className="m-0 text-caption text-muted-foreground">
                 {mode === 'now'
                   ? `${agentName(agent)} starts in the background once the few seconds to undo are over. You stay the owner; the card moves to Agent working, then to Review.`
-                  : `A job starts ${agentName(agent)} on this task at that time. Until then the card sits in Agent scheduled with the date.`}
+                  : then === 'goal'
+                    ? `${agentName(agent)} starts then and keeps going until the goal is reached. Until then the task sits in Agent scheduled under Missions, on every device and for every member. You're asked only for a question, a review or a failed run.`
+                    : then === 'repeat'
+                      ? `${agentName(agent)} works on it on that rhythm until you end it. The task sits in Agent scheduled under Routines, on every device and for every member.`
+                      : `A job starts ${agentName(agent)} on this task at that time. Until then the card sits in Agent scheduled under Starts later, with the date.`}
               </p>
             </>
           ) : (

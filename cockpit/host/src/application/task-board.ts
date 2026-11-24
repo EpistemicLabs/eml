@@ -5,6 +5,33 @@ import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-g
 import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import type { ScheduleFields } from '../domain/delegation.js'
+import { isStale } from '../domain/runs.js'
+
+/** A run as the board shows it: whose, its state, when it was last active, its result line, and whether it is this cockpit's. */
+export interface BoardRun {
+  id: string
+  member: string
+  agent: string | null
+  state: 'running' | 'idle' | 'stale'
+  lastActivityAt: string | null
+  result: string | null
+  here: boolean
+}
+
+/** The task's open runs for the board: needs-attention order is the panel's; here, running first, then by last activity. */
+function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: string }>, viewer: string, now: number): BoardRun[] {
+  const localIds = new Set(local.map((s) => s.sessionId))
+  return runs
+    .filter((r) => r.state !== 'ended')
+    .map((r) => ({
+      id: r.id, member: r.member, agent: r.agent ?? null,
+      state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
+      lastActivityAt: r.last_activity_at ?? null, result: r.result ?? null,
+      here: localIds.has(r.id) || r.member === viewer,
+    }))
+    .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
+}
 import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -27,6 +54,11 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
+  /** v0.23: its schedule (a job's here, else the delegation's) and its open runs. */
+  schedule?: ScheduleFields
+  /** What has to be true for it to be done (the task's goal). */
+  goal?: string
+  runs?: BoardRun[]
   id: string
   spaceId: string
   spaceName: string
@@ -161,6 +193,8 @@ export interface TaskBoardDeps {
   sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean }>
   /** The next run of a job of the task, if any. */
   nextRunOf(taskId: string): string | null
+  /** The schedule this cockpit's jobs give the task (domain/task-schedule.ts scheduleOfJobs), if any. */
+  scheduleOf?(taskId: string): ScheduleFields | null
   snoozes(): Snooze[]
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
@@ -227,6 +261,7 @@ interface Row {
     delegate?: string
     checkpoint?: string
     delegation?: DelegationFields
+    goal?: string
     priority?: string
     due_date?: string
     depends_on?: string[]
@@ -430,7 +465,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           facts.runner = await blockOf(row)
         }
         // A job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts).
-        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? nextRunOfSchedule(props.delegation?.schedule, now), now)
+        const schedule = deps.scheduleOf?.(row.id) ?? props.delegation?.schedule ?? null
+        const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? nextRunOfSchedule(props.delegation?.schedule, now), now), schedule }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
@@ -468,6 +504,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           sessionIds: CLOSED_STATUSES.has(row.status) ? deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId) : sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
+          ...(schedule ? { schedule } : {}),
+          ...(props.goal ? { goal: props.goal } : {}),
+          // Its open runs, on this cockpit and the other members', for the panel and the card (domain/runs.ts).
+          ...(() => {
+            const list = boardRuns(runs.get(row.id) ?? [], sessions, deps.viewer, now)
+            return list.length ? { runs: list } : {}
+          })(),
           ...(() => {
             // Work on it now released an agent, or a delegation was never handed over (v0.23: no request, no schedule).
             const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)

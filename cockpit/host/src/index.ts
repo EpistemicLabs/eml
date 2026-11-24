@@ -92,6 +92,8 @@ import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
+import { scheduleOfJobs } from './domain/task-schedule.js'
+import { scheduledJobOptions } from './domain/hand-over.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
@@ -751,6 +753,7 @@ async function main() {
       .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
     nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
       .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
@@ -796,9 +799,12 @@ async function main() {
       const projectId = projectIdForBrain(brainProject)
       const problem = ensureTaskProject(space, projectId)
       if (problem) return { error: problem }
+      const newest = ledger.list().filter((e) => e.taskId === task.id)
+        .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null
+      const how = scheduledJobOptions(spec, { goal: task.properties?.goal }, newest)
       const answer = await jobs.handle(
-        { sessionId: null, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
-        { action: 'create', name: task.title ?? task.id, prompt, ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, task_id: task.id },
+        { sessionId: how.callerSessionId, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
+        { action: 'create', name: task.title ?? task.id, prompt, task_id: task.id, ...how.input },
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },

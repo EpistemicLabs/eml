@@ -167,6 +167,24 @@ describe('the task board', () => {
     await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
   });
 
+  it('schedules an agent until the goal is reached, continuing the same session, or as a routine with new sessions (v0.23)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(board()), { status: 200 });
+      if (init?.method === 'POST') posts.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ opId: 'op-1', state: 'pending', undoUntil: new Date(Date.now() + 8000).toISOString() }), { status: 202 });
+    }));
+    mount();
+    fireEvent.click(await screen.findByText('Demo meeting prep'));
+    const sheet = await screen.findByRole('dialog');
+    fireEvent.click(within(sheet).getAllByRole('button', { name: 'Schedule…' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Until the goal is reached' }));
+    expect(screen.getByRole('button', { name: 'Continues the same session' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/hand-over'));
+    expect(posts[0].body).toMatchObject({ mode: 'schedule', schedule: { session: 'resume', untilGoal: true } });
+    expect(posts[0].body.schedule.at).toMatch(/T09:00$/);
+  });
+
   it('offers to hand a task to the agent Work on it now released, with that agent chosen', async () => {
     const released = (): Board => ({
       ...board(),

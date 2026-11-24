@@ -20,7 +20,12 @@ import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 export type HandOverMode = 'now' | 'schedule' | 'together'
 export const HAND_OVER_MODES: readonly HandOverMode[] = ['now', 'schedule', 'together']
 
-export type ScheduleSpec = { timeZone: string } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
+/**
+ * When a scheduled agent works on the task: one time (at) or a repeat rule (cron). session: each run continues the task's
+ * last session (resume) or starts a new one; untilGoal: the agent keeps at it, setting its own next check, until the
+ * task's goal is reached.
+ */
+export type ScheduleSpec = { timeZone: string; session?: 'new' | 'resume'; untilGoal?: boolean } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
 
 export interface HandOverRequest {
   mode: HandOverMode
@@ -126,5 +131,18 @@ export function planUndo(before: HandOverTask): { patch: Required<TaskPatch>; jo
   return {
     patch: { delegation, waits: waitsBody(waitsOfTask(before)).waits, status: before.status },
     journal: 'Hand-over undone; the task is back as it was.',
+  }
+}
+
+/**
+ * How a scheduled hand-over's job runs: continuing the task's newest session (target self from it) when the owner chose
+ * resume and there is one, else a new worker each run; with the task's goal when the agent keeps at it until the goal.
+ */
+export function scheduledJobOptions(spec: ScheduleSpec, task: { goal?: string | null }, newestSessionId: string | null): { callerSessionId: string | null; input: Record<string, unknown> } {
+  const resume = spec.session === 'resume' ? newestSessionId : null
+  const goal = spec.untilGoal ? task.goal ?? null : null
+  return {
+    callerSessionId: resume,
+    input: { ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, ...(resume ? { target: 'self' } : {}), ...(goal ? { goal } : {}) },
   }
 }

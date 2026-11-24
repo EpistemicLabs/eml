@@ -10,7 +10,10 @@ describe('whose turn a task is', () => {
   it.each([
     ['an agent asked the owner', { waitingOn: { who: 'lasse', kind: 'question', why: 'Count the 07.11. booking?' } }, {}, { turn: 'needs_you', group: 'asked' }],
     ['a step waits for the owner\'s go', { delegate: 'atlas', checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'go' } }, {}, { turn: 'needs_you', group: 'asked' }],
-    ['an agent stopped without a next step', { delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'stopped' } }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
+    ['a run failed', { delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'stopped' } }, {}, { turn: 'needs_you', group: 'failed', reason: 'stopped' }],
+    ['a routine repeats', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { cron: '0 9 * * 1' } }, { turn: 'agent_scheduled', group: 'routine' }],
+    ['a mission checks back until its goal', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { at: '2026-11-20T09:00:00Z', session: 'resume' } }, { turn: 'agent_scheduled', group: 'mission' }],
+    ['it starts later', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { at: '2026-11-20T09:00:00Z', session: 'new' } }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['an agent finished with checkpoint after', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'review' } }, {}, { turn: 'review' }],
     ['a session works on it', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress with its session open between turns', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'agent_working' }],
