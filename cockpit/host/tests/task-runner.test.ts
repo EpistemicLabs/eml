@@ -16,7 +16,7 @@ function brainOf(list: T[], runs: Array<Record<string, unknown>> = []) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -210,16 +210,16 @@ describe('the delegation request (v0.23)', () => {
     expect(started).toEqual(['open'])
   })
 
-  it('takes the old signal for one release (planned, delegate and checkpoint, no request); never a delegation without a checkpoint or a scheduled one', async () => {
+  it('starts nothing without a request: not the old signal (planned, delegate and checkpoint), a delegation without a checkpoint, or a scheduled one', async () => {
     const brain = brainOf([
       { id: 'old-signal', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } },
-      { id: 'no-checkpoint', status: 'planned', delegate: 'atlas', delegation: { agent: 'atlas' } },
+      { id: 'no-checkpoint', status: 'planned', delegate: 'atlas', delegation: { agent: 'atlas', requested_at: REQUESTED } },
       { id: 'scheduled', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', schedule: { cron: '0 8 * * *' } } },
-      { id: 'active-no-request', status: 'active', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } },
+      { id: 'planned-request', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: REQUESTED } },
     ])
     const started: string[] = []
     await runnerOf(brain, started).tick()
-    expect(started).toEqual(['old-signal'])
+    expect(started).toEqual(['planned-request'])
     expect(brain.posts[0].body).toEqual({ status: 'active', text: 'Started by the task runner.' })
   })
 })

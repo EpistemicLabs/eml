@@ -6,10 +6,11 @@
  * requested_at is the runner's trigger. A request is open while no run on the task started at or after it, so the
  * status never has to go back to planned to start a task again: it moves forward only (planned → active → closed).
  *
- * For one release the runner also takes the old signal — a planned task with a delegate and a checkpoint but no
- * requested_at and no schedule — so a hand-over from a cockpit on the older logic still starts. The brain's migration
- * never gives a delegation a requested_at, and the cockpit's migration pass gives one only where the runner would
- * have started the task anyway.
+ * There is no fallback to the old signal (planned + delegate + checkpoint): both members of a shared space move to
+ * schema 23 together, every hand-over written since carries a request (Delegate now, eml_track_task, a task created
+ * with a delegate and a checkpoint), and the cockpit's migration pass gives one exactly to the tasks the runner would
+ * have started. The old signal would start the planned tasks that only had a delegate, once the migration gives them
+ * checkpoint after (decision task-state-migration-rules).
  */
 
 export interface ScheduleFields {
@@ -47,19 +48,16 @@ export function delegationOf(task: DelegatedTask): DelegationFields | null {
 
 /**
  * The runner has an open request to start the task: it is open, delegated with a checkpoint, and no run started at
- * or after its request (`lastRunStartedAt`: when the newest run on it started, or null). See the header for the old
- * signal it still takes.
+ * or after its request (`lastRunStartedAt`: when the newest run on it started, or null).
  */
 export function requestOpen(task: DelegatedTask, lastRunStartedAt: string | null): boolean {
   if (!OPEN.has(task.status)) return false
   const d = delegationOf(task)
   if (!d?.agent || !d.checkpoint) return false
-  if (d.requested_at) {
-    const requested = Date.parse(d.requested_at)
-    const started = lastRunStartedAt ? Date.parse(lastRunStartedAt) : NaN
-    return !Number.isFinite(started) || started < requested
-  }
-  return task.status === 'planned' && !d.schedule
+  if (!d.requested_at) return false
+  const requested = Date.parse(d.requested_at)
+  const started = lastRunStartedAt ? Date.parse(lastRunStartedAt) : NaN
+  return !Number.isFinite(started) || started < requested
 }
 
 /** The newest run's start per task, from GET /object/run?latest=true. */

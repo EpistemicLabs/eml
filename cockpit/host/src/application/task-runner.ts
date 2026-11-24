@@ -14,8 +14,7 @@ import { projectIdForBrain } from '../project-registry.js'
  *   - it has a delegation with a checkpoint (before · after · none) and an
  *     open request: no run on it started after delegation.requested_at
  *     (domain/delegation.ts). Its status is planned or active: it never goes
- *     back to planned to start again. For one release a planned task with a
- *     delegate and a checkpoint but no request (the old signal) starts too;
+ *     back to planned to start again;
  *   - as a step (a sub-task), its parent task is active (a parked plan does
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;

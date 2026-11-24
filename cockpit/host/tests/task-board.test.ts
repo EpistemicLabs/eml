@@ -39,7 +39,13 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
 function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
-  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(opts.other ?? [], [])]])
+  // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
+  const requested = (rows: Row[]) => rows.map((r) => {
+    const p = r.properties ?? {}
+    return r.status === 'planned' && p.delegate && p.checkpoint && !p.delegation
+      ? { ...r, properties: { ...p, delegation: { agent: p.delegate, checkpoint: p.checkpoint, requested_at: '2026-11-19T09:00:00.000Z' } } } : r
+  })
+  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(opts.main), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   const deps: TaskBoardDeps = {
