@@ -837,8 +837,9 @@ export class ChatBridge {
     return {
       onPrompt: () => {
         const stored = this.ctx.ledger.get(entry.sessionId)
-        // A greeted session was already told to name itself once the user's reply shows the topic.
-        const name = stored && !stored.worker && !stored.greeted && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
+        // A greeted session was already told to name itself once the user's reply shows the topic; a session with a
+        // task is called by its task, which its task context asks it to name.
+        const name = stored && !stored.worker && !stored.greeted && !stored.taskId && !stored.title && !stored.agentTitle ? NAME_YOURSELF : null
         // The agent saw a tool die (exit 137) without a reason: this is the reason.
         const ceiling = entry.ceilingNote ? `The cockpit: ${entry.ceilingNote}` : null
         entry.ceilingNote = null

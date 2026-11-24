@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, earlierRunLine, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, earlierRunLine, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -276,5 +276,21 @@ describe('an earlier session in one line', () => {
     const run = { id: 'r', member: 'lasse', agent: 'atlas', startedAt: new Date(NOW - DAY_MS).toISOString(), endedAt: null, endReason: 'finished', result: '4 mails need you', here: true };
     expect(earlierRunLine(run, NOW)).toBe(`Atlas · ${when(run.startedAt, NOW)} · finished · 4 mails need you`);
     expect(earlierRunLine({ ...run, endReason: 'crashed', result: null }, NOW)).toBe(`Atlas · ${when(run.startedAt, NOW)} · stopped with the cockpit`);
+  });
+});
+
+describe('taskNamesKey', () => {
+  it('changes when any task is renamed, closed and lineage ones included, and not when only the order moves', () => {
+    const a = task({ id: 'a', title: 'fix-stock', displayTitle: 'Fix the stock' });
+    const b = task({ id: 'b', title: 'plain-anchor' });
+    const closed = { ...task({ id: 'c', title: 'done-one' }), closedAt: null } as never;
+    const lineage = { id: 'l', spaceId: 'main', project: 'acme', title: 'root', status: 'resolved', parentId: null, originId: null };
+    const key = taskNamesKey({ tasks: [a, b], closed: [closed], lineage: [lineage] });
+    expect(taskNamesKey({ tasks: [b, a], closed: [closed], lineage: [lineage] })).toBe(key);
+    expect(taskNamesKey({ tasks: [{ ...a, displayTitle: 'Fix the stock answers' }, b], closed: [closed], lineage: [lineage] })).not.toBe(key);
+    expect(taskNamesKey({ tasks: [a, { ...b, title: 'other-anchor' }], closed: [closed], lineage: [lineage] })).not.toBe(key);
+    expect(taskNamesKey({ tasks: [a, b], closed: [{ ...(closed as object), displayTitle: 'Renamed' } as never], lineage: [lineage] })).not.toBe(key);
+    expect(taskNamesKey({ tasks: [a, b], closed: [closed], lineage: [{ ...lineage, displayTitle: 'Root' }] })).not.toBe(key);
+    expect(taskNamesKey({ tasks: [a, b] })).toBe(taskNamesKey({ tasks: [a, b], closed: [], lineage: [] }));
   });
 });

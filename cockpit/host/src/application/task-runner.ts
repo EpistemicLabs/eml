@@ -4,6 +4,7 @@ import { MAX_RUNNING, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -65,9 +66,6 @@ interface Task {
   properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
-
-const parentOf = (task: Task) => task.relations?.find((r) => r.relation === 'part_of' && r.source_id === task.id)?.target_id ?? null
-const childrenOf = (task: Task) => (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
 
 /**
  * Decision task-closing-and-continuation-rules: an agent hands finished work over for review and

@@ -18,14 +18,14 @@ async function main(): Promise<void> {
   const title = process.argv.slice(2).join(' ').trim()
   if (!title) fail(CLI, `usage: node "$COCKPIT_TITLE_JS" '<title>'`)
 
-  const answer = await requestHost<{ title?: string }>(
+  const answer = await requestHost<{ title?: string; note?: string }>(
     CLI,
     { method: 'PUT', path: `/api/session-title/${encodeURIComponent(session)}` },
     { kind: 'session-title', session, title },
   )
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
-  process.stdout.write(`Session named "${answer.body.title}".\n`)
+  process.stdout.write(answer.body.note ? `${answer.body.note}\n` : `Session named "${answer.body.title}".\n`)
 }
 
 void main()

@@ -1,9 +1,11 @@
-import type { EmlApi } from '@engramprotocol/mcp-server'
+import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { brainIdFromProjectId } from '../project-registry.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
-import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
+import { MAX_RUNNING } from '../domain/runner-gate.js'
+import { parentOf } from '../domain/task-relations.js'
+import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -14,8 +16,10 @@ import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
  *     worker's task is its own; it is a step of the requester's task only when
  *     the requester asked for that (spawn --step). Who started it is noted.
  *     A job's session works on the job's task instead.
- *   - When the session names itself (session-title-cli.ts), the placeholder
- *     takes that name, unless the session already renamed the task.
+ *   - A session is called by its task: the
+ *     heading, the sidebar and the chat show the task's name. When the session
+ *     names itself (session-title-cli.ts), only a placeholder takes that name;
+ *     a task with a name keeps it. The user renaming the session renames the task.
  *   - Every start, the session reads its task and the handoff it ends with.
  *
  * In a shared space each member's cockpit acts for its own sessions only: the
@@ -38,10 +42,29 @@ interface Task {
   content: string
   status: string
   properties?: { stage?: string; checkpoint?: string; depends_on?: string[]; goal?: string; delegate?: string; display_title?: string }
+  relations?: Array<{ relation: string; source_id: string; target_id: string }>
 }
 
-/** The name a task gets before its session has one. */
-const PLACEHOLDER = /^session-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/
+/**
+ * One session does a task from start to end; a sub-task only for truly separate work, and it
+ * stands on its own. Every session reads it, workers included.
+ */
+export const SPLIT_RULES = [
+  '## Splitting work',
+  '- One session does this task from start to end. Work with several parts stays here and you do them in order: sequential work, and work that touches the same files as yours or needs your results along the way.',
+  '- Make a sub-task (eml_create_task with parent_id) only for truly separate work: it has its own goal, its own result that can be checked without the rest, and ideally files that no other open step touches. If that does not hold, keep the work here.',
+  '- Two steps that would change the same files do not run in parallel: chain them (depends_on) or make them one step.',
+  '- A sub-task stands on its own, because a fresh session reads only the sub-task: a goal (one checkable sentence), and content in the brief shape (Came up in · Decided so far · Open questions · Files, links, ids · Not to redo), plus depends_on, checkpoint and delegate.',
+  `- At most ${MAX_RUNNING} steps of one task run at the same time, and ${MAX_RUNNING} tasks without a parent per space; further ones wait. Plan a few steps that are each worth a session, not many small ones.`,
+]
+
+/** A worker has nobody to offer a split to: new work goes into its handoff. */
+export const WORKER_NEW_WORK_RULE = '- New work that is not part of this task: do not start it and do not create a task for it. Name it in the handoff as a [task] question.'
+
+type Parent = Pick<Task, 'id' | 'title' | 'properties'>
+
+/** A task nobody has named yet: the cockpit's placeholder anchor and no display title. */
+const isPlaceholder = (task: Pick<Task, 'title' | 'properties'>) => task.title !== null && PLACEHOLDER_TITLE.test(task.title) && !task.properties?.display_title
 
 export const placeholderTitle = (sessionId: string, now: Date) =>
   `session-${now.toISOString().slice(0, 10)}-${sessionId.replace(/-/g, '').slice(0, 8)}`
@@ -49,7 +72,7 @@ export const placeholderTitle = (sessionId: string, now: Date) =>
 export { displayTitleOf, kebabTitle }
 
 /** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
-export function taskContext(task: Task, placeholder: boolean, unattended = false): string {
+export function taskContext(task: Task, placeholder: boolean, unattended = false, parent: Parent | null = null): string {
   const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null, task.properties?.delegate ? `delegate ${task.properties.delegate}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
@@ -60,14 +83,16 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     task.properties?.goal
       ? `Goal: ${task.properties.goal}`
       : 'Goal: not set yet. Propose one checkable sentence for when this task is done and set it (eml_track_task goal).',
+    ...(parent ? [`Step of **${parent.properties?.display_title ?? parent.title ?? parent.id}** (${parent.id}).${parent.properties?.goal ? ` Parent goal: ${parent.properties.goal}` : ''}`] : []),
     ...(task.properties?.display_title && !placeholder ? [] : [
       'Name: as soon as the goal is clear, give the task the name people read in their lists with eml_track_task display_title: verb + object + scope, about 60 characters, the customer or product named, the distinguishing words first (e.g. "Fix missing stock answers in Acme\'s chat assistant", not "acme-stock" or "Session 23 Nov").',
     ]),
     ...(placeholder ? [
       '',
-      'The cockpit created this task for the session; it takes the session\'s name once you name the session.',
+      'The cockpit created this task for the session with a placeholder name; give it its name as above.',
       'If the work belongs to an open task that already exists, tell the user and propose to continue there instead.',
     ] : []),
+    'The cockpit calls this session by its task\'s name (heading, sidebar, chat): it has no name of its own. Name or rename the task with eml_track_task display_title; the session follows.',
     '',
     '## Rules',
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
@@ -85,6 +110,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
       '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. In the chat call offer_split (name the open task it belongs to, if one exists); in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.',
       '- Steps of this task\'s own work, and a task the user explicitly asks you to note, you create yourself; the chat shows each new task to the user with Undo.',
     ]),
+    ...(unattended ? [WORKER_NEW_WORK_RULE] : []),
+    '',
+    ...SPLIT_RULES,
     ...(unattended ? [
       '',
       '## Until it is done',
@@ -116,8 +144,21 @@ export interface SessionTask {
   context(sessionId: string): Promise<string>
   /** The session named itself: a placeholder task takes the name. */
   named(sessionId: string, title: string): Promise<void>
+  /** The user renamed the session: its task takes the name, with one journal entry per change. False when the session has no task here; throws when the brain refuses (renameRefusal maps it). */
+  renamed(sessionId: string, title: string): Promise<boolean>
   /** Before an idle stop: the prompt asking for the handoff, or null (no brain, no task, or unattended: it hands off every turn). */
   handoffBeforeStop(sessionId: string): string | null
+}
+
+/**
+ * Why a session's rename did not reach its task, as the page gets it: whether trying again can help, and nothing of
+ * the brain's own wording. Nothing was changed in any of these cases.
+ */
+export function renameRefusal(err: unknown): { status: number; code: string; message: string } {
+  const status = err instanceof EmlApiError ? err.status : 0
+  if (status === 404) return { status: 404, code: 'TASK_NOT_FOUND', message: 'The session\'s task no longer exists. Nothing was changed.' }
+  if (status >= 400 && status < 500) return { status: 422, code: 'TASK_NAME_REFUSED', message: 'The brain does not take this name for the task. Nothing was changed.' }
+  return { status: 502, code: 'BRAIN_UNAVAILABLE', message: 'The brain did not answer. Nothing was changed; try again.' }
 }
 
 export const HANDOFF_BEFORE_STOP = 'The cockpit is about to stop this session because nobody has used it for a while. Before it does, write your handoff block now (### Handoff with Result, Checked · Claimed, Decided, Next, Questions). Put anything only the user can answer under Questions as [lasse]. Nothing else; the session stops after this reply.'
@@ -146,7 +187,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       : ''
     const body = {
       title: placeholderTitle(sessionId, now()),
-      content: `The work of cockpit session ${sessionId}; the task takes the session's name once it has one.${from}`,
+      content: `The work of cockpit session ${sessionId}; the task gets its name once the work is clear.${from}`,
       status: 'active',
       ...(parentTask ? { parent_id: parentTask } : {}),
     }
@@ -192,22 +233,39 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
         taskId = await running
       }
       if (!taskId) return ''
-      let task = await t.brain.get(`/engram/${taskId}`) as Task
+      let task = await t.brain.get(`/engram/${taskId}`, { with_relations: 'true' }) as Task
       // A session that has a name already (it named itself before its task was made) lends it now.
       const name = t.entry.title ?? t.entry.agentTitle
-      if (name && task.title && PLACEHOLDER.test(task.title) && deps.ledger.get(sessionId)?.taskAuto) {
+      if (name && isPlaceholder(task) && deps.ledger.get(sessionId)?.taskAuto) {
         await rename(task, name, sessionId, t.brain)
-        task = await t.brain.get(`/engram/${taskId}`) as Task
+        task = await t.brain.get(`/engram/${taskId}`, { with_relations: 'true' }) as Task
       }
-      return taskContext(task, task.title !== null && PLACEHOLDER.test(task.title), deps.ledger.get(sessionId)?.worker === true)
+      // A step reads its parent's name and goal; a parent it cannot read is left out.
+      const parentId = parentOf(task)
+      const parent = parentId ? await (t.brain.get(`/engram/${parentId}`) as Promise<Task>).catch(() => null) : null
+      return taskContext(task, isPlaceholder(task), deps.ledger.get(sessionId)?.worker === true, parent)
+    },
+
+    async renamed(sessionId, title) {
+      const t = target(sessionId)
+      if (!t?.entry.taskId) return false
+      const display = displayTitleOf(title) ?? title.replace(/\s+/g, ' ').trim().slice(0, DISPLAY_TITLE_MAX)
+      if (!display) return false
+      const task = await t.brain.get(`/engram/${t.entry.taskId}`) as Task
+      // A placeholder also loses its anchor, so the session's own naming no longer counts it as unnamed.
+      const anchor = isPlaceholder(task) ? kebabTitle(title) : null
+      // The same name again (a second click, a retry after a timeout) writes nothing.
+      if (!anchor && task.properties?.display_title === display) return true
+      await t.brain.post(`/task/${task.id}/track`, { display_title: display, ...(anchor ? { title: anchor } : {}), text: 'Renamed from its session\'s heading in the cockpit.' })
+      return true
     },
 
     async named(sessionId, title) {
       const t = target(sessionId)
       if (!t?.entry.taskId || !t.entry.taskAuto) return
       const task = await t.brain.get(`/engram/${t.entry.taskId}`) as Task
-      // The session or the user renamed it already: theirs stays.
-      if (!task.title || !PLACEHOLDER.test(task.title)) return
+      // The session or the user named it already: theirs stays, and the session's own name is not used.
+      if (!isPlaceholder(task)) return
       await rename(task, title, sessionId, t.brain)
     },
   }

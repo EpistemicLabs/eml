@@ -198,6 +198,15 @@ export function useTaskBoard() {
   return useQuery({ queryKey: BOARD_KEY, queryFn: fetchBoard, refetchInterval: BOARD_POLL_MS });
 }
 
+/**
+ * Every task's name on the board, as one string. A session with a task is called by its task (the host's session
+ * summary), so when this changes the session list's names are stale: AppContent reloads it.
+ */
+export function taskNamesKey(board: Pick<Board, 'tasks' | 'closed' | 'lineage'>): string {
+  return [...board.tasks, ...(board.closed ?? []), ...(board.lineage ?? [])]
+    .map((t) => `${t.id}\u0000${t.displayTitle ?? t.title}`).sort().join('\u0001');
+}
+
 /** A project's newest closed tasks (host GET /api/v1/tasks/closed), done, dropped and replaced; `more` when older ones are left. */
 export interface ClosedPage {
   tasks: ClosedTask[];

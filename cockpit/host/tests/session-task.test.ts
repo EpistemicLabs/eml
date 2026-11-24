@@ -69,7 +69,8 @@ describe('session task', () => {
     expect(ledger.get(id(1))).toMatchObject({ taskId: 't1', taskAuto: true })
     expect(first).toBe(second)
     expect(first).toContain('**session-2026-11-17-00000001** · t1 [active]')
-    expect(first).toContain('takes the session\'s name')
+    expect(first).toContain('give it its name as above')
+    expect(first).toContain('calls this session by its task\'s name')
     expect(first).toContain('### Handoff')
     expect(first).toContain('- [lasse]')
   })
@@ -106,6 +107,20 @@ describe('session task', () => {
     expect(ledger.get(id(14))!.taskAuto).toBeUndefined()
   })
 
+  it('tells a step its parent\'s name and goal, and leaves out a parent it cannot read', async () => {
+    const brain = fakeBrain()
+    brain.tasks.set('rescue', { id: 'rescue', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: { display_title: 'Keep Acme as a customer', goal: 'Acme renewed.' } })
+    brain.tasks.set('step', { id: 'step', title: 'acme-call-notes', content: 'Sum up the call.', status: 'active', properties: {}, relations: [{ relation: 'part_of', source_id: 'step', target_id: 'rescue' }] })
+    brain.tasks.set('orphan', { id: 'orphan', title: 'lost-step', content: 'A step.', status: 'active', properties: {}, relations: [{ relation: 'part_of', source_id: 'orphan', target_id: 'gone' }] })
+    const { ledger, tasks } = setup({ shared: false }, brain)
+    ledger.recordSpawn(id(15), null, 'bp-eml', 'claude', true, 'step')
+    expect(await tasks.context(id(15))).toContain('Step of **Keep Acme as a customer** (rescue). Parent goal: Acme renewed.')
+    ledger.recordSpawn(id(16), null, 'bp-eml', 'claude', true, 'orphan')
+    const orphan = await tasks.context(id(16))
+    expect(orphan).toContain('**lost-step** · orphan')
+    expect(orphan).not.toContain('Step of')
+  })
+
   it('gives a job\'s session the job\'s task', async () => {
     const brain = fakeBrain()
     brain.tasks.set('weekly', { id: 'weekly', title: 'weekly-report', content: 'Write it.', status: 'active', properties: {} })
@@ -137,6 +152,34 @@ describe('session task', () => {
     // The task survives a respawn as the cockpit's own.
     ledger.recordSpawn(id(6), 'pane', 'bp-eml', 'claude')
     expect(ledger.get(id(6))!.taskAuto).toBe(true)
+  })
+
+  it('does not name a task that has a display title, even with the placeholder anchor', async () => {
+    const { ledger, brain, tasks } = setup({ shared: false })
+    ledger.recordSpawn(id(20), null, 'bp-eml', 'claude')
+    await tasks.context(id(20))
+    brain.tasks.set('t1', { ...brain.tasks.get('t1'), properties: { display_title: 'Fix the stock answers' } })
+    await tasks.named(id(20), 'Something else')
+    expect(brain.posts.filter((p) => p.path === '/task/t1/track')).toHaveLength(0)
+  })
+
+  it('renames the task when the user renames the session, and gives a placeholder its anchor too', async () => {
+    const { ledger, brain, tasks } = setup({ shared: false })
+    ledger.recordSpawn(id(21), null, 'bp-eml', 'claude')
+    await tasks.context(id(21))
+    expect(await tasks.renamed(id(21), 'Check the page size')).toBe(true)
+    expect(brain.posts.at(-1)).toMatchObject({ path: '/task/t1/track', body: { display_title: 'Check the page size', title: 'check-the-page-size', text: 'Renamed from its session\'s heading in the cockpit.' } })
+    // a named task keeps its anchor; a lowercase word still becomes the name
+    expect(await tasks.renamed(id(21), 'pagesize')).toBe(true)
+    expect(brain.posts.at(-1)!.body).toEqual({ display_title: 'pagesize', text: 'Renamed from its session\'s heading in the cockpit.' })
+    // the same name again writes nothing
+    const posts = brain.posts.length
+    brain.tasks.set('t1', { ...brain.tasks.get('t1'), properties: { display_title: 'pagesize' } })
+    expect(await tasks.renamed(id(21), 'pagesize')).toBe(true)
+    expect(brain.posts).toHaveLength(posts)
+    // a session without a task has nothing to rename
+    ledger.recordSpawn(id(22), null, 'bp-eml', 'claude')
+    expect(await tasks.renamed(id(22), 'Anything')).toBe(false)
   })
 
   it('names the placeholder at start when the session had its name before its task', async () => {

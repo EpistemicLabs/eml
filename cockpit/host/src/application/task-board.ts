@@ -8,6 +8,7 @@ import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
+import { taskNameOf } from '../domain/task-title.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -665,6 +666,17 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   return {
     refresh,
     closed,
+
+    /** The name a person reads for the task (domain/task-title.ts taskNameOf), from the last board; null when it holds none. */
+    nameOf(taskId: string): string | null {
+      // No board yet (no page asked since the start): build one, the page reloads its sessions once it is there.
+      if (!current) {
+        if (!refreshing) refresh().catch((err) => deps.log(`[board] refresh failed: ${(err as Error).message}`))
+        return null
+      }
+      const task = current.tasks.find((t) => t.id === taskId) ?? current.closed.find((t) => t.id === taskId) ?? current.lineage.find((t) => t.id === taskId)
+      return task ? taskNameOf(task) : null
+    },
 
     /** The board, rebuilt when it is older than `maxAgeMs`; a build under way is waited for, not skipped. */
     async get(maxAgeMs: number): Promise<Board> {

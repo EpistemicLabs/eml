@@ -11,13 +11,14 @@ import { handlePushApi, type PushApiDeps } from './push-api.js'
 import { handleBridgeApi, type BridgeApiDeps } from './channel-bridge-api.js'
 import { handleJobContract, type JobContractDeps } from './job-contract-api.js'
 import type { StartWorker } from './application/start-worker.js'
-import type { SessionTask } from './application/session-task.js'
+import { renameRefusal, type SessionTask } from './application/session-task.js'
 import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
 import { needsAnswer } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
+import { sessionName } from './domain/session-name.js'
 import { sessionAddress } from './session-address.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
@@ -338,10 +339,9 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
   return {
     id: entry.sessionId,
     projectId: entry.projectId,
-    // `summary` is the display name. A user-chosen title wins, then the
-    // title the agent gave the session, then Claude Code's own session
-    // title, then the first user prompt.
-    summary: entry.title ?? entry.agentTitle ?? summary.aiTitle ?? summary.summary ?? '',
+    // `summary` is the display name (domain/session-name.ts): the task's name when the session has a named task,
+    // else the title the user chose, the one the agent gave, Claude Code's own session title, the first prompt.
+    summary: sessionName(entry, entry.taskId ? deps.tasks?.board.nameOf(entry.taskId) ?? null : null, summary.aiTitle ?? summary.summary ?? ''),
     title: entry.title,
     createdAt: entry.createdAt,
     lastActivity,
@@ -1351,8 +1351,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     if (resource === 'sessions' && id && method === 'PATCH') {
       const body = await readJson(req)
+      // A session with a task is called by its task: renaming the session renames the task.
+      // A brain that refuses the name leaves both as they were.
+      // The task is then the only one holding the name: the session's own title is cleared, not kept as a second copy.
+      const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''
+      let taskNamed = false
+      if (title && deps.bridge.ledger.get(id)?.taskId && deps.sessionTask) {
+        try {
+          taskNamed = await deps.sessionTask.renamed(id, title)
+        } catch (err) {
+          const refusal = renameRefusal(err)
+          json(res, refusal.status, { error: { code: refusal.code, message: refusal.message } })
+          return true
+        }
+        if (taskNamed) await deps.tasks?.board.refresh().catch(() => {})
+      }
       const entry = deps.bridge.ledger.update(id, {
-        title: typeof body.title === 'string' ? body.title : undefined,
+        title: taskNamed ? null : typeof body.title === 'string' ? body.title : undefined,
         pinned: typeof body.isPinned === 'boolean' ? body.isPinned : undefined,
       })
       if (!entry) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }

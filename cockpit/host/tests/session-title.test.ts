@@ -89,6 +89,14 @@ describe('session title', () => {
       expect(ledger.get('s-named')?.agentTitle).toBe('Session titles')
     })
 
+    it('keeps no title of its own for a session with a task: the task carries the name', async () => {
+      ledger.recordSpawn('s-tasked', null, 'p1', 'codex', false, 'task-1', null, true)
+      const outcome = await request({ kind: 'session-title', session: 's-tasked', title: 'Another name', token: TOKEN })
+      expect(outcome.status).toBe(200)
+      expect(outcome.payload).toEqual({ title: 'Another name', note: expect.stringContaining('eml_track_task display_title') })
+      expect(ledger.get('s-tasked')?.agentTitle).toBeNull()
+    })
+
     it('drops control characters and bidi overrides from the title', async () => {
       const outcome = await request({ kind: 'session-title', session: 's-named', title: 'Release\u202e notes\u001b[31m v2', token: TOKEN })
       expect(outcome).toEqual({ status: 200, payload: { title: 'Release notes[31m v2' } })
