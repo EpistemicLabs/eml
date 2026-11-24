@@ -101,7 +101,7 @@ export function registerCreateTaskTool(server: McpServer, http: EmlApi): void {
       assignee_ids: z.array(z.string()).optional().describe('Handles of who should act — users or agents eml_read_object lists (object=user · agent). An unknown handle is refused.'),
       due_date: optIsoDate('ISO date, only for a real external deadline.'),
       blockers: z.array(z.string()).optional().describe('One phrase each. Blocked is not a status: keep planned and list blockers.'),
-      parent_id: z.string().optional().describe('Parent task id → sub-task (part_of).'),
+      parent_id: z.string().optional().describe('Parent task id → sub-task (part_of). Only for truly separate work; a sub-task needs a goal of its own and content a fresh session can work from alone.'),
         checkpoint: z.enum(CHECKPOINTS).optional().describe('Task system: where this step stops for its person — before (prepares, then asks before acting) · after (acts, then waits for review) · none (runs alone). Set it, together with delegate, whenever an agent can do the task: default after; before when the plan needs the user\'s OK first. The runner starts a task only when it has both. Leave both out when the person does it themselves or the user says so. Say in your reply which checkpoint and delegate you set.'),
         depends_on: z.array(z.string()).optional().describe('Task system: ids of the steps that must be done before this one starts. Steps without dependencies on each other can run at the same time.'),
         delegate: z.string().optional().describe('Task system: the one agent that works on the task (an agent handle, e.g. atlas). The person who owns it stays in assignee_ids. Set it with a checkpoint when an agent should do the work; the cockpit\'s runner then starts it.'),
