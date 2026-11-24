@@ -22,6 +22,10 @@ import {
   Keyboard,
   LayoutGrid,
   ListChecks,
+  FileCode,
+  FileText,
+  Image as ImageIcon,
+  Sheet,
 } from 'lucide-react';
 
 import {
@@ -43,6 +47,8 @@ import { useEngramPanel } from '@/lib/engram-panel';
 import type { Engram, EngramStatus } from '@/lib/types';
 import { activateDesk, openInPane, useActiveDeskId, useActiveSpaceId, useDesks, type PaneView } from '@/stores/usePaneStore';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
+import { typeLabel } from '@/components/media/file-refs';
+import { openMedia, useRecentFiles, type RecentFile } from '@/components/media/files';
 import { taskState } from '@/components/tasks-card/taskTree';
 import { locateTask, locationWords, projectNameOf, searchTasks, type TaskLocation } from '@/lib/open-task';
 import { type BoardTask, readable, taskName, useTaskBoard } from '@/lib/task-board';
@@ -111,6 +117,13 @@ const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: Lucide
 
 const IS_MAC = detectMac();
 const NEW_SESSION_HINT = IS_MAC ? '⌘⇧K' : 'Ctrl+Shift+K';
+
+const FILE_ICONS = { csv: Sheet, image: ImageIcon, pdf: FileText, markdown: FileCode } as const;
+
+function FileKindIcon({ kind }: { kind: RecentFile['kind'] }) {
+  const Icon = FILE_ICONS[kind] ?? FileText;
+  return <Icon className="size-4" aria-hidden />;
+}
 
 function PaletteRow({
   value,
@@ -345,6 +358,23 @@ export default function CommandPalette({
   const showSessions = page === null || page === 'sessions';
   const shownSessions = page === null ? matchingSessions.slice(0, rootLimit) : matchingSessions;
 
+  // ── Files the chats named (media viewer): one opens wide, with the chat it comes from beside it ──
+  const showFiles = page === null;
+  const { data: recentFiles } = useRecentFiles(open && showFiles);
+  const matchingFiles = useMemo(
+    () => (recentFiles ?? []).filter((f) => matchesWords(words, f.name, f.path, f.sessionTitle)),
+    [recentFiles, words],
+  );
+  const shownFiles = matchingFiles.slice(0, rootLimit);
+  const pickFile = (file: RecentFile) => {
+    const ofChat = (recentFiles ?? []).filter((f) => f.sessionId === file.sessionId);
+    run(() => openMedia({
+      files: ofChat,
+      index: Math.max(0, ofChat.findIndex((f) => f.path === file.path)),
+      chat: { sessionId: file.sessionId, projectId: file.projectId, spaceId: file.spaceId, title: file.sessionTitle },
+    }));
+  };
+
   // ── Projects ────────────────────────────────────────────────────────
   const orderedProjects = useMemo(
     () => currentProjectFirst(projects, selectedProject?.projectId ?? null),
@@ -530,6 +560,21 @@ export default function CommandPalette({
                     muted
                   />
                 )}
+              </CommandGroup>
+            )}
+
+            {showFiles && shownFiles.length > 0 && (
+              <CommandGroup heading="Files">
+                {shownFiles.map((file) => (
+                  <PaletteRow
+                    key={file.path}
+                    value={`file ${file.path}`}
+                    onSelect={() => pickFile(file)}
+                    icon={<FileKindIcon kind={file.kind} />}
+                    label={file.name}
+                    aside={<AsideText>{typeLabel(file.path).toUpperCase()} · from {file.sessionTitle}</AsideText>}
+                  />
+                ))}
               </CommandGroup>
             )}
 

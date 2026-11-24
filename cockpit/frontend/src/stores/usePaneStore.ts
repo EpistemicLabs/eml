@@ -41,13 +41,15 @@ import { setTopView } from './useTopViewStore';
  * Worktrees mode shows the project's worktrees, sessions and ports. Repository
  * mode shows a checkout's diffs, files and commits, read-only. Shell mode is
  * a terminal on this computer, the user's own shell in the home folder, not
- * tied to the project. Time mode shows the work time across projects. Labels, icons and groups of the views: lib/pane-views.ts.
+ * tied to the project. Time mode shows the work time across projects. File mode
+ * shows one file pinned from the media viewer ("Open as pane"); it is no tab of
+ * the view switch, the pane holds that file alone. Labels, icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time';
+export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time' | 'file';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell', 'time'];
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell', 'time', 'file'];
 /** Views that show something of their own, not the pane's session: never remembered as a session's view. */
-const OWN_VIEWS: ReadonlySet<PaneView> = new Set(['note', 'shell', 'time']);
+const OWN_VIEWS: ReadonlySet<PaneView> = new Set(['note', 'shell', 'time', 'file']);
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -90,6 +92,11 @@ export interface PaneState {
    * back to Note returns to the same note.
    */
   noteId?: string;
+  /**
+   * The file a file pane shows (absolute path), pinned from the media viewer's
+   * "Open as pane". Kept with the layout, so the pane survives a reload and a restart.
+   */
+  filePath?: string;
   /**
    * How the brain view of this pane was left (BrainPane): lens, reach and the
    * types hidden. Kept with the layout, so the pane opens where it was after a
@@ -324,6 +331,7 @@ const parsePane = (entry: unknown): PaneState | null => {
     title: typeof e.title === 'string' && e.title.trim() ? e.title : undefined,
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
+    filePath: typeof e.filePath === 'string' && e.filePath.startsWith('/') ? e.filePath : undefined,
     brainView: parseBrainView(e.brainView),
     repositoryView: parseRepositoryView(e.repositoryView),
     shellId: typeof e.shellId === 'string' && e.shellId ? e.shellId : undefined,
@@ -984,6 +992,8 @@ export type OpenTarget =
   /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
   | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
+  /** A file from the media viewer, pinned as a pane of its own. */
+  | { surface: 'file'; projectId: string | null; filePath: string }
   | { surface: 'brain' | 'worktrees'; projectId: string | null }
   /** With `worktree`: that checkout's changes. */
   | { surface: 'repository'; projectId: string | null; worktree?: string };
@@ -1028,6 +1038,8 @@ function findPaneHolding(target: OpenTarget): PaneState | undefined {
       return target.sessionId ? panes.find(p => p.sessionId === target.sessionId) : undefined;
     case 'note':
       return panes.find(p => p.noteId === target.noteId);
+    case 'file':
+      return panes.find(p => p.paneView === 'file' && p.filePath === target.filePath);
     case 'brain':
     case 'worktrees':
     case 'repository':
@@ -1085,8 +1097,11 @@ export function openInPane(target: OpenTarget): string {
       ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.sessionId ? undefined : target.provider }
       : target.surface === 'note'
         ? { noteId: target.noteId }
-        : checkout;
-  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: shownView, ...items };
+        : target.surface === 'file'
+          ? { filePath: target.filePath }
+          : checkout;
+  // A file pane holds the file alone: an empty pane it lands in drops the session id it was minted with.
+  const fields: Partial<Omit<PaneState, 'id'>> = { projectId: target.projectId, paneView: shownView, ...items, ...(target.surface === 'file' ? { sessionId: null } : {}) };
 
   const active = getActivePane();
   if (active && isEmptyPane(active)) {

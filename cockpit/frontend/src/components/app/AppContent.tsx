@@ -58,6 +58,7 @@ import { APP_HEIGHT_VAR, useVisibleViewportHeight } from '@/hooks/useVisibleView
 import { TasksCard } from '@/components/tasks-card/TasksCard';
 import { useTasksCard } from '@/stores/useTasksCardStore';
 import { OpenTaskToast } from '@/components/command-palette/OpenTaskToast';
+import { FileSlideOver } from '@/components/media/FileSlideOver';
 
 export default function AppContent() {
   return (
@@ -147,6 +148,8 @@ function AppContentInner() {
   // note pane with neither a note nor a project (Pick a project…). Against the
   // projects of the pane's own space.
   paneStore.setEmptyPaneTest((pane) => {
+    // A file pane is never empty while it names its file; it needs no project.
+    if (pane.paneView === 'file') return !pane.filePath;
     const desk = paneStore.getDeskOfPane(pane.id);
     // Projects not loaded yet (a space first opened from the All view): nothing
     // can be told about the pane, so only one without a project counts as empty,
@@ -440,6 +443,7 @@ function AppContentInner() {
       <ShortcutSheet />
 
       <OpenTaskToast />
+      <FileSlideOver />
       <CommandPalette
         projects={projects}
         selectedProject={activePaneCtx.project}

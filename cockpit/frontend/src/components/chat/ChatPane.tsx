@@ -30,6 +30,7 @@ import { CreatedMarker, MessageActions, OfferCard, SortCard, SplitMarker, type S
 import { SortDialog } from './SortDialog';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
+import { FileChips, useChatFiles } from '@/components/media/FileChips';
 import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
@@ -383,8 +384,10 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
 const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
 
 const Messages = memo(function Messages({
-  items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
+  sessionId, items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
 }: {
+  /** The session, for the files its replies name (relative paths are read from its folder). */
+  sessionId: string;
   items: ChatItem[];
   agents: AgentTask[];
   agentTools: Record<string, AgentTool[]>;
@@ -408,6 +411,9 @@ const Messages = memo(function Messages({
   renderCreated: (created: { taskId: string; title: string; displayTitle?: string }) => React.ReactNode;
 }) {
   const groups = useMemo(() => groupItems(items), [items]);
+  // The files the replies name, looked up once for the chat: a chip opens its file, ← → the chat's others.
+  const replyTexts = useMemo(() => items.flatMap((i) => (i.type === 'assistant' && !i.streaming ? [i.text] : [])), [items]);
+  const chatFiles = useChatFiles(replyTexts, sessionId);
   const marksAfter = (id: string) => marks.filter((m) => m.afterItemId === id).map((m) => <Fragment key={m.opId}>{renderMark(m)}</Fragment>);
   const known = new Set(items.map((i) => i.id));
   return (
@@ -475,6 +481,7 @@ const Messages = memo(function Messages({
             return (
               <div key={item.id} data-chat-item={item.id} className="group/msg relative">
                 <Assistant text={item.text} streaming={item.streaming} />
+                {!item.streaming && <FileChips text={item.text} files={chatFiles} />}
                 {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
               </div>
             );
@@ -649,7 +656,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
+          <Messages sessionId={sessionId} items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}

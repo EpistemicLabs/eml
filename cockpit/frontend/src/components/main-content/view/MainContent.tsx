@@ -20,6 +20,7 @@ import { WorktreesPane } from '../../worktrees/WorktreesPane';
 import { SessionChat } from '../../ui/session-chat';
 import { ShellPluginPane } from '../../shell-plugin/ShellPluginPane';
 import { TimePane } from '../../time-plugin/TimePane';
+import { FilePane } from '../../media/FilePane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import { LimitsBadge } from '../../chat/LimitsBadge';
 import type { MainContentProps } from '../types/types';
@@ -118,6 +119,20 @@ function MainContent({
   const compact = useCompactLayout();
   const toolbarReveal = !isActive &&
     'opacity-0 transition-opacity duration-(--duration-fast) hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:hidden';
+
+  // A file pinned from the media viewer: the file alone, the toolbar without view switch.
+  if (paneView === 'file') {
+    return (
+      <FilePane
+        filePath={pane?.filePath ?? ''}
+        toolbar={!compact && (
+          <div className={toolbarReveal || undefined}>
+            <MainContentTabSwitcher groups={[]} paneView={paneView} onSetPaneView={onSetPaneView} onClosePane={onClosePane} onAddPane={handleAddPane} isMainPane={isMainPane} onToggleMainPane={onToggleMainPane} />
+          </div>
+        )}
+      />
+    );
+  }
 
   // Plugin panes don't need a project here; terminal and chat panes do.
   if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {

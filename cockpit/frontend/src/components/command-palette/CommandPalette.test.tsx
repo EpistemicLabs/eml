@@ -32,6 +32,15 @@ vi.mock('@/stores/usePaneStore', async (importOriginal) => ({
   useActiveDeskId: () => 'd1',
   useActiveSpaceId: () => 'eml',
 }));
+const media = vi.hoisted(() => ({ opened: [] as unknown[] }));
+vi.mock('@/components/media/files', () => ({
+  useRecentFiles: () => ({ data: [
+    { ref: 'out/a.csv', path: '/w/out/a.csv', name: 'a.csv', kind: 'csv', size: 10, modifiedAt: '', sessionId: 's-1', sessionTitle: 'Control group', projectId: 'p', spaceId: 'eml', seenAt: '' },
+    { ref: 'chart.png', path: '/w/chart.png', name: 'chart.png', kind: 'image', size: 10, modifiedAt: '', sessionId: 's-1', sessionTitle: 'Control group', projectId: 'p', spaceId: 'eml', seenAt: '' },
+    { ref: 'notes.md', path: '/x/notes.md', name: 'notes.md', kind: 'markdown', size: 10, modifiedAt: '', sessionId: 's-2', sessionTitle: 'Other', projectId: 'q', spaceId: 'eml', seenAt: '' },
+  ] }),
+  openMedia: (open: unknown) => { media.opened.push(open); },
+}));
 vi.mock('./openTask', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   openTask: async (...args: unknown[]) => { opened.calls.push(args); },
@@ -71,5 +80,22 @@ describe('opening a task from ⌘K', () => {
     fireEvent.keyDown(input, { key: 'Enter', metaKey: true, ctrlKey: true });
     await act(async () => {});
     expect(opened.calls[0]).toEqual([expect.objectContaining({ id: 'cockpit-media-viewer' }), { kind: 'none' }, { newDesk: true }]);
+  });
+});
+
+describe('files in ⌘K', () => {
+  it('lists the files chats named and opens one with its chat beside it, its chat\'s files to flip through', () => {
+    renderPalette();
+    fireEvent.keyDown(document, { key: 'k', metaKey: true, ctrlKey: true });
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'chart' } });
+    const row = screen.getAllByRole('option').find((o) => (o.textContent ?? '').includes('chart.png'));
+    expect(row?.textContent).toContain('from Control group');
+    fireEvent.click(row!);
+    expect(media.opened[0]).toEqual({
+      files: [expect.objectContaining({ name: 'a.csv' }), expect.objectContaining({ name: 'chart.png' })],
+      index: 1,
+      chat: { sessionId: 's-1', projectId: 'p', spaceId: 'eml', title: 'Control group' },
+    });
   });
 });
