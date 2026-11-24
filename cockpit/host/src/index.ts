@@ -92,6 +92,7 @@ import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
+import { createTaskStateMigration } from './application/task-state-migration.js'
 import { runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
 import { projectIdForBrain } from './project-registry.js'
@@ -766,6 +767,20 @@ async function main() {
     },
   })
   const taskCommandStore = new TaskCommandStore()
+  // The task state migration of a space: a dry run its owner sees first, then the run (application/task-state-migration.ts).
+  const taskStateMigration = createTaskStateMigration({
+    space: (spaceId) => spaces.get(spaceId), brain: taskBrain, viewer: owner,
+    jobs: () => jobStore.list(),
+    setJobTask: (jobId, taskId) => { const job = jobStore.get(jobId); if (job) jobStore.put({ ...job, taskId, updatedAt: new Date().toISOString() }) },
+    snoozes: () => taskCommandStore.snoozes(Date.now()),
+    setSnoozes: (snoozes) => taskCommandStore.setSnoozes(snoozes),
+    heldWaitsFile: path.join(COCKPIT_HOME, 'held-waits.json'),
+    liveSessions: (spaceId) => ledger.list()
+      .filter((e) => e.taskId && !e.archivedAt && spaces.resolve(e.spaceId ?? null).id === spaceId && (chat.isRunning(e.sessionId) || bridge.isRunning(e.sessionId)))
+      .map((e) => ({ sessionId: e.sessionId, taskId: e.taskId! })),
+    now: () => Date.now(),
+    log,
+  })
   taskCommands = createTaskCommands({
     store: taskCommandStore,
     viewer: owner,
@@ -930,7 +945,7 @@ async function main() {
 
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
+      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask, migration: taskStateMigration },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
