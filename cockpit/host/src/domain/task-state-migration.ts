@@ -11,7 +11,9 @@ import { waitsOf } from './task-waits.js'
  *     without a request: nothing starts; the board offers "Hand to <agent>";
  *   - a checkpoint without a delegate → cleared;
  *   - a planned task with a delegate and a checkpoint, no request and no schedule — one the runner starts today →
- *     requested now, so it starts as before;
+ *     requested now, so it starts as before. Only in a space the migration has not run in yet: afterwards a task like
+ *     that is one the migration gave its checkpoint (or one handed over without a start), and a second run would
+ *     start it;
  *   - blockers → one wait of kind outside per blocker, on the owner;
  *   - intent → appended to the goal where it says something the goal does not (the text is in the dry run);
  *   - a snooze in this cockpit's store → snoozed_until on the task's wait.
@@ -56,6 +58,8 @@ export interface MigrationInput {
   viewer: string
   /** The migration's time (ISO): the requests it gives. */
   now: string
+  /** When the migration ran in this space before (its marker in the brain), or null: then it gives no requests. */
+  ranBefore?: string | null
 }
 
 export type MigrationRule = 'checkpoint_after' | 'checkpoint_cleared' | 'requested' | 'blockers' | 'intent' | 'snooze'
@@ -119,7 +123,7 @@ export function planTaskStateMigration(input: MigrationInput): MigrationPlan {
       patch.checkpoint = null
       rules.push('checkpoint_cleared')
       lines.push(`checkpoint ${p.checkpoint} cleared: no agent is delegated`)
-    } else if (task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !delegation?.schedule && !input.scheduledTaskIds.has(task.id)) {
+    } else if (!input.ranBefore && task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !delegation?.schedule && !input.scheduledTaskIds.has(task.id)) {
       delegation = { ...delegation!, requested_at: input.now }
       rules.push('requested')
       lines.push(`requested now, so the runner starts ${p.delegate} as before`)
@@ -192,8 +196,9 @@ const RULE_TITLES: Record<MigrationRule, string> = {
 }
 
 /** The plan as the dry run's Markdown: per rule, every task it touches, then what the cockpit does on its own. */
-export function migrationReport(plan: MigrationPlan, opts: { space: string; at: string }): string {
+export function migrationReport(plan: MigrationPlan, opts: { space: string; at: string; ranBefore?: string | null }): string {
   const out: string[] = [`# Task state migration — dry run`, '', `Space: ${opts.space} · ${opts.at} · nothing written.`, '']
+  if (opts.ranBefore) out.push(`The migration ran in this space on ${opts.ranBefore}: it gives no start requests again.`, '')
   out.push(`${plan.changes.length} task${plan.changes.length === 1 ? '' : 's'} change in the brain, one journal line each.`, '')
   for (const rule of Object.keys(RULE_TITLES) as MigrationRule[]) {
     const hit = plan.changes.filter((c) => c.rules.includes(rule))

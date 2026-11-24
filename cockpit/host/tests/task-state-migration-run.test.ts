@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskStateMigration, routineTitle, type TaskStateMigrationDeps } from '../src/application/task-state-migration.js'
+import { createTaskStateMigration, MIGRATION_MARKER, routineTitle, type TaskStateMigrationDeps } from '../src/application/task-state-migration.js'
 import type { Job } from '../src/domain/job.js'
 
 // paths.ts reads the home at import time — set it before loading the modules that use it.
@@ -22,15 +22,22 @@ const job = (patch: Partial<Job>): Job => ({
 function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: string; until: string }>; failOn?: string[] } = {}) {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
   const byId = new Map(tasks.map((t) => [t.id, t]))
+  const notes: Array<{ title: string; created_at: string }> = []
   let snoozes = opts.snoozes ?? []
   const jobs = opts.jobs ?? []
   const brain = {
     async get(path: string, query?: Record<string, unknown>) {
+      if (path === '/list' && query?.type === 'note') return { engrams: notes.filter((n) => n.title === query.title) }
       if (path === '/list' && query?.title) return { engrams: [...byId.values()].filter((t) => t.title === query.title) }
       if (path === '/list') return { engrams: [...byId.values()].filter((t) => t.status === query?.status) }
       throw new Error(`unexpected ${path}`)
     },
     async post(path: string, body: Record<string, unknown>) {
+      if (path === '/engram/note') {
+        const note = { title: body.title as string, created_at: new Date(NOW).toISOString() }
+        notes.push(note)
+        return note
+      }
       posts.push({ path, body })
       if (path === '/engram/task') {
         const made = { id: `made-${byId.size}`, status: 'active', title: body.title as string, properties: {} }
@@ -41,6 +48,9 @@ function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: strin
       if (opts.failOn?.includes(id)) throw new Error('brain down')
       const t = byId.get(id)!
       for (const [k, v] of Object.entries(body)) if (k !== 'text') { if (v === null) delete t.properties[k]; else t.properties[k] = v }
+      // core keeps the flat fields mirrored with the delegation
+      const d = body.delegation as { agent?: string; checkpoint?: string } | undefined
+      if (d?.checkpoint) t.properties.checkpoint = d.checkpoint
       return t
     },
   }
@@ -58,12 +68,31 @@ function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: strin
     now: () => NOW,
     log: () => {},
   }
-  return { migration: createTaskStateMigration(deps), posts, byId, jobs, snoozes: () => snoozes, heldWaitsFile }
+  return { migration: createTaskStateMigration(deps), posts, notes, byId, jobs, snoozes: () => snoozes, heldWaitsFile }
 }
 
 const waits = [{ id: 's1', who: 'lasse', kind: 'question', why: 'Which?', since: '2026-11-23T09:00:00.000Z' }]
 
 describe('the task state migration run', () => {
+  it('leaves its marker before it writes a task; a second run gives no start request, so a task it gave a checkpoint never starts', async () => {
+    const w = world([
+      { id: 'legacy', status: 'planned', title: 'legacy', properties: { assignee_ids: ['lasse'], delegate: 'atlas', checkpoint: 'after' } },
+      { id: 'unasked', status: 'planned', title: 'unasked', properties: { assignee_ids: ['lasse'], delegate: 'motti' } },
+    ])
+    const first = await w.migration.run('main')
+    expect(first).toMatchObject({ ok: true, written: 2 })
+    expect(w.notes.map((n) => n.title)).toEqual([MIGRATION_MARKER])
+    expect(w.byId.get('legacy')!.properties.delegation).toMatchObject({ requested_at: '2026-11-24T12:00:00.000Z' })
+    // 'unasked' now has a delegate and a checkpoint and no request, like 'legacy' had: the second run leaves it so
+    const dry = await w.migration.dryRun('main')
+    expect(dry).toMatchObject({ ok: true, ranBefore: '2026-11-24T12:00:00.000Z', plan: { changes: [] } })
+    if (dry.ok) expect(dry.report).toContain('it gives no start requests again')
+    const second = await w.migration.run('main')
+    expect(second).toMatchObject({ ok: true, written: 0 })
+    expect(w.byId.get('unasked')!.properties.delegation).toEqual({ agent: 'motti', checkpoint: 'after' })
+    expect(w.notes).toHaveLength(1)
+  })
+
   it('the dry run writes nothing; the run writes one track call per change with its journal line', async () => {
     const w = world([
       { id: 'd', status: 'planned', title: 'd', properties: { assignee_ids: ['lasse'], delegate: 'atlas' } },
