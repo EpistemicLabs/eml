@@ -4,6 +4,7 @@ import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
+import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -400,7 +401,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(deps.nextRunOf(row.id) ?? nextRunOfSchedule(row.properties?.delegation?.schedule, now)),
         })
       }
 
@@ -428,7 +429,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           facts.requested = true
           facts.runner = await blockOf(row)
         }
-        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id), now)
+        // A job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts).
+        const live: LiveFacts = liveFactsOf(sessions, runs.get(row.id) ?? [], deps.nextRunOf(row.id) ?? nextRunOfSchedule(props.delegation?.schedule, now), now)
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length

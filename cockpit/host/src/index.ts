@@ -91,6 +91,7 @@ import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
+import { createScheduleMirror } from './application/schedule-mirror.js'
 import { runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
 import { projectIdForBrain } from './project-registry.js'
@@ -730,6 +731,12 @@ async function main() {
     log,
   })
   turns.on('turn', () => runRecords.poke())
+  // A task's schedule lives in the brain: this cockpit's jobs mirror their timing into it (application/schedule-mirror.ts).
+  const scheduleMirror = createScheduleMirror({
+    spaces: () => spaces.list(), brain: taskBrain, jobs: () => jobStore.list(), agentOf: (space) => space.agent, now: () => Date.now(), log,
+  })
+  setTimeout(() => { void scheduleMirror.sync() }, RUN_FIRST_SYNC_MS).unref?.()
+  scheduleMirror.every(RUN_SYNC_MS)
   // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
   setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
   runRecords.every(RUN_SYNC_MS)

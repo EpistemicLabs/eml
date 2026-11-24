@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
+import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { projectIdForBrain } from '../project-registry.js'
 
 /**
@@ -150,7 +151,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
-        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id), scheduled: deps.scheduled?.(step.id),
+        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id),
+        // A job here, or a schedule in its delegation, starts it at its time (domain/task-schedule.ts).
+        scheduled: deps.scheduled?.(step.id) || Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
       if (block) continue
