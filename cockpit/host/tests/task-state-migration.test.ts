@@ -16,6 +16,12 @@ describe('the task state migration', () => {
     expect(requestOpen({ status: 'planned', properties: { delegate: 'atlas', checkpoint: 'after', delegation: plan.changes[0].patch.delegation as never } }, null)).toBe(false)
   })
 
+  it('gives no request in a space it ran in before: a planned task with a delegate and a checkpoint stays unstarted', () => {
+    const plan = planTaskStateMigration(input([task('ready', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } })], { ranBefore: '2026-11-24T11:03:43.729Z' }))
+    expect(plan.changes).toEqual([])
+    expect(migrationReport(plan, { space: 'EML', at: NOW, ranBefore: '2026-11-24T11:03:43.729Z' })).toContain('ran in this space on 2026-11-24T11:03:43.729Z')
+  })
+
   it('a planned task the runner starts today is requested now, so it starts as before; an active one, a scheduled one or one already requested is not', () => {
     const plan = planTaskStateMigration(input([
       task('ready', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }),

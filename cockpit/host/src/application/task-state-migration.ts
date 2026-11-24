@@ -29,12 +29,19 @@ export interface TaskStateMigrationDeps {
   log(line: string): void
 }
 
-export interface DryRun { ok: true; plan: MigrationPlan; report: string; at: string }
+export interface DryRun { ok: true; plan: MigrationPlan; report: string; at: string; ranBefore: string | null }
 export type Refusal = { ok: false; refusal: 'unknown_space' | 'no_brain' | 'in_flight'; message?: string }
 
 /** The task a job without one gets: its title names the job, so a run that is retried finds the task it made before. */
 export const routineTitle = (job: Pick<Job, 'id' | 'name'>) =>
   `routine-${job.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)}-${job.id.slice(0, 8)}`
+
+/**
+ * The note the first run leaves in the space's brain. A second run (a retry, another member's cockpit on a shared
+ * space) reads it and gives no start requests: by then the tasks the migration gave a checkpoint look like ones the
+ * runner used to start.
+ */
+export const MIGRATION_MARKER = 'task-state-migration-v23'
 
 const inSpace = (job: Job, space: BrainSpace) => (job.spaceId ?? null) === (space.main ? null : space.id)
 
@@ -45,6 +52,13 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
   const tasksOf = async (brain: Pick<EmlApi, 'get'>): Promise<MigrationTask[]> => {
     const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: 500 }) as Promise<{ engrams?: Array<MigrationTask & { title: string | null; properties?: MigrationTask['properties'] & { display_title?: string } }> }>))
     return lists.flatMap((l) => l.engrams ?? []).map((t) => ({ ...t, title: t.properties?.display_title ?? t.title ?? t.id }))
+  }
+
+  /** When the migration ran in this space before, from its marker; null when it has not. */
+  const ranBefore = async (brain: Pick<EmlApi, 'get'>): Promise<string | null> => {
+    const found = await brain.get('/list', { type: 'note', title: MIGRATION_MARKER, limit: 1 }) as { engrams?: Array<{ created_at?: string }> }
+    const marker = found.engrams?.[0]
+    return marker ? (marker.created_at ?? 'an earlier date') : null
   }
 
   const heldWaitTasks = (): Array<{ taskId: string; count: number }> => {
@@ -64,6 +78,7 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
     const at = new Date(deps.now()).toISOString()
     const jobs = deps.jobs().filter((j) => inSpace(j, space) && !j.endedAt)
     const timed = jobs.filter((j) => scheduleOfJob(j) !== null)
+    const before = await ranBefore(brain)
     const migration = planTaskStateMigration({
       tasks: await tasksOf(brain),
       scheduledTaskIds: new Set(timed.flatMap((j) => (j.taskId ? [j.taskId] : []))),
@@ -74,8 +89,9 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
       liveSessions: deps.liveSessions(space.id),
       viewer: deps.viewer,
       now: at,
+      ranBefore: before,
     })
-    return { ok: true, plan: migration, report: migrationReport(migration, { space: space.name, at }), at }
+    return { ok: true, plan: migration, report: migrationReport(migration, { space: space.name, at, ranBefore: before }), at, ranBefore: before }
   }
 
   return {
@@ -103,6 +119,15 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
       if (!planned.ok) return planned
       const space = deps.space(spaceId)!
       const brain = deps.brain(space)!
+      // The marker first: a retry after a failure part-way plans without requests, so it never starts a task this
+      // run gave a checkpoint. A task whose request failed shows "Hand to <agent>" on the board instead.
+      if (!planned.ranBefore) {
+        await brain.post('/engram/note', {
+          title: MIGRATION_MARKER,
+          scope: 'global',
+          content: `The cockpit's task state migration (brain schema 23) ran in this space on ${planned.at}, by ${deps.viewer}. A second run gives no start requests.`,
+        })
+      }
       const failed: string[] = []
       let written = 0
       for (const change of planned.plan.changes) {
