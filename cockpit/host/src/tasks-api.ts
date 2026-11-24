@@ -8,6 +8,7 @@ import type { SortSession } from './application/sort-session.js'
 import { SORT_PICKS, type SortPick, type SortRow } from './domain/sort.js'
 import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
+import type { TaskStateMigration } from './application/task-state-migration.js'
 
 /**
  * The task board over HTTP, versioned (decision cockpit-host-routes-versioned-from-now). Page only:
@@ -38,6 +39,8 @@ export interface TasksApiDeps {
   split: SplitSession
   brief: SplitBrief
   sort: SortSession
+  /** The task state migration (application/task-state-migration.ts): a dry run, then the run. */
+  migration?: TaskStateMigration
   /** Start a session of the user's own on a task: the host binds the task, the page opens the pane (in chat when that is the user's view). */
   startOnTask(input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }): Promise<
     { ok: true; sessionId: string } | { ok: false; refusal: 'unknown_space' | 'unknown_task' | 'task_closed' | 'no_project'; message?: string }
@@ -134,6 +137,19 @@ function schedule(body: Record<string, unknown>): ScheduleSpec | undefined {
 export async function handleTasksApi(
   req: http.IncomingMessage, res: http.ServerResponse, deps: TasksApiDeps, pathname: string, method: string, json: Json, readJson: ReadJson,
 ): Promise<boolean> {
+  // The task state migration of a space: GET is the dry run (nothing written), POST the run.
+  if (pathname === '/api/v1/tasks/migration' && deps.migration && (method === 'GET' || method === 'POST')) {
+    const spaceId = method === 'GET' ? str(new URL(req.url ?? '', 'http://host').searchParams.get('spaceId')) : str((await readJson(req)).spaceId)
+    if (!spaceId) {
+      json(res, 400, { error: { code: 'invalid', message: 'Name the spaceId.', retry: false } })
+      return true
+    }
+    const answer = method === 'GET' ? await deps.migration.dryRun(spaceId) : await deps.migration.run(spaceId)
+    if (answer.ok) json(res, 200, answer)
+    else refuse(json, res, answer.refusal)
+    return true
+  }
+
   if (pathname === '/api/v1/tasks/board' && method === 'GET') {
     json(res, 200, await deps.board.get(BOARD_MAX_AGE_MS))
     return true

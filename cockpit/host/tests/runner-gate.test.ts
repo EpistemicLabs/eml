@@ -3,7 +3,12 @@ import { MAX_RUNNING, runnerBlock, type GateInput, type GateTask } from '../src/
 
 const t = (id: string, status: string, props: GateTask['properties'] = {}, extra: Partial<GateTask> = {}): GateTask =>
   ({ id, status, scope: 'project.eml', title: id, properties: props, ...extra })
-const ready = (props: GateTask['properties'] = {}) => t('step', 'planned', { delegate: 'atlas', checkpoint: 'after', assignee_ids: ['lasse'], ...props })
+const REQUESTED = '2026-11-24T10:00:00.000Z'
+/** A planned step handed over: its delegation follows delegate and checkpoint (as core mirrors them), with a request. */
+const ready = (props: GateTask['properties'] = {}) => {
+  const p = { delegate: 'atlas', checkpoint: 'after', assignee_ids: ['lasse'], ...props }
+  return t('step', 'planned', { ...p, ...(p.delegate ? { delegation: { agent: p.delegate, ...(p.checkpoint ? { checkpoint: p.checkpoint } : {}), requested_at: REQUESTED } } : {}) })
+}
 const gate = (patch: Partial<GateInput> = {}) => runnerBlock({ task: ready(), deps: [], running: 0, shared: false, me: 'lasse', ...patch })
 
 describe('the runner gate', () => {
@@ -12,8 +17,12 @@ describe('the runner gate', () => {
     expect(gate({ parent: { id: 'plan', task: t('plan', 'active') }, deps: [{ id: 'a', task: t('a', 'resolved') }] })).toBeNull()
   })
 
-  it('is not runner work when not planned, or without a delegate or a checkpoint', () => {
-    expect(gate({ task: { ...ready(), status: 'active' } })).toEqual({ kind: 'not_runner_work' })
+  it('is not runner work when closed, without a delegate or a checkpoint, or without an open request; an active one with a request is (v0.23)', () => {
+    expect(gate({ task: { ...ready(), status: 'active' } })).toBeNull()
+    expect(gate({ task: { ...ready(), status: 'resolved' } })).toEqual({ kind: 'not_runner_work' })
+    expect(gate({ lastRunStartedAt: '2026-11-24T10:00:01.000Z' })).toEqual({ kind: 'not_runner_work' })
+    expect(gate({ lastRunStartedAt: '2026-11-24T09:00:00.000Z' })).toBeNull()
+    expect(gate({ task: t('step', 'planned', { delegate: 'atlas', checkpoint: 'after' }) })).toEqual({ kind: 'not_runner_work' })
     expect(gate({ task: ready({ delegate: undefined }) })).toEqual({ kind: 'not_runner_work' })
     expect(gate({ task: ready({ checkpoint: undefined }) })).toEqual({ kind: 'not_runner_work' })
   })
