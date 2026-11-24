@@ -13,6 +13,7 @@ import { agentName, type Board, type BoardTask, type InboxItem, closeTask, close
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
+import { nextRuns, type WorkingRow, workingNow } from '@/lib/working-now';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
 import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
@@ -29,6 +30,7 @@ import { NowBoard } from './NowBoard';
 import { PlanView } from './PlanView';
 import { SessionPanel } from './SessionPanel';
 import { UnreadDot } from './parts';
+import { WorkingColumn, WorkingStrip } from './WorkingNow';
 import { focusReply, TaskPanel, TASK_TITLE_ID } from './TaskPanel';
 
 type View = TaskView;
@@ -197,6 +199,20 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     setOpen({ sessionId: session.id });
   }, [byId, openTask, spaces]);
 
+  // Working now: this cockpit's working sessions (live turn state) and other members' runs from the board.
+  const working = useMemo(() => (board ? workingNow(sessions ?? [], turns, board, spaces) : []), [board, sessions, turns, spaces]);
+  const upcoming = useMemo(() => (board ? nextRuns(board) : []), [board]);
+
+  /** A working row opens as an Inbox item does: with its task when the task lists the session, else the session on its own. */
+  const openWorking = useCallback((row: WorkingRow) => {
+    if (row.task && (!row.sessionId || row.task.sessionIds.includes(row.sessionId))) { openTask(row.task, row.sessionId ?? undefined); return; }
+    const session = sessions?.find((s) => s.id === row.sessionId);
+    if (!session) return;
+    const space = spaces.find((s) => s.id === session.spaceId);
+    if (space && paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
+    setOpen({ sessionId: session.id });
+  }, [openTask, sessions, spaces]);
+
   const markAllRead = useCallback(() => {
     const before = readBefore(unreadSessions);
     const keys = unreadSessions.map(readKey);
@@ -231,6 +247,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     onOpen: openUnread,
     onMarkAllRead: markAllRead,
   };
+  const currentWorking = working.find((r) => (r.sessionId ? r.sessionId === (open?.sessionId ?? sessionOnly) : r.task?.id === task?.id))?.key ?? null;
+  const workingColumn = (
+    <WorkingColumn rows={working} next={upcoming} now={now} current={split ? currentWorking : null} onOpen={openWorking} onOpenTask={(t) => openTask(t)} onShowNow={() => setTaskView('now')} />
+  );
   const panel = task ? (
     <TaskPanel
       key={task.id}
@@ -269,7 +289,8 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       <div className={cn('mx-auto flex w-full max-w-content flex-col gap-4 px-4 pt-3', split ? 'min-h-0 flex-1 pb-3' : 'pb-10')}>
         {compact && <ControlBar board={board} unread={unreadSessions.length} view={open && !split ? null : view} onView={setTaskView} />}
         {split ? (
-          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-split)">
+          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-working-split)">
+            <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">{workingColumn}</div>
             <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">
               <InboxView board={board} now={now} compact currentTaskId={task?.id ?? null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
             </div>
@@ -278,7 +299,12 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
             </section>
           </div>
         ) : view === 'inbox' ? (
-          <InboxView board={board} now={now} compact={false} currentTaskId={null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-working)">
+            {/* Wide: a column left of the list. Narrow: a strip of cards above it, gone while nothing works. */}
+            <div className="hidden min-w-0 lg:sticky lg:top-3 lg:block">{workingColumn}</div>
+            <div className="min-w-0 lg:hidden"><WorkingStrip rows={working} now={now} onOpen={openWorking} /></div>
+            <InboxView board={board} now={now} compact={false} currentTaskId={null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
+          </div>
         ) : view === 'now' ? (
           <NowBoard board={board} now={now} onOpen={(t) => openTask(t)} movedId={board.events[0]?.taskId ?? null} />
         ) : (

@@ -313,9 +313,10 @@ function AppContentInner() {
     paneStore.openInPane({ surface: 'terminal', projectId: project.projectId });
   }, []);
 
-  // The tasks card: next to the sidebar or right of the desk, never on a phone.
+  // The tasks card: next to the sidebar or right of the desk, never on a phone. It belongs to a desk: the
+  // pages across spaces (Inbox, Now, Plan, Brain, Jobs) go without it.
   const tasksCard = useTasksCard();
-  const tasksCardPlace = !compact && tasksCard.shown ? tasksCard.place : null;
+  const tasksCardPlace = !compact && tasksCard.shown && topView === 'desks' ? tasksCard.place : null;
 
   // ── Sidebar derives its selection from the active pane.
   const activePaneCtx = usePaneContext(activePaneId, projects);
