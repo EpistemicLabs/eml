@@ -289,7 +289,7 @@ export function continueMode(task: Pick<BoardTask, 'closedAt' | 'owner'> & { blo
   if (task.blocked === 'superseded') return { primary: 'follow_up', reopen: false, note: 'Another task replaced this one, so it can\'t be reopened: a follow-up starts a new task.' };
   if (task.blocked === 'parent_closed') return { primary: 'follow_up', reopen: false, note: 'Its parent is closed, so it can\'t be reopened here: a follow-up starts a new task.' };
   const closed = task.closedAt ? Date.parse(task.closedAt) : NaN;
-  if (Number.isFinite(closed) && now - closed > REOPEN_DAYS * 24 * 60 * 60 * 1000) {
+  if (Number.isFinite(closed) && now - closed > REOPEN_DAYS * DAY_MS) {
     return { primary: 'follow_up', reopen: true, note: `Closed more than ${REOPEN_DAYS} days ago: a follow-up starts a new task. Reopen & send goes on in this one.` };
   }
   return { primary: 'reopen', reopen: true };
