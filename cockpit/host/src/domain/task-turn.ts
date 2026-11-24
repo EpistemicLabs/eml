@@ -1,4 +1,5 @@
 import type { RunnerBlock } from './runner-gate.js'
+import { isParked } from './task-waits.js'
 
 /**
  * Whose turn a task is, derived and never stored (decision whose-turn-derived-in-cockpit-host).
@@ -10,8 +11,8 @@ import type { RunnerBlock } from './runner-gate.js'
  * and urgency, which orders Plan.
  */
 
-export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done'
-export const TURNS: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'done']
+export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done'
+export const TURNS: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'parked', 'done']
 
 export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'outside'
 export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'outside']
@@ -27,6 +28,8 @@ export interface WaitingOn {
   why?: string
   since?: string
   session_id?: string
+  /** Parked until then (an ISO date) or "open" (domain/task-waits.ts). */
+  snoozed_until?: string
 }
 
 /** What the brain says about a task, read tolerantly. */
@@ -87,6 +90,9 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
     return Number.isFinite(at) && now - at <= DONE_WINDOW_MS ? { turn: 'done' } : null
   }
   const w = task.waitingOn
+  // Parked (decision task-parking-is-a-snoozed-wait): its wait is snoozed, and the most urgent wait is only parked when
+  // every wait is. It is parked for every viewer, until its date; nothing runs meanwhile. Past the date it comes back.
+  if (w?.snoozed_until && isParked(w, now)) return { turn: 'parked' }
   const kind = w ? waitKind(w) : null
   if (w && w.who === viewer && kind === 'review') return { turn: 'review' }
   if (live.working) return { turn: 'agent_working' }
@@ -133,7 +139,7 @@ export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idl
 export const COVERAGE_GROUPS: readonly CoverageGroup[] = ['ask', 'review', 'due', 'high', 'blocked', 'idle', 'nofollow', 'stopped', 'owner', 'mine']
 
 export type Coverage =
-  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
+  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number }
 
 export const DUE_SOON_DAYS = 14
@@ -147,6 +153,7 @@ export const daysUntil = (due: string, now: number) => Math.floor((Date.parse(`$
  */
 export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now: number, stepsWaiting = 0): Coverage {
   const t = turnOf(task, live, viewer, now)
+  if (t?.turn === 'parked') return { ok: true, how: 'parked', ...(task.waitingOn?.snoozed_until && task.waitingOn.snoozed_until !== 'open' ? { at: task.waitingOn.snoozed_until } : {}) }
   if (live.working) return { ok: true, how: 'working' }
   if (t?.group === 'asked') return { ok: false, group: 'ask' }
   if (t?.turn === 'review') return { ok: false, group: 'review' }

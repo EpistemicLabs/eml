@@ -4,6 +4,7 @@ import { planHandOver } from '../domain/hand-over.js'
 import { runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
+import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import {
@@ -228,6 +229,7 @@ interface Row {
     priority?: string
     due_date?: string
     depends_on?: string[]
+    waits?: unknown
     waiting_on?: WaitingOn
     outcome?: string
     stage?: string
@@ -310,14 +312,17 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waitingOn: props.waiting_on, ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
+      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
-      const { status, waiting_on, delegation } = planned.plan.patch
+      const { status, waits, delegation } = planned.plan.patch
       const next = { ...props } as NonNullable<Row['properties']>
       // The flat fields follow the delegation, as core keeps them (packages/core task-state.ts).
       if (delegation === null) { delete next.delegation; delete next.delegate; delete next.checkpoint }
       if (delegation) { next.delegation = delegation; next.delegate = delegation.agent; if (delegation.checkpoint) next.checkpoint = delegation.checkpoint; else delete next.checkpoint }
-      if (waiting_on === null) delete next.waiting_on
+      if (waits !== undefined) {
+        next.waits = waits ?? undefined
+        next.waiting_on = urgentWaitOf({ waits: waits ?? [] })
+      }
       return { ...row, ...(status ? { status } : {}), properties: next }
     }
     return row
@@ -412,7 +417,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           owner: props.assignee_ids?.[0],
           delegate: props.delegate,
           checkpoint: props.checkpoint,
-          waitingOn: props.waiting_on,
+          waitingOn: urgentWaitOf(props),
           priority: props.priority,
           due: props.due_date,
           closedAt: row.status === 'resolved' ? row.updated_at : undefined,
@@ -471,7 +476,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return items.length ? { reopenedWith: items } : {}
           })(),
         })
-        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waitingOn: props.waiting_on })
+        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
       }
       // A wait on a step names where that step stands, read from the step's own card.
       for (const t of spaceTasks) {

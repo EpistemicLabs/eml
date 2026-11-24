@@ -111,7 +111,7 @@ describe('next-step check', () => {
     expect(brain.posts).toEqual([])
     await check.turnEnded('w1-1')
     expect(delivered).toHaveLength(1)
-    expect(brain.posts[0]).toEqual({ path: '/task/t1/track', body: { waiting_on: { who: 'lasse', kind: 'stopped', why: mod.NO_NEXT_STEP, since: '2026-11-19T10:00:00.000Z', session_id: 'w1-1' } } })
+    expect(brain.posts[0]).toEqual({ path: '/task/t1/track', body: { waits: [{ id: 'w1-1', who: 'lasse', kind: 'stopped', why: mod.NO_NEXT_STEP, since: '2026-11-19T10:00:00.000Z', session_id: 'w1-1' }] } })
     expect(ledger.get('w1-1')!.attention).toMatchObject({ kind: 'question', reason: mod.NO_NEXT_STEP })
     expect(waited).toEqual(['w1-1'])
   })
@@ -120,7 +120,15 @@ describe('next-step check', () => {
     const { ledger, brain, check } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { delivers: false })
     ledger.recordSpawn('w1-2', null, 'bp-eml', 'claude', true, 't1')
     await check.turnEnded('w1-2')
-    expect(brain.posts[0].body.waiting_on).toMatchObject({ why: mod.NO_NEXT_STEP })
+    expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ why: mod.NO_NEXT_STEP })])
+  })
+
+  it('adds its stopped wait next to another session\'s wait on the task', async () => {
+    const other = { id: 'u1', who: 'kim', kind: 'outside', why: 'reply to the offer', since: '2026-11-19T09:00:00.000Z', session_id: 'u1' }
+    const { ledger, brain, check } = setup({ t1: { id: 't1', status: 'active', properties: { waits: [other] } } }, { delivers: false })
+    ledger.recordSpawn('w1-x', null, 'bp-eml', 'claude', true, 't1')
+    await check.turnEnded('w1-x')
+    expect(brain.posts[0].body.waits).toEqual([other, expect.objectContaining({ id: 'w1-x', kind: 'stopped' })])
   })
 
   it('leaves a worker alone whose task has a next step after the prompt', async () => {
@@ -140,7 +148,7 @@ describe('next-step check', () => {
     await check.turnEnded('w1-4')
     expect(delivered).toEqual([`w1-4: ${mod.NEXT_STEP_PROMPT}`])
     await check.turnEnded('w1-4')
-    expect(brain.posts[0].body.waiting_on).toMatchObject({ who: 'lasse', why: mod.NO_NEXT_STEP })
+    expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ who: 'lasse', why: mod.NO_NEXT_STEP })])
   })
 
   it('never checks the user\'s own sessions or closed tasks', async () => {

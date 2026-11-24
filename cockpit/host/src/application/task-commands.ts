@@ -6,9 +6,12 @@ import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, typ
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import type { DelegationFields } from '../domain/delegation.js'
+import { waitsOf } from '../domain/task-waits.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
+import { trackWaits } from './task-waits.js'
+import { SNOOZED_OPEN, waitsBody } from '../domain/task-waits.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
@@ -165,7 +168,7 @@ interface BrainTask {
   content?: string
   status: string
   scope: string
-  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waiting_on?: WaitingOn; display_title?: string }
+  properties?: { assignee_ids?: string[]; delegate?: string; checkpoint?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: WaitingOn; display_title?: string }
 }
 
 /**
@@ -221,9 +224,15 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   owner: t.properties?.assignee_ids?.[0],
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
-  waitingOn: t.properties?.waiting_on,
+  waits: waitsOf(t.properties),
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
 })
+
+/** The task and the moment its wait began, from an Inbox key (domain/inbox.ts itemKey: task:<id>@<since>). */
+export function parkTarget(key: string): { taskId: string; since: string } | null {
+  const m = /^task:([^@]+)@(.*)$/.exec(key)
+  return m ? { taskId: m[1], since: m[2] } : null
+}
 
 export function createTaskCommands(deps: TaskCommandsDeps) {
   const iso = (ms: number) => new Date(ms).toISOString()
@@ -279,6 +288,33 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         deps.log(`[commands] ${command.opId.slice(0, 8)} together release failed: ${(err as Error).message}`)
       }
     }
+  }
+
+  /**
+   * Park the waits on the viewer that began at `since` (every wait on the viewer when since is empty): snoozed_until is
+   * the date they come back, or "open"; null unparks them. False when the task is gone or has no such wait.
+   */
+  const park = async (brain: Pick<EmlApi, 'get' | 'post'>, target: { taskId: string; since: string }, until: string | null): Promise<boolean> => {
+    let found = false
+    try {
+      await trackWaits(brain, target.taskId, (task) => {
+        const waits = waitsOf(task.properties)
+        const hit = (w: { who: string; since?: string }) => (!deps.viewer || w.who === deps.viewer) && (target.since === '' || (w.since ?? '') === target.since)
+        found = waits.some(hit)
+        if (!found) return null
+        const next = waits.map((w) => {
+          if (!hit(w)) return w
+          const { snoozed_until: _was, ...rest } = w
+          return until ? { ...rest, snoozed_until: until } : rest
+        })
+        const how = until === null ? 'Unparked by the owner.' : until === SNOOZED_OPEN ? 'Parked by the owner until further notice.' : `Parked by the owner until ${until}.`
+        return { ...waitsBody(next), text: how }
+      })
+    } catch (err) {
+      deps.log(`[commands] parking ${target.taskId.slice(0, 8)} failed: ${(err as Error).message}`)
+      return false
+    }
+    return found
   }
 
   /** Only a task's owner may reopen it or start a follow-up of it; null when the viewer may. */
@@ -356,9 +392,15 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     }
 
     if (input.kind === 'snooze') {
-      if (!input.snooze || !Number.isFinite(Date.parse(input.snooze.until))) return { ok: false, refusal: 'invalid' }
-      deps.store.setSnoozes([...deps.store.snoozes(now).filter((s) => s.key !== input.snooze!.key), input.snooze])
-      return { ok: true, command: save({ ...base, state: 'applied' }) }
+      // Parking (decision task-parking-is-a-snoozed-wait): the snooze goes on the task's wait in the brain, so the
+      // task shows as Parked on every device and for every member, and comes back by itself at the date.
+      const snooze = input.snooze
+      if (!snooze || (snooze.until !== SNOOZED_OPEN && !Number.isFinite(Date.parse(snooze.until)))) return { ok: false, refusal: 'invalid' }
+      const target = parkTarget(snooze.key)
+      if (!target) return { ok: false, refusal: 'invalid' }
+      const parked = await park(brain, target, snooze.until)
+      if (!parked) return { ok: false, refusal: 'unknown_task' }
+      return { ok: true, command: save({ ...base, taskId: target.taskId, state: 'applied' }) }
     }
 
     if (input.kind === 'close') {
@@ -467,13 +509,13 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       } else if (command.kind === 'review') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null }, 'Looks good: the owner reviewed the result and closed the task.')
+          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null }, 'Looks good: the owner reviewed the result and closed the task.')
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'close') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null }, 'Closed on the task board by the owner: not needed.')
+          await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waits: null }, 'Closed on the task board by the owner: not needed.')
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'reopen') {
@@ -487,7 +529,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           const reason = current.reason ? ` Why: ${current.reason}` : ''
           // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
           const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
-          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const answer = await track(brain, checked.task.id, { status: 'active', waits: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
           const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
           current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
           if (items.length > 0) {
@@ -518,7 +560,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const now = deps.now()
       if (now > Date.parse(command.undoUntil) || command.state === 'failed') return { ok: false, refusal: 'undo_expired' }
       if (command.kind === 'snooze') {
+        // A snooze from before parking lived in the local store; one since then is on the wait.
         deps.store.setSnoozes(deps.store.snoozes(now).filter((s) => s.key !== command.snooze!.key))
+        const space = deps.space(command.spaceId)
+        const brain = space ? deps.brain(space) : null
+        const target = parkTarget(command.snooze!.key)
+        if (brain && target) await park(brain, target, null)
       } else if (command.kind === 'hand_over' && command.state === 'applied') {
         const space = deps.space(command.spaceId)
         const brain = space ? deps.brain(space) : null
@@ -548,7 +595,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${checked.message ?? checked.refusal}`).catch(() => {})
           return 'refused'
         }
-        await track(brain, taskId, { status: 'active', waiting_on: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
+        await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
         deps.changed(spaceId)
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopened by writing in its chat`)
         return 'reopened'

@@ -94,7 +94,7 @@ describe('Now', () => {
       task({ id: 'c', turn: 'agent_scheduled', group: 'runner' }),
     ]);
     expect(cols.map((c) => [c.turn, c.tasks.map((t) => t.id)])).toEqual([
-      ['needs_you', ['a', 'b']], ['review', []], ['agent_working', []], ['agent_scheduled', ['c']], ['waiting_on_others', []], ['done', []],
+      ['needs_you', ['a', 'b']], ['review', []], ['agent_working', []], ['agent_scheduled', ['c']], ['waiting_on_others', []], ['parked', []], ['done', []],
     ]);
     expect(cols[0].groups.map((g) => g.group)).toEqual(['asked', 'own']);
   });

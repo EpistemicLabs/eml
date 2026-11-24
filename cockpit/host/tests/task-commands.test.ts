@@ -111,7 +111,7 @@ describe('hand over', () => {
     expect(r).toMatchObject({ ok: true, command: { carriedQuestion: 'Count it?' } })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toMatchObject({ waiting_on: null })
+    expect(w.posts[0].body).toMatchObject({ waits: null })
     expect(w.posts[0].body).not.toHaveProperty('status')
     expect(w.posts[0].body.text).toContain('Handed over with the open question: "Count it?"')
     expect(w.commands.briefOf('t1')).toContain('Count it?')
@@ -131,11 +131,11 @@ describe('hand over', () => {
     const w = world([owned('t1', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } })])
     const r = await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Customers' } })
     expect(r).toMatchObject({ ok: true, command: { state: 'applied', brief: expect.stringContaining('Which list?') } })
-    expect(w.posts[0].body).toMatchObject({ status: 'active', waiting_on: null })
+    expect(w.posts[0].body).toMatchObject({ status: 'active', waits: null })
     expect(w.posts[0].body).not.toHaveProperty('delegation')
     expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
-    expect(w.posts[1].body).toEqual({ delegation: null, waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' }, status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
+    expect(w.posts[1].body).toEqual({ delegation: null, waits: [{ id: 'waiting_on', who: 'lasse', kind: 'question', why: 'Which list?' }], status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
   })
 
   it('refuses what cannot be handed over, with a reason', async () => {
@@ -164,18 +164,32 @@ describe('looks good, snooze, close', () => {
     await w.commands.submit({ opId: 'op-ok', kind: 'review', spaceId: 'main', taskId: 't1' })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toEqual({ status: 'resolved', outcome: 'Reviewed and closed by the owner', waiting_on: null, text: 'Looks good: the owner reviewed the result and closed the task.' })
+    expect(w.posts[0].body).toEqual({ status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, text: 'Looks good: the owner reviewed the result and closed the task.' })
 
     const bound = world([owned('t2', {}, 'active')], { bound: ['d1'] })
     expect(await bound.commands.submit({ opId: 'op-b', kind: 'review', spaceId: 'main', taskId: 't2' })).toMatchObject({ ok: false, refusal: 'bound_items' })
   })
 
-  it('snooze hides an Inbox item at once and undo brings it back', async () => {
-    const w = world([owned('t1')])
-    await w.commands.submit({ opId: 'op-z', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@s', until: '2026-11-20T01:00:00Z' } })
-    expect(w.commands.snoozes()).toEqual([{ key: 'task:t1@s', until: '2026-11-20T01:00:00Z' }])
-    expect(await w.commands.undo('op-z')).toEqual({ ok: true })
+  it('parking puts snoozed_until on the task\'s wait in the brain at once, and undo takes it off (v0.23)', async () => {
+    const waits = [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T09:00:00.000Z', session_id: 's1' },
+      { id: 'kim', who: 'kim', kind: 'outside', why: 'reply', since: '2026-11-19T09:00:00.000Z' },
+    ]
+    const w = world([owned('t1', { waits }, 'active')])
+    const r = await w.commands.submit({ opId: 'op-z', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2026-11-19T09:00:00.000Z', until: '2026-11-20T01:00:00Z' } })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', taskId: 't1' } })
+    // only the viewer's wait is parked; nothing goes into this cockpit's own store
+    expect(w.byId.get('t1')!.properties.waits).toEqual([{ ...waits[0], snoozed_until: '2026-11-20T01:00:00Z' }, waits[1]])
+    expect(w.posts[0].body.text).toBe('Parked by the owner until 2026-11-20T01:00:00Z.')
     expect(w.commands.snoozes()).toEqual([])
+    expect(await w.commands.undo('op-z')).toEqual({ ok: true })
+    expect(w.byId.get('t1')!.properties.waits).toEqual(waits)
+
+    // open-ended, and refusals
+    await w.commands.submit({ opId: 'op-open', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@', until: 'open' } })
+    expect((w.byId.get('t1')!.properties.waits as Array<Record<string, string>>)[0].snoozed_until).toBe('open')
+    expect(await w.commands.submit({ opId: 'op-bad', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@', until: 'someday' } })).toEqual({ ok: false, refusal: 'invalid' })
+    expect(await w.commands.submit({ opId: 'op-none', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2001-01-01', until: 'open' } })).toEqual({ ok: false, refusal: 'unknown_task' })
   })
 
   it('close drops a task not needed after the window; undo inside it leaves the task as it was', async () => {
@@ -186,7 +200,7 @@ describe('looks good, snooze, close', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
     expect(w.posts.map((p) => p.path)).toEqual(['/task/t1/track'])
-    expect(w.posts[0].body).toEqual({ status: 'invalidated', outcome: 'Closed by the owner on the task board', waiting_on: null, text: 'Closed on the task board by the owner: not needed.' })
+    expect(w.posts[0].body).toEqual({ status: 'invalidated', outcome: 'Closed by the owner on the task board', waits: null, text: 'Closed on the task board by the owner: not needed.' })
     expect(w.byId.get('t2')!.status).toBe('planned')
   })
 
@@ -210,7 +224,7 @@ describe('reopen', () => {
     await w.commands.submit({ opId: 'op-rq', kind: 'reopen', spaceId: 'main', taskId: 't1' })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body).toEqual({ status: 'active', waiting_on: null, delegation: { agent: 'atlas', checkpoint: 'after' }, text: 'Reopened on the task board by the owner.' })
+    expect(w.posts[0].body).toEqual({ status: 'active', waits: null, delegation: { agent: 'atlas', checkpoint: 'after' }, text: 'Reopened on the task board by the owner.' })
   })
 
   it('reopens a closed task as active after the window: wait cleared, delegate and checkpoint kept, nothing started', async () => {
@@ -221,9 +235,9 @@ describe('reopen', () => {
     expect(w.posts).toEqual([])
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { status: 'active', waiting_on: null, text: 'Reopened on the task board by the owner. Why: Lasse found a bug' } }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { status: 'active', waits: null, text: 'Reopened on the task board by the owner. Why: Lasse found a bug' } }])
     expect(w.byId.get('t1')).toMatchObject({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after' } })
-    expect(w.byId.get('t1')!.properties.waiting_on).toBeUndefined()
+    // waits: null clears the wait; core clears waiting_on with it (packages/core task-state.ts)
     expect(w.jobs).toEqual([])
   })
 
@@ -501,7 +515,7 @@ describe('writing in a closed task\'s session', () => {
     ])
     expect(await w.commands.reopenByWriting('main', 'done')).toBe('reopened')
     expect(w.byId.get('done')!.status).toBe('active')
-    expect(w.posts[0]).toEqual({ path: '/task/done/track', body: { status: 'active', waiting_on: null, text: 'Reopened by writing in its chat.' } })
+    expect(w.posts[0]).toEqual({ path: '/task/done/track', body: { status: 'active', waits: null, text: 'Reopened by writing in its chat.' } })
     expect(await w.commands.reopenByWriting('main', 'open')).toBe('open')
     expect(await w.commands.reopenByWriting('main', 'theirs')).toBe('refused')
     expect(w.byId.get('theirs')!.status).toBe('resolved')
