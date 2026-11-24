@@ -64,6 +64,25 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('names a task as the tasks card does, from open, closed and lineage tasks, and builds a board when none is there yet', async () => {
+    const log: string[] = []
+    const { board, brains } = setup({
+      main: [mine('fix-stock', { display_title: 'Fix the stock answers' }), mine('plain-anchor'), mine('session-2026-11-24-a609860b'), mine('done-one', { display_title: 'Done one' }, 'resolved')],
+      log,
+    })
+    // No board yet: no name, and one build starts (not one per call).
+    expect(board.nameOf('fix-stock')).toBeNull()
+    expect(board.nameOf('fix-stock')).toBeNull()
+    await board.get(60_000)
+    expect(brains.get('main')!.queries.filter((q) => q.status === 'active')).toHaveLength(1)
+    expect(board.nameOf('fix-stock')).toBe('Fix the stock answers')
+    expect(board.nameOf('plain-anchor')).toBe('Plain anchor')
+    expect(board.nameOf('session-2026-11-24-a609860b')).toBeNull()
+    expect(board.nameOf('done-one')).toBe('Done one')
+    expect(board.nameOf('unknown')).toBeNull()
+    expect(log).toEqual([])
+  })
+
   it('gives a task closed in the Done window its put-away sessions, so its chat shows; an open task only its live ones', async () => {
     const { board } = setup({
       main: [mine('just-done', {}, 'resolved'), mine('open')],

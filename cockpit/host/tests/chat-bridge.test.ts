@@ -150,6 +150,15 @@ describe('ChatBridge', () => {
     expect(runtimes[0].start.worker?.onPrompt?.() ?? null).toBeNull()
   })
 
+  it('asks a session started by hand to name itself, but not one with a task: it is called by its task', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Northwind reply' })
+    await flush()
+    expect(runtimes[0].start.worker?.onPrompt?.() ?? '').toContain('name it in a few words')
+    ;(ledgerEntries.get('s1') as unknown as { taskId: string }).taskId = 'task-1'
+    expect(runtimes[0].start.worker?.onPrompt?.() ?? null).toBeNull()
+  })
+
   it('starts a new chat from the launcher with its own first message and model, without the greeting', async () => {
     const { bridge, runtimes, ledgerEntries } = setup()
     connect(bridge, { readOnly: true, greet: true, prompt: 'Check the Northwind reply', model: 'opus' })
