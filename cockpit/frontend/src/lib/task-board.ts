@@ -6,12 +6,12 @@ import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstac
 import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
-export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'done';
+export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
 export type TurnGroup = 'asked' | 'own' | 'parent' | 'nobody' | 'at_time' | 'runner' | 'blocked';
 export type NobodyReason = 'stopped' | 'no_checkpoint' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
-  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner'; at?: string }
+  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
 
 export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
@@ -298,7 +298,7 @@ export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponen
 
 // ---- names and colours ----
 
-export const TURN_ORDER: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'done'];
+export const TURN_ORDER: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'parked', 'done'];
 
 export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> = {
   needs_you: { name: 'Needs you', rule: 'You have the next move: answer an agent, do your own task, or decide what happens.', hue: 'you' },
@@ -306,6 +306,7 @@ export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> =
   agent_working: { name: 'Agent working', rule: 'An agent session works on it right now.', hue: 'agent' },
   agent_scheduled: { name: 'Agent scheduled', rule: 'Delegated. An agent picks it up at a set time, when the runner has a free slot, or after the step it waits for.', hue: 'scheduled' },
   waiting_on_others: { name: 'Waiting on others', rule: 'Someone outside has the next move. An agent checks back when a job says so.', hue: 'waiting' },
+  parked: { name: 'Parked', rule: 'Its wait is snoozed: it comes back by itself at the date, on every device. Nothing runs meanwhile.', hue: 'waiting' },
   done: { name: 'Done · 24 h', rule: 'Reviewed by you, or closed in the last 24 hours.', hue: 'done' },
 };
 
@@ -526,6 +527,7 @@ export function coverageText(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
   if (c.ok) {
     if (c.how === 'working') return `${agent} working now`;
+    if (c.how === 'parked') return c.at ? `parked · back ${when(c.at, now)}` : 'parked until you bring it back';
     if (c.how === 'checks_back') return `waiting on ${task.waitingOn?.who ?? 'someone'} · ${agent} checks ${when(c.at, now)}`;
     if (c.how === 'at_time') return `${agent} · ${when(c.at, now)}`;
     const b = task.runner;

@@ -170,12 +170,26 @@ describe('looks good, snooze, close', () => {
     expect(await bound.commands.submit({ opId: 'op-b', kind: 'review', spaceId: 'main', taskId: 't2' })).toMatchObject({ ok: false, refusal: 'bound_items' })
   })
 
-  it('snooze hides an Inbox item at once and undo brings it back', async () => {
-    const w = world([owned('t1')])
-    await w.commands.submit({ opId: 'op-z', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@s', until: '2026-11-20T01:00:00Z' } })
-    expect(w.commands.snoozes()).toEqual([{ key: 'task:t1@s', until: '2026-11-20T01:00:00Z' }])
-    expect(await w.commands.undo('op-z')).toEqual({ ok: true })
+  it('parking puts snoozed_until on the task\'s wait in the brain at once, and undo takes it off (v0.23)', async () => {
+    const waits = [
+      { id: 's1', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T09:00:00.000Z', session_id: 's1' },
+      { id: 'kim', who: 'kim', kind: 'outside', why: 'reply', since: '2026-11-19T09:00:00.000Z' },
+    ]
+    const w = world([owned('t1', { waits }, 'active')])
+    const r = await w.commands.submit({ opId: 'op-z', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2026-11-19T09:00:00.000Z', until: '2026-11-20T01:00:00Z' } })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', taskId: 't1' } })
+    // only the viewer's wait is parked; nothing goes into this cockpit's own store
+    expect(w.byId.get('t1')!.properties.waits).toEqual([{ ...waits[0], snoozed_until: '2026-11-20T01:00:00Z' }, waits[1]])
+    expect(w.posts[0].body.text).toBe('Parked by the owner until 2026-11-20T01:00:00Z.')
     expect(w.commands.snoozes()).toEqual([])
+    expect(await w.commands.undo('op-z')).toEqual({ ok: true })
+    expect(w.byId.get('t1')!.properties.waits).toEqual(waits)
+
+    // open-ended, and refusals
+    await w.commands.submit({ opId: 'op-open', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@', until: 'open' } })
+    expect((w.byId.get('t1')!.properties.waits as Array<Record<string, string>>)[0].snoozed_until).toBe('open')
+    expect(await w.commands.submit({ opId: 'op-bad', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@', until: 'someday' } })).toEqual({ ok: false, refusal: 'invalid' })
+    expect(await w.commands.submit({ opId: 'op-none', kind: 'snooze', spaceId: 'main', taskId: 't1', snooze: { key: 'task:t1@2001-01-01', until: 'open' } })).toEqual({ ok: false, refusal: 'unknown_task' })
   })
 
   it('close drops a task not needed after the window; undo inside it leaves the task as it was', async () => {

@@ -10,6 +10,8 @@ import { waitsOf } from '../domain/task-waits.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
+import { trackWaits } from './task-waits.js'
+import { SNOOZED_OPEN, waitsBody } from '../domain/task-waits.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
@@ -226,6 +228,12 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
 })
 
+/** The task and the moment its wait began, from an Inbox key (domain/inbox.ts itemKey: task:<id>@<since>). */
+export function parkTarget(key: string): { taskId: string; since: string } | null {
+  const m = /^task:([^@]+)@(.*)$/.exec(key)
+  return m ? { taskId: m[1], since: m[2] } : null
+}
+
 export function createTaskCommands(deps: TaskCommandsDeps) {
   const iso = (ms: number) => new Date(ms).toISOString()
   let ticking: Promise<void> | null = null
@@ -280,6 +288,33 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         deps.log(`[commands] ${command.opId.slice(0, 8)} together release failed: ${(err as Error).message}`)
       }
     }
+  }
+
+  /**
+   * Park the waits on the viewer that began at `since` (every wait on the viewer when since is empty): snoozed_until is
+   * the date they come back, or "open"; null unparks them. False when the task is gone or has no such wait.
+   */
+  const park = async (brain: Pick<EmlApi, 'get' | 'post'>, target: { taskId: string; since: string }, until: string | null): Promise<boolean> => {
+    let found = false
+    try {
+      await trackWaits(brain, target.taskId, (task) => {
+        const waits = waitsOf(task.properties)
+        const hit = (w: { who: string; since?: string }) => (!deps.viewer || w.who === deps.viewer) && (target.since === '' || (w.since ?? '') === target.since)
+        found = waits.some(hit)
+        if (!found) return null
+        const next = waits.map((w) => {
+          if (!hit(w)) return w
+          const { snoozed_until: _was, ...rest } = w
+          return until ? { ...rest, snoozed_until: until } : rest
+        })
+        const how = until === null ? 'Unparked by the owner.' : until === SNOOZED_OPEN ? 'Parked by the owner until further notice.' : `Parked by the owner until ${until}.`
+        return { ...waitsBody(next), text: how }
+      })
+    } catch (err) {
+      deps.log(`[commands] parking ${target.taskId.slice(0, 8)} failed: ${(err as Error).message}`)
+      return false
+    }
+    return found
   }
 
   /** Only a task's owner may reopen it or start a follow-up of it; null when the viewer may. */
@@ -357,9 +392,15 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     }
 
     if (input.kind === 'snooze') {
-      if (!input.snooze || !Number.isFinite(Date.parse(input.snooze.until))) return { ok: false, refusal: 'invalid' }
-      deps.store.setSnoozes([...deps.store.snoozes(now).filter((s) => s.key !== input.snooze!.key), input.snooze])
-      return { ok: true, command: save({ ...base, state: 'applied' }) }
+      // Parking (decision task-parking-is-a-snoozed-wait): the snooze goes on the task's wait in the brain, so the
+      // task shows as Parked on every device and for every member, and comes back by itself at the date.
+      const snooze = input.snooze
+      if (!snooze || (snooze.until !== SNOOZED_OPEN && !Number.isFinite(Date.parse(snooze.until)))) return { ok: false, refusal: 'invalid' }
+      const target = parkTarget(snooze.key)
+      if (!target) return { ok: false, refusal: 'invalid' }
+      const parked = await park(brain, target, snooze.until)
+      if (!parked) return { ok: false, refusal: 'unknown_task' }
+      return { ok: true, command: save({ ...base, taskId: target.taskId, state: 'applied' }) }
     }
 
     if (input.kind === 'close') {
@@ -519,7 +560,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const now = deps.now()
       if (now > Date.parse(command.undoUntil) || command.state === 'failed') return { ok: false, refusal: 'undo_expired' }
       if (command.kind === 'snooze') {
+        // A snooze from before parking lived in the local store; one since then is on the wait.
         deps.store.setSnoozes(deps.store.snoozes(now).filter((s) => s.key !== command.snooze!.key))
+        const space = deps.space(command.spaceId)
+        const brain = space ? deps.brain(space) : null
+        const target = parkTarget(command.snooze!.key)
+        if (brain && target) await park(brain, target, null)
       } else if (command.kind === 'hand_over' && command.state === 'applied') {
         const space = deps.space(command.spaceId)
         const brain = space ? deps.brain(space) : null

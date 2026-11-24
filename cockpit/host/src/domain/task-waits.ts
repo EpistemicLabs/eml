@@ -69,11 +69,11 @@ export function mostUrgent<T extends WaitingOn>(waits: readonly T[]): T | undefi
   return best
 }
 
-/** The task's most urgent wait as the flat waiting_on (without its id), or undefined. */
+/** The task's most urgent wait without its id, or undefined. It keeps snoozed_until, which core's stored waiting_on leaves out: turnOf reads it. */
 export function urgentWaitOf(props: { waits?: unknown; waiting_on?: unknown } | undefined): WaitingOn | undefined {
   const w = mostUrgent(waitsOf(props))
   if (!w) return undefined
-  const { id: _id, snoozed_until: _snoozed, ...rest } = w
+  const { id: _id, ...rest } = w
   return rest
 }
 

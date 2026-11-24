@@ -37,6 +37,14 @@ describe('the Inbox', () => {
     expect(inboxItems(newer, 'lasse', snoozes, NOW).live.map((i) => i.text)).toEqual(['And the other list?'])
   })
 
+  it('a parked wait is listed as snoozed until its date, on every device; past it, it is live again (v0.23)', () => {
+    const parked = t('parked', { who: 'lasse', kind: 'question', why: 'later', since: '2026-11-19T09:00:00Z', snoozed_until: '2026-11-20T00:00:00.000Z' })
+    const back = t('back', { who: 'lasse', kind: 'question', why: 'now', since: '2026-11-19T08:00:00Z', snoozed_until: '2026-11-19T00:00:00.000Z' })
+    const r = inboxItems([parked, back], 'lasse', [], Date.parse('2026-11-19T10:00:00Z'))
+    expect(r.live.map((i) => i.taskId)).toEqual(['back'])
+    expect(r.snoozed.map((i) => [i.taskId, i.until])).toEqual([['parked', '2026-11-20T00:00:00.000Z']])
+  })
+
   it('lists every wait of a task on the viewer as an item of its own, each opening its session', () => {
     const two = [t('both', { who: 'lasse', kind: 'question', why: 'First?', since: '2026-11-19T08:00:00Z', session_id: 'a' }, { who: 'lasse', kind: 'review', why: 'Review: done', since: '2026-11-19T09:00:00Z', session_id: 'b' }, { who: 'kim', kind: 'outside', since: '2026-11-19T09:30:00Z' })]
     expect(inboxItems(two, 'lasse', [], NOW).live.map((i) => [i.kind, i.sessionId])).toEqual([['review', 'b'], ['question', 'a']])

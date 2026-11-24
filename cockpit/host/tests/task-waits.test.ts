@@ -30,7 +30,7 @@ describe('a task\'s waits', () => {
     // a parked wait ranks after every wait that is not, and the flat form leaves its snooze out
     const parked = [{ ...w('a', 'question'), snoozed_until: 'open' }, w('b', 'outside')]
     expect(mostUrgent(parked)).toEqual(mostUrgentWait(parked as never))
-    expect(urgentWaitOf({ waits: [parked[0]] })).not.toHaveProperty('snoozed_until')
+    expect(urgentWaitOf({ waits: [parked[0]] })).toMatchObject({ snoozed_until: 'open' })
   })
 
   it('one wait per session: replaced in place, kept as it is when the same, removed by session', () => {

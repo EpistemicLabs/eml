@@ -50,6 +50,14 @@ describe('whose turn a task is', () => {
     expect(turn({ status: 'invalidated', closedAt: '2026-11-19T09:00:00Z' })).toBeNull()
   })
 
+  it('a parked wait parks the task for every viewer until its date; past it, the wait counts again (v0.23)', () => {
+    const asked = { who: 'lasse', kind: 'question', why: 'Which list?' }
+    expect(turn({ waitingOn: { ...asked, snoozed_until: '2026-11-20T00:00:00.000Z' } })).toEqual({ turn: 'parked' })
+    expect(turnOf(task({ waitingOn: { ...asked, snoozed_until: 'open' } }), live(), 'dominik', NOW)).toEqual({ turn: 'parked' })
+    expect(turn({ waitingOn: { ...asked, snoozed_until: '2026-11-19T09:00:00.000Z' } })).toEqual({ turn: 'needs_you', group: 'asked' })
+    expect(coverageOf(task({ waitingOn: { ...asked, snoozed_until: '2026-11-20T00:00:00.000Z' } }), live(), 'lasse', NOW)).toEqual({ ok: true, how: 'parked', at: '2026-11-20T00:00:00.000Z' })
+  })
+
   it('reads a waiting_on written before kinds existed', () => {
     expect(waitKind({ who: 'lasse', why: 'review: result ready' })).toBe('review')
     expect(waitKind({ who: 'lasse', why: 'Which price list?' })).toBe('question')
