@@ -179,6 +179,17 @@ describe('task runner', () => {
   })
 })
 
+describe('the newest start per task', () => {
+  it('keeps the newest run of each task when several come newest first', async () => {
+    const { lastStartsOf } = await import('../src/domain/delegation.js')
+    const starts = lastStartsOf([
+      { task_id: 't', started_at: '2026-11-24T10:00:00.000Z' }, { task_id: 't', started_at: '2026-11-23T10:00:00.000Z' },
+      { task_id: 'u', started_at: '2026-11-20T10:00:00.000Z' },
+    ])
+    expect([...starts]).toEqual([['t', '2026-11-24T10:00:00.000Z'], ['u', '2026-11-20T10:00:00.000Z']])
+  })
+})
+
 describe('the delegation request (v0.23)', () => {
   let mod: Mod
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })

@@ -13,7 +13,14 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
     fetched,
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/object/agent') return { objects: agents.map((id) => ({ id, name: id })) }
-      if (path === '/object/run') return { objects: runs }
+      // As core answers: latest=N is the newest N runs of each task, newest first per task; else the open runs.
+      if (path === '/object/run' && query?.latest) {
+        const n = query.latest === 'true' ? 1 : Number(query.latest)
+        const byTask = new Map<string, Array<Record<string, unknown>>>()
+        for (const r of runs) byTask.set(String(r.task_id), [...(byTask.get(String(r.task_id)) ?? []), r])
+        return { objects: [...byTask.values()].flatMap((list) => [...list].sort((a, b) => String(b.started_at ?? '').localeCompare(String(a.started_at ?? ''))).slice(0, n)) }
+      }
+      if (path === '/object/run') return { objects: runs.filter((r) => r.state !== 'ended') }
       if (path === '/object/project') return { objects: projects }
       if (path === '/list') {
         queries.push(query ?? {})
@@ -72,18 +79,23 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
-  it('sends a task\'s ended sessions, newest first, with how they ended and whose they were', async () => {
+  it('sends a task\'s ended sessions, newest first, at most ten, without the one still running', async () => {
     const ended = (id: string, member: string, started: string, reason: string, result: string | null) =>
       ({ id, task_id: 'r', member, agent: member === 'lasse' ? 'atlas' : 'motti', state: 'ended', started_at: started, ended_at: started, end_reason: reason, result })
+    const day = (d: number) => `2026-11-${String(d).padStart(2, '0')}T08:00:00.000Z`
+    const older = Array.from({ length: 10 }, (_, i) => ended(`old-${i + 1}`, 'lasse', day(i + 1), 'finished', null))
     const { board } = setup({
       main: [mine('r', { delegate: 'atlas' })],
-      runs: [ended('mon', 'lasse', '2026-11-16T08:00:00.000Z', 'finished', '4 mails need you'), ended('tue', 'dominik', '2026-11-17T08:00:00.000Z', 'crashed', null)],
+      runs: [...older, ended('mon', 'lasse', day(16), 'finished', '4 mails need you'), ended('tue', 'dominik', day(17), 'crashed', null),
+        { id: 'now', task_id: 'r', member: 'lasse', agent: 'atlas', state: 'running', started_at: day(18), last_activity_at: day(18) }],
     })
     const t = (await board.refresh()).tasks.find((x) => x.id === 'r')!
-    expect(t.earlierRuns).toEqual([
-      { id: 'mon', member: 'lasse', agent: 'atlas', startedAt: '2026-11-16T08:00:00.000Z', endedAt: '2026-11-16T08:00:00.000Z', endReason: 'finished', result: '4 mails need you', here: true },
-      { id: 'tue', member: 'dominik', agent: 'motti', startedAt: '2026-11-17T08:00:00.000Z', endedAt: '2026-11-17T08:00:00.000Z', endReason: 'crashed', result: null, here: false },
+    expect(t.earlierRuns).toHaveLength(10)
+    expect(t.earlierRuns!.slice(0, 2)).toEqual([
+      { id: 'tue', member: 'dominik', agent: 'motti', startedAt: day(17), endedAt: day(17), endReason: 'crashed', result: null, here: false },
+      { id: 'mon', member: 'lasse', agent: 'atlas', startedAt: day(16), endedAt: day(16), endReason: 'finished', result: '4 mails need you', here: true },
     ])
+    expect(t.earlierRuns!.map((r) => r.id)).not.toContain('now')
   })
 
   it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {

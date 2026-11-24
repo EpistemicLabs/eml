@@ -163,7 +163,7 @@ function scopeCount(eml: EML, scope: string): number {
 export function readObject(eml: EML, object: unknown, opts: { id?: string, status?: string, kind?: string, members?: SpaceMember[], latest?: boolean | number } = {}): unknown {
   assertObject(object)
   // v0.23: the newest runs of each task, whatever their state (runs.ts latestPerTask); runs only. true is one per task.
-  if (opts.latest) {
+  if (opts.latest !== undefined && opts.latest !== false) {
     if (object !== 'run') throw new Error('Invalid object: latest lists the newest run of each task; it is for runs only.')
     const n = opts.latest === true ? 1 : opts.latest
     if (!Number.isInteger(n) || n < 1 || n > 50) throw new Error('Invalid object: latest is true or a whole number from 1 to 50 (runs per task).')

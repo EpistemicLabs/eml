@@ -55,7 +55,7 @@ export class RunStore {
    * first is what a task's delegation request is checked against (a request is open while no run started after it),
    * the rest are the task's earlier sessions.
    */
-  latestPerTask(perTask = 1): Run[] {
+  latestPerTask(perTask: number): Run[] {
     return (this.db.prepare(`
       SELECT * FROM (
         SELECT r.*, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC, id DESC) AS nth FROM runs r

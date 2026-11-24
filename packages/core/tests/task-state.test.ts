@@ -267,6 +267,8 @@ describe('the run object', () => {
     // a number: the newest n runs of each task, newest first per task
     expect((readObject(eml, 'run', { latest: 2 }) as Array<{ id: string }>).map(r => r.id)).toEqual(['c', 'b'])
     expect(() => readObject(eml, 'run', { latest: 51 })).toThrow('whole number from 1 to 50')
+    expect(() => readObject(eml, 'run', { latest: 0 })).toThrow('whole number from 1 to 50')
+    expect(() => readObject(eml, 'run', { latest: Number.NaN })).toThrow('whole number from 1 to 50')
     expect(() => readObject(eml, 'project', { latest: true })).toThrow('for runs only')
   })
 })
