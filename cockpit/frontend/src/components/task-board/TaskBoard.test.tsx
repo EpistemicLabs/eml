@@ -307,6 +307,43 @@ describe('the task board', () => {
   });
 });
 
+describe('Working now', () => {
+  const withRunning = () => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url === '/api/v1/tasks/board') {
+      const b = board();
+      b.tasks = b.tasks.map((t) => (t.id === 'running' ? { ...t, sessionIds: ['w1'], statusLine: { now: 'Rolling out to the second shop', next: null, at: iso(1) } } : t));
+      b.tasks.push(task({ id: 'later', title: 'weekly-report', turn: 'agent_scheduled', delegate: 'atlas', nextRunAt: iso(-120) }));
+      return new Response(JSON.stringify(b), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  }));
+
+  it('lists the sessions working now left of the Inbox, with the next runs, and opens a row beside the list', async () => {
+    live.sessions = [{ id: 'w1', spaceId: 'main', summary: 'w1', state: 'running', turnState: 'working', turnSince: iso(4), worker: true, taskId: 'running' }];
+    withRunning();
+    setTaskView('inbox');
+    mount();
+    const column = await screen.findByRole('complementary', { name: 'Working now' });
+    expect(within(column).getByText('Kit v4 rollout')).toBeTruthy();
+    expect(within(column).getByText('Rolling out to the second shop')).toBeTruthy();
+    expect(within(column).getByText('4 min')).toBeTruthy();
+    expect(within(column).getByText('worker')).toBeTruthy();
+    expect(within(column).getByText('Weekly report')).toBeTruthy();
+    fireEvent.click(within(column).getByText('Kit v4 rollout'));
+    expect((await screen.findByTestId('session-chat')).textContent).toContain('w1');
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Kit v4 rollout');
+  });
+
+  it('says so when no agent is working, and names the next run', async () => {
+    withRunning();
+    setTaskView('inbox');
+    mount();
+    const column = await screen.findByRole('complementary', { name: 'Working now' });
+    expect(within(column).getByText('No agent is working')).toBeTruthy();
+    expect(within(column).getByText(/Next run .*: Weekly report/)).toBeTruthy();
+  });
+});
+
 describe('the Unread fold', () => {
   const answer = (id: string, minutesAgo: number, fields: Record<string, unknown> = {}) => ({
     id, spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: `Session ${id}`, createdAt: iso(90), lastActivity: iso(minutesAgo),

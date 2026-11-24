@@ -225,7 +225,10 @@ html.dark {
   --size-command-list: 340px;
   /* A tooltip's gap to what it explains. */
   --gap-tooltip: 6px;
-  --grid-inbox-split: minmax(0, 3fr) minmax(0, 7fr);
+  /* The Inbox with its Working now column on the left; open, the list and the task share the rest. */
+  --grid-inbox-working: var(--size-working-column) minmax(0, 1fr);
+  --grid-inbox-working-split: var(--size-working-column) minmax(0, 4fr) minmax(0, 6fr);
+  --size-working-column: 17rem;
   /* The Inbox's task panel fills the board's height, never shorter than this. */
   --size-split-panel-min: 35rem;
   /* The opened task: the task on the left, its session's chat on the right. */
