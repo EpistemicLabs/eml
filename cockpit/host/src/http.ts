@@ -1351,7 +1351,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     }
     if (resource === 'sessions' && id && method === 'PATCH') {
       const body = await readJson(req)
-      // A session with a task is called by its task: renaming the session renames the task (decision task-owns-the-name).
+      // A session with a task is called by its task: renaming the session renames the task.
       // A brain that refuses the name leaves both as they were.
       // The task is then the only one holding the name: the session's own title is cleared, not kept as a second copy.
       const title = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : ''

@@ -168,7 +168,7 @@ export function requestSessionTitle(deps: Pick<SpawnDeps, 'ledger' | 'sessionNam
   if (!title || title.length > MAX_TITLE) return fail(400, 'INVALID_TITLE', `title is required (max ${MAX_TITLE} chars)`)
   const known = typeof sessionId === 'string' && sessionId ? deps.ledger.get(sessionId) : undefined
   if (!known) return fail(404, 'NOT_FOUND', 'Session not found')
-  // A session with a task is called by its task (decision task-owns-the-name): the title can only name a task that
+  // A session with a task is called by its task: the title can only name a task that
   // has no name yet (session-task.ts named), and is not kept as the session's own.
   if (!known.taskId) deps.ledger.setAgentTitle(sessionId as string, title)
   deps.sessionNamed?.(sessionId as string, title)

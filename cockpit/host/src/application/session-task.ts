@@ -16,7 +16,7 @@ import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from
  *     worker's task is its own; it is a step of the requester's task only when
  *     the requester asked for that (spawn --step). Who started it is noted.
  *     A job's session works on the job's task instead.
- *   - A session is called by its task (decision task-owns-the-name): the
+ *   - A session is called by its task: the
  *     heading, the sidebar and the chat show the task's name. When the session
  *     names itself (session-title-cli.ts), only a placeholder takes that name;
  *     a task with a name keeps it. The user renaming the session renames the task.
