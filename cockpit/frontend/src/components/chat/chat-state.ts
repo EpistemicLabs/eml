@@ -2,6 +2,7 @@
 // (host domain/session-runtime.ts). One source: a view is rebuilt from the log,
 // never merged with anything else.
 import { SORT_PICKS, type SortRow, type SplitRelation } from '@/lib/split';
+import { readable } from '@/lib/task-board';
 
 export type ToolStatus = 'running' | 'completed' | 'failed' | 'launched' | 'interrupted';
 export type ToolKind = 'read' | 'edit' | 'execute' | 'search' | 'fetch' | 'agent' | 'other';
@@ -353,14 +354,23 @@ export type RenderGroup =
   | { kind: 'status'; id: string; status: string; reason: string | null }
   | { kind: 'offer'; id: string; offer: SplitOffer }
   | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string }
-  | { kind: 'created'; id: string; taskId: string; title: string };
+  | { kind: 'created'; id: string; taskId: string; title: string; displayTitle?: string };
 
 /** A task the agent created (the brain's eml_create_task, once it answered): shown as a bar with Undo, not folded away. */
-export function createdTaskOfTool(item: Extract<ChatItem, { type: 'tool' }>): { taskId: string; title: string } | null {
+export function createdTaskOfTool(item: Extract<ChatItem, { type: 'tool' }>): { taskId: string; title: string; displayTitle?: string } | null {
   if (!/(^|__)eml_create_task$/.test(item.name) || item.status !== 'completed') return null;
   const id = /"id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/.exec(item.output)?.[1];
   if (!id) return null;
-  return { taskId: id, title: typeof item.input.title === 'string' && item.input.title ? item.input.title : id };
+  const displayTitle = text(item.input.display_title);
+  return { taskId: id, title: typeof item.input.title === 'string' && item.input.title ? item.input.title : id, ...(displayTitle ? { displayTitle } : {}) };
+}
+
+/**
+ * The name the New task bar shows: the task's name on the board now (so a rename shows here too), else the
+ * display title the agent created it with, else its kebab anchor as words.
+ */
+export function createdTaskName(created: { title: string; displayTitle?: string }, live: { title: string; displayTitle?: string } | undefined): string {
+  return live?.displayTitle ?? created.displayTitle ?? readable(live?.title ?? created.title);
 }
 
 /** One topic of a sort the agent proposed (the cockpit's propose_sort tool). */

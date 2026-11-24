@@ -23,3 +23,18 @@ export function displayTitleOf(title: string): string | null {
   const space = cut.lastIndexOf(' ')
   return `${(space > DISPLAY_TITLE_MAX / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:–-]+$/, '')}…`
 }
+
+/** The name the cockpit gives a session's task before anyone names it (application/session-task.ts placeholderTitle). */
+export const PLACEHOLDER_TITLE = /^session-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/
+
+/**
+ * The name a person reads for a task, as the tasks card shows it: its display_title, else its kebab anchor as
+ * words. Null while it still has the cockpit's placeholder: that is no name yet.
+ */
+export function taskNameOf(task: { title: string | null; displayTitle?: string | null }): string | null {
+  if (task.displayTitle) return task.displayTitle
+  if (!task.title || PLACEHOLDER_TITLE.test(task.title)) return null
+  if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(task.title)) return task.title
+  const words = task.title.split(/[-_]/).join(' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}

@@ -69,7 +69,8 @@ describe('session task', () => {
     expect(ledger.get(id(1))).toMatchObject({ taskId: 't1', taskAuto: true })
     expect(first).toBe(second)
     expect(first).toContain('**session-2026-11-17-00000001** · t1 [active]')
-    expect(first).toContain('takes the session\'s name')
+    expect(first).toContain('give it its name as above')
+    expect(first).toContain('calls this session by its task\'s name')
     expect(first).toContain('### Handoff')
     expect(first).toContain('- [lasse]')
   })
@@ -151,6 +152,29 @@ describe('session task', () => {
     // The task survives a respawn as the cockpit's own.
     ledger.recordSpawn(id(6), 'pane', 'bp-eml', 'claude')
     expect(ledger.get(id(6))!.taskAuto).toBe(true)
+  })
+
+  it('does not name a task that has a display title, even with the placeholder anchor', async () => {
+    const { ledger, brain, tasks } = setup({ shared: false })
+    ledger.recordSpawn(id(20), null, 'bp-eml', 'claude')
+    await tasks.context(id(20))
+    brain.tasks.set('t1', { ...brain.tasks.get('t1'), properties: { display_title: 'Fix the stock answers' } })
+    await tasks.named(id(20), 'Something else')
+    expect(brain.posts.filter((p) => p.path === '/task/t1/track')).toHaveLength(0)
+  })
+
+  it('renames the task when the user renames the session, and gives a placeholder its anchor too', async () => {
+    const { ledger, brain, tasks } = setup({ shared: false })
+    ledger.recordSpawn(id(21), null, 'bp-eml', 'claude')
+    await tasks.context(id(21))
+    expect(await tasks.renamed(id(21), 'Check the page size')).toBe(true)
+    expect(brain.posts.at(-1)).toMatchObject({ path: '/task/t1/track', body: { display_title: 'Check the page size', title: 'check-the-page-size', text: 'Renamed from its session\'s heading in the cockpit.' } })
+    // a named task keeps its anchor; a lowercase word still becomes the name
+    expect(await tasks.renamed(id(21), 'pagesize')).toBe(true)
+    expect(brain.posts.at(-1)!.body).toEqual({ display_title: 'pagesize', text: 'Renamed from its session\'s heading in the cockpit.' })
+    // a session without a task has nothing to rename
+    ledger.recordSpawn(id(22), null, 'bp-eml', 'claude')
+    expect(await tasks.renamed(id(22), 'Anything')).toBe(false)
   })
 
   it('names the placeholder at start when the session had its name before its task', async () => {
