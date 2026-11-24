@@ -83,6 +83,7 @@ import { PushNotifier, notifySessions } from './application/push-notifier.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
+import { createStartGate } from './application/start-gate.js'
 import { createSplitSession } from './application/split-session.js'
 import { createSplitBrief } from './application/split-brief.js'
 import { createSortSession } from './application/sort-session.js'
@@ -377,6 +378,8 @@ async function main() {
   })
   // The task board's commands (application/task-commands.ts), made below; the runner asks them first.
   let taskCommands: TaskCommands | null = null
+  // Set once the task commands exist; the chat and the hooks call it when the user writes.
+  let userWrote: (sessionId: string) => void = () => {}
   // A brain project the cockpit has not opened yet gets its local entry and a cockpit-made folder.
   const ensureTaskProject = (space: BrainSpace, projectId: string): string | null => {
     const brainId = brainIdFromProjectId(projectId)
@@ -496,6 +499,7 @@ async function main() {
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     turnDone: turnEnded,
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
+    userWrote: (sessionId) => userWrote(sessionId),
     handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
     onExit: (sessionId) => turns.forget(sessionId),
     memory,
@@ -746,13 +750,31 @@ async function main() {
       const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
       return { total: on.length, open: on.filter((e) => !e.archivedAt).length }
     },
+    // Send in a closed task's chat: the message goes to its newest session, or starts one when it has none.
+    newestSessionOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId)
+      .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null,
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    startOnTask: async (spaceId, taskId, prompt) => {
+      const started = await startOnTask({ spaceId, taskId, prompt })
+      return started.ok ? started.sessionId : null
+    },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
   })
+  // The user wrote in a session on a closed task (a desk, outside the board): the task reopens first.
+  userWrote = (sessionId) => {
+    const entry = ledger.get(sessionId)
+    if (!entry?.taskId) return
+    void taskCommands?.reopenByWriting(spaces.resolve(entry.spaceId).id, entry.taskId)
+  }
   // A session of the user's own on a task, started from the page (a task row, Advance task): the host binds the
   // task and queues it; the page claims it and opens it in chat when that is the user's view (application/start-worker.ts).
-  const startOnTask = async (input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }) => {
+  type StartInput = { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }
+  // One start per task and prompt at a time (application/start-gate.ts): several clients asking at once get one session.
+  const startGate = createStartGate<Awaited<ReturnType<typeof startOnTaskOnce>>>()
+  const startOnTask = (input: StartInput) => startGate(`${input.spaceId}:${input.taskId}:${input.prompt ?? ''}`, () => startOnTaskOnce(input))
+  const startOnTaskOnce = async (input: StartInput) => {
     const space = spaces.get(input.spaceId)
     if (!space) return { ok: false as const, refusal: 'unknown_space' as const }
     const task = await taskBrain(space)?.get(`/engram/${encodeURIComponent(input.taskId)}`).catch(() => null) as { title?: string | null; status?: string; scope?: string } | null | undefined
@@ -866,7 +888,7 @@ async function main() {
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
 
   const host = createHostServer(
-    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {

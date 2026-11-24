@@ -495,11 +495,16 @@ const Messages = memo(function Messages({
 });
 
 export function ChatPane({
-  paneId, projectId, sessionId, session, isActive, whenIdle = false, spaceId,
+  paneId, projectId, sessionId, session, isActive, whenIdle = false, spaceId, composer,
 }: {
   paneId: string; projectId: string; sessionId: string; session: ProjectSession | null; isActive: boolean; whenIdle?: boolean;
   /** Outside the desks (the task panel): the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
+  /**
+   * In place of the session's own input and status bar: a closed task's chat (task panel), where writing
+   * reopens the task or starts a follow-up instead of going to the session straight away.
+   */
+  composer?: React.ReactNode;
 }) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
   const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
@@ -722,6 +727,7 @@ export function ChatPane({
             onClose={() => setServersOpen(false)}
           />
         )}
+        {composer ?? (<>
         {terminalBusy ? (
           <div role="status" className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
             <span className="min-w-0 flex-1">
@@ -753,6 +759,7 @@ export function ChatPane({
           endSlot={<RestartButton running={running} onRestart={restart} />}
           className="mt-0 border-t-0 px-1 pt-0.5 text-muted-foreground"
         />}
+        </>)}
       </div>
     </div>
   );

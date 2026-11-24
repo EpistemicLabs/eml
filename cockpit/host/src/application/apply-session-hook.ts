@@ -10,6 +10,8 @@ export interface SessionHookDeps {
   turnDone?: (sessionId: string, payload: Record<string, unknown>) => void
   /** The user typed into the session: whatever it waited for is answered (task router). */
   answered?: (sessionId: string) => void
+  /** The user typed a prompt into the session's terminal: a closed task it works on reopens first. */
+  userWrote?: (sessionId: string) => void
 }
 
 /**
@@ -56,6 +58,7 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
     if (asked?.attention || asked?.taskId) deps.answered?.(sessionId)
     deps.ledger.setAttention(sessionId, null)
     deps.ledger.unarchive(sessionId)
+    deps.userWrote?.(sessionId)
   }
   // A turn that ends with a question for the user ends as done: its flag keeps it in Your turn,
   // the desk dot clears once seen. Only a live prompt is waiting (decision desk-dot-until-seen).

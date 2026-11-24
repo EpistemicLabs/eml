@@ -501,6 +501,19 @@ describe('ChatBridge', () => {
     expect(runtimes[0].sent).toEqual(['hi'])
   })
 
+  it('tells the host the user wrote on a send from a client, not on start or interrupt', async () => {
+    const { bridge } = setup()
+    const wrote: string[] = []
+    ;(bridge as unknown as { ctx: ChatContext }).ctx.userWrote = (id) => wrote.push(id)
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'start' })
+    ws.client({ type: 'interrupt' })
+    expect(wrote).toEqual([])
+    ws.client({ type: 'send', text: 'go on' })
+    expect(wrote).toEqual(['s1'])
+  })
+
   it('a read-only view joins a running session as it is', async () => {
     const { bridge, runtimes } = setup()
     connect(bridge)

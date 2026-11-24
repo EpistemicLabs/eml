@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskCommands, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
+import { createTaskCommands, firstLine, MESSAGE_MAX, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'cockpit-task-commands-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -21,6 +21,13 @@ function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id:
     },
     async post(path: string, body: Record<string, unknown>) {
       posts.push({ path, body })
+      if (path === '/relate') return { ok: true }
+      if (path === '/engram/task') {
+        const { title, status, scope, ...props } = body
+        const made: Task = { id: `new-${byId.size}`, status: status as string, scope: scope as string, title: title as string, properties: props }
+        byId.set(made.id, made)
+        return made
+      }
       const t = byId.get(/^\/task\/([^/]+)\/track$/.exec(path)![1])!
       for (const [k, v] of Object.entries(body)) {
         if (k === 'text' || k === 'outcome') continue
@@ -359,5 +366,133 @@ describe('work on it now ends (B2)', () => {
     w.later(8 * 24 * 60 * 60 * 1000)
     await w.commands.submit({ opId: 'op-snooze', kind: 'snooze', spaceId: 'main', snooze: { key: 'x', until: new Date(w.clock.now + 60_000).toISOString() } })
     expect(w.commands.together('t1')).toBe(true)
+  })
+})
+
+describe('send in a closed task\'s chat', () => {
+  const chatWorld = (tasks: Task[], opts: { newest?: string | null; delivers?: boolean; starts?: string | null } = {}) => {
+    const w = world(tasks)
+    const delivered: Array<{ sessionId: string; text: string }> = []
+    const started: Array<{ taskId: string; prompt: string }> = []
+    const commands = createTaskCommands({
+      ...w.deps,
+      newestSessionOn: () => opts.newest === undefined ? 's-newest' : opts.newest,
+      deliver: async (sessionId, text) => { delivered.push({ sessionId, text }); return opts.delivers ?? true },
+      startOnTask: async (_space, taskId, prompt) => { started.push({ taskId, prompt }); return opts.starts === undefined ? 's-started' : opts.starts },
+    })
+    return { ...w, commands, delivered, started }
+  }
+
+  it('reopens after the undo window, then gives the message to the newest session', async () => {
+    const w = chatWorld([owned('t1', { delegate: 'atlas', checkpoint: 'before' }, 'resolved')])
+    const r = await w.commands.submit({ opId: 'op-s', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'One more thing:\nthe badge is off' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'pending' } })
+    await w.commands.tick()
+    expect(w.delivered).toEqual([])
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.byId.get('t1')!.status).toBe('active')
+    expect(w.posts[0].body.text).toBe('Reopened by writing in its chat: "One more thing:".')
+    expect(w.delivered).toEqual([{ sessionId: 's-newest', text: 'One more thing:\nthe badge is off' }])
+    expect(w.started).toEqual([])
+    expect(w.store.get('op-s')).toMatchObject({ state: 'applied', continued: { sessionId: 's-newest', how: 'delivered' } })
+  })
+
+  it('undo inside the window: the task stays closed and no session gets the message', async () => {
+    const w = chatWorld([owned('t1', {}, 'resolved')])
+    await w.commands.submit({ opId: 'op-u', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'hello' })
+    expect(await w.commands.undo('op-u')).toEqual({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.byId.get('t1')!.status).toBe('resolved')
+    expect(w.delivered).toEqual([])
+  })
+
+  it('starts a session with the message when the task has none, or the newest can\'t take it', async () => {
+    const none = chatWorld([owned('t1', {}, 'resolved')], { newest: null })
+    await none.commands.submit({ opId: 'op-n', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'go on' })
+    none.later(UNDO_WINDOW_MS + 1)
+    await none.commands.tick()
+    expect(none.started).toEqual([{ taskId: 't1', prompt: 'go on' }])
+    expect(none.store.get('op-n')).toMatchObject({ continued: { sessionId: 's-started', how: 'started' } })
+
+    const refused = chatWorld([owned('t1', {}, 'resolved')], { delivers: false, starts: null })
+    await refused.commands.submit({ opId: 'op-f', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'go on' })
+    refused.later(UNDO_WINDOW_MS + 1)
+    await refused.commands.tick()
+    expect(refused.byId.get('t1')!.status).toBe('active')
+    expect(refused.store.get('op-f')).toMatchObject({ state: 'applied', continued: { how: 'failed' } })
+  })
+
+  it('after a crash between the reopen and the delivery, the retry still gives the message once', async () => {
+    const w = chatWorld([owned('t1', {}, 'active')])
+    // As the store holds it when the host died right after the reopen was recorded.
+    w.store.put({ opId: 'op-c', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'go on', createdAt: '', undoUntil: new Date(w.clock.now - 1).toISOString(), state: 'pending', reopened: { items: [], closedSteps: 0 } }, w.clock.now)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.delivered).toEqual([{ sessionId: 's-newest', text: 'go on' }])
+    expect(w.store.get('op-c')).toMatchObject({ state: 'applied', continued: { how: 'delivered' } })
+  })
+
+  it('refuses an empty or oversized message with what to change, and keeps the reopen rules', async () => {
+    const w = chatWorld([owned('t1', {}, 'resolved'), { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } }])
+    expect(await w.commands.submit({ opId: 'a', kind: 'reopen', spaceId: 'main', taskId: 't1', message: '  ' })).toMatchObject({ ok: false, refusal: 'invalid', message: expect.stringContaining(`at most ${MESSAGE_MAX}`) })
+    expect(await w.commands.submit({ opId: 'b', kind: 'reopen', spaceId: 'main', taskId: 't1', message: 'x'.repeat(MESSAGE_MAX + 1) })).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await w.commands.submit({ opId: 'c', kind: 'reopen', spaceId: 'main', taskId: 'theirs', message: 'hi' })).toMatchObject({ ok: false, refusal: 'not_owner' })
+  })
+
+  it('firstLine is the flat first line, cut at 120 characters', () => {
+    expect(firstLine('  a   b\nsecond')).toBe('a b')
+    expect(firstLine('y'.repeat(200))).toHaveLength(120)
+  })
+})
+
+describe('as follow-up', () => {
+  it('makes a planned task in the same project with owner, delegate and checkpoint, linked to the one it follows', async () => {
+    const w = world([{ ...owned('t1', { delegate: 'atlas', checkpoint: 'before', display_title: 'Build the fold' }, 'resolved'), scope: 'project.ui', title: 'build-fold' }])
+    const r = await w.commands.submit({ opId: 'op-f', kind: 'follow_up', spaceId: 'main', taskId: 't1', message: 'Now the phone layout' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'pending', kind: 'follow_up' } })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    const created = w.posts.find((p) => p.path === '/engram/task')!.body
+    expect(created).toEqual({
+      title: 'follow-up-build-fold', display_title: 'Follow-up: Build the fold', content: 'Now the phone layout', scope: 'project.ui', status: 'planned',
+      assignee_ids: ['lasse'], delegate: 'atlas', checkpoint: 'before',
+    })
+    const id = w.store.get('op-f')!.followUp!.taskId
+    expect(w.posts.find((p) => p.path === '/relate')!.body).toMatchObject({ source_id: id, target_id: 't1', relation: 'derived_from' })
+    expect(w.posts.filter((p) => p.path.endsWith('/track')).map((p) => p.path)).toEqual([`/task/${id}/track`, '/task/t1/track'])
+    expect(w.byId.get('t1')!.status).toBe('resolved')
+    expect(w.store.get('op-f')).toMatchObject({ state: 'applied', followUp: { taskId: id, linked: true, journaled: true } })
+  })
+
+  it('refuses without a message, an unknown task, or someone else\'s task; undo makes nothing', async () => {
+    const w = world([owned('t1', {}, 'resolved'), { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } }])
+    expect(await w.commands.submit({ opId: 'a', kind: 'follow_up', spaceId: 'main', taskId: 't1' })).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await w.commands.submit({ opId: 'b', kind: 'follow_up', spaceId: 'main', taskId: 'nope', message: 'x' })).toMatchObject({ ok: false, refusal: 'unknown_task' })
+    expect(await w.commands.submit({ opId: 'c', kind: 'follow_up', spaceId: 'main', taskId: 'theirs', message: 'x' })).toMatchObject({ ok: false, refusal: 'not_owner' })
+    await w.commands.submit({ opId: 'd', kind: 'follow_up', spaceId: 'main', taskId: 't1', message: 'x' })
+    await w.commands.undo('d')
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+  })
+})
+
+describe('writing in a closed task\'s session', () => {
+  it('reopens a closed task, leaves an open one, and journals why one that can\'t reopen stays closed', async () => {
+    const w = world([
+      owned('done', {}, 'resolved'),
+      owned('open', {}, 'active'),
+      { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } },
+    ])
+    expect(await w.commands.reopenByWriting('main', 'done')).toBe('reopened')
+    expect(w.byId.get('done')!.status).toBe('active')
+    expect(w.posts[0]).toEqual({ path: '/task/done/track', body: { status: 'active', waiting_on: null, text: 'Reopened by writing in its chat.' } })
+    expect(await w.commands.reopenByWriting('main', 'open')).toBe('open')
+    expect(await w.commands.reopenByWriting('main', 'theirs')).toBe('refused')
+    expect(w.byId.get('theirs')!.status).toBe('resolved')
+    expect(w.posts.at(-1)!.body.text).toContain('stays closed')
+    expect(await w.commands.reopenByWriting('elsewhere', 'done')).toBe('refused')
   })
 })

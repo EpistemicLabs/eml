@@ -158,6 +158,8 @@ export interface ChatContext {
   turnDone?: (sessionId: string, text: string) => void
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
+  /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
+  userWrote?: (sessionId: string) => void
   /**
    * Before an idle stop: the prompt that asks this session for its handoff
    * (application/session-task.ts), or null when it needs none. Asked once per
@@ -423,7 +425,10 @@ export class ChatBridge {
         const entry = this.entries.get(sessionId)
         if (!entry?.clients.has(ws)) return
         if (data.type === 'start') this.ensureStarted(entry)
-        else if (data.type === 'send') this.sendMessage(entry, text(data.text), parseImageNames(data.images), text(data.id))
+        else if (data.type === 'send') {
+          this.sendMessage(entry, text(data.text), parseImageNames(data.images), text(data.id))
+          this.ctx.userWrote?.(entry.sessionId)
+        }
         else if (data.type === 'interrupt') void entry.runtime?.interrupt().catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         else if (data.type === 'answer') {
           const answer = parseAnswer(data.answer)

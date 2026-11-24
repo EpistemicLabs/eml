@@ -18,7 +18,9 @@ import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
- *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason? }: the owner reopens a closed task (active; starts nothing)
+ *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason?, message? }: the owner reopens a closed task (active;
+ *                                                     starts nothing, or with a message: its newest session gets it)
+ *   POST /api/v1/tasks/<id>/follow-up               { opId, spaceId, message }: a new task spun off from this one, the message its brief
  *   POST /api/v1/sessions/<id>/split                { opId, title, brief, relation, when, projectId, existingTaskId? }: split a topic off a session (onto an open task, with existingTaskId)
  *   POST /api/v1/sessions/<id>/split-brief          { upTo?, contextOnly? }: a draft (title, relation, projectId, brief) from the turns up to a message; contextOnly: only the dialog's context, no model call
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
@@ -271,7 +273,7 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|reopen)$/.exec(pathname)
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|reopen|follow-up)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -288,7 +290,10 @@ export async function handleTasksApi(
         input = { ...base, kind: verb, taskId }
       } else if (verb === 'reopen') {
         const reason = str(body.reason)?.trim().slice(0, 500)
-        input = { ...base, kind: 'reopen', taskId, ...(reason ? { reason } : {}) }
+        const message = typeof body.message === 'string' ? body.message : undefined
+        input = { ...base, kind: 'reopen', taskId, ...(reason ? { reason } : {}), ...(message !== undefined ? { message } : {}) }
+      } else if (verb === 'follow-up') {
+        input = { ...base, kind: 'follow_up', taskId, ...(typeof body.message === 'string' ? { message: body.message } : {}) }
       } else {
         const key = str(body.key), until = str(body.until)
         if (!key || !until) { refuse(json, res, 'invalid', 'key and until are required'); return true }

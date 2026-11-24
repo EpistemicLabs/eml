@@ -11,7 +11,9 @@ import { stepPrompt } from './task-runner.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
- * Looks good, Snooze, Close and Reopen (decision task-board-reopen-action). Everything else stays in the chat.
+ * Looks good, Snooze, Close and Reopen (decision task-board-reopen-action), and from a closed task's chat Send
+ * (Reopen with the message for its newest session) and As follow-up (a new task spun off from it). Everything
+ * else stays in the chat.
  *
  * Each action is a command with the page's operation id, so a retry does the work once. A command
  * waits out its undo window (UNDO_WINDOW_MS) before it touches the brain or a job; Undo
@@ -28,7 +30,11 @@ const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'reopen' | 'split' | 'sort'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'reopen' | 'follow_up' | 'split' | 'sort'
+
+/** The longest message a closed task's chat takes for Send or As follow-up. */
+export const MESSAGE_MAX = 20_000
+const MESSAGE_RULE = `Write a message of at most ${MESSAGE_MAX} characters.`
 
 export interface CommandInput {
   opId: string
@@ -39,6 +45,8 @@ export interface CommandInput {
   snooze?: Snooze
   /** Reopen: the owner's reason, for the journal (optional). */
   reason?: string
+  /** Reopen from the task's chat: the message its newest session gets once the task is open. Follow-up: its brief. */
+  message?: string
 }
 
 /** A decision or note that closed with the task: a reopen lists it for the chat, which brings it back on the owner's yes. */
@@ -76,6 +84,10 @@ export interface TaskCommand extends CommandInput {
   sortProgress?: { next: number; created: Record<string, string>; createdSteps?: Record<string, { linked?: boolean; journaled?: boolean }>; summed?: boolean }
   /** A reopen that was applied: what closed with the task and comes back only through the chat, and the steps that stay closed. */
   reopened?: { items: ReopenItem[]; closedSteps: number }
+  /** Where a reopen's message went: the session that got it, or the one started with it. */
+  continued?: { sessionId: string | null; how: 'delivered' | 'started' | 'failed' }
+  /** The task a follow-up made, and whether it is linked to the one it follows (a retry skips what is done). */
+  followUp?: { taskId: string; linked?: boolean; journaled?: boolean }
   error?: string
 }
 
@@ -159,6 +171,11 @@ type Relation = { source_id: string; target_id: string; relation: string }
 type BrainTaskWithRelations = BrainTask & { relations?: Relation[] }
 
 const OPEN = new Set(['planned', 'active'])
+/** A message's first line for a journal: flat, at most 120 characters. */
+export const firstLine = (text: string) => {
+  const line = text.trim().split('\n')[0].replace(/\s+/g, ' ')
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line
+}
 const nameOf = (t: BrainTask) => t.properties?.display_title ?? t.title ?? t.id
 
 export interface TaskCommandsDeps {
@@ -174,6 +191,12 @@ export interface TaskCommandsDeps {
    * Without it Work on it now never ends on its own.
    */
   sessionsSince?(taskId: string, since: string): { total: number; open: number }
+  /** The task's newest session, archived or not: where a reopen's message goes. */
+  newestSessionOn?(taskId: string): string | null
+  /** Give a session the user's message, resuming it when stopped; true once it has it. */
+  deliver?(sessionId: string, text: string): Promise<boolean>
+  /** Start a session of the owner's own on the task with this prompt (a task without a session to wake). */
+  startOnTask?(spaceId: string, taskId: string, prompt: string): Promise<string | null>
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -244,6 +267,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     }
   }
 
+  /** Only a task's owner may reopen it or start a follow-up of it; null when the viewer may. */
+  const ownerRefusal = (task: BrainTask, action: string): { ok: false; refusal: CommandRefusal; message: string } | null => {
+    const owner = task.properties?.assignee_ids?.[0]
+    return deps.viewer && owner && owner !== deps.viewer ? { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can ${action}.` } : null
+  }
+
   /** Check a hand-over against the task as it is now and plan it. */
   const plan = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, taskId: string, req: HandOverRequest) => {
     const task = await taskOf(brain, taskId)
@@ -261,8 +290,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     const task = await brain.get(`/engram/${taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
     if (!task) return { ok: false, refusal: 'unknown_task' }
     if (OPEN.has(task.status)) return { ok: false, refusal: 'task_open' }
-    const owner = task.properties?.assignee_ids?.[0]
-    if (deps.viewer && owner && owner !== deps.viewer) return { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can reopen this task.` }
+    const refused = ownerRefusal(task, 'reopen this task')
+    if (refused) return refused
     const relations = task.relations ?? []
     for (const r of relations.filter((r) => r.relation === 'supersedes' && r.target_id === task.id)) {
       const successor = await taskOf(brain, r.source_id)
@@ -335,11 +364,69 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
 
     if (input.kind === 'reopen') {
       if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      if (input.message !== undefined && (!input.message.trim() || input.message.length > MESSAGE_MAX)) return { ok: false, refusal: 'invalid', message: MESSAGE_RULE }
       const checked = await checkReopen(brain, input.taskId)
       if (!checked.ok) return checked
       return { ok: true, command: save(base) }
     }
+
+    if (input.kind === 'follow_up') {
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      if (!input.message?.trim() || input.message.length > MESSAGE_MAX) return { ok: false, refusal: 'invalid', message: MESSAGE_RULE }
+      const task = await taskOf(brain, input.taskId)
+      if (!task) return { ok: false, refusal: 'unknown_task' }
+      const refused = ownerRefusal(task, 'start a follow-up of this task')
+      if (refused) return refused
+      return { ok: true, command: save(base) }
+    }
     return { ok: false, refusal: 'invalid' }
+  }
+
+  /** A reopened task's message: to its newest session (resumed when stopped), or a new session started with it. */
+  const continueIn = async (spaceId: string, taskId: string, message: string): Promise<NonNullable<TaskCommand['continued']>> => {
+    const newest = deps.newestSessionOn?.(taskId) ?? null
+    if (newest && deps.deliver && await deps.deliver(newest, message).catch(() => false)) return { sessionId: newest, how: 'delivered' }
+    const started = deps.startOnTask ? await deps.startOnTask(spaceId, taskId, message).catch(() => null) : null
+    if (started) return { sessionId: started, how: 'started' }
+    deps.log(`[commands] task ${taskId.slice(0, 8)} reopened, but its message reached no session`)
+    return { sessionId: newest, how: 'failed' }
+  }
+
+  /**
+   * A follow-up: a new task in the same project with the same owner, delegate and checkpoint, the message as its
+   * brief, linked to the task it follows (derived_from, the board's origin). Planned, so the runner starts its
+   * delegate as with any new step. Each part is recorded, so a retry after a failure part-way does it once.
+   */
+  const makeFollowUp = async (brain: Pick<EmlApi, 'get' | 'post'>, command: TaskCommand): Promise<NonNullable<TaskCommand['followUp']> | null> => {
+    const from = await taskOf(brain, command.taskId!)
+    if (!from) return null
+    const record = (followUp: NonNullable<TaskCommand['followUp']>) => { save({ ...command, followUp }); return followUp }
+    let done = command.followUp
+    if (!done) {
+      const props = from.properties ?? {}
+      const name = nameOf(from)
+      const created = await brain.post('/engram/task', {
+        title: `follow-up-${from.title ?? from.id}`.slice(0, 80),
+        display_title: `Follow-up: ${name}`.slice(0, 80),
+        content: command.message!.trim(),
+        scope: from.scope,
+        status: 'planned',
+        ...(props.assignee_ids?.length ? { assignee_ids: props.assignee_ids } : {}),
+        ...(props.delegate ? { delegate: props.delegate } : {}),
+        ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
+      }) as { id: string }
+      done = record({ taskId: created.id })
+    }
+    if (!done.linked) {
+      await brain.post('/relate', { source_id: done.taskId, target_id: from.id, relation: 'derived_from', detection_method: 'manual', explanation: 'follow-up of' })
+      done = record({ ...done, linked: true })
+    }
+    if (!done.journaled) {
+      await track(brain, done.taskId, {}, `Follow-up of ${nameOf(from)}, started from its chat by the owner.`)
+      await track(brain, from.id, {}, `A follow-up was started from its chat: Follow-up: ${nameOf(from)} (${done.taskId}).`)
+      done = record({ ...done, journaled: true })
+    }
+    return done
   }
 
   const apply = async (command: TaskCommand) => {
@@ -376,18 +463,31 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'reopen') {
-        const checked = await checkReopen(brain, command.taskId!)
-        if (!checked.ok) return fail(checked.message ?? checked.refusal)
-        const steps = checked.closedSteps ? ` ${checked.closedSteps} closed step${checked.closedSteps === 1 ? '' : 's'} stay closed.` : ''
-        const reason = command.reason ? ` Why: ${command.reason}` : ''
-        // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
-        const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `Reopened on the task board by the owner.${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
-        const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
-        if (items.length > 0) {
-          const list = items.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')
-          await track(brain, checked.task.id, {}, `Closed with the task and not back yet: ${list}. They come back through the chat on the owner's yes (eml_update status active).`)
+        // Each part is recorded as it is done, so a retry after a crash goes on where it stopped: the message
+        // is keyed on the reopened task, not on this run making the change (service-design, retries).
+        let current = command
+        if (!current.reopened) {
+          const checked = await checkReopen(brain, current.taskId!)
+          if (!checked.ok) return fail(checked.message ?? checked.refusal)
+          const steps = checked.closedSteps ? ` ${checked.closedSteps} closed step${checked.closedSteps === 1 ? '' : 's'} stay closed.` : ''
+          const reason = current.reason ? ` Why: ${current.reason}` : ''
+          // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
+          const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
+          const answer = await track(brain, checked.task.id, { status: 'active', waiting_on: null }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
+          current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
+          if (items.length > 0) {
+            const list = items.map((i) => `${i.type} ${i.title ?? i.id} (${i.id})`).join('; ')
+            await track(brain, checked.task.id, {}, `Closed with the task and not back yet: ${list}. They come back through the chat on the owner's yes (eml_update status active).`)
+              .catch((err: Error) => deps.log(`[commands] ${current.opId.slice(0, 8)} reopen: listing what closed with it failed: ${err.message}`))
+          }
         }
-        save({ ...command, state: 'applied', reopened: { items, closedSteps: checked.closedSteps } })
+        const continued = current.message && !current.continued ? await continueIn(current.spaceId, current.taskId!, current.message) : current.continued
+        save({ ...current, state: 'applied', ...(continued ? { continued } : {}) })
+      } else if (command.kind === 'follow_up') {
+        const followUp = await makeFollowUp(brain, command)
+        if (!followUp) return fail('its task is gone')
+        save({ ...command, state: 'applied', followUp })
       }
       deps.log(`[commands] ${command.opId.slice(0, 8)} ${command.kind} applied`)
     } catch (err) {
@@ -415,6 +515,33 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       save({ ...command, state: 'undone' })
       deps.log(`[commands] ${opId.slice(0, 8)} ${command.kind} undone`)
       return { ok: true }
+    },
+
+    /**
+     * The owner wrote in a session of a closed task (on a desk, outside the board): the task reopens first, by
+     * the board's reopen rules, so its work never runs while it shows as closed. A task that can't be reopened
+     * stays closed and its journal says why. Never throws.
+     */
+    async reopenByWriting(spaceId: string, taskId: string): Promise<'reopened' | 'open' | 'refused'> {
+      const space = deps.space(spaceId)
+      const brain = space ? deps.brain(space) : null
+      if (!brain) return 'refused'
+      try {
+        const task = await taskOf(brain, taskId)
+        if (!task || OPEN.has(task.status)) return task ? 'open' : 'refused'
+        const checked = await checkReopen(brain, taskId)
+        if (!checked.ok) {
+          await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${checked.message ?? checked.refusal}`).catch(() => {})
+          return 'refused'
+        }
+        await track(brain, taskId, { status: 'active', waiting_on: null }, 'Reopened by writing in its chat.')
+        deps.changed(spaceId)
+        deps.log(`[commands] task ${taskId.slice(0, 8)} reopened by writing in its chat`)
+        return 'reopened'
+      } catch (err) {
+        deps.log(`[commands] task ${taskId.slice(0, 8)} reopen by writing failed: ${(err as Error).message}`)
+        return 'refused'
+      }
     },
 
     /** Apply the commands whose undo window is over. */

@@ -35,7 +35,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(opts.main, undefined, undefined, opts.unlisted, !opts.oldBrain)], ['ebisu', brainOf(opts.other ?? [], [])]])
@@ -55,6 +55,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     ...(opts.head ? { head: opts.head } : {}),
     runnerBusy: (taskId) => opts.busy?.includes(taskId) ?? false,
     runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
+    ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
   }
   const board = createTaskBoard(deps)
   return { board, brains, clock }
@@ -63,6 +64,17 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('gives a task closed in the Done window its put-away sessions, so its chat shows; an open task only its live ones', async () => {
+    const { board } = setup({
+      main: [mine('just-done', {}, 'resolved'), mine('open')],
+      working: ['open'],
+      ledger: { 'just-done': ['s-archived', 's-older'], open: ['s0', 's-archived-open'] },
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'just-done')!.sessionIds).toEqual(['s-archived', 's-older'])
+    expect(model.tasks.find((t) => t.id === 'open')!.sessionIds).toEqual(['s0'])
+  })
+
   it('offers to hand a task to the agent Work on it now released, only while nobody is delegated (B2)', async () => {
     const { board } = setup({
       main: [mine('released'), mine('handed-again', { delegate: 'atlas', checkpoint: 'after' }, 'planned'), mine('plain')],
