@@ -45,6 +45,7 @@ export interface HandOverTask {
   waits?: Wait[]
   waitingOn?: WaitingOn
   delegation?: DelegationFields
+  goal?: string
 }
 
 export type HandOverRefusal =
@@ -53,6 +54,8 @@ export type HandOverRefusal =
   | 'checkpoint_required'
   | 'schedule_required'
   | 'desk_required'
+  /** Until the goal is reached, on a task without a goal: set the goal first. */
+  | 'goal_required'
 
 export interface TaskPatch {
   status?: string
@@ -85,6 +88,7 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (req.mode !== 'together' && (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint))) return { ok: false, refusal: 'checkpoint_required' }
   if (req.mode === 'schedule' && !req.schedule) return { ok: false, refusal: 'schedule_required' }
   if (req.mode === 'together' && !req.desk) return { ok: false, refusal: 'desk_required' }
+  if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
 
   const patch: TaskPatch = {}
   const lines: string[] = []

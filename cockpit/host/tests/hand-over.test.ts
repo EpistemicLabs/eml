@@ -89,6 +89,12 @@ describe('planning a hand-over', () => {
     expect(weekly.plan.job).toEqual({ cron: '0 9 * * 1', timeZone: 'Asia/Singapore' })
   })
 
+  it('until the goal on a task with a goal is planned as a job', () => {
+    const r = planHandOver(task({ goal: 'Shipped' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true, session: 'resume' } }, ctx)
+    if (!r.ok) throw new Error(r.refusal)
+    expect(r.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true, session: 'resume' })
+  })
+
   it('work on it now: a session in the chosen desk, no delegation, a planned task moves to active', () => {
     const r = planHandOver(task(), { mode: 'together', delegate: 'atlas', desk: 'Customers' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
@@ -107,6 +113,7 @@ describe('planning a hand-over', () => {
     ['no checkpoint', task(), { mode: 'now', delegate: 'atlas' }, ctx, 'checkpoint_required'],
     ['schedule without a time', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after' }, ctx, 'schedule_required'],
     ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'desk_required'],
+    ['until the goal on a task without a goal', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true } }, ctx, 'goal_required'],
     ['schedule without a checkpoint', task(), { mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx, 'checkpoint_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {
     expect(planHandOver(t, req as never, c)).toEqual({ ok: false, refusal })

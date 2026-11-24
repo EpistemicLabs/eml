@@ -71,7 +71,7 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
         // task runs on that member's cockpit but leaves the shared schedule to the owner's.
         const owner = task.properties?.assignee_ids?.[0]
         if (owner && owner !== deps.me) {
-          if (!seen) deps.log(`[schedule] task ${taskId.slice(0, 8)} is ${owner}'s: its schedule is theirs to write, not this cockpit's`)
+          if (!seen) deps.log(`[schedule] task ${taskId.slice(0, 8)}: owned by another member, its schedule is left to their cockpit`)
           known.set(key, { schedule: wanted, at: now })
           continue
         }

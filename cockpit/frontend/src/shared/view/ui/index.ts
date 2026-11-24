@@ -16,7 +16,7 @@ export { default as ThemeModeSelector } from './ThemeModeSelector';
 export { Chip, Dot } from './Chip';
 export { Empty } from './Empty';
 export { HUE, type Hue } from './hue';
-export { FIELD, FOCUS, LABEL, MINI, PAGER_BUTTON, POPOVER, ROW, TAB, TRACK } from './styles';
+export { FIELD, FOCUS, LABEL, LINK, MINI, PAGER_BUTTON, POPOVER, ROW, TAB, TRACK } from './styles';
 export { Select, Textarea } from './Input';
 export { Switch } from './Switch';
 export { Count } from './Count';

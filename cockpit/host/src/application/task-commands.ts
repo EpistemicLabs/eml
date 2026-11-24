@@ -226,6 +226,7 @@ const asHandOverTask = (t: BrainTask): HandOverTask => ({
   checkpoint: t.properties?.checkpoint,
   waits: waitsOf(t.properties),
   ...(t.properties?.delegation ? { delegation: t.properties.delegation } : {}),
+  ...(t.properties?.goal ? { goal: t.properties.goal } : {}),
 })
 
 /** A snooze's until that brings a parked wait back now. */

@@ -192,13 +192,24 @@ describe('the task panel on the task state model (v0.23)', () => {
 
   it('shows another member\'s session as a tab named by its state and cockpit; the question is one short Waiting on line', () => {
     show(task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'Which address? · Which tone? · One job or several?' }, runs: [
-      { id: 'b', member: 'dominik', agent: 'motti', state: 'stale', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString(), result: null, here: false },
+      { id: 'b', member: 'dominik', agent: 'motti', state: 'stale', lastActivityAt: new Date(NOW - 2 * 3_600_000).toISOString(), here: false },
     ] }));
     expect(screen.getByLabelText('Sessions on it').textContent).toBe("Motti · silent · Dominik's cockpit");
     expect(screen.getByText('You · 3 questions from Atlas')).toBeTruthy();
     // asked, with its session gone: no Run/Schedule row, but a way to answer
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Work on it now' })).toBeTruthy();
+  });
+
+  it('orders its own session tabs by attention: the one the task waits on first, named needs input', () => {
+    const session = (id: string, minutesAgo: number) => ({ id, spaceId: 'main', __projectId: 'bp-acme', state: 'ended', summary: id, createdAt: new Date(NOW - 3_600_000).toISOString(), lastActivity: new Date(NOW - minutesAgo * 60_000).toISOString(), readAt: null, resultAt: null, attention: null }) as never;
+    render(
+      <MemoryRouter><QueryClientProvider client={client}>
+        <TaskPanel task={task({ group: 'asked', delegate: 'atlas', sessionIds: ['newer', 'asking'], waitingOn: { who: 'lasse', kind: 'question', why: 'Go?', session_id: 'asking' } })}
+          board={board(parent)} now={NOW} sessions={[session('newer', 1), session('asking', 30)]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+      </QueryClientProvider></MemoryRouter>,
+    );
+    expect([...screen.getByLabelText('Sessions on it').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Atlas · needs input', 'Atlas · idle']);
   });
 
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {

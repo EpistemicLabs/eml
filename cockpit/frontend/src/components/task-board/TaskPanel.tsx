@@ -11,9 +11,9 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardRun, type BoardTask, cardLine, repeatsText, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
@@ -50,46 +50,6 @@ export function focusReply(): void {
 
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
-
-/** A session's state as its tab names it, most in need of the viewer first (decision task-sessions-listed-by-attention). */
-type SessionState = 'needs input' | 'review' | 'silent' | 'working' | 'idle' | 'done';
-const SESSION_ORDER: Record<SessionState, number> = { 'needs input': 0, review: 1, silent: 2, working: 3, idle: 4, done: 5 };
-
-/** What a session on the task is doing, from the task's wait on it, its run, and whether it is put away. */
-export function sessionState(task: BoardTask, sessionId: string, archived: boolean, run: BoardRun | undefined): SessionState {
-  if (task.waitingOn?.session_id === sessionId) return task.waitingOn.kind === 'review' ? 'review' : 'needs input';
-  if (archived) return 'done';
-  if (run?.state === 'stale') return 'silent';
-  if (run?.state === 'running') return 'working';
-  return 'idle';
-}
-
-/** "Waiting on" in one short line: whose move it is, a question count when the agent asked several, and since when. */
-export function waitingLine(task: BoardTask, viewer: string): string {
-  const w = task.waitingOn;
-  if (!w) return '';
-  const who = w.who === viewer ? 'You' : w.who;
-  const parts = (w.why ?? '').split(' · ').filter(Boolean);
-  if (w.who === viewer && w.kind === 'question' && parts.length > 1) return `${who} · ${parts.length} questions from ${agentName(task.delegate)}`;
-  if (w.who === viewer && w.kind === 'review') return `${who} · a result to review`;
-  return w.why ? `${who} · ${w.why}` : who;
-}
-
-/** The actions a task's state calls for: none while an agent asks (the chat answers), Hand to after Work on it now, … */
-export function panelActions(task: BoardTask, hasSession = true): Array<'looks_good' | 'hand_to' | 'run_now' | 'delegate_now' | 'schedule' | 'together'> {
-  // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
-  if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
-  if (task.turn === 'review') return ['looks_good'];
-  if (task.handTo) return ['hand_to', 'schedule', 'together'];
-  if (task.turn === 'agent_working' && task.group !== 'stale') return ['together'];
-  if (task.turn === 'parked') return [];
-  if (task.delegate) {
-    // Scheduled: the Delegate line changes the schedule; run it now or work on it.
-    if (task.nextRunAt || task.schedule) return ['run_now', 'together'];
-    return ['run_now', 'schedule', 'together'];
-  }
-  return ['delegate_now', 'schedule', 'together'];
-}
 
 export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue, onPark }: {
   task: BoardTask;
@@ -156,7 +116,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
       })}
     </div>
   );
-  const LINK = cn('min-h-(--target-min) text-ui text-mark-ink underline underline-offset-2', FOCUS);
+
 
   // A closed task: how it ended, and Reopen, or why it can't be reopened here.
   const parent = task.parentId ? board.tasks.find((t) => t.id === task.parentId) ?? board.closed?.find((c) => c.id === task.parentId) : undefined;
@@ -251,7 +211,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <dt className={LABEL}>Delegate</dt>
               <dd className="m-0 flex flex-wrap items-center gap-2">
                 {task.delegate ? <AgentBadge handle={task.delegate} /> : <span className="text-muted-foreground">not delegated</span>}
-                {task.delegate && (task.group === 'mission' || task.schedule?.session === 'resume') && <span className="text-ui text-muted-foreground">until the goal is reached</span>}
+                {task.group === 'mission' && <span className="text-ui text-muted-foreground">until the goal is reached</span>}
                 {task.group === 'routine' && <span className="text-ui text-muted-foreground">{repeatsText(task.schedule).toLowerCase()}</span>}
                 {task.nextRunAt && <span className="text-ui text-muted-foreground">· {task.group === 'mission' ? 'next check' : 'next'} {when(task.nextRunAt, now)}</span>}
                 {!closed && (task.nextRunAt || task.schedule) && <button type="button" className={LINK} onClick={() => onHandOver(task, 'schedule')}>Change schedule…</button>}
@@ -301,7 +261,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               {/* Another member's session: seen here, opened only on that member's cockpit. */}
               {remote.map((r) => (
                 <span key={r.id} title={`On ${agentName(r.member)}'s cockpit`} className={cn('shrink-0 rounded-md px-2 py-1 text-ui text-muted-foreground', r.state === 'stale' && HUE.stopped.ink)}>
-                  {agentName(r.agent ?? task.delegate)} · {r.state === 'stale' ? 'silent' : r.state === 'running' ? 'working' : 'idle'} · {agentName(r.member)}'s cockpit
+                  {agentName(r.agent ?? task.delegate)} · {sessionState(task, r.id, false, r)} · {agentName(r.member)}'s cockpit
                 </span>
               ))}
             </div>

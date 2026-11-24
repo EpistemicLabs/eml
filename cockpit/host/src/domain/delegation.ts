@@ -6,11 +6,9 @@
  * requested_at is the runner's trigger. A request is open while no run on the task started at or after it, so the
  * status never has to go back to planned to start a task again: it moves forward only (planned → active → closed).
  *
- * There is no fallback to the old signal (planned + delegate + checkpoint): both members of a shared space move to
- * schema 23 together, every hand-over written since carries a request (Delegate now, eml_track_task, a task created
- * with a delegate and a checkpoint), and the cockpit's migration pass gives one exactly to the tasks the runner would
- * have started. The old signal would start the planned tasks that only had a delegate, once the migration gives them
- * checkpoint after (decision task-state-migration-rules).
+ * Only an open request starts a task: planned with a delegate and a checkpoint alone starts nothing. Every hand-over
+ * carries a request (Delegate now, eml_track_task, a task created with a delegate and a checkpoint), and a delegation
+ * without one waits for its owner to hand it over (decision task-state-migration-rules).
  */
 
 export interface ScheduleFields {

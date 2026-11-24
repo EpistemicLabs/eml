@@ -104,20 +104,24 @@ describe('the schedule mirror', () => {
     expect(brain.posts).toEqual([])
   })
 
-  it('keeps spaces apart: the same task id in another space neither clears nor re-reads this one', async () => {
+  it('keeps spaces apart: the same task id in two spaces is two tasks, each cached on its own', async () => {
+    // The task is gone in main (its job is there) and lives in the other space with no job there.
     const main = brainOf({})
     const other = brainOf({ t1: { status: 'active', properties: { assignee_ids: ['lasse'], delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } } } })
     const logs: string[] = []
     const mirror = createScheduleMirror({
       spaces: () => [{ id: 'main', name: 'Main', main: true } as never, { id: 'other', name: 'Other', main: false } as never],
-      brain: (space) => ((space as { id: string }).id === 'main' ? main : other), jobs: () => [job({ taskId: 't1' })],
+      brain: (space) => ((space as { id: string }).id === 'main' ? main : other),
+      jobs: () => [job({ taskId: 't1' }), job({ id: 'j-other', taskId: 't1', spaceId: 'other', endedAt: '2026-11-24T09:00:00.000Z' })],
       agentOf: () => 'atlas', me: 'lasse', now: () => NOW, log: (l) => logs.push(l),
     })
     await mirror.sync()
     await mirror.sync()
+    await mirror.sync()
+    // main's lookup failed once and waits out its recheck; the other space's task loses its schedule once, then rests
     expect(main.reads()).toBe(1)
-    expect(other.reads()).toBe(0)
-    expect(other.posts).toEqual([])
+    expect(other.posts).toHaveLength(1)
+    expect(other.reads()).toBe(1)
     expect(logs).toHaveLength(1)
   })
 
