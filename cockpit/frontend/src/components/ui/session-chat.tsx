@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import { ChatPane } from '@/components/chat/ChatPane';
 import { useSwitchBlocked } from '@/components/chat/chat-store';
@@ -33,10 +33,12 @@ export interface SessionChatToolbar {
  *   its own toolbar (a desk pane's, which also switches to the plugins).
  * - `borrowed`: shown outside its pane, so the terminal goes back to the pane on unmount.
  * - `paneId` names the surface, so scroll and draft are kept per surface.
+ * - `composer` replaces the session's input (a closed task's chat in the task panel); the chat view
+ *   then stays, since the terminal would write to the session straight away.
  */
 export function SessionChat({
   paneId, projectId, sessionId, session, spaceId, view: controlled, onView, toolbar, borrowed = false,
-  isActive = true, whenIdle = false, command = null, title = null,
+  isActive = true, whenIdle = false, command = null, title = null, composer,
 }: {
   paneId: string;
   projectId: string | null;
@@ -53,9 +55,10 @@ export function SessionChat({
   /** First prompt for a freshly spawned terminal session. */
   command?: string | null;
   title?: string | null;
+  composer?: ReactNode;
 }) {
   const [own, setOwn] = useState<SessionView>(session?.runtime === 'sdk' ? 'chat' : 'terminal');
-  const view = controlled ?? own;
+  const view = composer ? 'chat' : controlled ?? own;
   const setView = (next: SessionView) => { if (onView) onView(next); else setOwn(next); };
   const switchBlocked = useSwitchBlocked(sessionId);
   useEffect(() => {
@@ -69,7 +72,7 @@ export function SessionChat({
       {toolbar && (
         <div className="flex shrink-0 justify-end px-2 py-1.5">
           <MainContentTabSwitcher
-            groups={['session']}
+            groups={composer ? [] : ['session']}
             paneView={view}
             onSetPaneView={(next) => { if (next === 'terminal' || next === 'chat') setView(next); }}
             switchBlocked={switchBlocked}
@@ -78,7 +81,7 @@ export function SessionChat({
         </div>
       )}
       {view === 'chat' && sessionId ? (
-        <ChatPane paneId={paneId} projectId={projectId} sessionId={sessionId} session={session} whenIdle={whenIdle} isActive={isActive} spaceId={spaceId} />
+        <ChatPane paneId={paneId} projectId={projectId} sessionId={sessionId} session={session} whenIdle={whenIdle} isActive={isActive} spaceId={spaceId} composer={composer} />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">

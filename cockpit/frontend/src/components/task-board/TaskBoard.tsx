@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, closeTask, closedAsTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, closeTask, closedAsTask, type ContinueHow, continueTask, followUpTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
@@ -35,6 +35,8 @@ type View = TaskView;
 const VIEWS: Array<[View, string]> = [['inbox', 'Inbox'], ['now', 'Now'], ['plan', 'Plan']];
 /** Relative times ("asked 10:27", "in 3 days") are worked out again this often. */
 const NOW_TICK_MS = 30_000;
+/** How long after its undo window a follow-up's panel still opens on its own once the board has it. */
+const FOLLOW_UP_WAIT_MS = 60_000;
 /** How long Mark all read can be undone: as long as the host's commands (8 s). */
 const UNREAD_UNDO_MS = 8_000;
 /** Open something in the view that is shown now; it stays open when the board is left and shown again. */
@@ -116,6 +118,29 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       },
     }, answer.undoUntil);
   }, [refetch, say]);
+
+  // A follow-up started from a closed task's chat: its panel opens once the board has the new task.
+  const [followUpOf, setFollowUpOf] = useState<{ taskId: string; spaceId: string; since: number; until: number } | null>(null);
+  useEffect(() => {
+    if (!followUpOf || !board) return;
+    if (Date.now() > followUpOf.until) { setFollowUpOf(null); return; }
+    const made = board.tasks.filter((t) => t.originId === followUpOf.taskId && t.spaceId === followUpOf.spaceId && Date.parse(t.updatedAt ?? '') >= followUpOf.since)
+      .sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')))[0];
+    if (made) { setFollowUpOf(null); openTask(made); }
+  }, [board, followUpOf, openTask]);
+
+  const continueFrom = useCallback(async (t: BoardTask, text: string, how: ContinueHow, restore: () => void) => {
+    const answer = how === 'reopen' ? await continueTask(t, text) : await followUpTask(t, text);
+    answered(answer, how === 'reopen'
+      ? 'Reopened: its session gets your message once Undo is over.'
+      : 'Follow-up started: a new task linked to this one opens once Undo is over.', restore);
+    if (answer.ok && how === 'follow_up') {
+      // Only tasks made after this send count: an older follow-up of the same task must not open instead.
+      setFollowUpOf({ taskId: t.id, spaceId: t.spaceId, since: Date.parse(answer.undoUntil), until: Date.parse(answer.undoUntil) + FOLLOW_UP_WAIT_MS });
+      window.setTimeout(() => { void refetch(); }, Math.max(0, Date.parse(answer.undoUntil) - Date.now()) + 1000);
+    }
+    return answer.ok;
+  }, [answered, refetch]);
 
   const submitHandOver = useCallback(async (t: BoardTask, input: HandOverInput, desk: { id: string } | { name: string } | null) => {
     setDialog(null);
@@ -210,8 +235,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       sessionId={open?.sessionId}
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
-      onReview={async (t) => answered(await reviewDone(t), 'Closed as reviewed.')}
+      onReview={async (t) => answered(await reviewDone(t), 'Closed as done.')}
+      onDrop={async (t) => answered(await closeTask(t), 'Closed: not needed.')}
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
+      onContinue={continueFrom}
       onClose={closePanel}
     />
   ) : sessionOnly ? (

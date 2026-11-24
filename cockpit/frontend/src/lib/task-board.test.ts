@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, columns, coverageText, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, visibleInPlan, when, type BoardTask } from './task-board';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -182,5 +182,24 @@ describe('starting a session on a task', () => {
     expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
     answer(502, {});
     expect(await startTaskSession({ id: 't', spaceId: 'main' })).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('continueMode', () => {
+  const NOW = Date.parse('2026-11-24T10:00:00Z');
+  const DAY = 24 * 60 * 60 * 1000;
+  const at = (ms: number) => new Date(ms).toISOString();
+
+  it('reopens within 7 days, makes a follow-up the main way after, and only a follow-up for a blocked task', () => {
+    expect(continueMode({ owner: 'lasse', closedAt: at(NOW - DAY) }, 'lasse', NOW)).toEqual({ primary: 'reopen', reopen: true });
+    expect(continueMode({ owner: 'lasse', closedAt: null }, 'lasse', NOW)).toEqual({ primary: 'reopen', reopen: true });
+    expect(continueMode({ owner: 'lasse', closedAt: at(NOW - (REOPEN_DAYS * DAY + 1)) }, 'lasse', NOW)).toMatchObject({ primary: 'follow_up', reopen: true });
+    expect(continueMode({ owner: 'lasse', closedAt: at(NOW - DAY), blocked: 'superseded' }, 'lasse', NOW)).toMatchObject({ primary: 'follow_up', reopen: false });
+    expect(continueMode({ owner: 'lasse', closedAt: at(NOW - DAY), blocked: 'parent_closed' }, 'lasse', NOW)).toMatchObject({ primary: 'follow_up', reopen: false });
+  });
+
+  it('offers neither on someone else\'s task', () => {
+    expect(continueMode({ owner: 'dominik', closedAt: at(NOW) }, 'lasse', NOW)).toBeNull();
+    expect(continueMode({ closedAt: at(NOW) }, 'lasse', NOW)).toEqual({ primary: 'reopen', reopen: true });
   });
 });

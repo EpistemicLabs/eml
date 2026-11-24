@@ -35,7 +35,7 @@ describe('the task panel', () => {
   it('shows the Related block once while the journal and the question box come and go', () => {
     const panel = (t: BoardTask) => (
       <MemoryRouter><QueryClientProvider client={client}>
-        <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onReopen={() => {}} />
+        <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
       </QueryClientProvider></MemoryRouter>
     );
     const { rerender } = render(panel(parent));
@@ -50,14 +50,55 @@ describe('the task panel', () => {
 
   describe('a closed task', () => {
     const closed = (patch: Partial<BoardTask>) => task({ id: 'c', status: 'invalidated', turn: null, group: undefined, closedAt: new Date(NOW).toISOString(), outcome: 'Not needed', delegate: 'atlas', checkpoint: 'after', ...patch });
-    const show = (t: BoardTask, onReopen = vi.fn(), viewer = 'lasse') => {
+    const show = (t: BoardTask, onReopen = vi.fn(), viewer = 'lasse', onContinue = vi.fn(async () => true)) => {
       render(
         <MemoryRouter><QueryClientProvider client={client}>
-          <TaskPanel task={t} board={{ ...board(parent), viewer, closed: [] }} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onReopen={onReopen} />
+          <TaskPanel task={t} board={{ ...board(parent), viewer, closed: [] }} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={onReopen} onContinue={onContinue} />
         </QueryClientProvider></MemoryRouter>,
       );
       return onReopen;
     };
+    const DAY = 24 * 60 * 60 * 1000;
+    const input = () => screen.getByRole('textbox', { name: /Continue…|What should the follow-up do/ });
+
+    it('keeps an input under its chat: Enter reopens with the message, ⌥Enter starts a follow-up', async () => {
+      const onContinue = vi.fn(async () => true);
+      show(closed({ status: 'resolved' }), vi.fn(), 'lasse', onContinue);
+      expect(input().getAttribute('placeholder')).toBe('Continue… (reopens the task)');
+      fireEvent.change(input(), { target: { value: 'one more fix' } });
+      fireEvent.keyDown(input(), { key: 'Enter' });
+      await vi.waitFor(() => expect(onContinue).toHaveBeenCalledWith(expect.objectContaining({ id: 'c' }), 'one more fix', 'reopen', expect.any(Function)));
+      await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(''));
+      fireEvent.change(input(), { target: { value: 'something new' } });
+      fireEvent.keyDown(input(), { key: 'Enter', altKey: true });
+      await vi.waitFor(() => expect(onContinue).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'c' }), 'something new', 'follow_up', expect.any(Function)));
+      expect(screen.getByRole('button', { name: /As follow-up/ })).toBeTruthy();
+    });
+
+    it('keeps the text when the cockpit refuses, and Shift+Enter is a new line', async () => {
+      const onContinue = vi.fn(async () => false);
+      show(closed({ status: 'resolved' }), vi.fn(), 'lasse', onContinue);
+      fireEvent.change(input(), { target: { value: 'keep me' } });
+      fireEvent.keyDown(input(), { key: 'Enter', shiftKey: true });
+      expect(onContinue).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: /^Send/ }));
+      await vi.waitFor(() => expect(onContinue).toHaveBeenCalled());
+      await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe('keep me'));
+    });
+
+    it('makes a follow-up the main way after 7 days, and the only one for a replaced task; none for someone else\'s', () => {
+      show(closed({ status: 'resolved', closedAt: new Date(NOW - 8 * DAY).toISOString() }));
+      expect(screen.getByRole('button', { name: /^Start follow-up/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Reopen & send/ })).toBeTruthy();
+      cleanup();
+      show(closed({ blocked: 'superseded', status: 'superseded' }));
+      expect(screen.getByRole('button', { name: /^Start follow-up/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Reopen & send|^Send/ })).toBeNull();
+      expect(screen.getByText(/can't be reopened: a follow-up starts a new task/)).toBeTruthy();
+      cleanup();
+      show(closed({ owner: 'dominik' }));
+      expect(screen.queryByRole('textbox', { name: /Continue…|What should the follow-up do/ })).toBeNull();
+    });
 
     it('says how it ended and reopens with the reason; no hand-over buttons', () => {
       const onReopen = show(closed({}));
@@ -87,6 +128,39 @@ describe('the task panel', () => {
       show(task({ id: 'r', reopenedWith: [{ id: 'd1', type: 'decision', title: 'use-postgres' }] }));
       expect(screen.getByText('Closed with it, not back yet')).toBeTruthy();
       expect(screen.getByText(/decision · use postgres/i)).toBeTruthy();
+    });
+  });
+
+  describe('the ⋯ menu', () => {
+    const show = (t: BoardTask) => {
+      const onReview = vi.fn();
+      const onDrop = vi.fn();
+      render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={onReview} onDrop={onDrop} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      return { onReview, onDrop };
+    };
+
+    it('closes an open task as done, or as not needed', () => {
+      const { onReview, onDrop } = show(task({ id: 'o' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Done' }));
+      expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ id: 'o' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Not needed' }));
+      expect(onDrop).toHaveBeenCalledWith(expect.objectContaining({ id: 'o' }));
+    });
+
+    it('has no Done in review (Looks good, done is there), and no menu on a closed task', () => {
+      show(task({ id: 'r', turn: 'review' }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.queryByRole('menuitem', { name: 'Done' })).toBeNull();
+      expect(screen.getByRole('menuitem', { name: 'Not needed' })).toBeTruthy();
+      cleanup();
+      show(task({ id: 'c', status: 'resolved', turn: null }));
+      expect(screen.queryByRole('button', { name: 'More task actions' })).toBeNull();
     });
   });
 });

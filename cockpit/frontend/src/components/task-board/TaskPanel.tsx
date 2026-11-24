@@ -1,6 +1,7 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
 // the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions,
-// and a closed task's one action is Reopen (decision task-board-reopen-action).
+// Done and Not needed sit in the ⋯ menu. A closed task keeps its chat: writing there reopens it or starts
+// a follow-up (decision task-closing-and-continuation-rules), and Reopen still reopens without a message.
 import { useEffect, useState } from 'react';
 
 import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
@@ -10,12 +11,13 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, CLOSED_STATUSES, closedAsTask, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, PRIMARY } from '@/shared/view/ui';
+import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
+import { ContinueComposer } from './ContinueComposer';
 import { AgentBadge, FromOrigin } from './parts';
 import { TaskRelated } from './TaskRelated';
 
@@ -49,7 +51,7 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onReopen }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -61,9 +63,14 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onClose: () => void;
   onOpenTask: (task: BoardTask) => void;
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
+  /** Close an open task as done (Looks good, done; the ⋯ menu's Done). */
   onReview: (task: BoardTask) => void;
+  /** Close an open task as not needed (dropped). */
+  onDrop: (task: BoardTask) => void;
   /** Reopen a closed task (owner only), with an optional reason for its journal. */
   onReopen: (task: BoardTask, reason: string) => void;
+  /** Writing in a closed task's chat: reopen it with the message, or start a follow-up. False: the text stays in the input. */
+  onContinue: (task: BoardTask, text: string, how: ContinueHow, restore: () => void) => Promise<boolean>;
 }) {
   const [reason, setReason] = useState('');
   const { hrefFor, go } = useEngramPanel();
@@ -79,6 +86,15 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   const closed = CLOSED_STATUSES.has(task.status);
   const asked = task.group === 'asked';
   const review = task.turn === 'review';
+  // A task closed in the Done window comes from the board's tasks; when and why it can't reopen are in its closed entry.
+  const closedEntry = closed ? board.closed?.find((c) => c.id === task.id && c.spaceId === task.spaceId) : undefined;
+  const blocked = task.blocked ?? closedEntry?.blocked;
+  const goOn = closed && !task.pending ? continueMode({ owner: task.owner, closedAt: task.closedAt ?? closedEntry?.closedAt ?? null, blocked }, board.viewer, now) : null;
+  const composer = goOn && <ContinueComposer mode={goOn} onSend={(text, how, restore) => onContinue(task, text, how, restore)} />;
+  const menu: MenuItem[] = closed ? [] : [
+    ...(review ? [] : [{ label: 'Done', onSelect: () => onReview(task) }]),
+    { label: 'Not needed', onSelect: () => onDrop(task), destructive: true },
+  ];
 
   const handOver = !closed && (
     <div className="flex flex-wrap gap-2">
@@ -98,12 +114,12 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     <div aria-label="Closed" className="flex flex-col gap-2 rounded-xl border border-border px-3 py-2.5 text-body">
       <div>
         <b className="font-semibold">{ENDED[task.status] ?? 'Closed'}</b>
-        {task.closedAt && <span className="tabular-nums text-muted-foreground"> · {when(task.closedAt, now)}</span>}
-        {task.outcome && <span className="text-muted-foreground"> · {task.outcome}</span>}
+        {(task.closedAt ?? closedEntry?.closedAt) && <span className="tabular-nums text-muted-foreground"> · {when((task.closedAt ?? closedEntry?.closedAt)!, now)}</span>}
+        {(task.outcome ?? closedEntry?.outcome) && <span className="text-muted-foreground"> · {task.outcome ?? closedEntry?.outcome}</span>}
       </div>
-      {task.blocked === 'superseded' ? (
+      {blocked === 'superseded' ? (
         <span className="text-ui text-muted-foreground">Another task replaced it: go on there.</span>
-      ) : task.blocked === 'parent_closed' ? (
+      ) : blocked === 'parent_closed' ? (
         <span className="text-ui text-muted-foreground">
           Its parent{parent ? <> <button type="button" className={cn('underline underline-offset-2', FOCUS)} onClick={() => onOpenTask('turn' in parent ? parent : closedAsTask(parent))}>{taskName(parent)}</button></> : null} is closed: reopen the parent first.
         </span>
@@ -116,7 +132,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
           <button type="submit" className={PRIMARY}>Reopen</button>
         </form>
       )}
-      {!task.blocked && mine && (
+      {!blocked && mine && (
         <span className="text-caption text-muted-foreground">It comes back as active with its owner{task.delegate ? `, delegate ${agentName(task.delegate)}` : ''}{task.checkpoint ? ` and checkpoint ${task.checkpoint}` : ''}. No agent starts; you can undo for 8 s.</span>
       )}
     </div>
@@ -141,6 +157,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
               {task.due && <Chip hue="mark">due {dueLabel(task.due, now)}</Chip>}
               {task.checkpoint && <Chip>checkpoint {task.checkpoint}</Chip>}
+              {menu.length > 0 && <Menu label="More task actions" items={menu} className="ml-auto" />}
             </div>
             <h2 id={TASK_TITLE_ID} tabIndex={-1} data-autofocus className={cn('m-0 text-display font-semibold tracking-title text-balance', FOCUS)}>{taskName(task)}</h2>
             <details className="group text-ui text-muted-foreground">
@@ -219,7 +236,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             </div>
           )}
           {current ? (
-            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} />
+            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} {...(closed ? { composer: composer || <ClosedNote task={task} pending={Boolean(task.pending)} /> } : {})} />
           ) : (
             <>
             <div className="flex shrink-0 justify-end px-2 py-1.5">
@@ -227,13 +244,24 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             </div>
             <div className="m-auto flex max-w-dialog flex-col items-center gap-3 px-5 py-10 text-center text-body text-muted-foreground">
               <b className="text-foreground">{closed ? 'No session on this task.' : 'No session on this task yet.'}</b>
-              {!closed && 'Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.'}
+              {closed ? (goOn?.primary === 'reopen' ? 'Write below to reopen it: a session starts with your message.' : null)
+                : 'Delegate it so an agent works on it in the background, schedule it, or work on it now with an agent in a desk of your choice.'}
               {handOver}
             </div>
+            {composer}
             </>
           )}
         </section>
       </div>
     </>
+  );
+}
+
+/** Under a closed task's chat when writing can't go on from here: being reopened, or not the viewer's. */
+function ClosedNote({ task, pending }: { task: BoardTask; pending: boolean }) {
+  return (
+    <p className="m-0 shrink-0 border-t border-border p-3 text-ui text-muted-foreground">
+      {pending ? 'Reopening… the chat takes your message once it is open.' : `Only its owner (${task.owner}) can go on with this task.`}
+    </p>
   );
 }

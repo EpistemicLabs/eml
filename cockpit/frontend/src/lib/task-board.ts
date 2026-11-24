@@ -264,6 +264,36 @@ export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpI
 /** Reopens a closed task (active, starts nothing), after the undo window; owner only. */
 export const reopenTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, reason?: string, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, ...(reason?.trim() ? { reason: reason.trim() } : {}) });
+/** Reopens a closed task from its chat: once the undo window is over, its newest session gets the message. */
+export const continueTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, message: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, message });
+/** Starts a follow-up of a task: a new task spun off from it with the message as its brief, after the undo window. */
+export const followUpTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, message: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/follow-up`, { opId, spaceId: task.spaceId, message });
+
+/** How writing in a closed task's chat goes on: reopen it, or start a follow-up. */
+export type ContinueHow = 'reopen' | 'follow_up';
+/** The main way, whether reopening is offered at all, and why not or why the main way is a follow-up. */
+export interface ContinueMode { primary: ContinueHow; reopen: boolean; note?: string }
+
+/** A task closed longer ago than this gets a follow-up as the main way: the work it held has moved on. */
+export const REOPEN_DAYS = 7;
+
+/**
+ * How a closed task's chat goes on (decision task-closing-and-continuation-rules): closed within
+ * REOPEN_DAYS and reopenable → Send reopens; older → Start follow-up first; replaced or under a closed
+ * parent → follow-up only. Null: not the viewer's task, so neither (both are the owner's).
+ */
+export function continueMode(task: Pick<BoardTask, 'closedAt' | 'owner'> & { blocked?: 'superseded' | 'parent_closed' }, viewer: string | undefined, now: number): ContinueMode | null {
+  if (task.owner && viewer && task.owner !== viewer) return null;
+  if (task.blocked === 'superseded') return { primary: 'follow_up', reopen: false, note: 'Another task replaced this one, so it can\'t be reopened: a follow-up starts a new task.' };
+  if (task.blocked === 'parent_closed') return { primary: 'follow_up', reopen: false, note: 'Its parent is closed, so it can\'t be reopened here: a follow-up starts a new task.' };
+  const closed = task.closedAt ? Date.parse(task.closedAt) : NaN;
+  if (Number.isFinite(closed) && now - closed > REOPEN_DAYS * 24 * 60 * 60 * 1000) {
+    return { primary: 'follow_up', reopen: true, note: `Closed more than ${REOPEN_DAYS} days ago: a follow-up starts a new task. Reopen & send goes on in this one.` };
+  }
+  return { primary: 'reopen', reopen: true };
+}
 export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponent(opId)}/undo`, {});
 
 // ---- names and colours ----
