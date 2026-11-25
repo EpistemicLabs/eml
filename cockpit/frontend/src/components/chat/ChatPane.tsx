@@ -10,12 +10,13 @@ import {
 import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
-import { buttonVariants, Chip, FIELD, FOCUS } from '@/shared/view/ui';
+import { buttonVariants, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { undoSplit } from '@/lib/split';
 import { closeTask, useTaskBoard } from '@/lib/task-board';
-import { activatePane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
+import { activatePane, getDeskOfPane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
+import { useSpaces } from '@/stores/useSpaceStore';
 
 import { AgentCard } from './AgentCard';
 import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, createdTaskName, keepItHereMessage, SORT_LATER_MESSAGE, isPaneCommand, type Question, type RequestOutcome } from './chat-state';
@@ -32,6 +33,7 @@ import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
 import { FileChips, openChatFile, resolvedRefs, useChatFiles } from '@/components/media/FileChips';
 import { FILE_REF_ATTR, rehypeFileRefs } from '@/components/media/inline-refs';
+import { turnEndLine, type TurnEndCall } from './turn-end-line';
 import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
@@ -387,17 +389,15 @@ function PinOnSend({ pinRef, unpinRef }: { pinRef: React.MutableRefObject<(() =>
   return null;
 }
 
-const STATUS_WORD: Record<string, string> = { done: 'Done', question: 'Question', review: 'Check this', failed: 'Failed' };
-
-/** How the session said it stands at the end of its turn: a label above its closing summary. */
-function StatusLabel({ status, reason }: { status: string; reason: string | null }) {
-  const needsYou = status === 'question' || status === 'failed';
+/**
+ * Where the agent ended its turn, as one quiet line under its reply: the state in words, so it
+ * reads without colour.
+ */
+function TurnEnd({ call, owner, agent }: { call: TurnEndCall; owner: string | null; agent: string | null }) {
+  const { label, detail } = turnEndLine(call, { owner, agent, now: Date.now() });
   return (
-    <div className="flex min-w-0 items-baseline gap-2 px-1">
-      <Chip hue={status === 'failed' ? 'stopped' : needsYou ? 'you' : undefined} className="flex-shrink-0 py-0.5">
-        {STATUS_WORD[status] ?? status}
-      </Chip>
-      {reason && <span className="min-w-0 text-muted-foreground break-words">{reason}</span>}
+    <div className="px-1 text-muted-foreground break-words">
+      <span className="font-medium">{label}</span>{detail && ` · ${detail}`}
     </div>
   );
 }
@@ -406,11 +406,14 @@ function StatusLabel({ status, reason }: { status: string; reason: string | null
 const latestItemId = (items: ChatItem[]): string | null => items.at(-1)?.id ?? null;
 
 const Messages = memo(function Messages({
-  sessionId, items, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
+  sessionId, items, owner, agent, agents, agentTools, opened, onToggle: toggle, onAnswer, onStopAgent, onSplit, marks, renderMark, offers, onOffer, onKeep, sorts, onSort, onLater, renderCreated,
 }: {
   /** The session, for the files its replies name (relative paths are read from its folder). */
   sessionId: string;
   items: ChatItem[];
+  /** The user's handle and the session's agent's, for the line that ends a turn; null while not known. */
+  owner: string | null;
+  agent: string | null;
   agents: AgentTask[];
   agentTools: Record<string, AgentTool[]>;
   opened: Set<string>;
@@ -465,7 +468,7 @@ const Messages = memo(function Messages({
           );
         }
         if (group.kind === 'tools') return <ToolGroup key={group.id} id={group.id} tools={group.tools} opened={opened} onToggle={toggle} />;
-        if (group.kind === 'status') return <StatusLabel key={group.id} status={group.status} reason={group.reason} />;
+        if (group.kind === 'status') return <TurnEnd key={group.id} call={group.call} owner={owner} agent={agent} />;
         if (group.kind === 'created') return <Fragment key={group.id}>{renderCreated(group)}</Fragment>;
         if (group.kind === 'sort') {
           const { id, rows, reason } = group;
@@ -586,6 +589,10 @@ export function ChatPane({
   const openSort = useCallback((id: string, rows: SortProposal[]) => setSortOpen({ id, rows }), []);
   // Tasks the agent created: Undo drops one through the board's close (it waits out the board's undo window).
   const { data: board } = useTaskBoard();
+  // The agent the session runs as: its space's (a pane's space is its desk's; null is the main space).
+  const spaces = useSpaces();
+  const spaceKey = spaceId !== undefined ? spaceId : getDeskOfPane(paneId)?.spaceId ?? null;
+  const agent = (spaceKey ? spaces.find((s) => s.id === spaceKey) : spaces.find((s) => s.main))?.agent ?? null;
   const [dropped, setDropped] = useState<Record<string, 'undoing' | 'undone' | { error: string }>>({});
   const renderCreated = useCallback((created: { taskId: string; title: string; displayTitle?: string }) => {
     const { taskId } = created;
@@ -683,7 +690,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages sessionId={sessionId} items={chat.items} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
+          <Messages sessionId={sessionId} items={chat.items} owner={board?.viewer || null} agent={agent} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
