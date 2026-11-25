@@ -339,14 +339,14 @@ function AppContentInner() {
           this wrapper — overflow-hidden here would clip it. The chrome layer
           lifts the overlay above the pane grid; the row stretches it to its
           height less the margins. */}
-      <div className={compact ? 'contents' : 'relative z-(--z-chrome) my-2 ml-2 flex-shrink-0 self-stretch'}>
+      <div className={compact ? 'contents' : 'relative z-(--z-chrome) my-(--gap-shell) ml-(--gap-shell) flex-shrink-0 self-stretch'}>
         <Sidebar
           drawer={compact ? { open: drawerOpen, onClose: closeDrawer } : undefined}
           onShowSettings={(tab) => { setDrawerOpen(false); openSettings(tab); }}
         />
       </div>
       {tasksCardPlace === 'left' && (
-        <div className="relative my-2 ml-2 flex-shrink-0 self-stretch">
+        <div className="relative my-(--gap-shell) ml-(--gap-shell) flex-shrink-0 self-stretch">
           <TasksCard projects={projectsBySpace} />
         </div>
       )}
@@ -423,7 +423,7 @@ function AppContentInner() {
         </div>
       </div>
       {tasksCardPlace === 'right' && (
-        <div className="relative my-2 mr-2 flex-shrink-0 self-stretch">
+        <div className="relative my-(--gap-shell) mr-(--gap-shell) flex-shrink-0 self-stretch">
           <TasksCard projects={projectsBySpace} />
         </div>
       )}

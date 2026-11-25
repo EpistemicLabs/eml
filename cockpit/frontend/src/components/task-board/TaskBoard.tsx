@@ -285,11 +285,12 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
-      {/* An open task in the Inbox fills the height, with the same gap below as above; the list beside it scrolls on its own. */}
-      <div className={cn('mx-auto flex w-full max-w-content flex-col gap-4 px-4 pt-3', split ? 'min-h-0 flex-1 pb-3' : 'pb-10')}>
+      {/* An open task in the Inbox fills the height, with the same gap below as above; the list beside it scrolls on its own.
+          Wide: the shell's gap on every side and between the columns, as around the sidebar and between desk panes. */}
+      <div className={cn('flex w-full flex-col gap-4', compact ? 'px-4 pt-3' : 'px-(--gap-shell) pt-(--gap-shell)', split ? (compact ? 'min-h-0 flex-1 pb-3' : 'min-h-0 flex-1 pb-(--gap-shell)') : 'pb-10')}>
         {compact && <ControlBar board={board} unread={unreadSessions.length} view={open && !split ? null : view} onView={setTaskView} />}
         {split ? (
-          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-working-split)">
+          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1 gap-4 lg:grid-cols-(--grid-inbox-working-split) lg:gap-(--gap-shell)">
             <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">{workingColumn}</div>
             <div className="hidden min-h-0 min-w-0 overflow-y-auto lg:block">
               <InboxView board={board} now={now} compact currentTaskId={task?.id ?? null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
@@ -299,9 +300,9 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
             </section>
           </div>
         ) : view === 'inbox' ? (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-working)">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-(--grid-inbox-working) lg:gap-(--gap-shell)">
             {/* Wide: a column left of the list. Narrow: a strip of cards above it, gone while nothing works. */}
-            <div className="hidden min-w-0 lg:sticky lg:top-3 lg:block">{workingColumn}</div>
+            <div className="hidden min-w-0 lg:sticky lg:top-(--gap-shell) lg:block">{workingColumn}</div>
             <div className="min-w-0 lg:hidden"><WorkingStrip rows={working} now={now} onOpen={openWorking} /></div>
             <InboxView board={board} now={now} compact={false} currentTaskId={null} unread={unread} onOpen={(item) => { const t = item.taskId ? byId.get(item.taskId) : undefined; if (t) openTask(t, item.sessionId); }} onAction={onInboxAction} />
           </div>
