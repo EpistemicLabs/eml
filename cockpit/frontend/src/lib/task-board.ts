@@ -145,7 +145,8 @@ export function closedAsTask(c: ClosedTask): BoardTask {
 
 export interface InboxItem {
   key: string;
-  kind: 'question' | 'review';
+  /** `stopped`: an agent failed or went silent, and only the viewer can get it going again. */
+  kind: 'question' | 'review' | 'stopped';
   space: string;
   title: string;
   text: string;
