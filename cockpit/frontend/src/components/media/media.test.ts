@@ -71,3 +71,41 @@ describe('the slide-over state', () => {
     expect(getMediaOpen()).toBeNull();
   });
 });
+
+describe('clickable paths in a reply', () => {
+  it('splits a text at the refs, the longer ref first where one holds another', async () => {
+    const { splitByRefs } = await import('./inline-refs');
+    expect(splitByRefs('see /w/a.csv and a.csv.', ['a.csv', '/w/a.csv'])).toEqual([
+      { text: 'see ' }, { text: '/w/a.csv', ref: '/w/a.csv' }, { text: ' and ' }, { text: 'a.csv', ref: 'a.csv' }, { text: '.' },
+    ]);
+    expect(splitByRefs('nothing here', ['x.md'])).toEqual([{ text: 'nothing here' }]);
+  });
+
+  it('wraps paths in prose and inline code, never inside links or code blocks', async () => {
+    const { rehypeFileRefs } = await import('./inline-refs');
+    const text = (value: string) => ({ type: 'text', value });
+    const tree = { type: 'root', children: [
+      { type: 'element', tagName: 'p', children: [text('Here: '), { type: 'element', tagName: 'code', children: [text('/w/a.csv')] }, text(' and /w/b.png.')] },
+      { type: 'element', tagName: 'a', properties: { href: 'x' }, children: [text('/w/a.csv')] },
+      { type: 'element', tagName: 'pre', children: [{ type: 'element', tagName: 'code', children: [text('/w/b.png')] }] },
+    ] };
+    rehypeFileRefs(['/w/a.csv', '/w/b.png'])()(tree as never);
+    const spans: string[] = [];
+    const walk = (n: { tagName?: string; properties?: Record<string, unknown>; children?: unknown[] }) => {
+      if (n.tagName === 'span' && n.properties?.dataFileRef) spans.push(String(n.properties.dataFileRef));
+      (n.children as typeof n[] | undefined)?.forEach(walk);
+    };
+    walk(tree);
+    expect(spans).toEqual(['/w/a.csv', '/w/b.png']);
+  });
+});
+
+describe('a clickable path is a mouse shortcut', () => {
+  it('has no role and no tab stop: the chip is the control', async () => {
+    const { rehypeFileRefs } = await import('./inline-refs');
+    const tree = { type: 'root', children: [{ type: 'element', tagName: 'p', children: [{ type: 'text', value: 'see /w/a.csv' }] }] };
+    rehypeFileRefs(['/w/a.csv'])()(tree as never);
+    const span = (tree.children[0].children as Array<{ properties?: Record<string, unknown> }>)[1];
+    expect(span.properties).toEqual({ dataFileRef: '/w/a.csv', className: ['file-ref'], title: 'Open this file' });
+  });
+});
