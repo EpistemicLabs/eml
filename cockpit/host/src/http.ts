@@ -71,6 +71,7 @@ import { RELAY_PATH } from './infrastructure/plugins/mcp-relay.js'
 import type { AgentBrains } from './agents.js'
 import { handleAgentsApi } from './agents-api.js'
 import { isPageRoute, NOT_PASSED, SPACE_BRAIN_ROUTES } from './page-brain-routes.js'
+import { sendJson } from './json-response.js'
 
 /**
  * The host's public surface (loopback only): static Vite assets, the /api/brain
@@ -185,9 +186,9 @@ async function readJson(req: http.IncomingMessage): Promise<Record<string, unkno
   }
 }
 
+/** JSON answers of the host's own routes, gzipped for a client that takes it (json-response.ts). */
 function json(res: http.ServerResponse, status: number, payload: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify(payload))
+  sendJson(res, status, payload)
 }
 
 function fail(res: http.ServerResponse, err: unknown): void {
