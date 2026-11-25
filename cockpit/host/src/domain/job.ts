@@ -2,7 +2,7 @@ import type { ProviderId } from './agent-provider.js'
 import type { WorkerStatus } from './session-attention.js'
 import type { ToolProfile } from './tool-profile.js'
 import { formatInZone, nextCronTime, parseCron } from './schedule.js'
-import { JOB_HEADER_STATUS } from './turn-end.js'
+import { CHECK_RUN_RULE, JOB_HEADER_STATUS } from './turn-end.js'
 
 /**
  * A job: work the cockpit wakes a session for, without anyone asking at that
@@ -266,8 +266,8 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
       : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + `Not from your user, and nobody may be watching: ${JOB_HEADER_STATUS}. `
-    + 'The schedule tool changes or stops this job.'
-    + continuation(job) + taskRule(job) + ']'
+    // A check set by ending a turn is moved and removed by ending a turn, not with the schedule tool.
+    + (job.origin === 'end_turn' ? CHECK_RUN_RULE : 'The schedule tool changes or stops this job.' + continuation(job) + taskRule(job)) + ']'
 }
 
 /**

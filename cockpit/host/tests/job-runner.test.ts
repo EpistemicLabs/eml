@@ -219,6 +219,18 @@ describe('job runner', () => {
     expect(header('Daily brief')).not.toContain('never close its task')
   })
 
+  it('tells the run of a check set by ending a turn how that check moves and ends, not the schedule tool\'s rules', async () => {
+    const { CHECK_RUN_RULE } = await import('../src/domain/turn-end.js')
+    const check = (await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'Check: a task', prompt: 'p', at: '2026-11-10T08:00', target: 'self' })).job!
+    world.store.put({ ...check, origin: 'end_turn' })
+    world.states.set('maker', 'idle')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    const header = world.delivered[0].text.split('\n')[0]
+    expect(header.endsWith(`${CHECK_RUN_RULE}]`)).toBe(true)
+    expect(header).not.toMatch(/schedule tool|action finish/)
+  })
+
   it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
     await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
     world.now = Date.parse('2026-11-10T00:00:30Z')
