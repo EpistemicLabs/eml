@@ -132,6 +132,7 @@ function answer(json: Json, res: http.ServerResponse, result: Submitted): void {
     ...(c.carriedQuestion ? { carriedQuestion: c.carriedQuestion } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.effects ? { effects: c.effects } : {}),
+    ...(c.tookOver ? { sessionId: c.tookOver } : {}),
   })
 }
 

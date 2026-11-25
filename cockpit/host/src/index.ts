@@ -885,6 +885,8 @@ async function main() {
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },
+    ownSession: (taskId) => ownSessionOn(taskId)?.sessionId ?? null,
+    sessionOpen: (sessionId) => { const entry = ledger.get(sessionId); return Boolean(entry && !entry.archivedAt) },
     sessionsSince: (taskId, since) => {
       const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
       return { total: on.length, open: on.filter((e) => !e.archivedAt).length }

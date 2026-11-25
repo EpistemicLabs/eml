@@ -362,6 +362,33 @@ describe('work on it now ends (B2)', () => {
     expect(w.posts).toHaveLength(1)
   })
 
+  it('take over opens the task\'s own session: no desk needed, the delegation goes, and it lasts while that session is open', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-19T09:00:00.000Z' }
+    const base = together({ delegate: 'atlas', delegation }, 'active')
+    let open = true
+    const commands = createTaskCommands({ ...base.deps, ownSession: (id) => (id === 't1' ? 'desk-1' : null), sessionOpen: (id) => id === 'desk-1' && open })
+    const r = await commands.submit({ opId: 'op-take', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas' } })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', tookOver: 'desk-1' } })
+    expect(base.posts[0].body).toMatchObject({ delegation: null })
+    expect(base.posts[0].body.text).toBe('Taken over by the owner in its session. atlas is no longer delegated, so it does not go on alone; a turn it is in finishes first.')
+    expect(commands.together('t1')).toBe(true)
+    // no session opened since, but the one it took over is open: it outlasts the grace time
+    base.later(TOGETHER_GRACE_MS + 1000)
+    await commands.tick()
+    expect(commands.together('t1')).toBe(true)
+    open = false
+    await commands.tick()
+    expect(commands.together('t1')).toBe(false)
+    expect(commands.releasedAgent('t1')).toBe('atlas')
+  })
+
+  it('work on it now on a task without an own session still needs a desk', async () => {
+    const w = together()
+    const commands = createTaskCommands({ ...w.deps, ownSession: () => null })
+    expect(await commands.submit({ opId: 'op-nodesk', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas' } }))
+      .toEqual({ ok: false, refusal: 'desk_required' })
+  })
+
   it('releases it when no session ever opened, after the grace time', async () => {
     const w = together()
     await w.commands.submit({ opId: 'op-tg2', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })

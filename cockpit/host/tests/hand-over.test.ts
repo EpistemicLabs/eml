@@ -17,6 +17,18 @@ describe('planning a hand-over', () => {
     expect(r.plan.session).toBeUndefined()
   })
 
+  it('take over: on a task with its own session, together opens that session, needs no desk and journals it as taken over', () => {
+    const r = planHandOver(task({ delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after' } }), { mode: 'together', delegate: 'atlas' }, { ...ctx, ownSession: 's1' })
+    if (!r.ok) throw new Error(r.refusal)
+    expect(r.plan.patch).toEqual({ delegation: null })
+    expect(r.plan.session).toEqual({ sessionId: 's1' })
+    expect(r.plan.journal).toBe('Taken over by the owner in its session. atlas is no longer delegated, so it does not go on alone; a turn it is in finishes first.')
+    const inDesk = planHandOver(task(), { mode: 'together', delegate: 'atlas', desk: 'Main' }, { ...ctx, ownSession: 's1' })
+    if (!inDesk.ok) throw new Error(inDesk.refusal)
+    expect(inDesk.plan.session).toEqual({ desk: 'Main', sessionId: 's1' })
+    expect(planHandOver(task(), { mode: 'together', delegate: 'atlas' }, ctx)).toEqual({ ok: false, refusal: 'desk_required' })
+  })
+
   it('delegate now on an active task leaves its status alone: the request starts it (status moves forward only)', () => {
     const r = planHandOver(task({ status: 'active' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx)
     if (!r.ok) throw new Error(r.refusal)

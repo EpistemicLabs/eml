@@ -5,7 +5,8 @@ import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 /**
  * Hand over: give a task to an agent while its owner stays (decision task-assignee-owner-and-agent-delegate).
  * Three modes: now (the runner starts the delegate), schedule (a job starts it at a time), together
- * (Work on it now: a session in a desk, with the owner in the chat). This file plans the change; the use case
+ * (Work on it now: a session in a desk, with the owner in the chat; on a task with its own open session it is Take
+ * over, which opens that session instead of starting one). This file plans the change; the use case
  * (application/task-commands.ts) carries it out and keeps it undoable.
  *
  * v0.23 (task state model): a delegation always means the agent works on its own. Delegate now writes
@@ -72,7 +73,8 @@ export interface HandOverPlan {
   /** What the delegate reads first when it starts. */
   brief?: string
   job?: ScheduleSpec
-  session?: { desk: string }
+  /** Work on it now: a new session in `desk`. Take over: the task's own session (`sessionId`), opened in `desk` when named. */
+  session?: { desk?: string; sessionId?: string }
 }
 
 export interface HandOverContext {
@@ -80,6 +82,8 @@ export interface HandOverContext {
   agents: string[]
   /** The time of the hand-over (ISO): a Delegate now's request. */
   now: string
+  /** The task's own open session (domain/own-session.ts), or null: Take over opens it instead of starting one. */
+  ownSession?: string | null
 }
 
 const CHECKPOINTS = new Set(['before', 'after', 'none'])
@@ -89,7 +93,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (!ctx.agents.includes(req.delegate)) return { ok: false, refusal: 'delegate_not_in_space' }
   if (req.mode !== 'together' && (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint))) return { ok: false, refusal: 'checkpoint_required' }
   if (req.mode === 'schedule' && !req.schedule) return { ok: false, refusal: 'schedule_required' }
-  if (req.mode === 'together' && !req.desk) return { ok: false, refusal: 'desk_required' }
+  // A new session opens in a desk; Take over opens the task's own session where it is shown (a desk names its pane).
+  if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'desk_required' }
   if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
 
   const patch: TaskPatch = {}
@@ -108,7 +113,10 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   }
   if (req.mode === 'together') {
     const was = task.delegation?.agent ?? task.delegate
-    lines.push(`Working on it with ${req.delegate} in desk ${req.desk}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`)
+    const where = req.desk ? ` in desk ${req.desk}` : ''
+    lines.push(ctx.ownSession
+      ? `Taken over by the owner in its session${where}.${was ? ` ${was} is no longer delegated, so it does not go on alone; a turn it is in finishes first.` : ''}`
+      : `Working on it with ${req.delegate}${where}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`)
   }
 
   const plan: HandOverPlan = { patch, journal: '' }
@@ -125,7 +133,7 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   }
   plan.journal = lines.join(' ')
   if (req.mode === 'schedule') plan.job = req.schedule
-  if (req.mode === 'together') plan.session = { desk: req.desk! }
+  if (req.mode === 'together') plan.session = { ...(req.desk ? { desk: req.desk } : {}), ...(ctx.ownSession ? { sessionId: ctx.ownSession } : {}) }
   return { ok: true, plan }
 }
 
