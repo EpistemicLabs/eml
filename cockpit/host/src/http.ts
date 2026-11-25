@@ -362,7 +362,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     runtime: entry.runtime,
     attention: entry.attention,
     worker: entry.worker,
-    // It works on its own (domain/session-attention.ts worksAlone): its answer goes to its task or its starter, not to Unread.
+    // It works on its own (domain/session-attention.ts worksAlone). The Unread fold leaves out a worker that does: its answer goes to its task or its starter.
     alone: worksAlone({ delegated: entry.taskId ? deps.tasks?.board.delegated(entry.taskId) ?? null : null, worker: entry.worker, spawned: wasSpawned(entry) }),
     deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,

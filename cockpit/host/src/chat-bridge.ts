@@ -954,10 +954,10 @@ export class ChatBridge {
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
       },
       onTurnEnding: async () => {
-        // Its subagents still run: they wake it again, and that turn says how it stands.
-        if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
         // Read now: its task may have been handed over or taken back during the turn. The turn's end reads it from here.
         entry.alone = await this.worksAlone(entry.sessionId)
+        // Its subagents still run: they wake it again, and that turn says how it stands.
+        if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
         const ask = shouldAskForStatus({ alone: entry.alone, clients: entry.clients.size, declared: entry.declared, asked: entry.reminded })
         const missing: Missing[] = ask ? ['call'] : missingReply({ called: entry.status !== null, questions: entry.asks, reply: entry.replyText, clients: entry.clients.size })
         // One reminder per turn, naming everything it lacks: no call and unasked questions only while nobody has the session open, no reply always.
