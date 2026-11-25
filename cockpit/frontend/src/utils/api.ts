@@ -43,8 +43,6 @@ export const api = {
 
   about: () => fetch('/api/about'),
   claimSpawn: (id: string) => fetch(`/api/spawns/${encodeURIComponent(id)}/claim`, jsonInit('POST')),
-  // The zone a scheduled job's times read in when it names none (host jobs-api.ts).
-  setTimeZone: (timeZone: string) => fetch('/api/jobs/time-zone', jsonInit('PUT', { timeZone })),
   // Web push on this device (host push-api.ts).
   pushKey: (endpoint?: string) => fetch(`/api/push${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ''}`),
   pushSubscribe: (subscription: PushSubscriptionJSON, label: string) =>

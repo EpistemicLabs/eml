@@ -12,7 +12,7 @@ import { JOB_LIMITS, type Job, type JobRun } from './domain/job.js'
 
 interface JobsFile {
   version: 1
-  /** The user's time zone (taken from their browser); null until a page told the host. */
+  /** The user's time zone (Settings › Preferences; a browser fills it in once); null until a page told the host. */
   timeZone: string | null
   jobs: Record<string, Job>
   runs: Record<string, JobRun[]>
