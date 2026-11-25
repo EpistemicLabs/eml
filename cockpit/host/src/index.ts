@@ -46,9 +46,9 @@ import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient 
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
-import { createTurnContexts } from './application/turn-context.js'
+import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
 import { createTurnCheck } from './application/turn-check.js'
-import { checkPrompt } from './domain/turn-end.js'
+import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createCycles } from './application/cycles.js'
@@ -377,7 +377,9 @@ async function main() {
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
   const owner = config?.handle ?? 'user'
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner })
+  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
+  const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
   const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })
@@ -442,7 +444,7 @@ async function main() {
   taskRunner.every(RUNNER_TICK_MS)
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
-    ledger, spaces, brain: taskBrain, owner, log,
+    ledger, spaces, brain: taskBrain, owner, log, endTurnTool,
     jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
       ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
       channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),
@@ -475,10 +477,10 @@ async function main() {
     const endedAt = new Date().toISOString()
     // The run keeps the result of the session's last call or handoff (application/run-records.ts).
     const handoff = parseHandoff(text)
-    const result = turn?.call?.result ?? handoff?.result
+    const result = resultOfTurn(turn?.call, handoff)
     if (result) lastResults.set(sessionId, result)
     runRecords.poke()
-    void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false })
+    void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false, ctx: turn?.ctx })
       .then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt, call: turn?.call ?? null, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
@@ -538,6 +540,7 @@ async function main() {
     onTurn: (sessionId, state) => turns.apply({ sessionId, state }),
     turnDone: turnEnded,
     turnContext: (sessionId) => turnContexts.of(sessionId),
+    callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
     // The check a call's next.when asks for (application/turn-check.ts).
     turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },

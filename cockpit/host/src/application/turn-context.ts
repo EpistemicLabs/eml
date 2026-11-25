@@ -15,8 +15,25 @@ import type { SessionLedger } from '../session-ledger.js'
  */
 
 /** What a space's agent goes by while none is bound: one of the words that always name the session itself. */
-export const NO_AGENT = 'agent'
+const NO_AGENT = 'agent'
 const HANDLES_MS = 5 * 60_000
+
+/**
+ * Whether a session can call end_turn: it runs in the chat, and its provider's
+ * chat sessions have the tool (domain/agent-provider.ts endTurnTool).
+ */
+export function hasEndTurnTool(session: { runtime: string } | undefined, provider: { endTurnTool: boolean }): boolean {
+  return session?.runtime === 'sdk' && provider.endTurnTool
+}
+
+/**
+ * The one place a call's context is put together: the tool's answer, the wait
+ * the router writes and the check all read a call against what this returns.
+ * `agent`: the space's; none bound goes by NO_AGENT.
+ */
+export function turnContextOf(who: { owner: string; agent?: string | null; members?: readonly string[]; checkpoint?: string | null }): TurnContext {
+  return { owner: who.owner, agent: who.agent || NO_AGENT, members: who.members ?? [], ...(who.checkpoint ? { checkpoint: who.checkpoint } : {}) }
+}
 
 export interface SessionTurn {
   ctx: TurnContext
@@ -71,14 +88,13 @@ export function createTurnContexts(deps: TurnContextDeps): TurnContexts {
     async of(sessionId) {
       const entry = deps.ledger.get(sessionId)
       const space = deps.spaces.resolve(entry?.spaceId ?? null)
-      const ctx: TurnContext = { owner: deps.owner, agent: space.agent ?? NO_AGENT, members: await handles(space) }
+      const who = { owner: deps.owner, agent: space.agent, members: await handles(space) }
       const brain = entry?.taskId ? deps.brain(space) : null
-      if (!brain) return { ctx, task: null }
+      if (!brain) return { ctx: turnContextOf(who), task: null }
       const task = await brain.get(`/engram/${encodeURIComponent(entry!.taskId!)}`).catch(() => null) as Task | null
-      if (!task?.id) return { ctx, task: null }
-      const checkpoint = task.properties?.checkpoint
+      if (!task?.id) return { ctx: turnContextOf(who), task: null }
       return {
-        ctx: { ...ctx, ...(checkpoint ? { checkpoint } : {}) },
+        ctx: turnContextOf({ ...who, checkpoint: task.properties?.checkpoint }),
         task: { id: task.id, name: task.properties?.display_title ?? task.title ?? task.id, open: task.status === 'planned' || task.status === 'active' },
       }
     },

@@ -90,6 +90,8 @@ describe('next-step check', () => {
     space?: { shared: boolean }
     jobs?: ReturnType<typeof job>[]
     watched?: boolean
+    /** The provider's chat sessions have the end_turn tool (default: they do). */
+    tool?: boolean
     delivers?: boolean
   } = {}) => {
     const ledger = new SessionLedger()
@@ -103,6 +105,7 @@ describe('next-step check', () => {
     const check = mod.createNextStepCheck({
       ledger, spaces: { resolve: () => (opts.space ?? { shared: false }) as never }, brain: () => brain,
       owner: 'lasse', log: () => {},
+      endTurnTool: (id) => ledger.get(id)?.runtime === 'sdk' && (opts.tool ?? true),
       jobsOf: () => opts.jobs ?? [],
       runStartedAt: () => RUN,
       working: () => state.working,
@@ -399,5 +402,13 @@ describe('next-step check', () => {
     expect(delivered).toEqual([`w1-20: ${reminder(['next'])}`])
     expect(NEXT).not.toBe(reminder(['next']))
     expect(NEXT).toContain('Handoff block')
+  })
+
+  it('tells a chat session whose provider has no end_turn tool the way without it', async () => {
+    const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { tool: false })
+    ledger.recordSpawn('w1-21', null, 'bp-eml', 'codex', true, 't1')
+    ledger.setRuntime('w1-21', 'sdk')
+    await check.turnEnded('w1-21')
+    expect(delivered).toEqual([`w1-21: ${NEXT}`])
   })
 })

@@ -50,6 +50,8 @@ class ClaudeProvider implements AgentProvider {
   readonly label = 'Claude Code'
   readonly adoptsSessionId = true
   readonly messaging = true
+  /** Its chat runtime registers the tool (sdk-runtime.ts workerOptions). */
+  readonly endTurnTool = true
   private isolation: IsolationFiles | null = null
 
   readonly runtime = asAgentRuntime(claudeRuntime, 'Settings › Models › Claude Code › "Check now" sets it up; then reopen this pane.')

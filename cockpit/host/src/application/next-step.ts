@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { needsAnswer } from '../domain/session-attention.js'
-import { hasEndTurnTool, reminder, type EndTurn } from '../domain/turn-end.js'
+import { reminder, type EndTurn } from '../domain/turn-end.js'
 import { sameWaits, waitsBody, waitsOf, withSessionWait } from '../domain/task-waits.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { trackWaits } from './task-waits.js'
@@ -127,6 +127,8 @@ export interface NextStepDeps {
   jobsOf(taskId: string): JobFacts[]
   /** When the session's current run began: its job run's start, else its creation. */
   runStartedAt(sessionId: string): string
+  /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot is pointed at the block. */
+  endTurnTool(sessionId: string): boolean
   /** The session is in a turn now (for another session on the task, and on the tick). */
   working(sessionId: string): boolean
   /** The session is open in a pane (a chat view or terminal attached); not that the user looks at it. */
@@ -223,7 +225,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     if (!task.properties?.delegate && !entry.worker) {
       nudged.delete(sessionId)
       // A terminal in use takes no message; its question goes through the handoff.
-      if (entry.runtime === 'sdk') return checkOwn(sessionId, task.id, hasEndTurnTool(entry))
+      if (entry.runtime === 'sdk') return checkOwn(sessionId, task.id, deps.endTurnTool(sessionId))
       later.delete(sessionId)
       return
     }
@@ -268,7 +270,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     // One reminder per stop: a turn the chat sent back already had it.
     if (!turn?.reminded && nudged.get(sessionId) !== task.id) {
       nudged.set(sessionId, task.id)
-      const arrived = await deps.deliver(sessionId, reminder(['next'], { tool: hasEndTurnTool(entry) })).catch(() => false)
+      const arrived = await deps.deliver(sessionId, reminder(['next'], { tool: deps.endTurnTool(sessionId) })).catch(() => false)
       deps.log(`[next-step] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} has no next step: ${arrived ? 'reminded' : 'reminder not delivered'}`)
       if (arrived) return
     }

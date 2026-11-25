@@ -53,10 +53,12 @@ describe('session task', () => {
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
+  /** Whether the provider's chat sessions have the end_turn tool. */
+  const tool = { chat: true }
   const setup = (space: { shared: boolean | null }, brain = fakeBrain()) => {
     const ledger = new mods.SessionLedger()
     const spaces = { resolve: () => space as never }
-    const tasks = mods.createSessionTask({ ledger, spaces, brain: () => brain, me: 'lasse', now: () => new Date('2026-11-17T10:00:00Z') })
+    const tasks = mods.createSessionTask({ ledger, spaces, brain: () => brain, me: 'lasse', endTurnTool: (id) => ledger.get(id)?.runtime === 'sdk' && tool.chat, now: () => new Date('2026-11-17T10:00:00Z') })
     return { ledger, brain, tasks }
   }
   const id = (n: number) => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`
@@ -136,7 +138,7 @@ describe('session task', () => {
     const brain = fakeBrain()
     brain.tasks.set('weekly', { id: 'weekly', title: 'weekly-report', content: 'Write it.', status: 'active', properties: {} })
     const ledger = new mods.SessionLedger()
-    const tasks = mods.createSessionTask({ ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, jobTask: (jobId) => (jobId === 'job-1' ? 'weekly' : null) })
+    const tasks = mods.createSessionTask({ ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, me: 'lasse', endTurnTool: () => false, jobTask: (jobId) => (jobId === 'job-1' ? 'weekly' : null) })
     ledger.recordSpawn(id(7), null, 'bp-eml', 'claude', true)
     ledger.setJobId(id(7), 'job-1')
     expect(await tasks.context(id(7))).toContain('**weekly-report** · weekly')
@@ -223,6 +225,21 @@ describe('session task', () => {
     expect(tasks.handoffBeforeStop('worker-1')).toBeNull()
     ledger.recordSpawn('no-task', null, 'bp-eml', 'claude')
     expect(tasks.handoffBeforeStop('no-task')).toBeNull()
+  })
+
+  it('does not point a chat session at end_turn when its provider\'s chat has no such tool', async () => {
+    const { ledger, tasks } = setup({ shared: false })
+    ledger.recordSpawn('other-chat', null, 'bp-eml', 'codex', true)
+    ledger.setRuntime('other-chat', 'sdk')
+    tool.chat = false
+    try {
+      const text = await tasks.context('other-chat')
+      expect(text).toContain('## Ending a turn\nEnd your reply with this block when you stop')
+      expect(text).toContain('### Handoff')
+      expect(text).not.toContain('end_turn')
+    } finally {
+      tool.chat = true
+    }
   })
 
   it('shows the task\'s goal, asks for one when it is missing, and gives the follow-up rules by the task\'s delegate', async () => {

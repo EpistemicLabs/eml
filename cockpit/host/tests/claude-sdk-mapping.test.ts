@@ -223,9 +223,9 @@ describe('toolTitle', () => {
 
 describe('the end_turn tool\'s answer', () => {
   const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
-  const worker = (extra: { missing?: Array<'next' | 'when'>; replied?: boolean; note?: string } = {}) => {
+  const worker = (extra: { missing?: Array<'next' | 'when'>; checkProblem?: string } = {}) => {
     const calls: EndTurn[] = []
-    return { calls, endTurn: async (call: EndTurn) => { calls.push(call); return { derived: deriveTurn(call, ctx), missing: extra.missing ?? [], replied: extra.replied ?? false, ...(extra.note ? { note: extra.note } : {}) } } }
+    return { calls, endTurn: async (call: EndTurn) => { calls.push(call); return { derived: deriveTurn(call, ctx), missing: extra.missing ?? [], ...(extra.checkProblem ? { checkProblem: extra.checkProblem } : {}) } } }
   }
 
   it('hands a readable call on, trimmed, and says what was recorded', async () => {
@@ -243,10 +243,20 @@ describe('the end_turn tool\'s answer', () => {
     expect(w.calls).toEqual([])
   })
 
-  it('says what the call lacks and what the host could not do, and asks for no reply that is written', async () => {
+  it('says what the call lacks and that the check could not be set, and always ends with the reply to come', async () => {
     const call = { result: 'Half way' }
-    expect(await endTurnReply(worker({ missing: ['next'], replied: true, note: 'The check was not set.' }), call))
-      .toEqual({ text: `${endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'], replied: true })} The check was not set.`, refused: false })
+    expect(await endTurnReply(worker({ missing: ['next'] }), call)).toEqual({ text: endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'] }), refused: false })
+    const timed = { result: 'Half way', next: { who: 'me', what: 'look', when: '2028-01-01T10:00' } }
+    const answer = await endTurnReply(worker({ checkProblem: 'at: at most a year ahead' }), timed)
+    expect(answer).toEqual({ text: endTurnAnswer(timed, deriveTurn(timed, ctx), { checkProblem: 'at: at most a year ahead' }), refused: false })
+    expect(answer.text).toMatch(/^Recorded: where the task stands, but no next step\. The check at 2028-01-01T10:00 was NOT set: at most a year ahead\./)
+    expect(answer.text.endsWith('Now write your reply as visible text.')).toBe(true)
+  })
+
+  it('refuses a call the host does not record, as one whose time has passed', async () => {
+    const passed = { endTurn: async () => { throw new Error('next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come') } }
+    expect(await endTurnReply(passed, { result: 'x', next: { who: 'me', what: 'look', when: '2020-01-01T10:00' } }))
+      .toEqual({ text: 'Not recorded: next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come. Call end_turn again.', refused: true })
   })
 
   it('says so when the call could not be recorded', async () => {

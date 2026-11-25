@@ -94,6 +94,9 @@ export function whoOf(who: string, ctx: Pick<TurnContext, 'owner' | 'agent' | 'm
   return { kind: 'outside', name: written.replace(/^@/, '') }
 }
 
+/** A who without the prefix that marks someone outside the space: the name as people read it. */
+export const withoutOutside = (who: string): string => (who.trim().toLowerCase().startsWith(OUTSIDE) ? who.trim().slice(OUTSIDE.length) : who).trim()
+
 /** A who as the journal keeps it: the handle itself, never an alias; someone outside with the prefix. */
 function writtenWho(who: string, ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'>): string {
   const w = whoOf(who, ctx)
@@ -125,7 +128,7 @@ export const notRecorded = (why: string): string => refused(`${why.replace(/[.\s
 /**
  * A call as the cockpit keeps it: trimmed, empty fields dropped. Refused with
  * the reason when it cannot be recorded: no result, a next without a who, a
- * when that is no time.
+ * when that is no time. Whether the time is still to come is passedWhen's.
  */
 export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: false; error: string } {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -153,6 +156,16 @@ export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: f
   return { ok: true, call }
 }
 
+/**
+ * Why a call whose when has passed is not recorded, or null: a check at that time would never wake anyone.
+ * `at`: the moment the call is read and the zone its when is read in.
+ */
+export function passedWhen(call: Pick<EndTurn, 'next'>, at: { now: number; zone: string }): string | null {
+  const when = call.next?.when
+  const time = when ? parseAt(when, at.zone) : null
+  return time !== null && time <= at.now ? `next.when "${when}" has passed (read in ${at.zone}); name a time that is still to come` : null
+}
+
 // ── Deriving ─────────────────────────────────────────────────────────────────
 
 /** A question as the Inbox shows it: up to its first question mark, at most 160 characters. */
@@ -164,7 +177,7 @@ export function shortQuestion(question: string): string {
 }
 
 /** The longest a wait's why gets. */
-const WHY_MAX = 300
+export const WHY_MAX = 300
 
 /** What a call means for the session, the task and the check. The first match wins. */
 export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
@@ -180,8 +193,8 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
     const who = whoOf(call.next.who, ctx)
     const what = call.next.what
     if (who.kind === 'owner') return { status: 'review', wait: wait(ctx.owner, 'review', what || `Review: ${call.result}`), checkAt }
-    if (who.kind === 'member') return { status: 'done', wait: wait(who.name, 'review', what || call.result), checkAt }
-    if (who.kind === 'outside') return { status: 'done', wait: wait(who.name, 'outside', what || call.result), checkAt }
+    // Another member or agent is waited on like someone outside: the task stays its owner's, and nobody else's Inbox gets it.
+    if (who.kind === 'member' || who.kind === 'outside') return { status: 'done', wait: wait(who.name, 'outside', what || call.result), checkAt }
     if (checkAt) return { status: 'done', wait: null, checkAt }
   }
   return { status: 'done', wait: null, checkAt: null }
@@ -189,15 +202,20 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
 
 /**
  * What the stop still lacks: no call at all; an open task whose call names no
- * next step; a next step of the agent's own without a time. `agent` is the
- * session's handle; without it only the aliases (me, self, agent) count as its own.
+ * next step; a next step for anyone but the owner without the time the agent
+ * looks again (the owner sees theirs in the Inbox; nothing else brings a wait
+ * on someone else back up).
  */
-export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; agent?: string }): Array<'call' | 'next' | 'when'> {
+export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'> }): Array<'call' | 'next' | 'when'> {
   if (!call) return ['call']
   if (call.failed || call.questions?.length) return []
   if (!call.next) return facts.taskOpen ? ['next'] : []
-  const own = whoOf(call.next.who, { owner: '', agent: facts.agent ?? '', members: [] }).kind === 'self'
-  return own && !call.next.when ? ['when'] : []
+  return whoOf(call.next.who, facts.ctx).kind !== 'owner' && !call.next.when ? ['when'] : []
+}
+
+/** Where the task stands after a turn, for the run's record: the call's result, else the block's. */
+export function resultOfTurn(call: Pick<EndTurn, 'result'> | null | undefined, handoff: Pick<Handoff, 'result'> | null | undefined): string | null {
+  return call?.result ?? handoff?.result ?? null
 }
 
 // ── Texts ────────────────────────────────────────────────────────────────────
@@ -217,14 +235,14 @@ const FIELD = {
 
 const STOP = 'when you stop and the stop changes who has to act or where the task stands'
 const PLAIN = 'for a turn that is plain conversation'
-const WHEN_REQUIRED = 'required when who is you'
+const WHEN_REQUIRED = 'required unless who is the user'
 const nextRequired = (next: string, questions: string, failed: string) => `${next} is required while the task is open, unless ${questions} or ${failed} is set`
 const VISIBLE = 'as visible text'
 const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HANDOFF_LABELS.heading} block instead.`
 
 export const END_TURN_DESCRIPTION = [
   `Call ${END_TURN_TOOL} once ${STOP}. Make no call ${PLAIN}.`,
-  `Write your full reply ${VISIBLE}: the user reads only that, never the call or your thinking.`,
+  `Call it first, then write your reply once ${VISIBLE}, as the last thing in the turn: the user reads only that, never the call or your thinking.`,
   `result: ${FIELD.result}. It is shown under the task's name in every list.`,
   `next: whose move it is. who: ${FIELD.who}. what: ${FIELD.what}. when: ${FIELD.when}; ${WHEN_REQUIRED}. ${nextRequired('next', 'questions', 'failed')}.`,
   `questions: ${FIELD.questions}, one entry per question. Ask them in your reply as a numbered list and copy that list here.`,
@@ -235,13 +253,15 @@ export const END_TURN_DESCRIPTION = [
 /** The older tool's description: it only points to end_turn. */
 export const LEGACY_STATUS_DESCRIPTION = `The older form of ${END_TURN_TOOL}, kept for sessions started before it. Use ${END_TURN_TOOL} instead.`
 
+const CALL_WITH_NEXT = `Call ${END_TURN_TOOL} with next, questions or failed.`
+
 /** What a reminder or the tool's answer says about each missing thing. */
 const MISSING: Record<Missing, string> = {
   call: `You stopped without an ${END_TURN_TOOL} call, and nobody is watching this session. Call ${END_TURN_TOOL} now.`,
-  reply: `Your turn has no visible reply. Write it now, as text, not in thinking: what was asked, what you did, what changed.`,
+  reply: `No visible reply follows your call. Write it now, as text, not in thinking: what was asked, what you did, what changed.`,
   questions: `Your ${END_TURN_TOOL} call has questions, but your reply does not ask them. Write them in your reply as a numbered list.`,
-  next: `The task is still open and no next step is recorded. Call ${END_TURN_TOOL} with next, questions or failed.`,
-  when: `Your next step names you without a time. Call ${END_TURN_TOOL} with next.when: ${FIELD.when}.`,
+  next: `The task is still open and no next step is recorded. ${CALL_WITH_NEXT}`,
+  when: `A next step for anyone but the user needs a time. Call ${END_TURN_TOOL} with next.when: ${FIELD.when}.`,
 }
 
 const MISSING_ORDER: readonly Missing[] = ['call', 'reply', 'questions', 'next', 'when']
@@ -261,32 +281,43 @@ export function reminder(missing: readonly Missing[], opts: { tool?: boolean } =
   return opts.tool === false && missing.some((m) => m !== 'reply' && m !== 'questions') ? `${named} ${NO_TOOL}` : named
 }
 
-function recorded(call: EndTurn, derived: DerivedTurn): string {
-  const again = derived.checkAt ? `you look again at ${derived.checkAt}` : ''
-  if (!derived.wait) return again ? `Recorded: ${again}.` : 'Recorded: done, nobody has to act.'
-  const { who, kind } = derived.wait
+/** What the answer opens with: what the cockpit now holds. A check that was not set is not named as one. */
+function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; check: boolean }): string {
+  const again = derived.checkAt && !lacks.check ? `you look again at ${derived.checkAt}` : ''
+  if (!derived.wait) {
+    if (again) return `Recorded: ${again}.`
+    return lacks.step || lacks.check ? 'Recorded: where the task stands, but no next step.' : 'Recorded: done, nobody has to act.'
+  }
+  const { who } = derived.wait
   const count = call.questions?.length ?? 0
   const what = derived.status === 'failed' ? `failed, for ${who}`
     : derived.status === 'question' ? `${count > 1 ? `${count} questions` : 'question'} for ${who}`
       : derived.status === 'review' ? `review for ${who}`
-        : `waiting on ${who}${kind === 'outside' ? ' (outside the space)' : ''}`
+        : `waiting on ${who}`
   return `Recorded: ${what}.${again ? ` Also: ${again}.` : ''}`
 }
 
+/** The check at next.when could not be set: the rest of the call is recorded. `why` is the schedule's own word on it. */
+const checkNotSet = (when: string, why: string) =>
+  `The check at ${when} was NOT set: ${why.replace(/^at:\s*/i, '').replace(/[.\s]+$/, '')}. Call ${END_TURN_TOOL} again with another next.when (${FIELD.when}).`
+
+const NOW_REPLY = `Now write your reply ${VISIBLE}.`
+
 /**
  * The tool's answer: what was recorded, then what the call still lacks (the
- * agent can call again in the same turn), then the reply if it is still to come.
+ * agent can call again in the same turn), then the reply, which comes after
+ * the call. `checkProblem`: why the check at next.when could not be set.
  */
-export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; replied?: boolean } = {}): string {
-  return [recorded(call, derived), missingText(opts.missing ?? []), opts.replied ? '' : `Now write your reply ${VISIBLE}.`].filter(Boolean).join(' ')
+export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null } = {}): string {
+  const missing = opts.missing ?? []
+  const problem = derived.checkAt && opts.checkProblem ? checkNotSet(derived.checkAt, opts.checkProblem) : ''
+  // The opening says there is no next step: the task being open is all that is left to add.
+  const lacking = !derived.wait && missing.includes('next') ? `The task is still open. ${CALL_WITH_NEXT}` : missingText(missing)
+  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }), problem, lacking, NOW_REPLY].filter(Boolean).join(' ')
 }
 
 /** The older tool's answer: what was recorded, then the reply that is still to come. */
-export const statusAnswer = (status: WorkerStatus) => `Recorded: ${status}. Now write your reply ${VISIBLE}.`
-
-/** Added to the tool's answer when the check at next.when could not be set: the rest of the call is recorded. */
-export const checkNotSet = (when: string, why: string) =>
-  `The check at ${when} was not set: ${why.replace(/[.\s]+$/, '')}. Call ${END_TURN_TOOL} again with another next.when (${FIELD.when}).`
+export const statusAnswer = (status: WorkerStatus) => `Recorded: ${status}. ${NOW_REPLY}`
 
 /** The block's template, for a session without the tool. */
 function blockTemplate(owner: string): string[] {
@@ -308,22 +339,16 @@ function blockTemplate(owner: string): string[] {
 
 /**
  * The section of a session's start context about ending a turn. `tool` says
- * whether the session has end_turn; left out, the section covers both, since
- * the start context of a terminal and of a chat is the same text.
+ * whether the session has end_turn: one that has it reads the tool's
+ * description, one without it (a terminal, another provider's chat) the block.
  */
-export function turnEndRules(opts: { owner: string; agent?: string | null; tool?: boolean }): string {
-  const withTool = `The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`
-  const block = `end your reply with this block ${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
-  const lines = opts.tool === true ? [withTool]
-    : opts.tool === false ? [`${block[0].toUpperCase()}${block.slice(1)}`, ...blockTemplate(opts.owner)]
-      : [withTool, `Without that tool (a terminal), ${block}`, ...blockTemplate(opts.owner)]
+export function turnEndRules(opts: { owner: string; agent?: string | null; tool: boolean }): string {
+  const block = `End your reply with this block ${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
+  const lines = opts.tool ? [`The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`] : [block, ...blockTemplate(opts.owner)]
   // The handles a who can name here: the tool's description says what a who is, this line who is who.
   const handles = `Handles for who: the user is ${opts.owner}${opts.agent ? `, you are ${opts.agent}` : ''}.`
   return ['## Ending a turn', ...lines, handles].join('\n')
 }
-
-/** Whether a session can call end_turn: only Claude's chat runtime registers it (providers/claude/sdk-runtime.ts). */
-export const hasEndTurnTool = (session: { runtime: string; provider: string }): boolean => session.runtime === 'sdk' && session.provider === 'claude'
 
 /** How finished work goes to its owner. The rules about closing a task say it in these words too. */
 export const FOR_REVIEW = 'hand the result over for review (next names the owner)'

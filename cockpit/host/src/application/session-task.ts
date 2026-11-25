@@ -7,7 +7,7 @@ import { MAX_RUNNING } from '../domain/runner-gate.js'
 import { parentOf } from '../domain/task-relations.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
-import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, hasEndTurnTool, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
+import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -37,6 +37,8 @@ export interface SessionTaskDeps {
   jobTask?: (jobId: string) => string | null
   /** This cockpit's member: the owner of a session's task when the task it comes from names none. */
   me: string
+  /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot reads the block. */
+  endTurnTool(sessionId: string): boolean
   now?: () => Date
 }
 
@@ -75,11 +77,11 @@ export const placeholderTitle = (sessionId: string, now: Date) =>
 
 export { displayTitleOf, kebabTitle }
 
-/** Who ends the turns of this session: the user's handle, the agent's, and whether it has the end_turn tool (left out: not known). */
+/** Who ends the turns of this session: the user's handle, the agent's, and whether it has the end_turn tool. */
 export interface TurnParty {
-  owner?: string
+  owner: string
   agent?: string | null
-  tool?: boolean
+  tool: boolean
 }
 
 /**
@@ -87,7 +89,7 @@ export interface TurnParty {
  * `unattended`: a worker, with nobody to offer a split to. What a task handed to an agent does until it
  * is done goes by the task's delegate, whoever started the session.
  */
-export function taskContext(task: Task, placeholder: boolean, unattended = false, parent: Parent | null = null, turn: TurnParty = {}): string {
+export function taskContext(task: Task, placeholder: boolean, turn: TurnParty, unattended = false, parent: Parent | null = null): string {
   const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null, task.properties?.delegate ? `delegate ${task.properties.delegate}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
@@ -130,7 +132,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     ...SPLIT_RULES,
     ...(task.properties?.delegate ? ['', untilDoneRules()] : []),
     '',
-    turnEndRules({ owner: turn.owner ?? 'user', agent: turn.agent, tool: turn.tool }),
+    turnEndRules(turn),
   ].join('\n')
 }
 
@@ -248,7 +250,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       const parent = parentId ? await (t.brain.get(`/engram/${parentId}`) as Promise<Task>).catch(() => null) : null
       const entry = deps.ledger.get(sessionId)
       const agent = deps.spaces.resolve(entry?.spaceId ?? null).agent
-      return taskContext(task, isPlaceholder(task), entry?.worker === true, parent, { owner: deps.me, agent, ...(entry ? { tool: hasEndTurnTool(entry) } : {}) })
+      return taskContext(task, isPlaceholder(task), { owner: deps.me, agent, tool: deps.endTurnTool(sessionId) }, entry?.worker === true, parent)
     },
 
     async renamed(sessionId, title) {

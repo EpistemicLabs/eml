@@ -18,8 +18,8 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, reminder, checkNotSet, type EndTurn, type Missing } from './domain/turn-end.js'
-import { NO_AGENT, type SessionTurn } from './application/turn-context.js'
+import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { turnContextOf, type SessionTurn } from './application/turn-context.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
 
@@ -71,7 +71,7 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
-// The calls that say how a turn ends: the reply is written before or after them.
+// The calls that say how a turn ends: the reply is what is written after them.
 const END_OF_TURN_TOOLS = [END_TURN_TOOL, LEGACY_STATUS_TOOL]
 
 // A session started by hand without the greeting (it is off, or the session predates it) names itself this way.
@@ -81,6 +81,8 @@ const NAME_YOURSELF = 'Once this exchange shows what the session is about, name 
 export interface TurnEndFacts {
   /** The end_turn call made in the turn; null when it made none. */
   call: EndTurn | null
+  /** Whom that call was read against for its answer: its wait is derived from the same. */
+  ctx: TurnContext | null
   /** The turn was sent back once already (onTurnEnding): it gets no second reminder. */
   reminded: boolean
   /** The session said how it stands in this turn (end_turn, or the older session_status); false: a flag on it is the cockpit's own (attentionAfterTurn). */
@@ -134,12 +136,11 @@ interface ChatEntry {
   /** How it stands as said this turn, and the end_turn call that said it (null for session_status). */
   status: WorkerStatus | null
   call: EndTurn | null
+  callCtx: TurnContext | null
   /** The call asks the user something: the reply has to ask it too. */
   asks: boolean
-  /** The visible text around the call: what was written since the last other tool call before it, and all after it. */
+  /** The reply: the visible text written after the call. */
   replyText: string
-  /** The call was made: no later tool call takes the reply back. */
-  replyKept: boolean
   /** The turn was sent back once: it is not sent back again. */
   reminded: boolean
   /** Everything the agent wrote this turn: the task router reads the handoff at its end. */
@@ -171,6 +172,8 @@ export interface ChatContext {
   turnDone?: (sessionId: string, text: string, turn: TurnEndFacts) => void
   /** Whom an end_turn call is read against, and the session's task (application/turn-context.ts); absent: the space's agent and no task. */
   turnContext?: (sessionId: string) => Promise<SessionTurn>
+  /** The moment a call is read and the zone its next.when is read in (the user's); absent: now, in this machine's zone. */
+  callTime?: () => { now: number; zone: string }
   /**
    * The check a call's next.when asks for: set, moved, or removed when the call has none
    * (application/turn-check.ts). Answers why it could not be set, or null.
@@ -584,7 +587,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -721,7 +724,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -775,7 +778,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -850,9 +853,9 @@ export class ChatBridge {
     entry.declared = false
     entry.status = null
     entry.call = null
+    entry.callCtx = null
     entry.asks = false
     entry.replyText = ''
-    entry.replyKept = false
     entry.reminded = false
   }
 
@@ -864,7 +867,7 @@ export class ChatBridge {
     })
     if (known) return known
     const agent = this.ctx.spaces.resolve(this.ctx.ledger.get(entry.sessionId)?.spaceId ?? null).agent
-    return { ctx: { owner: 'user', agent: agent ?? NO_AGENT, members: [] }, task: null }
+    return { ctx: turnContextOf({ owner: 'user', agent }), task: null }
   }
 
   private reporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
@@ -882,12 +885,16 @@ export class ChatBridge {
         return [ceiling, lifted, name].filter(Boolean).join('\n\n') || null
       },
       endTurn: async (call) => {
-        entry.declared = true
-        entry.replyKept = true
         const turn = await this.turnOf(entry)
+        // A time that has passed wakes nobody: the call is refused whole, so the agent names another.
+        const passed = passedWhen(call, this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+        if (passed) throw new Error(passed)
         const derived = deriveTurn(call, turn.ctx)
+        entry.declared = true
+        entry.replyText = ''
         entry.status = derived.status
         entry.call = call
+        entry.callCtx = turn.ctx
         entry.asks = (call.questions?.length ?? 0) > 0
         // What the lists show under the session: the question it waits on, why it failed, else where the task stands.
         const reason = call.failed ?? call.questions?.[0] ?? call.result
@@ -896,16 +903,16 @@ export class ChatBridge {
         const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
         return {
           derived,
-          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, agent: turn.ctx.agent }),
-          replied: entry.replyText.trim() !== '',
-          ...(problem && derived.checkAt ? { note: checkNotSet(derived.checkAt, problem) } : {}),
+          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
+          ...(problem && derived.checkAt ? { checkProblem: problem } : {}),
         }
       },
       report: (status, reason) => {
         entry.declared = true
-        entry.replyKept = true
+        entry.replyText = ''
         entry.status = status
         entry.call = null
+        entry.callCtx = null
         entry.asks = status === 'question'
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
       },
@@ -951,9 +958,8 @@ export class ChatBridge {
         else if (event.status) entry.runningAgents.delete(event.taskId)
         break
       case 'tool_call':
-        // The reply is what stands right before the call, and whatever comes after it: text from before other work is not it.
-        if (END_OF_TURN_TOOLS.some((name) => event.name === name || event.name.endsWith(`__${name}`))) entry.replyKept = true
-        else if (!entry.replyKept) entry.replyText = ''
+        // The reply comes after the call: what was written before it is not it.
+        if (END_OF_TURN_TOOLS.some((name) => event.name === name || event.name.endsWith(`__${name}`))) entry.replyText = ''
         break
       case 'text':
         entry.replyText += event.text
@@ -980,7 +986,7 @@ export class ChatBridge {
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
           this.ctx.ledger.setResult(entry.sessionId, true)
-          this.ctx.turnDone?.(entry.sessionId, entry.turnText, { call: entry.call, reminded: entry.reminded, said: entry.declared })
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText, { call: entry.call, ctx: entry.callCtx, reminded: entry.reminded, said: entry.declared })
           if (!entry.stopAfterTurn) entry.worked = true
         }
         entry.turnText = ''

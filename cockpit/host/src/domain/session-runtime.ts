@@ -193,7 +193,7 @@ export interface SessionRuntimeStart {
   worker?: {
     /** Added to the next prompt, unseen in the chat; null: nothing. */
     onPrompt?: () => string | null
-    /** An end_turn call (domain/turn-end.ts): recorded, and what its answer has to say. */
+    /** An end_turn call (domain/turn-end.ts): recorded, and what its answer has to say. Rejects with the reason when nothing was recorded. */
     endTurn(call: EndTurn): Promise<EndTurnRecorded>
     /** The older session_status call: the status as given, its reason as the result. */
     report(status: WorkerStatus, reason: string | null): void
@@ -209,10 +209,8 @@ export interface EndTurnRecorded {
   derived: DerivedTurn
   /** What the call still lacks (missingOf). */
   missing: readonly Missing[]
-  /** The reply is written already. */
-  replied: boolean
-  /** Something the agent has to know besides: the check could not be set. */
-  note?: string
+  /** Why the check at next.when could not be set; the rest of the call is recorded. */
+  checkProblem?: string
 }
 
 export interface SessionRuntimeFactory {

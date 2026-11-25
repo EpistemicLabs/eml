@@ -99,9 +99,11 @@ describe('handoff', () => {
 
 describe('task router', () => {
   let router: Router
+  let parseHandoff: HandoffMod['parseHandoff']
   let SessionLedger: Ledger
   beforeAll(async () => {
     router = await import('../src/application/task-router.js')
+    ;({ parseHandoff } = await import('../src/domain/handoff.js'))
     SessionLedger = (await import('../src/session-ledger.js')).SessionLedger
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -165,8 +167,8 @@ describe('task router', () => {
       ['a question waits on the owner', { result: 'Draft ready', questions: ['Send it today? It is long.', 'To whom?'] }, {}, { who: 'lasse', kind: 'question', why: 'Send it today? · To whom?' }],
       ['a question of a step with checkpoint before is a go', { result: 'Plan ready', questions: ['Start?'] }, { checkpoint: 'before' }, { who: 'lasse', kind: 'go', why: 'Start?' }],
       ['the owner next is a review', { result: 'Draft ready', next: { who: 'lasse', what: 'read the draft' } }, {}, { who: 'lasse', kind: 'review', why: 'read the draft' }],
-      ['another member next waits on them', { result: 'Draft ready', next: { who: '@Dominik', what: 'sign it' } }, {}, { who: 'dominik', kind: 'review', why: 'sign it' }],
-      ['another agent next waits on it', { result: 'Draft ready', next: { who: 'motti', what: 'translate it' } }, {}, { who: 'motti', kind: 'review', why: 'translate it' }],
+      ['another member next is waited on like someone outside: no review of theirs', { result: 'Draft ready', next: { who: '@Dominik', what: 'sign it', when: '2026-11-27T10:00' } }, {}, { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['another agent next is waited on like someone outside', { result: 'Draft ready', next: { who: 'motti', what: 'translate it', when: '2026-11-27T10:00' } }, {}, { who: 'motti', kind: 'outside', why: 'translate it' }],
       ['someone outside next is an outside wait', { result: 'Mail sent', next: { who: 'outside:Acme support', what: 'answer the mail', when: '2026-11-27T10:00' } }, {}, { who: 'Acme support', kind: 'outside', why: 'answer the mail' }],
       ['an unknown handle is someone outside', { result: 'Mail sent', next: { who: 'kim', what: 'answer' } }, {}, { who: 'kim', kind: 'outside', why: 'answer' }],
       ['a failure stops on the owner', { result: 'Stuck', failed: 'No access to the shop', next: { who: 'dominik', what: 'x' } }, {}, { who: 'lasse', kind: 'stopped', why: 'No access to the shop' }],
@@ -194,6 +196,7 @@ describe('task router', () => {
       await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
       await r.turnEnded('s-c', '', { result: 'Signed', next: { who: 'outside:Acme', what: 'countersign' } })
       expect(waitsOfTask(brain).map((w) => [w.id, w.who, w.kind])).toEqual([['s-o', 'lasse', 'review'], ['s-c', 'Acme', 'outside']])
+      // A wait on another member is nothing the Inbox of anyone lists (domain/inbox.ts skips outside waits).
       await r.turnEnded('s-c', '', { result: 'Countersigned, nothing left' })
       expect(waitsOfTask(brain).map((w) => w.id)).toEqual(['s-o'])
     })
@@ -205,7 +208,7 @@ describe('task router', () => {
       await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
       await r.turnEnded('s-c', 'Still waiting.')
       expect(brain.posts).toHaveLength(1)
-      expect(waitsOfTask(brain)).toEqual([wait({ who: 'dominik', kind: 'review', why: 'sign it' })])
+      expect(waitsOfTask(brain)).toEqual([wait({ who: 'dominik', kind: 'outside', why: 'sign it' })])
       // An answer ends it, and the same call again is routed anew.
       await r.answered('s-c')
       await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
@@ -229,7 +232,7 @@ describe('task router', () => {
 
   describe('from a block that names who is next', () => {
     it.each<[string, string, Props | null]>([
-      ['a member', 'Next: [dominik] sign it', { who: 'dominik', kind: 'review', why: 'sign it' }],
+      ['a member', 'Next: [dominik] sign it', { who: 'dominik', kind: 'outside', why: 'sign it' }],
       ['someone outside', 'Next: [outside:Acme] countersign @ 2026-11-27T10:00', { who: 'Acme', kind: 'outside', why: 'countersign' }],
       ['the owner', 'Next: [lasse] read it', { who: 'lasse', kind: 'review', why: 'read it' }],
       ['the agent itself', 'Next: [atlas] look again @ 2026-11-27T10:00', null],
@@ -253,23 +256,52 @@ describe('task router', () => {
   })
 
   describe('decideWaiting', () => {
-    const base = { handoff: null, attention: null, checkpoint: undefined, owner: 'lasse', sessionId: 's1', now: new Date('2026-11-17T09:00:00Z') }
+    const ctx: { owner: string; agent: string; members: string[]; checkpoint?: string } = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'dominik', 'atlas'] }
+    const base = { handoff: null, attention: null, ctx, sessionId: 's1', now: new Date('2026-11-17T09:00:00Z') }
+    const block = (text: string) => parseHandoff(`### Handoff\n${text}`)
 
-    it('reads a call against the handles it is given, and an unknown one as outside', () => {
+    it('reads a call against the context it is given, and an unknown handle as outside', () => {
       const call = { result: 'x', next: { who: 'dominik', what: 'sign' } }
-      expect(router.decideWaiting({ ...base, call, members: ['dominik'] })).toMatchObject({ who: 'dominik', kind: 'review' })
       expect(router.decideWaiting({ ...base, call })).toMatchObject({ who: 'dominik', kind: 'outside' })
+      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'robin', what: 'sign' } } })).toMatchObject({ who: 'robin', kind: 'outside' })
+      expect(router.decideWaiting({ ...base, call: { result: 'x', questions: ['Go?'] }, ctx: { ...ctx, checkpoint: 'before' } })).toMatchObject({ who: 'lasse', kind: 'go' })
     })
 
     it('a call without a wait wins over the status and the checkpoint', () => {
-      expect(router.decideWaiting({ ...base, call: { result: 'x' }, attention: { kind: 'review', reason: 'old' }, checkpoint: 'after' })).toBeNull()
+      expect(router.decideWaiting({ ...base, call: { result: 'x' }, attention: { kind: 'review', reason: 'old' }, ctx: { ...ctx, checkpoint: 'after' } })).toBeNull()
     })
 
-    it('without a call or a block, the status decides as before', () => {
+    it('without a call or a block, the status decides', () => {
       expect(router.decideWaiting({ ...base, attention: { kind: 'question', reason: 'A or B?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'A or B?' })
       expect(router.decideWaiting({ ...base, attention: { kind: 'failed', reason: null } })).toMatchObject({ kind: 'stopped', why: 'The session failed' })
       expect(router.decideWaiting({ ...base, attention: { kind: 'review', reason: 'Report' } })).toMatchObject({ kind: 'review', why: 'Review: Report' })
       expect(router.decideWaiting({ ...base, attention: { kind: 'done', reason: 'ok' } })).toBeNull()
+    })
+
+    describe('a status that needs an answer comes before a block\'s Next', () => {
+      const tagged = () => block('Result: Draft ready\nNext: [dominik] sign it')
+
+      it('a question status waits on the owner, not on whom Next names', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'question', reason: 'Send it today?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'Send it today?' })
+      })
+
+      it('a failed status stops on the owner, not on whom Next names', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'failed', reason: 'No access' } })).toMatchObject({ who: 'lasse', kind: 'stopped', why: 'No access' })
+      })
+
+      it('a done status leaves the tagged Next to decide', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'done', reason: 'ok' } })).toMatchObject({ who: 'dominik', kind: 'outside', why: 'sign it' })
+        expect(router.decideWaiting({ ...base, handoff: block('Result: Draft ready\nNext: [lasse] read it'), attention: { kind: 'done', reason: 'ok' } })).toMatchObject({ who: 'lasse', kind: 'review', why: 'read it' })
+      })
+
+      it('the block\'s own questions come before the status and the Next', () => {
+        const asks = block('Result: Draft ready\nNext: [dominik] sign it\nQuestions:\n- [lasse] Which price?')
+        expect(router.decideWaiting({ ...base, handoff: asks, attention: { kind: 'failed', reason: 'No access' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'Which price?' })
+      })
+
+      it('a review status after a tagged Next for someone else leaves the Next', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'review', reason: 'Report' } })).toMatchObject({ who: 'dominik', kind: 'outside' })
+      })
     })
   })
 
