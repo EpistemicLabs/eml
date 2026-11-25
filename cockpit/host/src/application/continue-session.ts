@@ -29,6 +29,11 @@ export interface ContinueSession {
   ownSession(taskId: string): SessionOnTaskFacts | null
   /** The session a delegation of the task continues, or null to start a new one. */
   toContinue(taskId: string): string | null
+  /**
+   * A session of the task was continued for this request already (its run started at or after `requestedAt`, as the
+   * ledger keeps it): the request counts as started, also when its run is not in the brain yet or was refused.
+   */
+  continuedFor(taskId: string, requestedAt: string): boolean
   /** For the board: the task's own session, and whether a delegation would continue it. */
   boardView(taskId: string): { sessionId: string; continues: boolean } | null
   /** Give the session the step's start prompt and start its new run (ResumeOutcome says what came of it). */
@@ -55,6 +60,10 @@ export function createContinueSession(deps: ContinueSessionDeps): ContinueSessio
     toContinue(taskId) {
       const own = ownSession(taskId)
       return own && newSessionReason(own, deps.startFresh(taskId)) === null ? own.sessionId : null
+    },
+    continuedFor(taskId, requestedAt) {
+      const requested = Date.parse(requestedAt)
+      return deps.ledger.list().some((e) => e.taskId === taskId && e.runStartedAt !== null && Date.parse(e.runStartedAt) >= requested)
     },
     boardView(taskId) {
       const own = ownSession(taskId)

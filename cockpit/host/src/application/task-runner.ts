@@ -70,6 +70,8 @@ export interface TaskRunnerDeps {
    * sessionToContinue), or null to start one.
    */
   ownSession?(taskId: string): string | null
+  /** A session of the task was continued for this request already (application/continue-session.ts continuedFor). */
+  continuedFor?(taskId: string, requestedAt: string): boolean
   /**
    * Give that session the step's start prompt and start its run for this request: continued, retry next tick (it is
    * busy: nothing starts beside it), or fall back to a new session (it cannot be reached).
@@ -156,7 +158,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     const lastStarts = lastStartsOf(((await brain.get('/object/run', { latest: 'true' }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [])
     // The space's open runs, read once per tick: a working run of another member's session holds its task (domain/runs.ts).
     const runs = openRunsByTask(runsOf(((await brain.get('/object/run').catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []))
-    const candidates = (listed.engrams ?? []).filter((t) => requestOpen(t, lastStarts.get(t.id) ?? null) && startedFor.get(t.id) !== requestOf(t))
+    // A request counts as started once a session was continued for it, as the ledger keeps it, before its run is written.
+    const continued = (t: Task) => Boolean(t.properties?.delegation?.requested_at && deps.continuedFor?.(t.id, t.properties.delegation.requested_at))
+    const candidates = (listed.engrams ?? []).filter((t) => requestOpen(t, lastStarts.get(t.id) ?? null) && startedFor.get(t.id) !== requestOf(t) && !continued(t))
     const started = new Map<string, number>()
     const now = Date.now()
     // A task holds a slot while an agent works on it for this cockpit (domain/runner-gate.ts), as the board counts it.

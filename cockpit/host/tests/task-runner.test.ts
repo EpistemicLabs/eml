@@ -45,7 +45,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; continuedFor?: (id: string, requestedAt: string) => boolean; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -93,6 +93,19 @@ describe('task runner', () => {
     await runner.tick()
     expect(tries.filter((t) => t === 'own-busy')).toHaveLength(2)
     expect(started.map((s) => s.id)).toEqual(['plain'])
+  })
+
+  it('after a restart, sends no second start prompt to a session the ledger says was continued for this request', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: string[] = []
+    // a fresh runner (nothing in memory) and no run in the brain: only the ledger's runStartedAt says it was continued
+    const { started } = await run(list, undefined, undefined, undefined, {
+      ownSession: () => 'desk-1',
+      continuedFor: (id, requestedAt) => id === 'solo' && requestedAt === '2026-11-25T10:00:00.000Z',
+      resume: async (sessionId) => { resumed.push(sessionId); return { kind: 'continued' } },
+    })
+    expect(resumed).toEqual([])
+    expect(started).toEqual([])
   })
 
   it('continues nothing while the hand-over can still be undone', async () => {

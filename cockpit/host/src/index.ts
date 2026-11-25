@@ -466,6 +466,7 @@ async function main() {
       return null
     },
     ownSession: (taskId) => continueSession.toContinue(taskId),
+    continuedFor: (taskId, requestedAt) => continueSession.continuedFor(taskId, requestedAt),
     resume: (sessionId, step) => continueSession.resume(sessionId, step),
   })
   taskRunner.every(RUNNER_TICK_MS)

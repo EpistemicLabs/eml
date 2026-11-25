@@ -74,6 +74,15 @@ describe('continuing the task\'s own session', () => {
     expect(runs()).toBe(1)
   })
 
+  it('knows from the ledger that a session was continued for a request, which outlives a restart', async () => {
+    const { continueSession } = setup([entry('own', { runStartedAt: '2026-11-25T10:00:05.000Z' }), entry('other', { taskId: 't2' })])
+    expect(continueSession.continuedFor('t1', '2026-11-25T10:00:00.000Z')).toBe(true)
+    expect(continueSession.continuedFor('t1', '2026-11-25T10:00:05.000Z')).toBe(true)
+    // a later delegation is a new request
+    expect(continueSession.continuedFor('t1', '2026-11-25T11:00:00.000Z')).toBe(false)
+    expect(continueSession.continuedFor('t2', '2026-11-25T10:00:00.000Z')).toBe(false)
+  })
+
   it('starts no run when the session does not take the prompt: busy is tried again, one that cannot be reached falls back to a new session', async () => {
     for (const [outcome, kind] of [['busy', 'retry'], ['running', 'retry'], ['refused', 'fallback'], ['unknown', 'fallback']] as const) {
       const { continueSession, entries, runs } = setup([entry('own')], { outcome })

@@ -74,8 +74,8 @@ export interface RunRecords {
 export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number } = {}): RunRecords {
   /** What this host wrote, by session id. */
   const written = new Map<string, Written>()
-  /** Sessions the brain refused a run for: the ledger covers them. */
-  const refused = new Set<string>()
+  /** Sessions the brain refused a run for, with the run's id: the ledger covers that run. A later run is tried again. */
+  const refused = new Map<string, string>()
   /** Spaces whose runs of this member were read after the host started. */
   const loaded = new Set<string>()
   /** Spaces whose runs could not be read, logged once (a brain from before schema 23). */
@@ -83,9 +83,9 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
   let running: Promise<void> | null = null
   let pokeTimer: NodeJS.Timeout | null = null
 
-  const refuse = (sessionId: string, why: string) => {
-    if (refused.has(sessionId)) return
-    refused.add(sessionId)
+  const refuse = (sessionId: string, runId: string, why: string) => {
+    if (refused.get(sessionId) === runId) return
+    refused.set(sessionId, runId)
     deps.log(`[runs] no run for session ${sessionId.slice(0, 8)}: ${why}`)
   }
 
@@ -125,7 +125,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
         written.set(s.sessionId, { runId, spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
         return false
       }
-      refuse(s.sessionId, `run ${runId} belongs to ${existing.member} on task ${existing.task_id}`)
+      refuse(s.sessionId, runId, `run ${runId} belongs to ${existing.member} on task ${existing.task_id}`)
       return true
     }
     const agent = deps.agentOf(space)
@@ -136,7 +136,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
       })
       written.set(s.sessionId, { runId, spaceId: space.id, taskId: s.taskId, state, result })
     } catch (err) {
-      refuse(s.sessionId, (err as Error).message)
+      refuse(s.sessionId, runId, (err as Error).message)
     }
     return true
   }
@@ -145,23 +145,26 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
     const sessions = deps.sessions().filter((s) => s.spaceId === space.id)
     const present = new Set(sessions.map((s) => s.sessionId))
     for (const s of sessions) {
-      if (!s.taskId || refused.has(s.sessionId)) continue
+      const runId = runIdOf(s.sessionId, s.runStartedAt)
+      if (!s.taskId || refused.get(s.sessionId) === runId) continue
+      // A refusal covers the run it was for; the session's later run (a delegation continued it) is written again.
+      refused.delete(s.sessionId)
       try {
         let prev = written.get(s.sessionId)
+        // A delegation continued the session: its earlier run ends, and the new one is written as any first run is.
+        if (prev && prev.runId !== runId && !s.archived) {
+          if (prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'finished' })
+          written.delete(s.sessionId)
+          prev = undefined
+        }
         if (prev && prev.taskId !== s.taskId) {
           if (prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'finished' })
-          refuse(s.sessionId, 'it moved to another task (a run keeps its task)')
+          refuse(s.sessionId, runId, 'it moved to another task (a run keeps its task)')
           continue
         }
         if (s.archived) {
           if (prev && prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'put_away' })
           continue
-        }
-        // A delegation continued the session: its earlier run ends, and the new one is written as any first run is.
-        if (prev && prev.runId !== runIdOf(s.sessionId, s.runStartedAt)) {
-          if (prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'finished' })
-          written.delete(s.sessionId)
-          prev = undefined
         }
         const isLive = live(s.sessionId)
         const state = runStateOf(deps.turnOf(s.sessionId))

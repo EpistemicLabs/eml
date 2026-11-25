@@ -208,6 +208,24 @@ describe('run records', () => {
     expect(brain.writes).toEqual([{ method: 'PUT', path: `/object/run/${runId}`, body: { state: 'running' } }])
   })
 
+  it('a run the brain refused stays with the ledger, but the session\'s later run is written', async () => {
+    const brain = brainOf(['t1'])
+    const failing = { ...brain, post: async (path: string, body: Record<string, unknown>) => {
+      if (body.id === 's1') throw new Error('brain unavailable')
+      return brain.post(path, body)
+    } }
+    const sessions = [session('s1', 't1')]
+    const { records, processes, logs } = setup(failing as never, sessions)
+    processes.add('s1')
+    await records.sync()
+    await records.sync()
+    expect(brain.runs.size).toBe(0)
+    expect(logs.filter((l) => l.includes('no run for session s1'))).toHaveLength(1)
+    sessions[0].runStartedAt = '2026-11-24T11:00:05.000Z'
+    await records.sync()
+    expect([...brain.runs.keys()]).toEqual([`s1_${Date.parse('2026-11-24T11:00:05.000Z')}`])
+  })
+
   it('a process gone mid-turn leaves the run idle until it runs again', async () => {
     const brain = brainOf()
     const { records, turns, processes } = setup(brain, [session('s1', 't1')])
