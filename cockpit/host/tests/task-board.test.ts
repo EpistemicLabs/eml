@@ -32,7 +32,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
         const id = path.slice('/engram/'.length)
         fetched.push(id)
         const row = [...rows, ...unlisted].find((r) => r.id === id)
-        if (!row) throw new Error('engram not found')
+        if (!row) throw Object.assign(new Error('engram not found'), { status: 404 })
         const relations = [
           ...(row.parent_id ? [{ relation: 'part_of', source_id: id, target_id: row.parent_id }] : []),
           ...(row.origin_task_id ? [{ relation: 'derived_from', source_id: id, target_id: row.origin_task_id, target_engram: { type: 'task' } }] : []),
@@ -528,6 +528,93 @@ describe('the task board', () => {
     expect(plain).not.toHaveProperty('displayTitle')
     expect(plain).not.toHaveProperty('statusLine')
     expect(model.inbox.find((i) => i.taskId === 'named')?.title).toBe('Ship the Acme widget release')
+  })
+
+  describe('a brain that does not answer', () => {
+    /** Make the space's brain fail every read with `err` until the returned function is called. */
+    const breakBrain = (brain: { get: (path: string, query?: Record<string, unknown>) => Promise<unknown> }, err: () => Error) => {
+      const plainGet = brain.get.bind(brain)
+      brain.get = async () => { throw err() }
+      return () => { brain.get = plainGet }
+    }
+    const timeout = () => Object.assign(new Error('GET /list?type=task timed out after 30000ms'), { status: 0 })
+
+    it('keeps the space as its brain gave it last, marked stale, while the other spaces update', async () => {
+      const log: string[] = []
+      const { board, brains } = setup({ main: [mine('a'), mine('done', {}, 'resolved')], other: [mine('e1')], log })
+      const before = await board.refresh()
+      const mend = breakBrain(brains.get('main')!, timeout)
+      brains.get('ebisu')!.rows.push(mine('e2'))
+      const during = await board.refresh()
+      expect(during.tasks.filter((t) => t.spaceId === 'main')).toEqual(before.tasks.filter((t) => t.spaceId === 'main'))
+      expect(during.closed).toEqual(before.closed)
+      expect(during.projects).toEqual(before.projects)
+      expect(during.inbox).toEqual(before.inbox)
+      expect(during.spaces.map((sp) => [sp.id, sp.stale ?? false])).toEqual([['main', true], ['ebisu', false]])
+      expect(during.tasks.filter((t) => t.spaceId === 'ebisu').map((t) => t.id)).toEqual(['e1', 'e2'])
+      // said once, however many builds fail
+      await board.refresh()
+      expect(log.filter((l) => l.includes('Main: its brain did not answer'))).toEqual(['[board] Main: its brain did not answer (GET /list?type=task timed out after 30000ms); showing its last state'])
+      mend()
+      brains.get('main')!.rows.push(mine('b'))
+      const after = await board.refresh()
+      expect(after.tasks.filter((t) => t.spaceId === 'main').map((t) => t.id)).toEqual(['a', 'b', 'done'])
+      expect(after.spaces[0]).not.toHaveProperty('stale')
+      expect(log.filter((l) => l.includes('Main: its brain answers again'))).toHaveLength(1)
+    })
+
+    it('does not ask a second time without the new parameters: only a refusal is worth that', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      await board.refresh()
+      const brain = brains.get('main')!
+      const plainGet = brain.get.bind(brain)
+      let lists = 0
+      brain.get = async (path: string, query?: Record<string, unknown>) => {
+        if (path !== '/list') return plainGet(path, query)
+        lists++
+        throw new Error('GET /list failed: fetch failed')
+      }
+      await board.refresh()
+      // the five lists of one build, each asked once
+      expect(lists).toBe(5)
+    })
+
+    it('takes a server error as no answer too', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      await board.refresh()
+      breakBrain(brains.get('main')!, () => Object.assign(new Error('brain needs intervention'), { status: 503 }))
+      expect((await board.refresh()).tasks.map((t) => t.id)).toEqual(['a'])
+    })
+
+    it('lists the space without tasks, marked stale, when its brain never answered yet', async () => {
+      const { board, brains } = setup({ main: [mine('a')], other: [mine('e1')] })
+      breakBrain(brains.get('main')!, timeout)
+      const model = await board.refresh()
+      expect(model.spaces[0]).toEqual({ id: 'main', name: 'Main', agents: [], stale: true })
+      expect(model.tasks.map((t) => t.id)).toEqual(['e1'])
+    })
+
+    it('tells the pages when a space goes stale and when it is back', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      let told = 0
+      board.onChange(() => { told++ })
+      await board.refresh()
+      const mend = breakBrain(brains.get('main')!, timeout)
+      await board.refresh()
+      expect(told).toBe(1)
+      mend()
+      await board.refresh()
+      expect(told).toBe(2)
+    })
+
+    it('does not take a mistake of its own for a brain that is away', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      const brain = brains.get('main')!
+      const plainGet = brain.get.bind(brain)
+      // an answer the build cannot read: its own failure, not the brain's
+      brain.get = async (path: string, query?: Record<string, unknown>) => path === '/list' ? { engrams: [null] } : plainGet(path, query)
+      await expect(board.refresh()).rejects.toThrow(TypeError)
+    })
   })
 
   it('still lists the tasks when the brain server does not know with_origin yet', async () => {
