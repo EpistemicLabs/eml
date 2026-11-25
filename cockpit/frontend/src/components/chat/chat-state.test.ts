@@ -289,6 +289,14 @@ describe('groupItems', () => {
     expect(groupItems(state.items).map((g) => g.kind)).toEqual(['tools', 'item', 'tools', 'item', 'tools']);
   });
 
+  it('a text before a status call stays open next to the text after it', () => {
+    const status: ChatEvent = { kind: 'tool_call', toolId: 's', name: 'mcp__cockpit__session_status', toolKind: 'other', title: 'session_status', input: { status: 'question', reason: 'Go?' } };
+    const state = fold([{ kind: 'text', blockId: 'm1:0', text: 'Long answer' }, status, { kind: 'tool_result', toolId: 's', status: 'completed', output: 'ok' }, { kind: 'text', blockId: 'm2:0', text: 'Go?' }]);
+    const groups = groupItems(state.items);
+    expect(groups.map((g) => g.kind)).toEqual(['item', 'status', 'item']);
+    expect(groups.flatMap((g) => (g.kind === 'item' && g.item.type === 'assistant' ? [g.item.text] : []))).toEqual(['Long answer', 'Go?']);
+  });
+
   it('the tool row keeps the approval', () => {
     const state = fold([
       tool('a'),

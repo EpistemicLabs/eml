@@ -308,4 +308,9 @@ describe('next-step check', () => {
     await unseen.check.tick()
     expect(unseen.delivered).toEqual([`w2-13: ${mod.NEXT_STEP_PROMPT}`])
   })
+
+  it('asks a session for status first, then its full answer as visible text, not one line', () => {
+    expect(mod.OWN_STATUS_PROMPT).not.toContain('one line')
+    expect(mod.OWN_STATUS_PROMPT).toContain('Then write your full answer as visible text, ending with the question if there is one')
+  })
 })
