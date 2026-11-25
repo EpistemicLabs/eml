@@ -2,7 +2,7 @@
 // background, one container. The model picker sits in the status bar below it,
 // and on a phone, where there is no status bar, behind the context chip.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, X } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, Workflow, X } from 'lucide-react';
 
 import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { FOCUS, POPOVER } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 
-import { currentModelOption, matchCommands, sentMessages, withPaneCommands, stepHistory, type ChatState, type CommandInfo } from './chat-state';
+import { backgroundLabel, currentModelOption, matchCommands, sentMessages, withPaneCommands, stepHistory, workflowDetail, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
 import { pasteTextDirectly } from './pasteText';
 import { TARGET } from './tool-icons';
@@ -160,13 +160,13 @@ function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: 
   );
 }
 
-const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-
-/** What runs beside the conversation: subagents and background shells. */
-function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: string) => void }) {
+/** What runs beside the conversation: workflow runs, subagents and background shells. */
+export function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: string) => void }) {
+  const label = backgroundLabel(chat);
+  if (!label) return null;
+  const workflows = chat.workflows.filter((run) => run.status === 'running');
   const agents = chat.agents.filter((agent) => agent.status === 'running');
   const shells = chat.shells.filter((shell) => shell.status === 'running');
-  if (agents.length + shells.length === 0) return null;
   const row = (taskId: string, icon: ReactNode, title: string, detail: string | null) => (
     <div key={taskId} className="flex items-center gap-2 px-2 py-1.5">
       {icon}
@@ -182,11 +182,12 @@ function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: st
   const iconClass = 'size-3.5 flex-shrink-0 text-muted-foreground';
   return (
     <ChipMenu
-      label={[agents.length ? count(agents.length, 'agent') : '', shells.length ? count(shells.length, 'shell') : ''].filter(Boolean).join(' · ')}
+      label={label}
       title="Running in the background"
       icon={<Loader2 className="size-3 flex-shrink-0 animate-spin" strokeWidth={1.8} />}
     >
       {() => [
+        ...workflows.map((run) => row(run.taskId, <Workflow className={iconClass} strokeWidth={1.8} />, run.name, workflowDetail(run))),
         ...agents.map((agent) => row(agent.taskId, <Users className={iconClass} strokeWidth={1.8} />, agent.description, agent.activity)),
         ...shells.map((shell) => row(shell.taskId, <Terminal className={iconClass} strokeWidth={1.8} />, shell.description, null)),
       ]}

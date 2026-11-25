@@ -46,6 +46,18 @@ export interface ShellTask {
   status: AgentTaskStatus;
 }
 
+/** A workflow run (the Workflow tool) in the background, and how far its agents are. */
+export interface WorkflowTask {
+  taskId: string;
+  toolId: string | null;
+  name: string;
+  status: AgentTaskStatus;
+  running: number;
+  done: number;
+  /** The phase of the agent it started last; null before any. */
+  phase: string | null;
+}
+
 export interface AgentTask {
   taskId: string;
   toolId: string | null;
@@ -82,6 +94,7 @@ export type ChatEvent =
   | { kind: 'context'; usedTokens: number; maxTokens: number }
   | { kind: 'agent_task'; taskId: string; toolId?: string | null; description?: string; agentType?: string | null; status?: AgentTaskStatus; background?: boolean; activity?: string; tokens?: number; toolUses?: number; durationMs?: number }
   | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
+  | { kind: 'workflow_task'; taskId: string; toolId?: string | null; name?: string; status?: AgentTaskStatus; running?: number; done?: number; phase?: string | null }
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
   | { kind: 'conversation_reset'; conversationId: string }
   | { kind: 'user_message'; id: string; text: string; queued: boolean; images?: Array<{ url: string | null }> }
@@ -127,6 +140,8 @@ export interface ChatState {
   agents: AgentTask[];
   /** Shells running in the background. */
   shells: ShellTask[];
+  /** Workflow runs, which always run in the background. */
+  workflows: WorkflowTask[];
   /** Tool calls inside subagents, by the call that started the subagent. */
   agentTools: Record<string, AgentTool[]>;
   /** The last turn ended in a failure; cleared by the next one. */
@@ -136,7 +151,7 @@ export interface ChatState {
 }
 
 export const EMPTY_CHAT: ChatState = {
-  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], agentTools: {}, failed: false, process: 'unknown',
+  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], workflows: [], agentTools: {}, failed: false, process: 'unknown',
 };
 
 function indexOfItem(items: ChatItem[], type: ChatItem['type'], id: string): number {
@@ -198,6 +213,39 @@ function reduceShellTask(shells: ShellTask[], event: Extract<ChatEvent, { kind: 
   return [...shells, { toolId: null, description: 'Shell', status: 'running', ...patch }];
 }
 
+function reduceWorkflowTask(workflows: WorkflowTask[], event: Extract<ChatEvent, { kind: 'workflow_task' }>): WorkflowTask[] {
+  const { kind: _kind, ...patch } = event;
+  const index = workflows.findIndex((run) => run.taskId === event.taskId);
+  if (index >= 0) {
+    const next = workflows.slice();
+    next[index] = { ...workflows[index], ...patch };
+    return next;
+  }
+  return [...workflows, { toolId: null, name: 'Workflow', status: 'running', running: 0, done: 0, phase: null, ...patch }];
+}
+
+const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/** The background chip's label: "1 workflow · 3 agents · 1 shell". Agents counts subagents and the agents running in workflow runs; null when nothing runs. */
+export function backgroundLabel(chat: Pick<ChatState, 'agents' | 'shells' | 'workflows'>): string | null {
+  const workflows = chat.workflows.filter((run) => run.status === 'running');
+  const agents = chat.agents.filter((agent) => agent.status === 'running').length + workflows.reduce((sum, run) => sum + run.running, 0);
+  const shells = chat.shells.filter((shell) => shell.status === 'running').length;
+  const parts = [
+    workflows.length ? counted(workflows.length, 'workflow') : '',
+    agents ? counted(agents, 'agent') : '',
+    shells ? counted(shells, 'shell') : '',
+  ].filter(Boolean);
+  // A workflow run whose agents have not started yet still runs.
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** A workflow run's line under its name: "Review · 3 running, 4 done"; a count of 0 is left out. */
+export function workflowDetail(run: Pick<WorkflowTask, 'running' | 'done' | 'phase'>): string | null {
+  const counts = [run.running > 0 ? `${run.running} running` : '', run.done > 0 ? `${run.done} done` : ''].filter(Boolean).join(', ');
+  return [run.phase ?? '', counts].filter(Boolean).join(' · ') || null;
+}
+
 function reduceAgentTool(tools: Record<string, AgentTool[]>, event: Extract<ChatEvent, { kind: 'agent_tool' }>): Record<string, AgentTool[]> {
   const list = tools[event.parentToolId] ?? [];
   const index = list.findIndex((tool) => tool.id === event.toolId);
@@ -245,11 +293,13 @@ function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
       return { ...state, agents: reduceAgentTask(state.agents, event) };
     case 'shell_task':
       return { ...state, shells: reduceShellTask(state.shells, event) };
+    case 'workflow_task':
+      return { ...state, workflows: reduceWorkflowTask(state.workflows, event) };
     case 'agent_tool':
       return { ...state, agentTools: reduceAgentTool(state.agentTools, event) };
     case 'conversation_reset':
       return {
-        ...state, agents: [], shells: [], agentTools: {}, context: null, failed: false,
+        ...state, agents: [], shells: [], workflows: [], agentTools: {}, context: null, failed: false,
         items: [{ type: 'notice', id: `s${seq}`, text: 'Started a new conversation.' }],
       };
     case 'user_message': {
@@ -339,6 +389,7 @@ function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
       return { ...state, activity: 'idle', process: 'stopped', items: settleTools(items),
         agents: stopAgents(state.agents, false),
         shells: state.shells.map((shell) => (shell.status === 'running' ? { ...shell, status: 'stopped' } : shell)),
+        workflows: state.workflows.map((run) => (run.status === 'running' ? { ...run, status: 'stopped' } : run)),
       };
     case 'usage':
       return state;
