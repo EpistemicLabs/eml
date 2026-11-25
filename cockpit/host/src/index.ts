@@ -101,6 +101,7 @@ import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
 import { hasSchedule, nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
+import { zoneLabel } from './domain/schedule.js'
 import type { DelegationFields } from './domain/delegation.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
@@ -384,7 +385,7 @@ async function main() {
   const owner = config?.handle ?? 'user'
   // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
   const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool })
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool, zone: () => zoneLabel(userTimeZone()) })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
   const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })

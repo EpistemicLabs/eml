@@ -1,5 +1,5 @@
 import type { WorkerStatus } from './session-attention.js'
-import type { DerivedTurn, EndTurn, Missing } from './turn-end.js'
+import type { CheckTime, DerivedTurn, EndTurn, Missing } from './turn-end.js'
 /**
  * A session driven through a structured harness instead of a terminal: the port
  * the chat view runs on. It says nothing about any one agent: an adapter
@@ -223,6 +223,8 @@ export interface SessionRuntimeStart {
   }
   /** The schedule tool's actions for this session (application/jobs.ts); the answer is what the agent reads. */
   jobs?: (input: Record<string, unknown>) => Promise<string>
+  /** The user's time zone as the session's tools name it, "Asia/Bangkok (UTC+7)" (domain/schedule.ts zoneLabel). */
+  timeZone?: string
 }
 
 /** What the cockpit made of an end_turn call, for the tool's answer. */
@@ -232,6 +234,8 @@ export interface EndTurnRecorded {
   missing: readonly Missing[]
   /** Why the check at next.when could not be set; the rest of the call is recorded. */
   checkProblem?: string
+  /** The zone next.when was read in and the instant the check was saved for. */
+  checkTime?: CheckTime
 }
 
 export interface SessionRuntimeFactory {

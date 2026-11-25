@@ -1,4 +1,4 @@
-import { isOpenRun, JOB_LIMITS, type Job } from '../domain/job.js'
+import { isOpenRun, isScheduleTrigger, JOB_LIMITS, type Job } from '../domain/job.js'
 import { checkJobName } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
 import type { JobAnswer, JobCaller } from './jobs.js'
@@ -41,6 +41,12 @@ export interface TurnCheck {
 
 const NO_TASK = 'this session'
 
+/** "2026-11-26T20:15 (Asia/Bangkok) = 2026-11-26T13:15:00.000Z": the time as written, the zone it was read in and the instant saved. */
+export function checkTimeLine(written: string, job: Pick<Job, 'triggers'> | undefined): string {
+  const trigger = job?.triggers.find(isScheduleTrigger)
+  return trigger?.at ? `${written} (${trigger.timeZone}) = ${trigger.at}` : written
+}
+
 /** The check's name within the limit for job names; `tag` tells two sessions' checks on one task apart. */
 export function checkName(taskName: string | null, tag = ''): string {
   const suffix = tag ? ` (${tag})` : ''
@@ -78,13 +84,13 @@ export function createTurnCheck(deps: TurnCheckDeps): TurnCheck {
       // The session may work on another task by now: the check goes with it.
       const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
       if (answer.status >= 400) return answer.text
-      deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${wanted.at}`)
+      deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${checkTimeLine(wanted.at, answer.job ?? deps.store.list().find((job) => job.id === check.id))}`)
       return null
     }
     const answer = await deps.jobs.handle(caller, { action: 'create', name: as, prompt: wanted.prompt, at: wanted.at, target: 'self' })
     if (answer.status >= 400 || !answer.job) return answer.text
     deps.store.put({ ...answer.job, origin: 'end_turn' })
-    deps.log(`[check] ${sessionId.slice(0, 8)} check ${answer.job.id.slice(0, 8)} set for ${wanted.at}`)
+    deps.log(`[check] ${sessionId.slice(0, 8)} check ${answer.job.id.slice(0, 8)} set for ${checkTimeLine(wanted.at, answer.job)}`)
     return null
   }
 

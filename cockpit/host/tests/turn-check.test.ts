@@ -9,13 +9,13 @@ import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
 
-function setup() {
+function setup(zone = 'UTC') {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-turn-check-')), 'jobs.json')
   const store = new JobStore(file)
   const jobs = new Jobs({
     store, runner: { runNow: () => null, tick: async () => {} }, now: () => NOW,
     resolveProject: async () => 'bp-eml', findSession: () => null, addressOf: (id) => `eml-${id}`,
-    providerKnown: () => true, defaultTimeZone: () => 'UTC',
+    providerKnown: () => true, defaultTimeZone: () => zone,
   })
   const callers: Record<string, JobCaller> = {
     s1: { sessionId: 's1', spaceId: null, projectId: 'bp-eml', toolProfile: null, taskId: 't1' },
@@ -182,6 +182,23 @@ describe('the check an end_turn call sets', () => {
     await check.settle('s1', wanted(null))
     expect(store.list()).toHaveLength(1)
     expect(scheduled()).toBe(false)
+  })
+
+  it('reads the time in the user\'s zone while the process runs in UTC, and logs the zone and the instant saved', async () => {
+    const { store, check, wanted, jobs, callers, logs } = setup('Asia/Bangkok')
+    expect(await check.settle('s1', wanted('2026-11-26T20:15'))).toBeNull()
+    const [job] = store.list()
+    // 20:15 in Bangkok, not 20:15 UTC.
+    expect(job).toMatchObject({ triggers: [{ type: 'schedule', at: '2026-11-26T13:15:00.000Z', timeZone: 'Asia/Bangkok' }], nextRunAt: '2026-11-26T13:15:00.000Z' })
+    expect(logs.at(-1)).toMatch(/set for 2026-11-26T20:15 \(Asia\/Bangkok\) = 2026-11-26T13:15:00\.000Z$/)
+    await check.settle('s1', wanted('2026-11-27T09:00'))
+    expect(logs.at(-1)).toMatch(/moved to 2026-11-27T09:00 \(Asia\/Bangkok\) = 2026-11-27T02:00:00\.000Z$/)
+    // The schedule tool's own default is the same zone.
+    const own = await jobs.handle(callers.s1, { action: 'create', name: 'Ask Acme again', prompt: 'x', at: '2026-11-28T08:00', target: 'self' })
+    expect(own.job?.triggers).toEqual([{ type: 'schedule', at: '2026-11-28T01:00:00.000Z', timeZone: 'Asia/Bangkok' }])
+    // One the user names in another zone keeps that zone.
+    const berlin = await jobs.handle(callers.s1, { action: 'create', name: 'Berlin call', prompt: 'x', at: '2026-11-28T08:00', timezone: 'Europe/Berlin', target: 'self' })
+    expect(berlin.job?.triggers).toEqual([{ type: 'schedule', at: '2026-11-28T07:00:00.000Z', timeZone: 'Europe/Berlin' }])
   })
 
   it('fits the name into a job name', () => {

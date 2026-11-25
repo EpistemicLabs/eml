@@ -28,6 +28,14 @@ describe('what a session reads about its task', () => {
     expect(text).toContain('Hand the result over for review (next names the owner); its owner closes it')
   })
 
+  it('names the user\'s time zone and its offset, in a chat and in a terminal', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const task = { id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: {} } as never
+    for (const tool of [true, false]) {
+      expect(taskContext(task, false, { ...WHO, tool, zone: 'Asia/Bangkok (UTC+7)' })).toContain("Times: the user's time zone is Asia/Bangkok (UTC+7).")
+    }
+  })
+
   it('says how a turn ends once, by what the session can do, with the handles a who can name', async () => {
     const { taskContext } = await import('../src/application/session-task.js')
     const { turnEndRules } = await import('../src/domain/turn-end.js')

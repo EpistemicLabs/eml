@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { deriveTurn, endTurnAnswer, type EndTurn } from '../src/domain/turn-end.js'
-import { ClaudeEventMapper, endTurnReply, historyEvents, startingMode, toolTitle, workflowLaunch } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { ClaudeEventMapper, endTurnReply, historyEvents, scheduleToolDescription, startingMode, toolTitle, workflowLaunch } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -311,6 +311,12 @@ describe('the end_turn tool\'s answer', () => {
     expect(answer.text.endsWith('Now write your reply as visible text.')).toBe(true)
   })
 
+  it('names the zone next.when was read in and the instant the check was saved for', async () => {
+    const timed = { result: 'Sent', next: { who: 'me', what: 'look', when: '2026-11-26T20:15' } }
+    const saved = { endTurn: async (call: EndTurn) => ({ derived: deriveTurn(call, ctx), missing: [], checkTime: { at: Date.parse('2026-11-26T13:15:00Z'), zone: 'Asia/Bangkok' } }) }
+    expect((await endTurnReply(saved, timed)).text).toBe('Recorded: you look again at 2026-11-26T20:15 (Asia/Bangkok, 2026-11-26T13:15Z). Now write your reply as visible text.')
+  })
+
   it('refuses a call the host does not record, as one whose time has passed', async () => {
     const passed = { endTurn: async () => { throw new Error('next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come') } }
     expect(await endTurnReply(passed, { result: 'x', next: { who: 'me', what: 'look', when: '2020-01-01T10:00' } }))
@@ -319,5 +325,12 @@ describe('the end_turn tool\'s answer', () => {
 
   it('says so when the call could not be recorded', async () => {
     expect(await endTurnReply({ endTurn: async () => { throw new Error('the brain does not answer') } }, { result: 'x' })).toEqual({ text: 'Not recorded: the brain does not answer. Call end_turn again.', refused: true })
+  })
+})
+
+describe('the schedule tool\'s description', () => {
+  it('names the user\'s own time zone and its offset, the default its times read in', () => {
+    expect(scheduleToolDescription('Asia/Bangkok (UTC+7)')).toContain('Times read in timezone (an IANA name), by default the user\'s own (Asia/Bangkok (UTC+7)); pass it when the user names another.')
+    expect(scheduleToolDescription()).toContain('by default the user\'s own; pass it when the user names another.')
   })
 })

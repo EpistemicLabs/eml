@@ -65,7 +65,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -129,7 +129,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     turnContext: opts.turnContext,
     turnCheck: opts.turnCheck,
     // A fixed moment, so the times in these calls stay ahead of it.
-    callTime: () => ({ now: Date.parse('2026-11-25T08:00:00Z'), zone: 'UTC' }),
+    callTime: () => ({ now: Date.parse('2026-11-25T08:00:00Z'), zone: opts.zone ?? 'UTC' }),
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -513,6 +513,25 @@ describe('ChatBridge', () => {
       await worker.endTurn({ result: 'Sent' })
       // A call without a time goes there too: the check it set earlier is removed.
       expect(checks).toEqual(['2026-11-27T10:00', '2028-01-01T10:00', null])
+    })
+
+    it('reads next.when in the user\'s time zone, names the instant it saved, and tells the session the zone (the process runs in UTC)', async () => {
+      const made = setup({ zone: 'Asia/Bangkok', turnCheck: async () => null })
+      made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      expect(made.runtimes[0].start.timeZone).toBe('Asia/Bangkok (UTC+7)')
+      const worker = made.runtimes[0].start.worker!
+      // 20:15 in Bangkok is 13:15 UTC, not 20:15 UTC.
+      expect((await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T20:15' } })).checkTime)
+        .toEqual({ at: Date.parse('2026-11-25T13:15:00Z'), zone: 'Asia/Bangkok' })
+      // 14:59 in Bangkok was 07:59 UTC: passed, although 14:59 UTC is still to come.
+      await expect(worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T14:59' } }))
+        .rejects.toThrow('next.when "2026-11-25T14:59" has passed (read in Asia/Bangkok)')
+    })
+
+    it('names no saved instant for a check that could not be set', async () => {
+      const made = setup({ zone: 'Asia/Bangkok', turnCheck: async () => 'This space has 30 jobs already.' })
+      made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      expect((await made.runtimes[0].start.worker!.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T20:15' } })).checkTime).toBeUndefined()
     })
 
     it('reminds a worker that stops without a call, once', async () => {
