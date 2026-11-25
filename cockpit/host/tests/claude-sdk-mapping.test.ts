@@ -230,23 +230,26 @@ describe('the end_turn tool\'s answer', () => {
 
   it('hands a readable call on, trimmed, and says what was recorded', async () => {
     const w = worker()
-    expect(await endTurnReply(w, { result: ' Draft ready ', questions: ['Send it today?'] })).toBe('Recorded: question for lasse. Now write your reply as visible text.')
+    expect(await endTurnReply(w, { result: ' Draft ready ', questions: ['Send it today?'] })).toEqual({ text: 'Recorded: question for lasse. Now write your reply as visible text.', refused: false })
     expect(w.calls).toEqual([{ result: 'Draft ready', questions: ['Send it today?'] }])
   })
 
   it('refuses a call it cannot read without handing it on', async () => {
     const w = worker()
-    expect(await endTurnReply(w, { result: 'x', next: { who: 'me', what: 'look', when: 'tomorrow' } })).toMatch(/^Not recorded: next\.when "tomorrow" is not a time\./)
+    // Refused: the tool answers as an error, so the chat does not show the call as the turn's end.
+    const answer = await endTurnReply(w, { result: 'x', next: { who: 'me', what: 'look', when: 'tomorrow' } })
+    expect(answer.refused).toBe(true)
+    expect(answer.text).toMatch(/^Not recorded: next\.when "tomorrow" is not a time\./)
     expect(w.calls).toEqual([])
   })
 
   it('says what the call lacks and what the host could not do, and asks for no reply that is written', async () => {
     const call = { result: 'Half way' }
     expect(await endTurnReply(worker({ missing: ['next'], replied: true, note: 'The check was not set.' }), call))
-      .toBe(`${endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'], replied: true })} The check was not set.`)
+      .toEqual({ text: `${endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'], replied: true })} The check was not set.`, refused: false })
   })
 
   it('says so when the call could not be recorded', async () => {
-    expect(await endTurnReply({ endTurn: async () => { throw new Error('the brain does not answer') } }, { result: 'x' })).toBe('Not recorded: the brain does not answer. Call end_turn again.')
+    expect(await endTurnReply({ endTurn: async () => { throw new Error('the brain does not answer') } }, { result: 'x' })).toEqual({ text: 'Not recorded: the brain does not answer. Call end_turn again.', refused: true })
   })
 })

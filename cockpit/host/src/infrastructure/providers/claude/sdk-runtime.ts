@@ -507,15 +507,19 @@ const SCHEDULE_TOOL_INPUT = {
     .describe('Mail that wakes the job: sender domains (e.g. example.com) and addresses.'),
 }
 
-/** What an end_turn call is answered with: why it was refused, or what was recorded and what it still lacks. */
-export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart['worker']>, 'endTurn'>, input: unknown): Promise<string> {
+/**
+ * What an end_turn call is answered with: why it was refused, or what was recorded and what it still lacks.
+ * `refused`: nothing was recorded. The tool then answers as an error, so the chat shows a failed tool row
+ * and not the end of the turn (frontend turn-end-line.ts turnEndOfTool).
+ */
+export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart['worker']>, 'endTurn'>, input: unknown): Promise<{ text: string; refused: boolean }> {
   const read = readEndTurn(input)
-  if (!read.ok) return read.error
+  if (!read.ok) return { text: read.error, refused: true }
   try {
     const { derived, missing, replied, note } = await worker.endTurn(read.call)
-    return [endTurnAnswer(read.call, derived, { missing, replied }), note].filter(Boolean).join(' ')
+    return { text: [endTurnAnswer(read.call, derived, { missing, replied }), note].filter(Boolean).join(' '), refused: false }
   } catch (error: unknown) {
-    return notRecorded(error instanceof Error ? error.message : 'unknown error')
+    return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
   }
 }
 
@@ -523,7 +527,10 @@ export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart[
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs']) {
   const said = (text: string) => ({ content: [{ type: 'text' as const, text }] })
   // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
-  const endTurn = tool(END_TURN_TOOL, END_TURN_DESCRIPTION, END_TURN_INPUT, async (input) => said(await endTurnReply(worker, input)), { alwaysLoad: true })
+  const endTurn = tool(END_TURN_TOOL, END_TURN_DESCRIPTION, END_TURN_INPUT, async (input) => {
+    const { text, refused } = await endTurnReply(worker, input)
+    return refused ? { ...said(text), isError: true } : said(text)
+  }, { alwaysLoad: true })
   // A session started before end_turn still calls this one.
   const status = tool(LEGACY_STATUS_TOOL, LEGACY_STATUS_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
     worker.report(status, reason ?? null)
