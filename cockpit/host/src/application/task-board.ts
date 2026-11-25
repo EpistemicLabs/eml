@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { isStaleWait } from '../domain/stale-runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { urgentWaitOf, waitsOf } from '../domain/task-waits.js'
@@ -486,7 +487,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const spaceTasks: BoardTask[] = []
       for (const row of rows) {
         const props = row.properties ?? {}
-        const sessions = deps.sessionsOn(row.id)
+        // A session whose run went silent (domain/stale-runs.ts) still says it is in a turn: it does not count as
+        // working, so its stopped wait puts the task under Needs you.
+        const hung = new Set(waitsOf(props).filter(isStaleWait).map((w) => w.id))
+        const sessions = deps.sessionsOn(row.id).map((s) => (hung.has(s.sessionId) ? { ...s, working: false } : s))
         if (CLOSED_STATUSES.has(row.status)) {
           board.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
           if (row.status === 'superseded') continue

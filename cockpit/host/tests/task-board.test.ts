@@ -227,6 +227,24 @@ describe('the task board', () => {
     expect(model.projects).toContainEqual({ spaceId: 'main', id: 'acme', name: 'Acme', goal: 'keep the customer' })
   })
 
+  it('a worker that went silent needs the owner, though its session still says it is in a turn', async () => {
+    const stale = { id: 's0', who: 'lasse', kind: 'stopped', why: 'No activity for 1 h', since: '2026-11-19T09:30:00Z', session_id: 's0' }
+    const { board } = setup({
+      main: [
+        mine('hung', { delegate: 'atlas', checkpoint: 'after', waits: [stale] }),
+        // A wait of another kind on a session in a turn changes nothing: it works.
+        mine('failed-before', { delegate: 'atlas', checkpoint: 'after', waits: [{ ...stale, id: 's1', session_id: 's1', why: 'The build broke', since: '2026-11-19T09:45:00Z' }] }),
+      ],
+      working: ['hung', 'failed-before'],
+    })
+    const model = await board.refresh()
+    const turn = (id: string) => model.tasks.find((t) => t.id === id)
+    expect(turn('hung')).toMatchObject({ turn: 'needs_you', group: 'failed', reason: 'stopped', working: false, sessionIds: ['s0'] })
+    expect(turn('failed-before')).toMatchObject({ turn: 'agent_working', working: true })
+    expect(model.inbox.map((i) => [i.kind, i.taskId, i.sessionId, i.text])).toEqual([['stopped', 'failed-before', 's1', 'The build broke'], ['stopped', 'hung', 's0', 'No activity for 1 h']])
+    expect(model.counts).toEqual({ needsYou: 1, inbox: 2 })
+  })
+
   it('says why the runner does not start a delegated task, from the runner\'s own checks', async () => {
     const step = (id: string, props: Record<string, unknown> = {}, extra: Partial<Row> = {}): Row => ({ ...mine(id, { delegate: 'atlas', checkpoint: 'after', ...props }, 'planned'), ...extra })
     const { board } = setup({
