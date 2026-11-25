@@ -34,6 +34,18 @@ describe('times', () => {
 });
 
 describe('what a card says', () => {
+  it('says what someone outside has to do instead of naming the owner who keeps an eye on it', () => {
+    const outside = { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier: API access, key, filters' };
+    const scheduled = task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: local(23, 9), waitingOn: outside, coverage: { ok: true, how: 'checks_back', at: local(23, 9) } });
+    expect(cardLine(scheduled, NOW)).toBe('Waiting for the supplier: API access, key, filters; Atlas checks again Mon 09:00.');
+    expect(coverageText(scheduled, NOW)).toBe('Waiting for the supplier: API access, key, filters · Atlas checks Mon 09:00');
+    const waiting = task({ turn: 'waiting_on_others', group: undefined, waitingOn: { who: 'lasse', kind: 'outside', why: 'The accountant has not filed the VAT return yet.' }, coverage: { ok: false, group: 'nofollow' } });
+    expect(cardLine(waiting, NOW)).toBe('The accountant has not filed the VAT return yet.');
+    expect(coverageText(waiting, NOW)).toBe('The accountant has not filed the VAT return yet · nobody checks back');
+    const customer = task({ turn: 'waiting_on_others', group: undefined, waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' }, coverage: { ok: false, group: 'nofollow' } });
+    expect(cardLine(customer, NOW)).toBe('Waiting on kim.');
+  });
+
   it('names the event that put it in its column', () => {
     const asked = task({ group: 'asked', waitingOn: { who: 'lasse', kind: 'question', why: 'Count the 07.11. booking?', since: local(19, 10, 27) }, delegate: 'atlas' });
     expect(cardLine(asked, NOW)).toBe('Count the 07.11. booking?');
@@ -256,6 +268,7 @@ describe('the task panel logic (v0.23)', () => {
   it('says whose move it is in one line, and offers what the state calls for', () => {
     expect(waitingLine(task({ delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'A? · B?' } }), 'lasse')).toBe('You · 2 questions from Atlas');
     expect(waitingLine(task({ waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' } }), 'lasse')).toBe('kim · reply to the offer');
+    expect(waitingLine(task({ waitingOn: { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier' } }), 'lasse')).toBe('Outside · Waiting for the supplier');
     expect(panelActions(task({ group: 'asked' }), true)).toEqual([]);
     expect(panelActions(task({ group: 'asked', delegate: 'atlas' }), false)).toEqual(['together', 'run_now']);
     expect(panelActions(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString() }), true)).toEqual(['run_now', 'together']);

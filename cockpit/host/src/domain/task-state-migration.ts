@@ -14,7 +14,8 @@ import { waitsOf } from './task-waits.js'
  *     requested now, so it starts as before. Only in a space the migration has not run in yet: afterwards a task like
  *     that is one the migration gave its checkpoint (or one handed over without a start), and a second run would
  *     start it;
- *   - blockers → one wait of kind outside per blocker, on the owner;
+ *   - blockers → one wait of kind outside per blocker, on the owner: the person keeping an eye on it, not the one to
+ *     act (task-turn.ts isViewersMove), so it never lands in Needs you;
  *   - intent → appended to the goal where it says something the goal does not (the text is in the dry run);
  *   - a snooze in this cockpit's store → snoozed_until on the task's wait.
  *

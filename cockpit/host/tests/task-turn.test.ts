@@ -21,6 +21,11 @@ describe('whose turn a task is', () => {
     ['someone else\'s delegated task in progress with no session here (B1)', { delegate: 'atlas', checkpoint: 'after', owner: 'dominik' }, {}, { turn: 'waiting_on_others' }],
     ['an unowned delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after', owner: undefined }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
     ['a customer has to answer', { delegate: 'atlas', waitingOn: { who: 'kim@acme', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
+    ['someone outside has to answer, the owner keeps an eye on it', { waitingOn: { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier' } }, {}, { turn: 'waiting_on_others' }],
+    ['someone outside has to answer and a job checks back', { delegate: 'atlas', checkpoint: 'before', waitingOn: { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier' } }, { nextRunAt: '2026-11-26T02:00:00Z', schedule: { cron: '0 2 * * *' } }, { turn: 'agent_scheduled', group: 'routine' }],
+    ['a customer has to answer and a mission checks back', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'kim@acme', kind: 'outside' } }, { nextRunAt: '2026-11-26T02:00:00Z', schedule: { at: '2026-11-26T02:00:00Z', session: 'resume' } }, { turn: 'agent_scheduled', group: 'mission' }],
+    ['someone outside has to answer, delegated, nothing checks back', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'outside' } }, {}, { turn: 'waiting_on_others' }],
+    ['a member has to answer and a job checks back', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'dominik', kind: 'question' } }, { nextRunAt: '2026-11-26T02:00:00Z' }, { turn: 'waiting_on_others' }],
     ['a job starts the delegate at a time', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z' }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['the runner will start it', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true }, {}, { turn: 'agent_scheduled', group: 'runner' }],
     ['it waits for a step it depends on', { delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true, runner: { kind: 'depends', stepId: 'pr', title: 'Open the PR', status: 'active', more: 0 } }, {}, { turn: 'agent_scheduled', group: 'blocked' }],
@@ -63,6 +68,10 @@ describe('whose turn a task is', () => {
     expect(coverageOf(task({ waitingOn: { ...asked, snoozed_until: '2026-11-20T00:00:00.000Z' } }), live(), 'lasse', NOW)).toEqual({ ok: true, how: 'parked', at: '2026-11-20T00:00:00.000Z' })
   })
 
+  it('a run gone silent shows as stale while only someone outside has the next move', () => {
+    expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'outside' } }, { sessions: 1, stale: true })).toEqual({ turn: 'agent_working', group: 'stale' })
+  })
+
   it('reads a waiting_on written before kinds existed', () => {
     expect(waitKind({ who: 'lasse', why: 'review: result ready' })).toBe('review')
     expect(waitKind({ who: 'lasse', why: 'Which price list?' })).toBe('question')
@@ -80,6 +89,13 @@ describe('coverage: does anything move an important task without the owner', () 
     expect(cover({ delegate: 'atlas', waitingOn: { who: 'kim', kind: 'outside' } }, { nextRunAt: '2026-11-26T10:00:00Z' }))
       .toEqual({ ok: true, how: 'checks_back', at: '2026-11-26T10:00:00Z' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after', status: 'planned', requested: true })).toEqual({ ok: true, how: 'runner' })
+    expect(cover({ delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'outside' } }, { nextRunAt: '2026-11-26T10:00:00Z' }))
+      .toEqual({ ok: true, how: 'checks_back', at: '2026-11-26T10:00:00Z' })
+  })
+
+  it('never asks the owner to answer when someone outside has the next move', () => {
+    expect(cover({ waitingOn: { who: 'lasse', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
+    expect(cover({ delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
   })
 
   it('names what has to happen when nothing will', () => {
@@ -108,6 +124,7 @@ describe('Plan: importance and urgency', () => {
     expect(important({ delegate: 'atlas', checkpoint: 'after', status: 'planned', priority: 'high' })).toBe(true)
     expect(important({ delegate: 'atlas', checkpoint: 'after', status: 'planned', due: '2027-02-15' })).toBe(false)
     expect(important({ owner: 'dominik' })).toBe(false)
+    expect(important({ waitingOn: { who: 'lasse', kind: 'outside' } })).toBe(false)
   })
 
   it('puts a question above a due date above priority', () => {

@@ -24,6 +24,11 @@ describe('the Inbox', () => {
     expect(live[0]).toMatchObject({ text: 'Which list?', sessionId: 's1', since: '2026-11-19T09:00:00Z' })
   })
 
+  it('leaves out an outside wait that names the viewer: someone outside has the next move', () => {
+    const kept = [t('blocker', { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier', since: '2026-11-19T09:00:00Z' })]
+    expect(inboxItems(kept, 'lasse', [], NOW)).toEqual({ live: [], snoozed: [] })
+  })
+
   it('a snooze hides an item until its time; a newer question on the same task is a new item', () => {
     const snoozes = [{ key: itemKey({ taskId: 'asked', since: '2026-11-19T09:00:00Z' }), until: '2026-11-20T01:00:00Z' }]
     const hidden = inboxItems(tasks, 'lasse', snoozes, NOW)

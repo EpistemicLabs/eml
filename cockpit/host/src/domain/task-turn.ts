@@ -91,6 +91,14 @@ export function waitKind(w: WaitingOn): WaitKind {
 }
 
 /**
+ * The wait is the viewer's move: it names them and is not of kind outside. An outside wait names the person keeping an
+ * eye on it (the task-state migration puts the owner there), while someone outside has the next move: never the viewer's.
+ */
+export function isViewersMove(w: WaitingOn | undefined, viewer: string): boolean {
+  return !!w && w.who === viewer && waitKind(w) !== 'outside'
+}
+
+/**
  * The task's turn for `viewer` (the person looking), or null when it is off the board: closed
  * longer than a day ago, or dropped.
  */
@@ -107,9 +115,12 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   const kind = w ? waitKind(w) : null
   if (w && w.who === viewer && kind === 'review') return { turn: 'review' }
   if (live.working) return { turn: 'agent_working' }
-  if (live.stale && !(w && w.who === viewer)) return { turn: 'agent_working', group: 'stale' }
+  const mine = isViewersMove(w, viewer)
+  if (live.stale && !mine) return { turn: 'agent_working', group: 'stale' }
   // A failed run is its own group in Needs you: the agent stopped and someone has to run it again or change the plan.
-  if (w && w.who === viewer) return kind === 'stopped' ? { turn: 'needs_you', group: 'failed', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
+  if (mine) return kind === 'stopped' ? { turn: 'needs_you', group: 'failed', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
+  // Someone outside has the next move: a job of its delegate checks back on it, or it waits.
+  if (kind === 'outside') return task.delegate && live.nextRunAt ? { turn: 'agent_scheduled', group: scheduledGroup(live) } : { turn: 'waiting_on_others' }
   if (w && w.who) return { turn: 'waiting_on_others' }
   if (task.delegate) {
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: scheduledGroup(live) }
@@ -175,10 +186,9 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
   if (t?.reason === 'stopped') return { ok: false, group: 'stopped', reason: 'stopped' }
   if (t?.group === 'parent') return { ok: false, group: 'blocked', reason: 'parent' }
   if (stepsWaiting > 0 && task.status !== 'active') return { ok: false, group: 'blocked', reason: 'steps_wait', steps: stepsWaiting }
-  if (live.nextRunAt) return task.waitingOn?.who && task.waitingOn.who !== viewer
-    ? { ok: true, how: 'checks_back', at: live.nextRunAt }
-    : { ok: true, how: 'at_time', at: live.nextRunAt }
-  if (task.waitingOn?.who && task.waitingOn.who !== viewer) return { ok: false, group: 'nofollow' }
+  const othersMove = Boolean(task.waitingOn?.who) && !isViewersMove(task.waitingOn, viewer)
+  if (live.nextRunAt) return othersMove ? { ok: true, how: 'checks_back', at: live.nextRunAt } : { ok: true, how: 'at_time', at: live.nextRunAt }
+  if (othersMove) return { ok: false, group: 'nofollow' }
   if (task.delegate) {
     if (t?.group === 'nobody') return { ok: false, group: 'idle', reason: t.reason }
     return { ok: true, how: 'runner' }

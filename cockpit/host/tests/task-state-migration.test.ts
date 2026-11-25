@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { goalWithIntent, migrationReport, planTaskStateMigration, type MigrationInput, type MigrationTask } from '../src/domain/task-state-migration.js'
 import { requestOpen } from '../src/domain/delegation.js'
+import { turnOf } from '../src/domain/task-turn.js'
+import { urgentWaitOf } from '../src/domain/task-waits.js'
 
 const NOW = '2026-11-24T12:00:00.000Z'
 const input = (tasks: MigrationTask[], patch: Partial<MigrationInput> = {}): MigrationInput => ({
@@ -46,6 +48,15 @@ describe('the task state migration', () => {
       blockers: null,
       waits: [wait, { id: 'blocker-1', who: 'lasse', kind: 'outside', why: 'TLS cert', since: NOW }, { id: 'blocker-2', who: 'lasse', kind: 'outside', why: 'vendor reply', since: NOW }],
     })
+  })
+
+  it('a blocker turned into a wait on the owner never puts the task in the owner\'s Needs you', () => {
+    const plan = planTaskStateMigration(input([task('b', { delegate: 'atlas', checkpoint: 'before', blockers: ['Waiting for the supplier'] }, 'active')]))
+    const waitingOn = urgentWaitOf(plan.changes[0].patch as { waits: unknown })
+    const facts = { status: 'active', owner: 'lasse', delegate: 'atlas', checkpoint: 'before', waitingOn, parentActive: null }
+    const at = Date.parse(NOW)
+    expect(turnOf(facts, { working: false, sessions: 0, nextRunAt: null }, 'lasse', at)).toEqual({ turn: 'waiting_on_others' })
+    expect(turnOf(facts, { working: false, sessions: 0, nextRunAt: '2026-11-26T02:00:00.000Z' }, 'lasse', at)).toEqual({ turn: 'agent_scheduled', group: 'at_time' })
   })
 
   it('folds an intent into the goal where it says something the goal does not', () => {
