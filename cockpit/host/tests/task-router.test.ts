@@ -170,7 +170,9 @@ describe('task router', () => {
       ['another member next is waited on like someone outside: no review of theirs', { result: 'Draft ready', next: { who: '@Dominik', what: 'sign it', when: '2026-11-27T10:00' } }, {}, { who: 'dominik', kind: 'outside', why: 'sign it' }],
       ['another agent next is waited on like someone outside', { result: 'Draft ready', next: { who: 'motti', what: 'translate it', when: '2026-11-27T10:00' } }, {}, { who: 'motti', kind: 'outside', why: 'translate it' }],
       ['someone outside next is an outside wait', { result: 'Mail sent', next: { who: 'outside:Acme support', what: 'answer the mail', when: '2026-11-27T10:00' } }, {}, { who: 'Acme support', kind: 'outside', why: 'answer the mail' }],
-      ['an unknown handle is someone outside', { result: 'Mail sent', next: { who: 'kim', what: 'answer' } }, {}, { who: 'kim', kind: 'outside', why: 'answer' }],
+      ['an unknown handle is someone outside', { result: 'Mail sent', next: { who: 'kim', what: 'answer', when: '2026-11-27T10:00' } }, {}, { who: 'kim', kind: 'outside', why: 'answer' }],
+      ['a step for someone else without a time is no next step: nobody waits', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } }, {}, null],
+      ['a step for someone outside without a time is none either', { result: 'Mail sent', next: { who: 'outside:Acme', what: 'answer' } }, {}, null],
       ['a failure stops on the owner', { result: 'Stuck', failed: 'No access to the shop', next: { who: 'dominik', what: 'x' } }, {}, { who: 'lasse', kind: 'stopped', why: 'No access to the shop' }],
       ['its own next step at a time waits on nobody', { result: 'Mail sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } }, {}, null],
       ['nothing next waits on nobody', { result: 'All done' }, { checkpoint: 'after' }, null],
@@ -193,8 +195,8 @@ describe('task router', () => {
     it('a call replaces the wait of the session\'s last call and keeps another session\'s', async () => {
       const { ledger, brain, r } = called({ waits: [{ id: 's-o', who: 'lasse', kind: 'review', why: 'Review: x', since: '2026-11-17T08:00:00.000Z', session_id: 's-o' }] })
       ledger.recordSpawn('s-o', null, 'bp-eml', 'claude', false, 't-c')
-      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
-      await r.turnEnded('s-c', '', { result: 'Signed', next: { who: 'outside:Acme', what: 'countersign' } })
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
+      await r.turnEnded('s-c', '', { result: 'Signed', next: { who: 'outside:Acme', what: 'countersign', when: '2026-11-27T10:00' } })
       expect(waitsOfTask(brain).map((w) => [w.id, w.who, w.kind])).toEqual([['s-o', 'lasse', 'review'], ['s-c', 'Acme', 'outside']])
       // A wait on another member is nothing the Inbox of anyone lists (domain/inbox.ts skips outside waits).
       await r.turnEnded('s-c', '', { result: 'Countersigned, nothing left' })
@@ -205,13 +207,13 @@ describe('task router', () => {
       const { ledger, brain, r } = called()
       // What the chat does with a call: the session's attention is the call's status.
       ledger.setAttention('s-c', { kind: 'done', reason: 'Draft ready' })
-      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
       await r.turnEnded('s-c', 'Still waiting.')
       expect(brain.posts).toHaveLength(1)
       expect(waitsOfTask(brain)).toEqual([wait({ who: 'dominik', kind: 'outside', why: 'sign it' })])
       // An answer ends it, and the same call again is routed anew.
       await r.answered('s-c')
-      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
       expect(waitsOfTask(brain)).toHaveLength(1)
     })
 
@@ -232,7 +234,9 @@ describe('task router', () => {
 
   describe('from a block that names who is next', () => {
     it.each<[string, string, Props | null]>([
-      ['a member', 'Next: [dominik] sign it', { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['a member, with the time the agent looks again', 'Next: [dominik] sign it @ 2026-11-27T10:00', { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['a member without a time: no next step, as from a call', 'Next: [dominik] sign it', null],
+      ['someone outside without a time', 'Next: [outside:Acme] countersign', null],
       ['someone outside', 'Next: [outside:Acme] countersign @ 2026-11-27T10:00', { who: 'Acme', kind: 'outside', why: 'countersign' }],
       ['the owner', 'Next: [lasse] read it', { who: 'lasse', kind: 'review', why: 'read it' }],
       ['the agent itself', 'Next: [atlas] look again @ 2026-11-27T10:00', null],
@@ -261,10 +265,12 @@ describe('task router', () => {
     const block = (text: string) => parseHandoff(`### Handoff\n${text}`)
 
     it('reads a call against the context it is given, and an unknown handle as outside', () => {
-      const call = { result: 'x', next: { who: 'dominik', what: 'sign' } }
+      const call = { result: 'x', next: { who: 'dominik', what: 'sign', when: '2026-11-27T10:00' } }
       expect(router.decideWaiting({ ...base, call })).toMatchObject({ who: 'dominik', kind: 'outside' })
-      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'robin', what: 'sign' } } })).toMatchObject({ who: 'robin', kind: 'outside' })
+      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'robin', what: 'sign', when: '2026-11-27T10:00' } } })).toMatchObject({ who: 'robin', kind: 'outside' })
       expect(router.decideWaiting({ ...base, call: { result: 'x', questions: ['Go?'] }, ctx: { ...ctx, checkpoint: 'before' } })).toMatchObject({ who: 'lasse', kind: 'go' })
+      // Without the time the agent looks again, a step for someone else is none.
+      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'dominik', what: 'sign' } } })).toBeNull()
     })
 
     it('a call without a wait wins over the status and the checkpoint', () => {
@@ -279,7 +285,7 @@ describe('task router', () => {
     })
 
     describe('a status that needs an answer comes before a block\'s Next', () => {
-      const tagged = () => block('Result: Draft ready\nNext: [dominik] sign it')
+      const tagged = () => block('Result: Draft ready\nNext: [dominik] sign it @ 2026-11-27T10:00')
 
       it('a question status waits on the owner, not on whom Next names', () => {
         expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'question', reason: 'Send it today?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'Send it today?' })

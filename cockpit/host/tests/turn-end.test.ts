@@ -84,8 +84,8 @@ describe('what a call means (the first match wins)', () => {
   })
 
   it('5: next for someone outside waits on them by name', () => {
-    expect(deriveTurn({ ...base, next: { who: 'outside:Acme', what: 'Sends the file.' } }, ctx)).toEqual({ status: 'done', wait: { who: 'Acme', kind: 'outside', why: 'Sends the file.' }, checkAt: null })
-    expect(deriveTurn({ ...base, next: { who: 'the supplier', what: 'Answers.' } }, ctx).wait).toEqual({ who: 'the supplier', kind: 'outside', why: 'Answers.' })
+    expect(deriveTurn({ ...base, next: { who: 'outside:Acme', what: 'Sends the file.', when: WHEN } }, ctx)).toEqual({ status: 'done', wait: { who: 'Acme', kind: 'outside', why: 'Sends the file.' }, checkAt: WHEN })
+    expect(deriveTurn({ ...base, next: { who: 'the supplier', what: 'Answers.', when: WHEN } }, ctx).wait).toEqual({ who: 'the supplier', kind: 'outside', why: 'Answers.' })
   })
 
   it('6: the agent\'s own next step with a time is a check and no wait', () => {
@@ -97,7 +97,8 @@ describe('what a call means (the first match wins)', () => {
     const done = { status: 'done', wait: null, checkAt: null }
     expect(deriveTurn(base, ctx)).toEqual(done)
     expect(deriveTurn({ ...base, questions: [] }, ctx)).toEqual(done)
-    expect(deriveTurn({ ...base, next: { who: 'self', what: 'Look again.' } }, ctx)).toEqual(done)
+    // A step for anyone but the owner without the time the agent looks again is no next step: no wait, no check.
+    for (const who of ['self', 'nova', 'sam', 'echo', 'outside:Acme', 'the supplier']) expect(deriveTurn({ ...base, next: { who, what: 'Look again.' } }, ctx), who).toEqual(done)
   })
 })
 
@@ -262,9 +263,12 @@ describe('the texts', () => {
     const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.' } }
     expect(endTurnAnswer(own, deriveTurn(own, ctx), { missing: missingOf(own, { taskOpen: true, ctx }) }))
       .toBe(`Recorded: where the task stands, but no next step. ${WHEN_MISSING} Now write your reply as visible text.`)
-    const other: EndTurn = { ...call, next: { who: 'sam', what: 'Merge.' } }
-    expect(endTurnAnswer(other, deriveTurn(other, ctx), { missing: missingOf(other, { taskOpen: true, ctx }) }))
-      .toBe(`Recorded: waiting on sam. ${WHEN_MISSING} Now write your reply as visible text.`)
+    // The same for every who that is not the user: nothing is waited on without the time.
+    for (const who of ['sam', 'echo', 'outside:Acme']) {
+      const other: EndTurn = { ...call, next: { who, what: 'Merge.' } }
+      expect(endTurnAnswer(other, deriveTurn(other, ctx), { missing: missingOf(other, { taskOpen: true, ctx }) }), who)
+        .toBe(`Recorded: where the task stands, but no next step. ${WHEN_MISSING} Now write your reply as visible text.`)
+    }
   })
 
   it('a check that could not be set is not answered as set: what was recorded, then that the check was not', () => {

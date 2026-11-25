@@ -193,9 +193,12 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
     const who = whoOf(call.next.who, ctx)
     const what = call.next.what
     if (who.kind === 'owner') return { status: 'review', wait: wait(ctx.owner, 'review', what || `Review: ${call.result}`), checkAt }
+    // A step for anyone but the owner counts only with the time the agent looks again: without one nothing would
+    // bring it back up, so it is no next step, from a call and from a block alike.
+    if (!checkAt) return { status: 'done', wait: null, checkAt: null }
     // Another member or agent is waited on like someone outside: the task stays its owner's, and nobody else's Inbox gets it.
     if (who.kind === 'member' || who.kind === 'outside') return { status: 'done', wait: wait(who.name, 'outside', what || call.result), checkAt }
-    if (checkAt) return { status: 'done', wait: null, checkAt }
+    return { status: 'done', wait: null, checkAt }
   }
   return { status: 'done', wait: null, checkAt: null }
 }
