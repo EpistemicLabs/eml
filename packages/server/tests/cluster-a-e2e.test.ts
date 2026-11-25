@@ -537,6 +537,16 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       expect(typeof h.body.total).toBe('number')
       expect(typeof h.body.schema).toBe('number')
     })
+
+    it('a read that runs in the read pool answers its own status: a project that is not there is a 404', async () => {
+      const engrams = await get('/project/ghost-project/engrams')
+      expect(engrams.status).toBe(404)
+      expect(engrams.body).toEqual({ error: 'project "ghost-project" not found' })
+      expect((await get('/project/ghost-project/relations')).status).toBe(404)
+      // the checks the route keeps in front of the pool still answer
+      expect((await get('/list?type=nope')).status).toBe(400)
+      expect((await get('/list?nope=1')).body.error).toBe('unknown query params')
+    })
   })
 
   // v0.15 Cluster C: task_id on a write — edge + entry in one core transaction,

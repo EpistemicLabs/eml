@@ -154,6 +154,9 @@ try {
   step('host')
   await until('the host', 120_000, async () => (await api('/api/setup')).body?.needed === false)
   ok(`host up on ${base}`)
+  // The brain server says so when its read worker did not ship (packages/server read-pool.ts): every read would run on its request thread.
+  if (hostLog.includes('[read-pool] no read worker')) fail('the brain server found no read worker next to it (dist/read-worker.cjs)')
+  ok('brain server: read worker shipped')
 
   const runtime = async (id) => {
     const provider = (await api('/api/providers')).body?.providers?.find((p) => p.id === id)
