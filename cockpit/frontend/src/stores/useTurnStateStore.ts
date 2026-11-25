@@ -8,7 +8,12 @@ import { useSyncExternalStore } from 'react';
 import type { LLMProvider } from '@/types/app';
 
 export type TurnState = 'idle' | 'working' | 'done' | 'waiting';
-export type TurnInfo = { state: TurnState; since: string };
+export type TurnInfo = {
+  state: TurnState;
+  since: string;
+  /** Working, but its own turn is over: it waits for this many subagents it started. */
+  helpers?: number;
+};
 export type TurnEvent = TurnInfo & { sessionId: string };
 
 type Snapshot = {
@@ -115,6 +120,8 @@ export type SpawnRequest = {
   origin?: 'job' | 'runner';
 };
 
+const turnInfo = ({ state, since, helpers }: TurnInfo): TurnInfo => ({ state, since, ...(helpers ? { helpers } : {}) });
+
 export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {
   const source = new EventSource('/api/events');
 
@@ -142,7 +149,7 @@ export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void)
     window.dispatchEvent(new CustomEvent('cockpit:tasks', { detail: { changes: [] } }));
     const events = JSON.parse((message as MessageEvent<string>).data) as TurnEvent[];
     const turns: Record<string, TurnInfo> = {};
-    for (const { sessionId, state, since } of events) turns[sessionId] = { state, since };
+    for (const { sessionId, ...info } of events) turns[sessionId] = turnInfo(info);
     setTurns(turns);
   });
 
@@ -150,7 +157,7 @@ export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void)
     const event = JSON.parse((message as MessageEvent<string>).data) as TurnEvent;
     const turns = { ...snapshot.turns };
     if (event.state === 'idle') delete turns[event.sessionId];
-    else turns[event.sessionId] = { state: event.state, since: event.since };
+    else turns[event.sessionId] = turnInfo(event);
     setTurns(turns);
   });
 

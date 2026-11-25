@@ -34,6 +34,17 @@ describe('workingNow', () => {
     expect(row.task?.id).toBe('t');
   });
 
+  it('says so when a session only waits for its subagents, and stops saying it when its turn runs again', () => {
+    const since = '2026-02-01T11:00:00.000Z';
+    const t = task({ sessionIds: ['w'], statusLine: { now: 'Grading the batches', next: null, at: since } });
+    const [waiting] = workingNow([session('w')], { w: { state: 'working', since, helpers: 2 } }, board([t]), [space]);
+    expect(waiting).toMatchObject({ waiting: 'Waiting for 2 subagents', step: 'Grading the batches', since });
+    const [one] = workingNow([session('w')], { w: { state: 'working', since, helpers: 1 } }, board([t]), [space]);
+    expect(one.waiting).toBe('Waiting for 1 subagent');
+    const [back] = workingNow([session('w')], { w: working(since) }, board([t]), [space]);
+    expect(back.waiting).toBeNull();
+  });
+
   it('keeps a desk session without a task, by its own name', () => {
     const [row] = workingNow([session('d')], { d: working('2026-02-01T11:00:00.000Z') }, board([]), [space]);
     expect(row).toMatchObject({ name: 'Session d', kind: 'desk', step: null });

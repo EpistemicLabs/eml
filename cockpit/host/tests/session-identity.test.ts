@@ -187,6 +187,53 @@ describe('session identity', () => {
     expect(wrote).toEqual(['s-task', 's-free'])
   })
 
+  it('holds a done back while the session waits on its helpers, and applies any other signal', () => {
+    const { ledger, providers, turns } = setup(false)
+    ledger.recordSpawn('s-helpers', null, 'p1', 'claude', true)
+    ledger.setRuntime('s-helpers', 'sdk')
+    let waits = true
+    const asked: string[] = []
+    const hook = (payload: Record<string, unknown>) => applySessionHook(
+      { ledger, providers, turns, waitsOnHelpers: (sessionId) => { asked.push(sessionId); return waits } }, 's-helpers', payload,
+    )
+    hook({ id: 'c1', state: 'working' })
+    expect(ledger.get('s-helpers')?.turnInFlight).toBeTruthy()
+    hook({ id: 'c1', state: 'done' })
+    expect(turns.get('s-helpers')?.state).toBe('working')
+    // The turn itself is over all the same: nothing is cut off should the host go down.
+    expect(ledger.get('s-helpers')?.turnInFlight).toBeFalsy()
+    hook({ id: 'c1', state: 'waiting' })
+    expect(turns.get('s-helpers')?.state).toBe('waiting')
+    hook({ id: 'c1', state: 'working' })
+    // Only a done asks: a question or the helpers being back make it false (chat-bridge.ts waitsOnHelpers).
+    expect(asked).toEqual(['s-helpers'])
+    waits = false
+    hook({ id: 'c1', state: 'done' })
+    expect(turns.get('s-helpers')?.state).toBe('done')
+  })
+
+  it('says how many subagents a working session waits for, until its state changes', () => {
+    const turns = new TurnTracker()
+    const events: Array<{ state: string; since: string; helpers?: number }> = []
+    turns.on('turn', (event) => events.push(event))
+    turns.waitOn('s-wait', 2)
+    expect(turns.get('s-wait')).toBeUndefined()
+    turns.apply({ sessionId: 's-wait', state: 'working' })
+    const since = turns.get('s-wait')!.since
+    turns.waitOn('s-wait', 2)
+    turns.waitOn('s-wait', 2)
+    expect(turns.get('s-wait')).toEqual({ state: 'working', since, helpers: 2 })
+    expect(turns.snapshot()).toEqual([{ sessionId: 's-wait', state: 'working', since, helpers: 2 }])
+    turns.waitOn('s-wait', 0)
+    expect(turns.get('s-wait')).toEqual({ state: 'working', since })
+    expect(events.map((e) => e.helpers ?? 0)).toEqual([0, 2, 0])
+    turns.waitOn('s-wait', 1)
+    turns.apply({ sessionId: 's-wait', state: 'done' })
+    expect(turns.get('s-wait')?.helpers).toBeUndefined()
+    turns.waitOn('s-wait', 1)
+    expect(turns.get('s-wait')?.helpers).toBeUndefined()
+  })
+
   it('passes hooks without a turn state on as notes', () => {
     const { turns, hook } = setup(true)
     const notes: string[] = []

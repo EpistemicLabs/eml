@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
-import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, type AllSession } from './allSessions';
+import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, workingWord, type AllSession } from './allSessions';
 
 const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, agent: null, upgrade: null, shared: false, agentName: 'Alpha' };
 const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, agent: null, upgrade: null, shared: false, agentName: 'Beta' };
@@ -259,6 +259,21 @@ describe('allSessionState', () => {
   it('counts an ended session as idle whatever the tracker kept', () => {
     expect(allSessionState(session('a', { state: 'ended' }), turn('waiting'))).toBe('idle');
     expect(allSessionState(session('a', { state: 'running' }), turn('waiting'))).toBe('waiting');
+  });
+});
+
+describe('workingWord', () => {
+  const since = '2026-02-01T11:00:00.000Z';
+
+  it('says working while its own turn runs', () => {
+    expect(workingWord({ state: 'working', since })).toBe('Working');
+    expect(workingWord({ state: 'working', since, helpers: 0 })).toBe('Working');
+    expect(workingWord(undefined)).toBe('Working');
+  });
+
+  it('says what it waits for once its own turn is over', () => {
+    expect(workingWord({ state: 'working', since, helpers: 1 })).toBe('Waiting for 1 subagent');
+    expect(workingWord({ state: 'working', since, helpers: 3 })).toBe('Waiting for 3 subagents');
   });
 });
 
