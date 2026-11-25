@@ -763,7 +763,54 @@ describe('live updates', () => {
     await until(() => seen >= 2)
     stop()
     expect(log.some((l) => l.includes('no /head'))).toBe(false)
-    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(2)
+    // said once when it starts and once when it ends, not with every try
+    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(1)
+    expect(log.filter((l) => l.includes('watching Main: its brain answers again after'))).toHaveLength(1)
+  })
+
+  it('refreshes once when a brain is back, whether or not its head moved, so nothing written meanwhile is missed', async () => {
+    let down = false
+    let calls = 0
+    const waits: number[] = []
+    const head: TaskBoardDeps['head'] = async (space, _after, waitMs) => {
+      if (space.id !== 'main') return 1
+      calls++
+      waits.push(waitMs)
+      if (down) throw new Error('GET /head?after=4&wait=25000 timed out after 35000ms')
+      return 4
+    }
+    const { board, brains } = setup({ main: [mine('t1')], head })
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, settleMs: 5, restMs: 5, sleep: quickSleep })
+    await until(() => calls >= 2)
+    down = true
+    const failedAt = calls
+    await until(() => calls >= failedAt + 2)
+    // written while the watch got no answer; the head the watch sees afterwards is the one it knew
+    brains.get('main')!.rows.push(mine('written-meanwhile', {}, 'planned'))
+    down = false
+    await until(() => told > 0)
+    stop()
+    expect((await board.get(60_000)).tasks.map((t) => t.id)).toContain('written-meanwhile')
+    // after a failed call the head is asked for without waiting, so the answer comes as soon as the brain is back
+    expect(waits.slice(failedAt + 1, failedAt + 3)).toEqual([0, 0])
+  })
+
+  it('asks a brain that does not answer again within ten seconds at most', async () => {
+    const rests: number[] = []
+    const head: TaskBoardDeps['head'] = async (space) => {
+      if (space.id !== 'main') return 1
+      throw new Error('fetch failed')
+    }
+    const { board } = setup({ main: [mine('t1')], head })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 2000, sleep: (ms) => { rests.push(ms); return quickSleep(ms) } })
+    await until(() => rests.filter((ms) => ms === 10_000).length >= 2)
+    stop()
+    expect(Math.max(...rests)).toBe(10_000)
+    expect(rests.slice(0, rests.indexOf(10_000) + 1).filter((ms) => ms > 2000)).toEqual([4000, 8000, 10_000])
   })
 
   it('falls back on NO_LOG and tries /head again later', async () => {

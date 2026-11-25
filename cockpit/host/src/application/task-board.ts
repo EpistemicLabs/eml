@@ -215,7 +215,7 @@ export interface WatchOptions {
   probeMs?: number
   /** How long a space checks its newest task before it tries /head again (the brain may have been updated). */
   headRetryMs?: number
-  /** How long the watch rests while nobody looks, or after a failed call (doubling up to 30 s). */
+  /** How long the watch rests while nobody looks, or after a failed call (doubling up to WATCH_REST_MAX_MS). */
   restMs?: number
   /** Writes that arrive within this long make one refresh. */
   settleMs?: number
@@ -224,6 +224,8 @@ export interface WatchOptions {
 
 /** How long one long poll on a brain's /head waits. */
 const HEAD_WAIT_MS = 25_000
+/** The longest the watch rests between two tries on a brain that does not answer: it is back within seconds of the brain. */
+const WATCH_REST_MAX_MS = 10_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
@@ -806,6 +808,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
      * Watch every space's log head while a page looks, and refresh soon after it moves: one long poll per space on
      * GET /head, or — for a brain without it — its newest task every probeMs. Each space has its own loop, so a
      * slow or unreachable one holds up no other. Spaces that come and go are picked up within a few seconds.
+     * A brain that stops answering is asked again every few seconds, and the board refreshes once when it is back.
      */
     watch(opts: WatchOptions): () => void {
       const probeMs = opts.probeMs ?? 2_000
@@ -831,6 +834,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         let useHead = !!deps.head
         let probingSince = 0
         let rest = restMs
+        /** When the calls started to fail; null while the brain answers. Said once when it starts and once when it ends. */
+        let failingSince: number | null = null
         while (!stopped) {
           const space = deps.spaces().find((s) => s.id === spaceId)
           if (!space) break
@@ -838,7 +843,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           try {
             if (useHead) {
               const asked = deps.now()
-              const seq = await deps.head!(space, after, after === null ? 0 : HEAD_WAIT_MS)
+              // After a failed call the head is only asked for, not waited on: the answer says at once that the brain is back.
+              const seq = await deps.head!(space, after, after === null || failingSince !== null ? 0 : HEAD_WAIT_MS)
               const quick = deps.now() - asked < 1_000
               if (after !== null && seq !== after) refreshSoon(settleMs)
               // A brain that answers at once without a change does not hold the request: rest, don't spin.
@@ -852,6 +858,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
               if (deps.head && deps.now() - probingSince >= headRetryMs) { useHead = true; after = null }
             }
             rest = restMs
+            if (failingSince !== null) {
+              deps.log(`[board] watching ${space.name}: its brain answers again after ${Math.round((deps.now() - failingSince) / 1000)} s`)
+              failingSince = null
+              // Whatever was written while nobody watched: one refresh, whether or not the head says so.
+              refreshSoon(settleMs)
+            }
           } catch (err) {
             const { status, body } = err as { status?: number; body?: { code?: string } }
             if (useHead && (status === 404 || body?.code === 'NO_LOG')) {
@@ -860,9 +872,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
               deps.log(`[board] ${space.name}: its brain has no /head; checking its newest task every ${probeMs} ms instead`)
               continue
             }
-            deps.log(`[board] watching ${space.name} failed: ${(err as Error).message}; trying again in ${Math.round(rest / 1000)} s`)
+            if (failingSince === null) {
+              failingSince = deps.now()
+              deps.log(`[board] watching ${space.name} failed: ${(err as Error).message}; trying again every ${Math.round(restMs / 1000)} to ${Math.round(WATCH_REST_MAX_MS / 1000)} s`)
+            }
             await sleep(rest)
-            rest = Math.min(rest * 2, 30_000)
+            rest = Math.min(rest * 2, WATCH_REST_MAX_MS)
           }
         }
         running.delete(spaceId)
