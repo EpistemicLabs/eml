@@ -13,6 +13,9 @@ import { sameSchedule, scheduleOfJobs } from '../domain/task-schedule.js'
  * gets one for the space's agent (no checkpoint, no request: the job starts it, not the runner). Only tasks with a job on
  * this cockpit and owned by its member (or by nobody) are touched — another member's schedules are theirs. The brain is read only when a task's schedule here
  * changed since the last sync, or every RECHECK_MS.
+ *
+ * It writes the field alone, without a note: the journal gets the change entry, and the task's newest note stays the
+ * agent's result, which is what the lists show under the task's name (domain/status-line.ts).
  */
 
 export interface ScheduleMirrorDeps {
@@ -82,10 +85,10 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
             const agent = d?.agent ?? deps.agentOf(space)
             if (!agent) { deps.log(`[schedule] task ${taskId.slice(0, 8)}: no agent to hold its schedule`); continue }
             const { schedule: _old, ...rest } = d ?? { agent }
-            await brain.post(`/task/${taskId}/track`, { delegation: { ...rest, agent, schedule: wanted }, text: 'Its schedule, as the job on the owner\'s cockpit runs it.' })
+            await brain.post(`/task/${taskId}/track`, { delegation: { ...rest, agent, schedule: wanted } })
           } else if (d) {
             const { schedule: _old, ...rest } = d
-            await brain.post(`/task/${taskId}/track`, { delegation: rest, text: 'No job runs it at a time any more: its schedule is cleared.' })
+            await brain.post(`/task/${taskId}/track`, { delegation: rest })
           }
         }
         known.set(key, { schedule: wanted, at: now })

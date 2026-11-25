@@ -28,6 +28,12 @@ describe('the status line of a task', () => {
     expect(statusLine({ text: '## Progress\n- Started the build. More later.', at: AT })?.now).toBe('Started the build')
   })
 
+  it('is not taken from a note the schedule mirror once wrote: that says nothing about where the task stands', async () => {
+    const { MIRROR_NOTES } = await import('../src/domain/task-schedule.js')
+    expect(MIRROR_NOTES).toHaveLength(2)
+    for (const text of MIRROR_NOTES) expect(statusLine({ text, at: AT })).toBeNull()
+  })
+
   it('is null without a note', () => {
     expect(statusLine(null)).toBeNull()
     expect(statusLine({ text: '   ', at: AT })).toBeNull()

@@ -12,6 +12,15 @@ import type { ScheduleFields } from './delegation.js'
  * member's board shows "Scheduled · Thu 10:00" and the runner holds the task.
  */
 
+/**
+ * The notes the schedule mirror wrote with a schedule before it wrote the field alone. A task whose newest note is
+ * one of them has no status line from it (domain/status-line.ts): it says nothing about where the task stands.
+ */
+export const MIRROR_NOTES: readonly string[] = [
+  'Its schedule, as the job on the owner\'s cockpit runs it.',
+  'No job runs it at a time any more: its schedule is cleared.',
+]
+
 /** A job's timing as the task's schedule; null when it has no time-based trigger or has ended. */
 export function scheduleOfJob(job: Pick<Job, 'triggers' | 'target' | 'paused' | 'pendingApproval' | 'endedAt'>): ScheduleFields | null {
   if (job.endedAt) return null

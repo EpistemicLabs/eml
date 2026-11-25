@@ -1,10 +1,13 @@
 import { parseHandoff } from './handoff.js'
+import { MIRROR_NOTES } from './task-schedule.js'
+import { withoutOutside } from './turn-end.js'
 
 /**
  * Where a task stands, in one line, from its newest journal note: the first sentence of the
  * newest handoff's Result (and its Next for the task view), or else the note's first sentence.
  * The journal gets a handoff whenever a session's stop changes where the task stands
- * (domain/turn-end.ts); nothing else stores the line.
+ * (domain/turn-end.ts); nothing else stores the line. What the cockpit itself writes into a task next to a field
+ * (its schedule, its waits) is a change entry, not a note, so it never takes the line's place.
  */
 export interface StatusLine {
   now: string
@@ -28,7 +31,7 @@ export function firstSentence(text: string, max = STATUS_LINE_MAX): string {
 
 /** A who as people read it: a handle with a capital, someone outside by their name. */
 function readableWho(who: string): string {
-  const name = who.replace(/^outside:\s*/i, '').trim()
+  const name = withoutOutside(who)
   return name ? `${name[0].toUpperCase()}${name.slice(1)}` : ''
 }
 
@@ -42,6 +45,8 @@ function nextLine(step: { who: string | null; what: string; when: string | null 
 
 export function statusLine(note: { text: string; at: string } | null | undefined): StatusLine | null {
   if (!note?.text?.trim()) return null
+  // A note the cockpit wrote about the task's schedule is not where the task stands.
+  if (MIRROR_NOTES.includes(note.text.trim())) return null
   const handoff = parseHandoff(note.text)
   if (handoff?.result) {
     return { now: firstSentence(handoff.result), next: nextLine(handoff.nextStep), at: note.at }

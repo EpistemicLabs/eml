@@ -112,7 +112,6 @@ describe('the schedule mirror', () => {
     await mirror.sync()
     expect(brain.posts).toEqual([{ path: '/task/t1/track', body: {
       delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T09:00:00.000Z', schedule: { cron: '0 8 * * *', time_zone: 'Asia/Makassar', session: 'new' } },
-      text: 'Its schedule, as the job on the owner\'s cockpit runs it.',
     } }])
     const reads = brain.reads()
     await mirror.sync()
@@ -127,6 +126,8 @@ describe('the schedule mirror', () => {
     jobs.length = 0
     await mirror.sync()
     expect(brain.posts.at(-1)!.body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T09:00:00.000Z' })
+    // Setting and clearing write the field alone: a note would take the place of the agent's result as the task's status line.
+    expect(brain.posts.filter((p) => 'text' in p.body)).toEqual([])
   })
 
   it('writes the schedule only of a task its member owns: another member\'s task keeps one writer', async () => {
