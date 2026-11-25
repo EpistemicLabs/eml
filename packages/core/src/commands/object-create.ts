@@ -104,7 +104,8 @@ function createObject(ctx: CommandContext, object: unknown, input: Record<string
 }
 
 /**
- * v0.23: a run — one session on a task (runs.ts). Its id is the session id;
+ * v0.23: a run — one session on a task (runs.ts). Its id is its session's id,
+ * or <session id>_<start ms> for a later run of the same session;
  * task_id names a task of this brain; member is the writer's own handle
  * (in a shared brain the op's author, so a member starts runs only for
  * themself); origin and driver say who started it and who drives it. state

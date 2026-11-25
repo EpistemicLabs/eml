@@ -43,10 +43,14 @@ export function sessionOfRun(runId: string): string {
   return at === -1 ? runId : runId.slice(0, at)
 }
 
-/** The id of a session's run: the session's id, or for a later run (it started at `runStartedAt`) that and its start. */
+/**
+ * The id of a session's run: the session's id, or for a later run (it started at `runStartedAt`) that and its start.
+ * A session id that holds RUN_SEPARATOR itself (none the cockpit makes) keeps one run: sessionOfRun could not read a
+ * later run's id back; its continued start still counts from the ledger (application/continue-session.ts continuedFor).
+ */
 export function runIdOf(sessionId: string, runStartedAt: string | null): string {
   const at = runStartedAt ? Date.parse(runStartedAt) : NaN
-  return Number.isFinite(at) ? `${sessionId}${RUN_SEPARATOR}${at}` : sessionId
+  return Number.isFinite(at) && !sessionId.includes(RUN_SEPARATOR) ? `${sessionId}${RUN_SEPARATOR}${at}` : sessionId
 }
 
 /** Rows of GET /object/run as runs; anything without an id, task, member or state is left out. */

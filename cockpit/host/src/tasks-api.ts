@@ -15,7 +15,11 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  * the same-origin guard holds the writes.
  *   GET  /api/v1/tasks/board                        the board (application/task-board.ts)
  *   GET  /api/v1/tasks/closed?spaceId&project&limit  a project's newest closed tasks, done and dropped: { tasks, more }
- *   POST /api/v1/tasks/<id>/hand-over               { opId, spaceId, mode, delegate, checkpoint, schedule?, desk? }
+ *   POST /api/v1/tasks/<id>/hand-over               { opId, spaceId, mode, delegate, checkpoint, schedule?, desk?, fresh? }: fresh true:
+ *                                                     Delegate now starts a new session instead of continuing the task's
+ *                                                     own one; mode together on a task with its own session is Take over
+ *                                                     (no desk needed); refused (not_ready) on a task without a name or goal,
+ *                                                     (no_session) without a desk when the task has no session to take over
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done; on a task whose schedule is on it approves
  *                                                     that run and the task stays open
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
@@ -32,8 +36,9 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *   POST /api/v1/sessions/<id>/sort                 { opId, rows: [{ topic, pick, taskId?, brief? }] }: sort a drifted session
  *   POST /api/v1/tasks/<id>/start                   { spaceId, projectId?, prompt?, title?, deskId? }: a session of the user's own on the task (chat when that is their view)
  *   POST /api/v1/commands/<opId>/undo
- * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects? }; Work on it now
- * happens at once, and the page opens the session in its desk with the brief. A refusal answers
+ * A command answers 202 { opId, state, undoUntil, carriedQuestion?, brief?, effects?, sessionId? }; Work on it now
+ * and Take over happen at once: the page opens a new session in its desk with the brief, or for a Take over the
+ * task's own session (sessionId) where it is shown or in the desk named. A refusal answers
  * { error: { code, message, retry } }: the code is what the page branches on, retry whether trying
  * again can help.
  */

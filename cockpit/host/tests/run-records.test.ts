@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runOriginOf, runStateOf, runsBlockRunner, sessionOfRun } from '../src/domain/runs.js'
+import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runIdOf, runOriginOf, runStateOf, runsBlockRunner, sessionOfRun } from '../src/domain/runs.js'
 import { createRunRecords, type RunSession } from '../src/application/run-records.js'
 import { lastStartsOf, requestOpen } from '../src/domain/delegation.js'
 import type { TurnState } from '../src/domain/agent-provider.js'
@@ -42,6 +42,18 @@ describe('runs as the board and the runner read them', () => {
   it('names the session a run belongs to: its id, or the part before a later run\'s start', () => {
     expect(sessionOfRun('5f0c-aa')).toBe('5f0c-aa')
     expect(sessionOfRun('5f0c-aa_1764064800000')).toBe('5f0c-aa')
+    expect(runIdOf('5f0c-aa', null)).toBe('5f0c-aa')
+    expect(runIdOf('5f0c-aa', '2025-11-25T10:00:00.000Z')).toBe('5f0c-aa_1764064800000')
+    expect(sessionOfRun(runIdOf('5f0c-aa', '2025-11-25T10:00:00.000Z'))).toBe('5f0c-aa')
+    // a session id with the separator in it keeps one run: its later run's id could not be read back
+    expect(runIdOf('odd_id', '2025-11-25T10:00:00.000Z')).toBe('odd_id')
+  })
+
+  it('reads a later run of a session this host has as that session: it is not someone else\'s, and it does not hold the runner', () => {
+    const later = run('s1_1764064800000', 'running', T0)
+    expect(liveFactsOf([{ sessionId: 's1', working: false }], [later], null, T0)).toEqual({ working: false, sessions: 1, nextRunAt: null })
+    expect(runsBlockRunner([later], new Set(['s1']), T0)).toBe(false)
+    expect(runsBlockRunner([later], new Set(), T0)).toBe(true)
   })
 
   it('groups open runs by task and maps turns and origins', () => {
