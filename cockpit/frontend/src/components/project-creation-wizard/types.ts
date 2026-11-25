@@ -26,16 +26,3 @@ export type MakeFolderResponse = {
   path?: string;
   error?: HostError;
 };
-
-export type CreateProjectPayload = {
-  path: string;
-  /** Omitted when empty; the host then names the project after the folder. */
-  customName?: string;
-};
-
-export type CreateProjectResponse = {
-  success?: boolean;
-  created?: boolean;
-  project?: Record<string, unknown>;
-  error?: HostError;
-};

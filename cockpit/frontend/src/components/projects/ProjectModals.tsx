@@ -4,9 +4,10 @@ import ProjectCreationWizard from '@/components/project-creation-wizard';
 import ProjectFolderDialog from '@/components/project-creation-wizard/ProjectFolderDialog';
 import { Button, Dialog, DialogContent, DialogTitle } from '@/shared/view/ui';
 
+import LinkProjectDialog from './LinkProjectDialog';
 import type { ProjectActions } from './useProjectActions';
 
-/** The project dialogs Plan opens: add a project, link a folder, and the remove confirm. */
+/** The project dialogs Plan opens: add a project, link a folder, link to a brain project, and the remove confirm. */
 export function ProjectModals({ actions }: { actions: ProjectActions }) {
   const removing = actions.removing;
   const sessions = removing?.sessions?.length ?? 0;
@@ -14,6 +15,7 @@ export function ProjectModals({ actions }: { actions: ProjectActions }) {
     <>
       {actions.adding && <ProjectCreationWizard onClose={actions.endAdd} onProjectCreated={() => { actions.endAdd(); actions.refresh(); }} />}
       {actions.linking && <ProjectFolderDialog project={actions.linking} onClose={actions.endLink} onSaved={() => actions.refresh()} />}
+      {actions.joining && <LinkProjectDialog project={actions.joining} onClose={actions.endJoin} onLinked={() => actions.refresh()} />}
       {removing && (
         // Escape or a click beside it cancels, never removes.
         <Dialog open onOpenChange={(open) => { if (!open) actions.cancelRemove(); }}>

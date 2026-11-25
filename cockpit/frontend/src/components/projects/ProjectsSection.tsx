@@ -1,11 +1,12 @@
 // Plan's project list: every project of the shown spaces with its actions, and Add project.
 import { useRef, useState } from 'react';
-import { Eye, EyeOff, FolderPlus, Pencil, Pin, PinOff, Plus, Trash2, X } from 'lucide-react';
+import { Eye, EyeOff, FolderPlus, Link2, Pencil, Pin, PinOff, Plus, Trash2, X } from 'lucide-react';
 
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { cn } from '@/lib/utils';
 import { Button, Chip, FOCUS, LABEL, Menu, type MenuItem } from '@/shared/view/ui';
+import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 
 import { sortProjects } from './sortProjects';
@@ -14,7 +15,10 @@ import type { ProjectActions } from './useProjectActions';
 /** A space as Plan names it, keyed like the project lists ('' is the main space). */
 export type PlanSpace = { key: string; name: string };
 
-/** What the old sidebar offered for each kind: pin and rename for all, folder and visibility for a brain project, remove for a folder. */
+/**
+ * What the old sidebar offered for each kind: pin and rename for all, folder and visibility for a brain project, remove
+ * for a folder. A folder-only project of the user's (`linkable`) can join a brain project.
+ */
 export function projectMenuItems(project: Project, actions: ProjectActions): MenuItem[] {
   const items: MenuItem[] = [
     { label: 'Rename', icon: Pencil, onSelect: () => actions.startRename(project) },
@@ -26,6 +30,7 @@ export function projectMenuItems(project: Project, actions: ProjectActions): Men
       { label: project.hidden ? 'Show' : 'Hide', icon: project.hidden ? Eye : EyeOff, onSelect: () => void actions.toggleHidden(project) },
     );
   } else {
+    if (project.linkable) items.push({ label: 'Link to brain project…', icon: Link2, onSelect: () => actions.startJoin(project) });
     items.push({ label: 'Remove from cockpit', icon: Trash2, destructive: true, onSelect: () => actions.askRemove(project) });
   }
   return items;
@@ -33,7 +38,13 @@ export function projectMenuItems(project: Project, actions: ProjectActions): Men
 
 export function ProjectsSection({ projects, spaces, actions }: { projects: ProjectsBySpace; spaces: PlanSpace[]; actions: ProjectActions }) {
   const [showHidden, setShowHidden] = useState(false);
-  const rows = spaces.flatMap((space) => (projects[space.key] ?? []).map((project) => ({ space, project })));
+  // Each project carries its space's id, so what is done to it goes to that space, not the open one.
+  const known = useSpaces();
+  const spaceIdOf = (key: string) => known.find((s) => (paneSpaceKey(s) ?? '') === key)?.id;
+  const rows = spaces.flatMap((space) => (projects[space.key] ?? []).map((project) => ({
+    space,
+    project: project.__spaceId ? project : { ...project, __spaceId: spaceIdOf(space.key) },
+  })));
   const hiddenCount = rows.filter((r) => r.project.hidden).length;
   const shown = sortProjects(rows.filter((r) => showHidden || !r.project.hidden), readSettings().projectSortOrder);
 
@@ -70,7 +81,11 @@ export function ProjectsSection({ projects, spaces, actions }: { projects: Proje
               </span>
             )}
             {project.hidden && <Chip>hidden</Chip>}
-            {project.kind !== 'brain' && <Chip>folder</Chip>}
+            {project.linkable ? (
+              <span title="This folder is not part of a brain project yet. Link it to one, or remove it from the cockpit.">
+                <Chip>not in the brain</Chip>
+              </span>
+            ) : project.kind !== 'brain' && <Chip>folder</Chip>}
             {spaces.length > 1 && <Chip>{space.name}</Chip>}
             <Menu label={`${project.displayName} actions`} items={projectMenuItems(project, actions)} />
           </li>

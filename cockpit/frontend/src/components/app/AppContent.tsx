@@ -49,6 +49,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import UpdateBanner from './UpdateBanner';
 import AgentUpgradeBanner from './AgentUpgradeBanner';
 import BrainHygieneBanner from './BrainHygieneBanner';
+import LinkFoldersBanner from './LinkFoldersBanner';
 import TeamBanner from './TeamBanner';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
@@ -358,13 +359,14 @@ function AppContentInner() {
         style={compact ? ({ '--bottom-inset': keyboardOpen ? '0px' : 'env(safe-area-inset-bottom)' } as React.CSSProperties) : undefined}
       >
         {/* Over the panes, in this order: update (available → installing → outcome), a space without
-            an agent (the agent upgrade), a shared brain that is not live, brain hygiene. */}
+            an agent (the agent upgrade), a shared brain that is not live, brain hygiene, folders not in a brain project. */}
         {/* On a phone the top banner sits between the floating menu and close buttons. */}
         <div className={cn('peer', compact && 'pt-[env(safe-area-inset-top)] empty:hidden [&>:first-child]:mx-[calc(var(--inset-phone-nav)+--spacing(1))]')}>
           <UpdateBanner />
           <AgentUpgradeBanner />
           <TeamBanner />
           <BrainHygieneBanner />
+          <LinkFoldersBanner projects={projects} onChanged={handleSidebarRefresh} onRemoved={handleProjectDelete} />
         </div>
         {compact && <CompactNavBar onOpenMenu={openDrawer} />}
         <div className="relative min-h-0 min-w-0 flex-1">

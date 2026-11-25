@@ -16,6 +16,7 @@ export function useProjectActions({ onChanged, onRemoved }: { onChanged: () => v
   const [renaming, setRenaming] = useState<Project | null>(null);
   const [removing, setRemoving] = useState<Project | null>(null);
   const [linking, setLinking] = useState<Project | null>(null);
+  const [joining, setJoining] = useState<Project | null>(null);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
@@ -65,6 +66,8 @@ export function useProjectActions({ onChanged, onRemoved }: { onChanged: () => v
     togglePin, toggleHidden,
     removing, askRemove: setRemoving, cancelRemove: () => setRemoving(null), confirmRemove,
     linking, startLink: setLinking, endLink: () => setLinking(null),
+    /** A folder-only project being linked to a brain project. */
+    joining, startJoin: setJoining, endJoin: () => setJoining(null),
     adding, startAdd: () => setAdding(true), endAdd: () => setAdding(false),
   };
 }

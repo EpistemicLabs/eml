@@ -76,6 +76,8 @@ export interface Project {
   brainStatus?: BrainProjectStatus | null;
   /** Linked by the user / made by the cockpit / none yet. */
   folderKind?: 'user' | 'cockpit' | 'none';
+  /** A folder-only project of the user's: to be linked to a brain project or removed. */
+  linkable?: boolean;
   goal?: string | null;
   displayName: string;
   customName?: string | null;

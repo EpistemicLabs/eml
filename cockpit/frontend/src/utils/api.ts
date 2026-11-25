@@ -14,8 +14,6 @@ const jsonInit = (method: string, body?: unknown, space?: string): RequestInit =
 
 export const api = {
   projects: () => fetch('/api/projects'),
-  createProject: (payload: { path: string; customName?: string }) =>
-    fetch('/api/projects', jsonInit('POST', payload)),
   // A project id says nothing about its space: one folder has the same id in two.
   renameProject: (projectId: string, displayName: string, space?: string) =>
     fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { displayName }, space)),
@@ -25,6 +23,9 @@ export const api = {
     fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { hidden }, space)),
   setProjectPath: (projectId: string, path: string | null, space?: string) =>
     fetch(`/api/projects/${encodeURIComponent(projectId)}`, jsonInit('PATCH', { path }, space)),
+  /** A folder-only project joins a brain project of its space, which takes the folder and its sessions. */
+  linkProject: (projectId: string, brainProjectId: string, space?: string) =>
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/link`, jsonInit('POST', { project: brainProjectId }, space)),
   deleteProject: (projectId: string, deleteData = false, space?: string) =>
     fetch(`/api/projects/${encodeURIComponent(projectId)}${deleteData ? '?deleteData=1' : ''}`, jsonInit('DELETE', undefined, space)),
 
