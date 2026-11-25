@@ -7,7 +7,7 @@ import { MAX_RUNNING } from '../domain/runner-gate.js'
 import { parentOf } from '../domain/task-relations.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
-import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, FOR_REVIEW, hasEndTurnTool, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
+import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, hasEndTurnTool, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -117,7 +117,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- Planned steps of this task: eml_create_task with parent_id, depends_on, checkpoint (before · after · none) and delegate (your agent handle); the runner starts them.',
     '- A task you create that an agent can do gets a checkpoint (default after; before when it needs the user\'s OK first) and a delegate: the runner starts it, also as a standalone task. Leave both out only when the person does it themselves or the user says so. Name the checkpoint and delegate you set in your reply.',
     '- A step is done when it is closed: eml_track_task with status resolved and the outcome. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
-    `- Closing: a task with checkpoint before or after you never close on your own. ${FOR_REVIEW[0].toUpperCase()}${FOR_REVIEW.slice(1)}; its owner closes it, or tells you explicitly in the chat to close it, and only then you do. Code work is ready for review only once it runs in the user's cockpit (merged, released and installed), not when its PR is open or merged. A task with checkpoint none, or one an agent owns, you close yourself when it is done.`,
+    `- Closing: a task with checkpoint before or after you never close on your own. ${FOR_REVIEW[0].toUpperCase()}${FOR_REVIEW.slice(1)}; its owner closes it, or tells you explicitly in the chat to close it, and only then you do. Code work is ready for review only once it runs in the user's cockpit (merged, released and installed), not when its PR is open or merged. A task with checkpoint none, or one an agent owns, you close yourself when it is done. A task whose schedule is still on (a job of it has not ended: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, ${END_SCHEDULE_FIRST}; its owner closes it.`,
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
     `- ${COCKPIT_ROUTES}`,
     '- When the work drifts from the task\'s name (the scope changed), rename it: eml_track_task display_title, with text saying why. The journal keeps the old name; the kebab title stays.',

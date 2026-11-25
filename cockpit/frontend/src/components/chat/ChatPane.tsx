@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { buttonVariants, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
-import { undoSplit } from '@/lib/split';
+import { sortSummary, undoSplit } from '@/lib/split';
 import { closeTask, useTaskBoard } from '@/lib/task-board';
 import { activatePane, getDeskOfPane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 import { useSpaces } from '@/stores/useSpaceStore';
@@ -751,7 +751,7 @@ export function ChatPane({
             rows={sortOpen.rows}
             onClose={() => setSortOpen(null)}
             onDone={(result) => {
-              setSorts((prev) => ({ ...prev, [sortOpen.id]: `Sorted: ${result.linked} linked, ${result.created} created, ${result.closed} closed.` }));
+              setSorts((prev) => ({ ...prev, [sortOpen.id]: sortSummary(result) }));
               setSortOpen(null);
               window.dispatchEvent(new Event('cockpit:tasks'));
             }}

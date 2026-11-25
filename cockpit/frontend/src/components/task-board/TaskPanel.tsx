@@ -1,6 +1,7 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
 // the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions,
-// Done and Not needed sit in the ⋯ menu. A closed task keeps its chat: writing there reopens it or starts
+// Done and Not needed sit in the ⋯ menu. A task whose schedule is still on is not closed that way: Looks good
+// approves the run, and the menu has End schedule and close instead. A closed task keeps its chat: writing there reopens it or starts
 // a follow-up (decision task-closing-and-continuation-rules), and Reopen still reopens without a message.
 import { useEffect, useState } from 'react';
 
@@ -11,7 +12,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, isScheduled, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -51,7 +52,7 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onReopen, onContinue, onPark }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onEndSchedule, onReopen, onContinue, onPark }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -63,10 +64,12 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onClose: () => void;
   onOpenTask: (task: BoardTask) => void;
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
-  /** Close an open task as done (Looks good, done; the ⋯ menu's Done). */
+  /** Close an open task as done (Looks good, done; the ⋯ menu's Done). On a scheduled task: approve this run, the task stays open. */
   onReview: (task: BoardTask) => void;
   /** Close an open task as not needed (dropped). */
   onDrop: (task: BoardTask) => void;
+  /** End a scheduled task's schedule and close it as done (the ⋯ menu's only entry on a scheduled task). */
+  onEndSchedule: (task: BoardTask) => void;
   /** Reopen a closed task (owner only), with an optional reason for its journal. */
   onReopen: (task: BoardTask, reason: string) => void;
   /** Writing in a closed task's chat: reopen it with the message, or start a follow-up. False: the text stays in the input. */
@@ -100,7 +103,11 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   const blocked = task.blocked ?? closedEntry?.blocked;
   const goOn = closed && !task.pending ? continueMode({ owner: task.owner, closedAt: task.closedAt ?? closedEntry?.closedAt ?? null, blocked }, board.viewer, now) : null;
   const composer = goOn && <ContinueComposer mode={goOn} onSend={(text, how, restore) => onContinue(task, text, how, restore)} />;
-  const menu: MenuItem[] = closed ? [] : [
+  // Its schedule is on: the task closes only by ending it.
+  const scheduled = isScheduled(task);
+  const menu: MenuItem[] = closed ? [] : scheduled ? [
+    { label: 'End schedule and close', onSelect: () => onEndSchedule(task) },
+  ] : [
     ...(review ? [] : [{ label: 'Done', onSelect: () => onReview(task) }]),
     { label: 'Not needed', onSelect: () => onDrop(task), destructive: true },
   ];
@@ -110,7 +117,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
     <div className="flex flex-wrap gap-2">
       {actions.map((a, i) => {
         const cls = i === 0 ? PRIMARY : BUTTON;
-        if (a === 'looks_good') return <button key={a} type="button" className={cls} onClick={() => onReview(task)}>Looks good, done</button>;
+        if (a === 'looks_good') return <button key={a} type="button" className={cls} title={scheduled ? 'Approves this run. The task stays open until its schedule ends.' : undefined} onClick={() => onReview(task)}>{scheduled ? 'Looks good' : 'Looks good, done'}</button>;
         if (a === 'hand_to') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Hand to {agentName(task.handTo)}</button>;
         if (a === 'run_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Run {agentName(task.delegate)} now</button>;
         if (a === 'delegate_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Delegate now</button>;
@@ -171,7 +178,10 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
               {task.due && <Chip hue="mark">due {dueLabel(task.due, now)}</Chip>}
               {task.checkpoint && <Chip>checkpoint {task.checkpoint}</Chip>}
-              {menu.length > 0 && <Menu label="More task actions" items={menu} className="ml-auto" />}
+              {menu.length > 0 && (
+                <Menu label="More task actions" items={menu} className="ml-auto"
+                  footer={scheduled ? <p className="px-2 pt-1 pb-1.5 text-caption text-muted-foreground">No more runs. The task closes as done.</p> : undefined} />
+              )}
             </div>
             <h2 id={TASK_TITLE_ID} tabIndex={-1} data-autofocus className={cn('m-0 text-display font-semibold tracking-title text-balance', FOCUS)}>{taskName(task)}</h2>
             {task.goal && (

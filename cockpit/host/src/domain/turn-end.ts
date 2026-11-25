@@ -328,6 +328,15 @@ export const hasEndTurnTool = (session: { runtime: string; provider: string }): 
 /** How finished work goes to its owner. The rules about closing a task say it in these words too. */
 export const FOR_REVIEW = 'hand the result over for review (next names the owner)'
 
+/**
+ * How a task whose schedule is still on comes to its end: its job ends first. Which way depends on who made the job;
+ * the rules about closing a task say it in these words.
+ */
+export const END_SCHEDULE_FIRST = `end its job first, then ${FOR_REVIEW}: a job you made with the schedule tool you end with it (action finish), a check you set by ending a turn with a time the cockpit removes once you end a turn without one`
+
+/** What the run of a check reads in its header instead of the schedule tool's rules (domain/job.ts runHeader). */
+export const CHECK_RUN_RULE = `This job is the check you set by ending a turn with a time. End this turn with a new time and it is set again; end it without one and the check is over. While it is set, never close its task: once its goal is reached, ${FOR_REVIEW} without a time; the owner closes the task.`
+
 /** Who sets the task's waits: said once, among the task's rules. */
 export const COCKPIT_ROUTES = 'Whose move it is you say only when you end a turn; the cockpit writes it into the task.'
 

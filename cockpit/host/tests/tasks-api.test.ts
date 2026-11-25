@@ -21,6 +21,9 @@ const deps = {
     submit: async (input: CommandInput) => {
       submitted.push(input)
       if (input.taskId === 'closed') return { ok: false, refusal: 'task_closed' }
+      if (input.taskId === 'daily' && input.kind === 'close') return { ok: false, refusal: 'scheduled' }
+      if (input.taskId === 'mirrored') return { ok: false, refusal: 'schedule_elsewhere' }
+      if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
       return { ok: true, command: { ...input, state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', createdAt: '', ...(input.taskId === 'asked' ? { carriedQuestion: 'Which list?' } : {}) } }
     },
@@ -126,6 +129,18 @@ describe('task board routes', () => {
     expect(submitted.at(-1)!.handOver!.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' })
     expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'later' } })).status).toBe(400)
     expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad2', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: 'yes' } })).status).toBe(400)
+  })
+
+  it('takes End schedule and close under a kebab-case route like its siblings, and refuses Close on a task whose schedule is on with a code to branch on', async () => {
+    expect(await post('/api/v1/tasks/daily/end-schedule', { opId: 'op-es', spaceId: 'main' }))
+      .toEqual({ status: 202, body: { opId: 'op-es', state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z' } })
+    expect(submitted.at(-1)).toEqual({ opId: 'op-es', spaceId: 'main', kind: 'end_schedule', taskId: 'daily' })
+    expect(await post('/api/v1/tasks/daily/close', { opId: 'op-c', spaceId: 'main' }))
+      .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } } })
+    expect(await post('/api/v1/tasks/mirrored/end-schedule', { opId: 'op-m', spaceId: 'main' }))
+      .toEqual({ status: 409, body: { error: { code: 'schedule_elsewhere', message: 'Its schedule runs in another cockpit: end it there.', retry: false } } })
+    expect(await post('/api/v1/tasks/plain/end-schedule', { opId: 'op-p', spaceId: 'main' }))
+      .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule to end: close it instead.', retry: false } } })
   })
 
   it('takes review, snooze and close; refuses with a code to branch on', async () => {

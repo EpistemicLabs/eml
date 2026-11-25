@@ -84,13 +84,19 @@ interface Task {
  */
 export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
 
-/** The prompt a step's session starts with; its task, the rules, how a turn ends and what happens until it is done come with its start hook. */
-export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string }, checkpoint: string): string {
+/**
+ * The prompt a step's session starts with; its task, the rules, how a turn ends and what happens until it is done come
+ * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
+ * (domain/job.ts JOB_TASK_RULE).
+ */
+export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
     ? `Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). ${CHECKPOINT_STOP.before}`
     : checkpoint === 'after'
       ? `Checkpoint after: ${CHECKPOINT_STOP.after[0].toLowerCase()}${CHECKPOINT_STOP.after.slice(1)}`
-      : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
+      : step.ofJob
+        ? 'No checkpoint: do this run to the end on your own; ask only when you cannot go on.'
+        : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   const reviewed = checkpoint === 'before' || checkpoint === 'after'
   return [
     `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
@@ -99,9 +105,9 @@ export function stepPrompt(step: { id: string; title: string; content: string; b
     '',
     how,
     ...(reviewed ? [CLOSING_RULE] : []),
-    reviewed
-      ? 'Closing, once the owner told you to: eml_track_task with status resolved and the outcome.'
-      : 'Closing means eml_track_task with status resolved and the outcome.',
+    ...(reviewed
+      ? ['Closing, once the owner told you to: eml_track_task with status resolved and the outcome.']
+      : step.ofJob ? [] : ['Closing means eml_track_task with status resolved and the outcome.']),
   ].join('\n')
 }
 

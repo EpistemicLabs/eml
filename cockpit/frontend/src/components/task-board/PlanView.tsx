@@ -2,7 +2,7 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, isScheduled, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
@@ -18,11 +18,13 @@ const PLAN_ROW = 'grid grid-cols-(--grid-plan-row) items-center gap-2 px-3 py-2 
 /** A row's space and counts: the table's own cells on a wide screen, a wrapping line under the name on a phone. */
 const PLAN_CELLS = 'contents max-md:col-start-2 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1';
 
-export function PlanView({ board, now, onOpen, onCloseTask, projects, projectActions }: {
+export function PlanView({ board, now, onOpen, onCloseTask, onEndSchedule, projects, projectActions }: {
   board: Board;
   now: number;
   onOpen: (task: BoardTask) => void;
   onCloseTask: (task: BoardTask) => void;
+  /** A task whose schedule is on closes by ending its schedule, not with Close. */
+  onEndSchedule: (task: BoardTask) => void;
   /** The cockpit's projects and what can be done to them: the project list at the end of Plan. */
   projects?: ProjectsBySpace;
   projectActions?: ProjectActions;
@@ -97,7 +99,7 @@ export function PlanView({ board, now, onOpen, onCloseTask, projects, projectAct
                 </button>
                 {isOpen && (
                   <div className="flex flex-col border-t border-border bg-background py-1 pl-10 pr-3 max-md:pl-3">
-                    {r.tasks.map(({ task, step }) => <PlanTask key={task.id} task={task} step={step} viewer={board.viewer} now={now} onOpen={onOpen} onClose={onCloseTask} />)}
+                    {r.tasks.map(({ task, step }) => <PlanTask key={task.id} task={task} step={step} viewer={board.viewer} now={now} onOpen={onOpen} onClose={onCloseTask} onEndSchedule={onEndSchedule} />)}
                   </div>
                 )}
               </div>
@@ -145,7 +147,7 @@ function FocusItem({ task, onOpen, chip, side }: { task: BoardTask; onOpen: (tas
   );
 }
 
-function PlanTask({ task, step, viewer, now, onOpen, onClose }: { task: BoardTask; step: boolean; viewer: string; now: number; onOpen: (task: BoardTask) => void; onClose: (task: BoardTask) => void }) {
+function PlanTask({ task, step, viewer, now, onOpen, onClose, onEndSchedule }: { task: BoardTask; step: boolean; viewer: string; now: number; onOpen: (task: BoardTask) => void; onClose: (task: BoardTask) => void; onEndSchedule: (task: BoardTask) => void }) {
   const hue = hueOf(task);
   const state = task.group === 'nobody' ? 'nobody on it' : task.group === 'asked' ? 'asked you' : task.group === 'parent' ? 'waits for parent' : task.turn ? TURN_META[task.turn].name.toLowerCase() : task.status;
   return (
@@ -163,7 +165,9 @@ function PlanTask({ task, step, viewer, now, onOpen, onClose }: { task: BoardTas
         </span>
         {task.statusLine && <span className="col-start-2 col-end-4 min-w-0 truncate text-ui text-muted-foreground max-md:col-end-3 max-md:whitespace-normal">{task.statusLine.now}</span>}
       </button>
-      {task.status !== 'resolved' && <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
+      {isScheduled(task)
+        ? <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="No more runs. The task closes as done." onClick={() => onEndSchedule(task)}>End schedule and close</button>
+        : task.status !== 'resolved' && <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
     </div>
   );
 }

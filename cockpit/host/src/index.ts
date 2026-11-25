@@ -98,8 +98,9 @@ import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createStaleRuns, sessionActivity } from './application/stale-runs.js'
 import { withoutHung } from './domain/stale-runs.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
-import { scheduleOfJobs } from './domain/task-schedule.js'
+import { hasSchedule, nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
+import type { DelegationFields } from './domain/delegation.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
@@ -665,6 +666,10 @@ async function main() {
       return said ? { kind: said.kind, reason: said.reason } : null
     },
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    // A run on a closed task reopens it first, so its questions reach the owner (application/task-commands.ts reopenForRun).
+    beforeRun: async (job, run) => {
+      if (job.taskId) await taskCommands?.reopenForRun(spaces.resolve(job.spaceId).id, job.taskId, { number: run.number, jobId: job.id, job: job.name })
+    },
     startWorker: (job, sessionId, text) => {
       if (job.target.type === 'session') return 'not a worker job'
       const parent = job.createdBy && ledger.has(job.createdBy) ? job.createdBy : null
@@ -777,15 +782,22 @@ async function main() {
     activityAt: (sessionId) => sessionActivity({ ledger, spaces, providers }, sessionId),
   }).every(RUN_SYNC_MS)
 
+  // A task's schedule is still on (domain/task-schedule.ts): one rule for the board, its commands and a session's sort.
+  const taskHasSchedule = (task: { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }) => hasSchedule({
+    jobs: jobStore.list().filter((job) => job.taskId === task.id),
+    schedule: task.properties?.delegation?.schedule,
+    owner: task.properties?.assignee_ids?.[0],
+  }, owner, Date.now())
+
   // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
   const taskBoard = createTaskBoard({
     spaces: () => spaces.list(),
     brain: taskBrain,
     viewer: owner,
     sessionsOn: taskSessions,
-    nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
-      .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    nextRunOf: (taskId) => nextRunOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
     scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
+    hasSchedule: taskHasSchedule,
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
@@ -853,6 +865,10 @@ async function main() {
       const started = await startOnTask({ spaceId, taskId, prompt })
       return started.ok ? started.sessionId : null
     },
+    // A task whose schedule is on is not closed; End schedule ends its jobs here first.
+    scheduled: taskHasSchedule,
+    openJobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt).map((job) => ({ id: job.id, name: job.name })),
+    endJob: (jobId) => { const job = jobStore.get(jobId); if (job) jobs.finish(job) },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
@@ -904,6 +920,7 @@ async function main() {
     now: () => Date.now(),
     log,
     me: owner,
+    scheduled: taskHasSchedule,
   })
   // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
   const claudeConfigOf = (spaceId: string | null) => {

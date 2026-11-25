@@ -2,7 +2,7 @@
 // An item clears itself when its session is answered, the result reviewed or the task closed.
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
-import { type Board, type BoardTask, fyi, type InboxItem, originName, readable, taskName, when } from '@/lib/task-board';
+import { type Board, type BoardTask, fyi, type InboxItem, isScheduled, originName, readable, taskName, when } from '@/lib/task-board';
 import { DAY_MS } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
@@ -122,7 +122,7 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
         </span>
       </button>
       <span className={cn('col-start-2 flex flex-wrap justify-start gap-1.5', !compact && '@3xl:col-start-auto @3xl:self-center @3xl:justify-end')}>
-        {item.kind === 'review' && <button type="button" className={MINI} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
+        {item.kind === 'review' && <button type="button" className={MINI} title={task && isScheduled(task) ? 'Approves this run. The task stays open until its schedule ends.' : undefined} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Park until tomorrow</button>
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Park until Monday</button>
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'open' })}>Park, no date</button>

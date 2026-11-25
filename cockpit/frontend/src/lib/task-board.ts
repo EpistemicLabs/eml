@@ -81,6 +81,11 @@ export interface BoardTask {
   sessionIds: string[];
   working: boolean;
   nextRunAt: string | null;
+  /**
+   * Its schedule is still on (the host decides: a job that has not ended, also a paused one or one only mail
+   * wakes, or a schedule another member's cockpit fires). Not the same as a next run: a paused job has none.
+   */
+  hasSchedule: boolean;
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
   /** What has to be true for it to be done; missing when it has none. */
@@ -128,6 +133,14 @@ export interface ClosedTask {
 
 export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['resolved', 'invalidated', 'superseded']);
 
+/**
+ * An open task whose schedule is still on (a routine, a mission that checks back, a one-time start that has
+ * not run, a job that is paused): it is not closed by approving one run or by Close, only by ending its
+ * schedule. The host decides it (hasSchedule); a closed task has none.
+ */
+export const isScheduled = (task: Pick<BoardTask, 'status' | 'hasSchedule'>): boolean =>
+  task.hasSchedule && !CLOSED_STATUSES.has(task.status);
+
 /** A closed task in the shape the panel takes: no turn, nothing covering it. */
 export function closedAsTask(c: ClosedTask): BoardTask {
   return {
@@ -140,6 +153,7 @@ export function closedAsTask(c: ClosedTask): BoardTask {
     important: false,
     working: false,
     nextRunAt: null,
+    hasSchedule: false,
   };
 }
 
@@ -323,13 +337,17 @@ export interface HandOverInput {
 
 export const handOver = (task: Pick<BoardTask, 'id' | 'spaceId'>, input: HandOverInput, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/hand-over`, { opId, spaceId: task.spaceId, ...input });
+/** Looks good: closes the task as done, after the undo window. On a scheduled task it approves that run only and the task stays open. */
 export const reviewDone = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/review`, { opId, spaceId: task.spaceId });
 export const snooze = (item: InboxItem, until: string, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? '')}/snooze`, { opId, spaceId: item.space, key: item.key, until });
-/** Drops a task that is not needed (invalidated), after the undo window. */
+/** Drops a task that is not needed (invalidated), after the undo window. The host refuses it on a scheduled task (code scheduled). */
 export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/close`, { opId, spaceId: task.spaceId });
+/** Ends a scheduled task's jobs and closes it as done, after the undo window. */
+export const endSchedule = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/end-schedule`, { opId, spaceId: task.spaceId });
 /** Reopens a closed task (active, starts nothing), after the undo window; owner only. */
 export const reopenTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, reason?: string, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, ...(reason?.trim() ? { reason: reason.trim() } : {}) });
@@ -517,7 +535,9 @@ export function runnerLine(task: Pick<BoardTask, 'runner' | 'delegate'>): string
 export function cardLine(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
   if (task.pending?.kind === 'hand_over') return `Handed to ${agent}. You can undo this for a few seconds.`;
-  if (task.pending?.kind === 'review') return 'Closing as reviewed. You can undo this for a few seconds.';
+  // A review of a task whose schedule is on closes nothing: the host shows the task as still open.
+  if (task.pending?.kind === 'review') return `${CLOSED_STATUSES.has(task.status) ? 'Closing as reviewed.' : 'Run approved.'} You can undo this for a few seconds.`;
+  if (task.pending?.kind === 'end_schedule') return 'Ending its schedule and closing. You can undo this for a few seconds.';
   if (task.turn === 'agent_working') return workingLine(task, now);
   if (task.turn === 'review') return task.waitingOn?.why?.replace(/^Review:\s*/, '') || 'The result is ready for your review.';
   if (task.reason === 'step_dropped' || task.reason === 'no_project') return runnerLine(task) ?? NOBODY[task.reason];

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-board.js'
+import { hasSchedule } from '../src/domain/task-schedule.js'
 
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; latest_note?: { text: string; at: string } | null; properties?: Record<string, unknown> }
 
@@ -43,7 +44,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -62,6 +63,11 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
     nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
     scheduleOf: (taskId) => (opts.schedules?.[taskId] as never) ?? null,
+    // A job here that has not ended: one with a next run (jobs), or one without (openJobs: paused, woken by mail only).
+    hasSchedule: (task) => hasSchedule({
+      jobs: [...Object.keys(opts.jobs ?? {}), ...(opts.openJobs ?? [])].includes(task.id) ? [{ endedAt: null }] : [],
+      schedule: task.properties?.delegation?.schedule, owner: task.properties?.assignee_ids?.[0],
+    }, 'lasse', clock.now),
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
@@ -382,6 +388,72 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'asked')).toMatchObject({ delegate: 'atlas', turn: 'agent_scheduled', pending: { opId: 'op-1', kind: 'hand_over', undoUntil: '2026-11-19T10:00:08Z' } })
     expect(model.tasks.find((t) => t.id === 'done-soon')).toMatchObject({ turn: 'done', pending: { opId: 'op-2' } })
     expect(model.inbox).toEqual([])
+  })
+
+  it('says whether a task\'s schedule is still on: a job here that has not ended, whatever its state, or another member\'s schedule; not a leftover on one\'s own', async () => {
+    const schedule = { cron: '0 8 * * *', time_zone: 'UTC' }
+    const { board } = setup({
+      main: [
+        mine('daily', { delegate: 'atlas' }), mine('paused', { delegate: 'atlas' }), mine('plain'),
+        // The schedule its ended job mirrored into it is still there: nothing runs it.
+        mine('leftover', { delegation: { agent: 'atlas', schedule } }),
+        { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'atlas', schedule } } },
+      ],
+      jobs: { daily: '2026-11-20T00:00:00.000Z' }, openJobs: ['paused'],
+    })
+    const model = await board.refresh()
+    const of = (id: string) => model.tasks.find((t) => t.id === id)!
+    expect(of('daily')).toMatchObject({ hasSchedule: true, nextRunAt: '2026-11-20T00:00:00.000Z' })
+    // No run is coming up, but its job could come back: it closes only by ending its schedule.
+    expect(of('paused')).toMatchObject({ hasSchedule: true, nextRunAt: null })
+    expect(of('plain').hasSchedule).toBe(false)
+    expect(of('leftover').hasSchedule).toBe(false)
+    expect(of('theirs').hasSchedule).toBe(true)
+  })
+
+  it('shows a pending Looks good on a task whose schedule is on as still open, without the reviews it answers; End schedule as closed', async () => {
+    const review = { id: 's1', who: 'lasse', kind: 'review', why: 'Review: brief written', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
+    const later = { ...review, why: 'Review: next brief written', since: '2026-11-19T09:59:00.000Z' }
+    const kim = { id: 'kim', who: 'kim', kind: 'outside', why: 'Kim answers', since: '2026-11-19T07:00:00.000Z' }
+    const pending = (opId: string, kind: string, taskId: string, extra: Record<string, unknown> = {}) => ({ opId, kind, spaceId: 'main', taskId, undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', ...extra })
+    const { board } = setup({
+      main: [
+        mine('daily', { delegate: 'atlas', waits: [review, kim], waiting_on: review }),
+        // Its only job is paused: no run is coming up, the schedule is on all the same.
+        mine('paused', { waits: [review], waiting_on: review }),
+        // Its schedule is another member's cockpit's, mirrored into the delegation.
+        { id: 'mirrored', status: 'active', properties: { assignee_ids: ['dominik'], waits: [review], waiting_on: review, delegation: { agent: 'atlas', schedule: { cron: '0 8 * * *', time_zone: 'UTC' } } } },
+        // Its job has ended, but its schedule was on when the owner chose Looks good.
+        mine('was-scheduled', { waits: [review], waiting_on: review }),
+        // The next run asked for its review after the owner approved the one before: that one stays.
+        mine('next-run', { waits: [later], waiting_on: later }),
+        // A wait from before kinds existed, a review by its why.
+        mine('old-wait', { waiting_on: { who: 'lasse', why: 'Review: brief written' } }),
+        mine('once', { waits: [review], waiting_on: review }),
+        mine('ending', { delegate: 'atlas' }),
+      ],
+      jobs: { daily: '2026-11-20T00:00:00.000Z', ending: '2026-11-20T00:00:00.000Z', 'next-run': '2026-11-20T00:00:00.000Z', 'old-wait': '2026-11-20T00:00:00.000Z' },
+      openJobs: ['paused'],
+      pending: () => [
+        pending('op-1', 'review', 'daily'), pending('op-2', 'review', 'mirrored'), pending('op-3', 'review', 'was-scheduled', { runOnly: true }),
+        pending('op-4', 'review', 'once'), pending('op-5', 'end_schedule', 'ending'), pending('op-6', 'review', 'paused'),
+        pending('op-7', 'review', 'next-run', { runOnly: true, approves: [{ id: 's1', since: review.since }] }), pending('op-8', 'review', 'old-wait'),
+      ] as never,
+    })
+    const model = await board.refresh()
+    const of = (id: string) => model.tasks.find((t) => t.id === id)!
+    expect(of('daily')).toMatchObject({ status: 'active', nextRunAt: '2026-11-20T00:00:00.000Z', waitingOn: { who: 'kim', kind: 'outside' }, pending: { opId: 'op-1', kind: 'review' } })
+    expect(of('daily').turn).not.toBe('done')
+    for (const id of ['mirrored', 'was-scheduled', 'paused', 'old-wait']) {
+      expect(of(id).status, id).toBe('active')
+      expect(of(id).waitingOn, id).toBeUndefined()
+      expect(of(id).turn, id).not.toBe('review')
+    }
+    expect(of('next-run')).toMatchObject({ status: 'active', turn: 'review', waitingOn: { why: 'Review: next brief written' } })
+    expect(of('once')).toMatchObject({ status: 'resolved', turn: 'done', pending: { opId: 'op-4' } })
+    expect(of('ending')).toMatchObject({ status: 'resolved', turn: 'done', pending: { opId: 'op-5', kind: 'end_schedule' } })
+    // The reviews left the Inbox with the click; only the next run's still asks for the viewer.
+    expect(model.inbox.map((i) => i.taskId)).toEqual(['next-run'])
   })
 
   it('lists closed tasks for Reopen and ⌘K, with why a reopen would be refused, and shows a pending reopen as active', async () => {

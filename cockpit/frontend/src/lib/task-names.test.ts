@@ -6,7 +6,7 @@ const NOW = Date.parse('2026-11-23T11:00:00Z');
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 't1', spaceId: 's', spaceName: 'Main', project: 'acme', title: 'builder-dock-long-thread-archive-listener-preview-ab', status: 'active',
   parentId: null, originId: null, updatedAt: null, turn: 'agent_working', coverage: { ok: true, how: 'working' }, urgency: 0, important: false,
-  sessionIds: [], working: true, nextRunAt: null, delegate: 'atlas', ...patch,
+  sessionIds: [], working: true, nextRunAt: null, hasSchedule: false, delegate: 'atlas', ...patch,
 });
 
 describe('readable task names', () => {

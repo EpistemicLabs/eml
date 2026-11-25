@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { SortDialog } from './SortDialog';
 import { SortCard } from './SplitParts';
 import { groupItems, sortOfTool } from './chat-state';
+import { sortSummary } from '@/lib/split';
 
 const posts: Array<Record<string, unknown>> = [];
 beforeEach(() => {
@@ -49,5 +50,10 @@ describe('sorting a drifted session', () => {
     expect(onSort).toHaveBeenCalled();
     rerender(<SortCard topics={14} reason="" result="Sorted: 1 linked, 1 created, 0 closed." onSort={onSort} onLater={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Later' })).toBeNull();
+  });
+
+  it('says what the sort did, and that a task picked to drop stays open while its schedule is on', () => {
+    expect(sortSummary({ linked: 1, created: 1, closed: 0 })).toBe('Sorted: 1 linked, 1 created, 0 closed.');
+    expect(sortSummary({ linked: 0, created: 0, closed: 1, kept: 1 })).toBe('Sorted: 0 linked, 0 created, 1 closed, 1 kept open: its schedule is still on.');
   });
 });
