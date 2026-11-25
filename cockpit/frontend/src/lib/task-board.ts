@@ -8,7 +8,7 @@ import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
 export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale';
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped';
+export type NobodyReason = 'stopped' | 'idle' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
@@ -486,6 +486,7 @@ export function dueLabel(due: string, now: number): string {
 
 const NOBODY: Record<NobodyReason, string> = {
   stopped: 'Agent stopped without a next step: continue or close.',
+  idle: 'Its session is open but idle: nothing asked, nothing scheduled. Write to it or close the task.',
   no_checkpoint: 'Delegated without a checkpoint, so nothing will start it.',
   not_handed_over: 'Delegated but not handed over yet, so nothing starts it: hand it over to let the agent start.',
   no_owner: 'Nobody owns it: claim it or drop it.',
@@ -596,6 +597,7 @@ export function cardTime(task: BoardTask, now: number): { label: string; future:
   const named = (word: string, iso: string | null | undefined, future = false) => (iso ? { label: `${word} ${when(iso, now)}`, future } : null);
   if (task.group === 'asked') return named('asked', task.waitingOn?.since);
   if (task.reason === 'stopped') return named('stopped', task.waitingOn?.since);
+  if (task.reason === 'idle') return named('idle since', task.runs?.[0]?.lastActivityAt ?? task.updatedAt);
   if (task.turn === 'agent_working') return named('last activity', task.runs?.find((r) => r.state === 'running')?.lastActivityAt ?? task.runs?.[0]?.lastActivityAt ?? task.updatedAt);
   if (task.turn === 'review') return named('finished', task.waitingOn?.since ?? task.updatedAt);
   if (task.turn === 'done') return named('closed', task.updatedAt);
