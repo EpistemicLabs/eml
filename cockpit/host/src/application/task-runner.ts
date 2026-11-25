@@ -2,7 +2,6 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
-import { hungOn } from '../domain/stale-runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
@@ -29,8 +28,7 @@ import { CHECKPOINT_STOP } from '../domain/turn-end.js'
  *   - its parent has fewer than MAX_RUNNING steps that hold a slot; standalone
  *     tasks hold at most MAX_RUNNING per space. A slot is held by a task this
  *     cockpit runs with a session working on it, or one it just started
- *     (domain/runner-gate.ts holdsSlot). A session whose run went silent
- *     (domain/stale-runs.ts) is not working: a hung worker holds no slot.
+ *     (domain/runner-gate.ts holdsSlot).
  * The checks live in domain/runner-gate.ts, which the task board asks too, so the board names the same reason.
  * Starting it marks a planned one active; the request counts as started here
  * at once and in the brain once the session's run is written. Its session gets the task
@@ -48,13 +46,10 @@ export interface TaskRunnerDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** This cockpit's member (the config handle): in a shared space it starts only their steps. */
   me: string
-  /**
-   * A session works on this task already (a worker started on it by hand or by a session), here or in another member's run.
-   * `hung`: its sessions whose run went silent (domain/stale-runs.ts hungOn): they are not in a turn.
-   */
-  busy?(taskId: string, runs: readonly RunFacts[], hung: ReadonlySet<string>): boolean
-  /** A session works on this task right now: one of this cockpit's sessions is in a turn and not hung, or another cockpit's run on it is working. */
-  working?(taskId: string, runs: readonly RunFacts[], hung: ReadonlySet<string>): boolean
+  /** A session works on this task already (a worker started on it by hand or by a session), here or in another member's run. */
+  busy?(taskId: string, runs: readonly RunFacts[]): boolean
+  /** A session works on this task right now: one of this cockpit's sessions is in a turn, or another cockpit's run on it is working. */
+  working?(taskId: string, runs: readonly RunFacts[]): boolean
   /** Its hand-over can still be undone: nothing starts until the undo window is over. */
   held?(taskId: string): boolean
   /** A job of the task will start it at a set time. */
@@ -73,7 +68,7 @@ interface Task {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -144,7 +139,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     const now = Date.now()
     // A task holds a slot while an agent works on it for this cockpit (domain/runner-gate.ts), as the board counts it.
     const slotHeld = (t: Task) => holdsSlot(t, {
-      working: deps.working?.(t.id, runs.get(t.id) ?? [], hungOn(t.properties)) ?? false,
+      working: deps.working?.(t.id, runs.get(t.id) ?? []) ?? false,
       startedAt: newestStart(startedAt.get(t.id), lastStarts.get(t.id)),
     }, { shared: space.shared, me: deps.me, now })
     for (const candidate of candidates) {
@@ -171,7 +166,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
-        busy: deps.busy?.(step.id, runs.get(step.id) ?? [], hungOn(step.properties)), held: deps.held?.(step.id),
+        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id),
         // A job here, or a schedule in its delegation, starts it at its time (domain/task-schedule.ts).
         scheduled: deps.scheduled?.(step.id) || Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
       })

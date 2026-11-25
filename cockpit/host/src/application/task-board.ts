@@ -3,7 +3,6 @@ import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
-import { hungOn, withoutHung } from '../domain/stale-runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
@@ -187,7 +186,7 @@ export interface TaskBoardDeps {
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
   /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
-  runnerBusy?(taskId: string, runs?: readonly RunFacts[], hung?: ReadonlySet<string>): boolean
+  runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
   /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
   runnerHeld?(taskId: string): boolean
   /** When the runner last started the task (application/task-runner.ts startedAt), before its run is in the brain. */
@@ -484,7 +483,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         const group = r.parent_id ?? (isStandaloneRunnerTask(r) ? null : undefined)
         if (group === undefined || r.status !== 'active') continue
         const held = holdsSlot(r, {
-          working: liveFactsOf(withoutHung(deps.sessionsOn(r.id), hungOn(r.properties)), runs.get(r.id) ?? [], null, now).working,
+          working: liveFactsOf(deps.sessionsOn(r.id), runs.get(r.id) ?? [], null, now).working,
           startedAt: newestStart(deps.runnerStartedAt?.(r.id), lastStarts.get(r.id)),
         }, { shared: space.shared, me: deps.viewer, now })
         if (held) slots.set(group, (slots.get(group) ?? 0) + 1)
@@ -498,16 +497,14 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? [], hungOn(row.properties)) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
         })
       }
 
       const spaceTasks: BoardTask[] = []
       for (const row of rows) {
         const props = row.properties ?? {}
-        // A session whose run went silent (domain/stale-runs.ts) still says it is in a turn: it does not count as
-        // working, so its stopped wait puts the task under Needs you.
-        const sessions = withoutHung(deps.sessionsOn(row.id), hungOn(props))
+        const sessions = deps.sessionsOn(row.id)
         if (CLOSED_STATUSES.has(row.status)) {
           board.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
           if (row.status === 'superseded') continue

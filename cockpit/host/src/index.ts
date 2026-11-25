@@ -95,8 +95,6 @@ import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
-import { createStaleRuns, sessionActivity } from './application/stale-runs.js'
-import { withoutHung } from './domain/stale-runs.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
 import { hasSchedule, nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
@@ -409,11 +407,10 @@ async function main() {
   // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
   // The task board asks the same two checks, so it names the reason the runner skips a task.
   // A working run of a session this cockpit does not have holds it too: someone works on it elsewhere (domain/runs.ts).
-  // A session whose run went silent (domain/stale-runs.ts hungOn) is not in a turn for the runner, as for the board.
-  const runnerBusy = (taskId: string, runs: readonly RunFacts[] = [], hung: ReadonlySet<string> = new Set()) => {
+  const runnerBusy = (taskId: string, runs: readonly RunFacts[] = []) => {
     const own = ledger.list().filter((e) => e.taskId === taskId)
     return sessionsBlockRunner(
-      own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' && !hung.has(e.sessionId) })),
+      own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
       taskCommands?.delegatedAt(taskId) ?? null,
     ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)), Date.now())
   }
@@ -428,7 +425,7 @@ async function main() {
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
-    working: (taskId, runs, hung) => liveFactsOf(withoutHung(taskSessions(taskId), hung), runs, null, Date.now()).working,
+    working: (taskId, runs) => liveFactsOf(taskSessions(taskId), runs, null, Date.now()).working,
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: runnerHeld,
     brief: (taskId) => taskCommands?.briefOf(taskId),
@@ -775,12 +772,6 @@ async function main() {
   // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
   setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
   runRecords.every(RUN_SYNC_MS)
-  // Hung workers: a run of this cockpit that went silent puts its task on the owner (application/stale-runs.ts), looked at as often as the runs sync.
-  createStaleRuns({
-    spaces: () => spaces.list(), brain: taskBrain, me: owner, log,
-    sessions: () => ledger.list().map((e) => ({ sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, archived: Boolean(e.archivedAt) })),
-    activityAt: (sessionId) => sessionActivity({ ledger, spaces, providers }, sessionId),
-  }).every(RUN_SYNC_MS)
 
   // A task's schedule is still on (domain/task-schedule.ts): one rule for the board, its commands and a session's sort.
   const taskHasSchedule = (task: { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }) => hasSchedule({
