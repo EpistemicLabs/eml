@@ -26,7 +26,6 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
-import { newSessionReason, ownSessionOf, type SessionOnTaskFacts } from './domain/own-session.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -51,6 +50,7 @@ import { createTurnContexts, hasEndTurnTool } from './application/turn-context.j
 import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
+import { createContinueSession } from './application/continue-session.js'
 import { createWorkerTask, createWorkerTaskHolds, type WorkerTaskInput } from './application/worker-task.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createSessionKind } from './application/session-kind.js'
@@ -437,16 +437,18 @@ async function main() {
     .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' }))
   // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
   // from the provider's summary for that one session only.
-  const ownSessionOn = (taskId: string): SessionOnTaskFacts | null => {
-    const own = ownSessionOf(ledger.list().map((e) => ({
-      sessionId: e.sessionId, taskId: e.taskId, createdAt: e.createdAt, archived: Boolean(e.archivedAt),
-      parentSessionId: e.parentSessionId, jobId: e.jobId, runtime: e.runtime, contextTokens: null,
-    })), taskId)
-    if (!own) return null
-    const entry = ledger.get(own.sessionId)
-    const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
-    return { ...own, contextTokens: providers.forSession(own.sessionId).summary(bridge.sessionRef(own.sessionId, projectPath)).contextTokens }
-  }
+  const continueSession = createContinueSession({
+    ledger,
+    contextTokensOf: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
+      return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
+    },
+    startFresh: (taskId) => taskCommands?.startFresh(taskId) ?? false,
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    runStarted: () => runRecords.poke(),
+    now: () => Date.now(),
+  })
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
@@ -463,19 +465,8 @@ async function main() {
       })
       return null
     },
-    ownSession: (taskId) => {
-      const own = ownSessionOn(taskId)
-      return newSessionReason(own, taskCommands?.startFresh(taskId) ?? false) === null ? own!.sessionId : null
-    },
-    // The session gets the start prompt as any message, resuming it when stopped; its new run starts with it.
-    resume: async (_space, sessionId, step) => {
-      const at = new Date().toISOString()
-      const outcome = await deliver({ target: sessionId, text: stepPrompt({ ...step, continued: true }, step.checkpoint), from: null, caller: 'session' })
-      if (outcome !== 'delivered' && outcome !== 'resumed') return `the session did not take the start prompt (${outcome})`
-      ledger.startRun(sessionId, at)
-      runRecords.poke()
-      return null
-    },
+    ownSession: (taskId) => continueSession.toContinue(taskId),
+    resume: (_space, sessionId, step) => continueSession.resume(sessionId, step),
   })
   taskRunner.every(RUNNER_TICK_MS)
   // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).
@@ -825,10 +816,7 @@ async function main() {
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
-    ownSessionOf: (taskId) => {
-      const own = ownSessionOn(taskId)
-      return own ? { sessionId: own.sessionId, continues: newSessionReason(own, false) === null } : null
-    },
+    ownSessionOf: (taskId) => continueSession.boardView(taskId),
     reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
     ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
     runnerBusy, runnerHeld,
@@ -881,7 +869,7 @@ async function main() {
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },
-    ownSession: (taskId) => ownSessionOn(taskId)?.sessionId ?? null,
+    ownSession: (taskId) => continueSession.ownSession(taskId)?.sessionId ?? null,
     sessionOpen: (sessionId) => { const entry = ledger.get(sessionId); return Boolean(entry && !entry.archivedAt) },
     sessionsSince: (taskId, since) => {
       const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
