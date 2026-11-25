@@ -15,3 +15,16 @@ export const ownerOf = (task: OwnedTask): string | null => task.properties?.assi
 
 /** This cockpit, whose member is `me`, may act on the task in a space shared or not. */
 export const runsHere = (shared: boolean | null, task: OwnedTask, me: string): boolean => shared === false || ownerOf(task) === me
+
+/**
+ * The owners of a task this cockpit makes. The brain refuses a task an agent writes without a person as its owner
+ * (packages/server/src/write.ts checkAgentTask), so the cockpit names one: the owners of the task the new one comes
+ * from (its parent, the task it follows or splits from), else this cockpit's member.
+ */
+export const ownersFor = (from: OwnedTask | null | undefined, me: string): string[] => {
+  const owners = from?.properties?.assignee_ids ?? []
+  return owners.length > 0 ? owners : [me]
+}
+
+/** A scope a task the cockpit makes may take: a project's, never global or another scope; null when there is none. */
+export const projectScope = (scope: string | null | undefined): string | null => (scope?.startsWith('project.') ? scope : null)

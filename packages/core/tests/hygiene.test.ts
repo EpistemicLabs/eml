@@ -36,6 +36,22 @@ describe('hygieneCheck()', () => {
     expect(check('task-without-display-title').findings).toEqual([])
   })
 
+  it('task-without-owner-or-project: finds open tasks without a person as owner or outside a project, not closed or complete ones', () => {
+    const none = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'no-owner', content: 'Nobody owns it.' })
+    const global = writes(eml).store({ type: 'task', scope: 'global', title: 'no-project', content: 'Lost.', properties: { assignee_ids: ['lasse'] } })
+    const agentOwned = writes(eml).store({ type: 'task', scope: 'project.demo', title: 'agent-owned', content: 'Mine.', properties: { assignee_ids: ['assistant'] } })
+    writes(eml).store({ type: 'task', scope: 'project.demo', title: 'complete', content: 'All set.', properties: { assignee_ids: ['lasse', 'assistant'] } })
+    const closed = writes(eml).store({ type: 'task', scope: 'global', title: 'old-lost', content: 'Old.' })
+    writes(eml).trackTask(closed.id, { status: 'resolved', outcome: 'done', text: 'closed' })
+    const c = check('task-without-owner-or-project')
+    expect(c).toMatchObject({ kind: 'review', decides: 'user' })
+    expect(Object.fromEntries(c.findings.map(f => [f.id, f.reason]))).toEqual({
+      [none.id]: 'an open task with no owner.',
+      [global.id]: 'an open task with no project (scope global).',
+      [agentOwned.id]: 'an open task with only an agent as owner (assistant).',
+    })
+  })
+
   it('lists every check with what and how, also without findings; migration checks name their schema', () => {
     const r = hygieneCheck(eml)
     expect(r.total).toBe(0)
@@ -147,8 +163,8 @@ describe('hygieneCheck()', () => {
         'reference-without-source', 'profile-scope',
         'rule-without-why', 'rule-without-agreement', 'task-link-without-binding', 'decision-without-rationale',
       ])
-      // the recurring checks come last: review-due, the learning check, then the conflict sweep
-      expect(r.checks.slice(-3).map(c => c.id)).toEqual(['review-due', 'learning-unclear', 'conflict-scan'])
+      // the recurring checks come last: review-due, the task check, the learning check, then the conflict sweep
+      expect(r.checks.slice(-4).map(c => c.id)).toEqual(['review-due', 'task-without-owner-or-project', 'learning-unclear', 'conflict-scan'])
     })
 
     it('reference-without-source: active references without source', () => {

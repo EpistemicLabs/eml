@@ -38,6 +38,7 @@ function setup(opts: { session?: SessionFacts | null; failOnce?: string } = {}) 
     changed: () => {},
     now: () => clock.now,
     log: () => {},
+    me: 'lasse',
   })
   return { split, posts, spawned, ended, clock }
 }
@@ -52,7 +53,7 @@ describe('splitting off from a session', () => {
     const answer = await split.submit(input())
     expect(answer.ok && answer.command).toMatchObject({ kind: 'split', state: 'applied', split: { createdTaskId: 't-new', spawnedSessionId: 's-new', sourceTaskId: 't-root' } })
     expect(posts).toEqual([
-      ['/engram/task', { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' }],
+      ['/engram/task', { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', assignee_ids: ['lasse'], status: 'active' }],
       ['/relate', { source_id: 't-new', target_id: 't-root', relation: 'derived_from', detection_method: 'manual', explanation: 'spun off from' }],
       ['/task/t-new/track', { text: 'Spun off from session-review-ui (session Session review).' }],
       ['/task/t-root/track', { text: 'Media viewer was spun off here as its own task.' }],
@@ -65,6 +66,12 @@ describe('splitting off from a session', () => {
     const { split, posts } = setup()
     await split.submit(input({ projectId: 'p-folder' }))
     expect(posts[0][1]).toMatchObject({ scope: 'project.ui' })
+  })
+
+  it('refuses a new task with no project to go into: a folder project and a session without a task', async () => {
+    const { split, posts } = setup({ session: noTask })
+    expect(await split.submit(input({ projectId: 'p-folder', when: 'park', relation: 'unrelated' }))).toEqual({ ok: false, refusal: 'no_project' })
+    expect(posts).toHaveLength(0)
   })
 
   it('does the work once for a retried operation', async () => {

@@ -80,10 +80,10 @@ describe('v0.19 review changes', () => {
   })
 
   describe('C6 hygiene: who decides', () => {
-    it('every check says who decides; the user decides rule agreements, unclear learnings and display titles', () => {
+    it('every check says who decides; the user decides rule agreements, unclear learnings, display titles and task owners', () => {
       const checks = hygieneCheck(eml).checks
       expect(checks.every(c => c.decides === 'agent' || c.decides === 'user')).toBe(true)
-      expect(checks.filter(c => c.decides === 'user').map(c => c.id)).toEqual(['rule-without-agreement', 'task-without-display-title', 'learning-unclear'])
+      expect(checks.filter(c => c.decides === 'user').map(c => c.id)).toEqual(['rule-without-agreement', 'task-without-display-title', 'task-without-owner-or-project', 'learning-unclear'])
     })
   })
 })

@@ -25,6 +25,7 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
+import { ownersFor, type OwnedTask } from './domain/task-owner.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -371,9 +372,9 @@ async function main() {
     const agent = boundAgent({ agents }, space)
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null })
-  // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const owner = config?.handle ?? 'user'
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner })
+  // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   const taskRouter = createTaskRouter({
     ledger, spaces, brain: taskBrain, owner, log,
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
@@ -482,14 +483,17 @@ async function main() {
     }
   }, 15_000).unref?.()
   // The spawn API's newTask: written into the brain at once (decision no-task-triage).
-  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string }) => {
-    const display = displayTitleOf(input.title)
-    const fields = { title: kebabTitle(input.title) ?? input.title, ...(display ? { display_title: display } : {}), content: input.content, scope: input.scope, status: 'active' }
+  // Its owners are those of the requester's task, else this cockpit's member (domain/task-owner.ts ownersFor).
+  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string; fromTaskId?: string }) => {
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
-    const post = (scope: string) => brain.post('/engram/task', { ...fields, scope }) as Promise<{ id: string }>
     try {
-      return await post(input.scope).catch(() => post('global'))
+      const origin = input.fromTaskId ? await brain.get(`/engram/${input.fromTaskId}`).catch(() => null) as OwnedTask | null : null
+      const display = displayTitleOf(input.title)
+      return await brain.post('/engram/task', {
+        title: kebabTitle(input.title) ?? input.title, ...(display ? { display_title: display } : {}), content: input.content,
+        scope: input.scope, status: 'active', assignee_ids: ownersFor(origin, owner),
+      }) as { id: string }
     } catch (err) {
       return { error: (err as Error).message }
     }
@@ -877,6 +881,7 @@ async function main() {
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
+    me: owner,
   })
   // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
   const claudeConfigOf = (spaceId: string | null) => {
@@ -952,6 +957,7 @@ async function main() {
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
+    me: owner,
   })
 
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })

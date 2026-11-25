@@ -28,7 +28,7 @@ describe('spawning a worker with a task', () => {
   const setup = () => {
     const ledger = new mods.SessionLedger()
     const spawns = new mods.SpawnQueue()
-    const space = { main: true, id: 'main', registry: { get: (id: string) => (id.startsWith('bp-') ? { projectId: id } : undefined), list: () => [] }, projects: { list: async () => [{ id: 'lohmann', name: 'Lohmann' }] } }
+    const space = { main: true, id: 'main', registry: { get: (id: string) => (id.startsWith('bp-') || id === 'notes-folder' ? { projectId: id } : undefined), list: () => [] }, projects: { list: async () => [{ id: 'lohmann', name: 'Lohmann' }] } }
     const created: Array<{ title: string; content: string; scope: string }> = []
     const provider = { id: 'claude', messaging: true, workerRunsInChat: () => true }
     const deps = {
@@ -53,13 +53,19 @@ describe('spawning a worker with a task', () => {
     const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'reply', fromSession: 'lord', newTask: { title: 'Lohmann custom tracking', in: 'Lohmann', text: 'Answer the custom tracking request.' } })
     expect(out.status).toBe(202)
     expect((out.payload as { taskId?: string }).taskId).toBe('new-task')
-    expect(created).toEqual([{ title: 'Lohmann custom tracking', content: 'Answer the custom tracking request. Started by session Email Lord.', scope: 'project.lohmann' }])
+    expect(created).toEqual([{ title: 'Lohmann custom tracking', content: 'Answer the custom tracking request. Started by session Email Lord.', scope: 'project.lohmann', fromTaskId: 'inbox-task' }])
     expect(spawns.list()[0].taskId).toBe('new-task')
     // Without --in the worker's project; one of task, step and newTask only.
     await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'Other' } })
     expect(created.at(-1)!.scope).toBe('project.eml')
     expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'A' }, task: 't' })).status).toBe(400)
     expect((await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: '' } })).status).toBe(400)
+    // A folder-only project has no project of the brain for the task: refused, nothing made
+    const before = created.length
+    const folder = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'x', fromSession: 'lord', newTask: { title: 'Notes', in: 'notes-folder' } })
+    expect(folder.status).toBe(400)
+    expect((folder.payload as { error: { code: string } }).error.code).toBe('NEW_TASK_NEEDS_PROJECT')
+    expect(created).toHaveLength(before)
   })
 
   it('makes its task a step of the requester\'s only with step, and refuses step without a task or with task', async () => {

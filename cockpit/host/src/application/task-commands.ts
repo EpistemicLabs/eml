@@ -7,6 +7,7 @@ import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import type { DelegationFields } from '../domain/delegation.js'
 import { waitsOf } from '../domain/task-waits.js'
+import { ownerOf, ownersFor } from '../domain/task-owner.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
@@ -473,7 +474,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         content: command.message!.trim(),
         scope: from.scope,
         status: 'planned',
-        ...(props.assignee_ids?.length ? { assignee_ids: props.assignee_ids } : {}),
+        // the same owners; a task that names none gets the person at the page, else its author (domain/task-owner.ts)
+        assignee_ids: ownersFor(from, deps.viewer ?? ownerOf(from) ?? ''),
         ...(props.delegate ? { delegate: props.delegate } : {}),
         ...(props.checkpoint ? { checkpoint: props.checkpoint } : {}),
       }) as { id: string }

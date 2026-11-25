@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planSort, type SortRow } from '../domain/sort.js'
 import type { SessionFacts } from './split-session.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
+import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 
 /**
  * Apply a sort of a drifted session (domain/sort.ts plans it): link, create and close as the rows say,
@@ -19,11 +20,13 @@ export interface SortSessionDeps {
   changed(): void
   now(): number
   log(line: string): void
+  /** This cockpit's member: a new task's owner when the session's task names none. */
+  me: string
 }
 
 export type SortAnswer =
   | { ok: true; command: TaskCommand }
-  | { ok: false; refusal: 'unknown_session' | 'no_task' | 'no_brain' | 'in_flight' }
+  | { ok: false; refusal: 'unknown_session' | 'no_task' | 'no_project' | 'no_brain' | 'in_flight' }
 
 export function createSortSession(deps: SortSessionDeps) {
   const running = new Set<string>()
@@ -49,9 +52,14 @@ export function createSortSession(deps: SortSessionDeps) {
       const brain = deps.brain(space)
       if (!brain) return { ok: false, refusal: 'no_brain' }
       const sourceId = facts.taskId
-      const source = await brain.get(`/engram/${encodeURIComponent(sourceId)}`).catch(() => null) as { title?: string; scope?: string } | null
+      const source = await brain.get(`/engram/${encodeURIComponent(sourceId)}`).catch(() => null) as ({ title?: string; scope?: string } & OwnedTask) | null
       const sourceTitle = source?.title ?? sourceId
-      const from = `the session "${facts.title}" (task ${sourceTitle})`
+      // New tasks take the project and the owners of the session's task; one outside every project has none to give.
+      const scope = projectScope(source?.scope)
+      const owners = ownersFor(source, deps.me)
+      const actions = planSort(sourceId, input.rows)
+      if (!scope && actions.some((a) => a.kind === 'create')) return { ok: false, refusal: 'no_project' }
+      const from =`the session "${facts.title}" (task ${sourceTitle})`
       const at = new Date(deps.now()).toISOString()
       let command: TaskCommand = existing ?? {
         opId: input.opId, kind: 'sort', spaceId: space.id, createdAt: at, undoUntil: at, state: 'pending',
@@ -64,7 +72,6 @@ export function createSortSession(deps: SortSessionDeps) {
       save({})
       const counts = { ...command.sort! }
       const progress = { next: 0, created: {} as Record<string, string>, createdSteps: {} as Record<string, { linked?: boolean; journaled?: boolean }>, ...command.sortProgress }
-      const actions = planSort(sourceId, input.rows)
 
       for (let i = progress.next; i < actions.length; i++) {
         const action = actions[i]
@@ -80,7 +87,7 @@ export function createSortSession(deps: SortSessionDeps) {
           const key = String(i)
           if (!progress.created[key]) {
             progress.created[key] = (await brain.post('/engram/task', {
-              title: action.title, ...(action.displayTitle ? { display_title: action.displayTitle } : {}), content: action.content, scope: source?.scope ?? 'global', status: 'planned',
+              title: action.title, ...(action.displayTitle ? { display_title: action.displayTitle } : {}), content: action.content, scope, assignee_ids: owners, status: 'planned',
               ...(action.parent ? { parent_id: sourceId } : {}),
             }) as { id: string }).id
             save({ sortProgress: progress })

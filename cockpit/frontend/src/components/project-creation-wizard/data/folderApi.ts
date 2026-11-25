@@ -1,12 +1,10 @@
-// Request layer over the host's folder and project endpoints. Each function
+// Request layer over the host's folder endpoints. Each function
 // reads the JSON body on success and on failure (the host's error envelope is
 // JSON), turns a non-OK response into an Error carrying the host's message,
 // and lets a rejected fetch propagate untouched.
 import { api } from '@/utils/api';
 
 import type {
-  CreateProjectPayload,
-  CreateProjectResponse,
   FolderListingResponse,
   FolderSuggestion,
   MakeFolderResponse,
@@ -63,11 +61,4 @@ export async function createFolder(path: string): Promise<string> {
   const response = await api.makeFolder(path);
   const data: MakeFolderResponse = await readEnvelope(response, 'Failed to create folder');
   return typeof data.path === 'string' ? data.path : path;
-}
-
-/** Register a folder as a cockpit project; resolves to the host's project record. */
-export async function createProject(payload: CreateProjectPayload): Promise<Record<string, unknown> | undefined> {
-  const response = await api.createProject(payload);
-  const data: CreateProjectResponse = await readEnvelope(response, 'Failed to create project');
-  return isRecord(data.project) ? data.project : undefined;
 }

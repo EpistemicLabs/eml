@@ -160,7 +160,7 @@ function sharedSpaceLines(eml: EML, agentId: string, members: SpaceMember[]): st
     const shown = own.map(id => (m.self && id === agentId ? `${id} (you)` : id))
     lines.push(`- ${m.handle}${shown.length > 0 ? ` · agents: ${shown.join(', ')}` : ''}`)
   }
-  lines.push("Assign work with assignee_ids (a member's or an agent's handle); eml_read_object object=user · agent lists them.")
+  lines.push("A task's owner (assignee_ids) is a member; an agent works on it as its delegate. eml_read_object object=user · agent lists them.")
   return lines
 }
 

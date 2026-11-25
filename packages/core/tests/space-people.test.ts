@@ -51,7 +51,7 @@ describe('boot — the shared-space block', () => {
     'This space is shared: every member reads and writes the same brain, and what you write here they see.',
     'Members:',
     ...lines,
-    "Assign work with assignee_ids (a member's or an agent's handle); eml_read_object object=user · agent lists them.",
+    "A task's owner (assignee_ids) is a member; an agent works on it as its delegate. eml_read_object object=user · agent lists them.",
   ].join('\n')
 
   it('lists each member with its agents, the session\'s own agent marked (you) — also before it wrote — and a handle not readable yet', () => {

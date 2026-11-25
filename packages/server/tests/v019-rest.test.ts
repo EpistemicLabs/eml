@@ -172,6 +172,26 @@ describe('v0.19 REST', () => {
       expect(reopened.body.reopen_candidates.map((k: { id: string }) => k.id)).toEqual([n.body.id])
     })
 
+    it('a task an agent writes has a project and a person as owner; a person\'s own writes are free', async () => {
+      const asAgent = { 'X-EML-Agent': 'default' }
+      expect((await post('/object/project', { id: 'agent-work', name: 'Agent work' })).status).toBe(201)
+      const noOwner = await create(validTask({ title: 'agent-no-owner', scope: 'project.agent-work' }), asAgent)
+      expect(noOwner.status).toBe(400)
+      expect(noOwner.body.error).toBe('Invalid engram: a task an agent creates has an owner — assignee_ids names at least one person (bootstrap). Take the parent task\'s owner for a sub-task, else bootstrap.')
+      const inGlobal = await create(validTask({ title: 'agent-global', properties: { assignee_ids: ['bootstrap'] } }), asAgent)
+      expect(inGlobal.status).toBe(400)
+      expect(inGlobal.body.error).toBe('Invalid engram: a task an agent creates belongs to a project — scope project.<id>, not global. Take the project the work is for (the parent task\'s project for a sub-task).')
+      const ok = await create(validTask({ title: 'agent-owned', scope: 'project.agent-work', properties: { assignee_ids: ['bootstrap'] } }), asAgent)
+      expect(ok.status).toBe(201)
+      // a track keeps both: no clearing the owner, no move out of the project; other changes pass
+      expect((await post(`/task/${ok.body.id}/track`, { assignee_ids: [] }, asAgent)).status).toBe(400)
+      expect((await post(`/task/${ok.body.id}/track`, { assignee_ids: ['default'] }, asAgent)).body.error).toContain('assignee_ids names the agent "default"')
+      expect((await post(`/task/${ok.body.id}/track`, { scope: 'global', text: 'moved' }, asAgent)).status).toBe(400)
+      expect((await post(`/task/${ok.body.id}/track`, { priority: 'high' }, asAgent)).status).toBe(200)
+      // the person writes without an agent: neither is required
+      expect((await create(validTask({ title: 'person-global' }))).status).toBe(201)
+    })
+
     it('task system: delegate names an agent of the brain; anyone else is refused with the known agents', async () => {
       const task = await create(validTask({ title: 'rest-delegate' }))
       const ok = await post(`/task/${task.body.id}/track`, { delegate: 'default', checkpoint: 'after', text: 'handed to the agent' })

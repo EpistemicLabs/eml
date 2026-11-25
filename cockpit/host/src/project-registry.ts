@@ -51,9 +51,19 @@ interface RegistryFile {
 }
 
 export class ProjectPathError extends Error {
-  constructor(message: string, public code: 'PATH_REQUIRED' | 'BAD_PATH' | 'NOT_FOUND') {
+  constructor(message: string, public code: 'PATH_REQUIRED' | 'BAD_PATH' | 'NOT_FOUND' | 'FOLDER_TAKEN') {
     super(message)
   }
+}
+
+/**
+ * A folder the cockpit made for its own sessions (brain hygiene, cycle planning, getting started), inside the cockpit
+ * home. It stays folder-only: those sessions maintain the brain or set it up, they are no project's work and get no task.
+ */
+export function isCockpitOwnFolder(project: Pick<ProjectEntry, 'kind' | 'path'>): boolean {
+  if (project.kind !== 'folder' || !project.path) return false
+  const rel = path.relative(COCKPIT_HOME, project.path)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
 /** `~`, `~/x` and `~\\x` expand to the home directory; the result is absolute + normalised. */
@@ -244,6 +254,25 @@ export class ProjectRegistry {
     }
     this.persist()
     return project
+  }
+
+  /**
+   * Link a folder-only project to a brain project (decision cockpit-brain-project-model): the brain project takes the
+   * folder, so the folder's sessions keep resuming there, and the folder-only entry goes. Refused when the brain project
+   * already runs in another folder, since that folder's sessions resume only there. The ledger moves the sessions.
+   */
+  link(folderProjectId: string, brainProjectId: string, name: string): ProjectEntry {
+    const folder = this.data.projects[folderProjectId]
+    if (!folder || folder.kind !== 'folder' || isCockpitOwnFolder(folder)) throw new ProjectPathError('No folder-only project to link', 'NOT_FOUND')
+    const brain = this.ensureBrain(brainProjectId, name)
+    if (brain.path && brain.path !== folder.path) {
+      throw new ProjectPathError(`${brain.displayName} already runs in ${brain.path}; its sessions resume only there`, 'FOLDER_TAKEN')
+    }
+    brain.path = folder.path
+    brain.starred = brain.starred || folder.starred
+    delete this.data.projects[folderProjectId]
+    this.persist()
+    return brain
   }
 
   remove(projectId: string): boolean {

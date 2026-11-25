@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/utils/api', () => ({ api }));
 vi.mock('@/components/project-creation-wizard', () => ({ default: () => <div role="dialog" aria-label="Add project wizard" /> }));
 vi.mock('@/components/project-creation-wizard/ProjectFolderDialog', () => ({ default: () => <div role="dialog" aria-label="Folder dialog" /> }));
+vi.mock('./LinkProjectDialog', () => ({ default: ({ project }: { project: Project }) => <div role="dialog" aria-label={`Link ${project.displayName}`} /> }));
 
 import { ProjectModals } from './ProjectModals';
 import { ProjectsSection } from './ProjectsSection';
@@ -21,12 +22,13 @@ import { ADD_PROJECT_EVENT, useProjectActions } from './useProjectActions';
 const brain: Project = { projectId: 'lighthouse', displayName: 'Lighthouse', kind: 'brain', fullPath: null, __spaceId: 'main', isStarred: false, hidden: false };
 const folder: Project = { projectId: 'scratch', displayName: 'Scratch', kind: 'folder', fullPath: '/work/scratch', __spaceId: 'main', sessions: [{ id: 's1' } as never] };
 const hiddenOne: Project = { ...brain, projectId: 'old', displayName: 'Old', hidden: true };
+const loose: Project = { projectId: 'loose', displayName: 'Loose', kind: 'folder', linkable: true, fullPath: '/work/loose', __spaceId: 'main' };
 
 let changed = 0;
 let removed: string[] = [];
 function Harness() {
   const actions = useProjectActions({ onChanged: () => { changed++; }, onRemoved: (id) => { removed.push(id); } });
-  return <><ProjectsSection projects={{ '': [brain, folder, hiddenOne] }} spaces={[{ key: '', name: 'Main' }]} actions={actions} /><ProjectModals actions={actions} /></>;
+  return <><ProjectsSection projects={{ '': [brain, folder, hiddenOne, loose] }} spaces={[{ key: '', name: 'Main' }]} actions={actions} /><ProjectModals actions={actions} /></>;
 }
 
 beforeEach(() => { changed = 0; removed = []; Object.values(api).forEach((f) => f.mockClear()); });
@@ -48,6 +50,15 @@ describe('project management in Plan', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Scratch actions' }));
     expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Pin', 'Remove from cockpit']);
+  });
+
+  it('marks a folder that is not in the brain and offers to link it', () => {
+    render(<Harness />);
+    expect(screen.getAllByText('not in the brain')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Loose actions' }));
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Rename', 'Pin', 'Link to brain project…', 'Remove from cockpit']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Link to brain project…' }));
+    expect(screen.getByRole('dialog', { name: 'Link Loose' })).toBeTruthy();
   });
 
   it('hides a project on the host and reads the lists again', async () => {

@@ -55,7 +55,7 @@ describe('session task', () => {
   const setup = (space: { shared: boolean | null }, brain = fakeBrain()) => {
     const ledger = new mods.SessionLedger()
     const spaces = { resolve: () => space as never }
-    const tasks = mods.createSessionTask({ ledger, spaces, brain: () => brain, now: () => new Date('2026-11-17T10:00:00Z') })
+    const tasks = mods.createSessionTask({ ledger, spaces, brain: () => brain, me: 'lasse', now: () => new Date('2026-11-17T10:00:00Z') })
     return { ledger, brain, tasks }
   }
   const id = (n: number) => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`
@@ -65,7 +65,7 @@ describe('session task', () => {
     ledger.recordSpawn(id(1), null, 'bp-eml', 'claude')
     const [first, second] = await Promise.all([tasks.context(id(1)), tasks.context(id(1))])
     expect(brain.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
-    expect(brain.posts[0].body).toMatchObject({ scope: 'project.eml', status: 'active', title: 'session-2026-11-17-00000001' })
+    expect(brain.posts[0].body).toMatchObject({ scope: 'project.eml', status: 'active', title: 'session-2026-11-17-00000001', assignee_ids: ['lasse'] })
     expect(ledger.get(id(1))).toMatchObject({ taskId: 't1', taskAuto: true })
     expect(first).toBe(second)
     expect(first).toContain('**session-2026-11-17-00000001** · t1 [active]')
@@ -75,15 +75,17 @@ describe('session task', () => {
     expect(first).toContain('- [lasse]')
   })
 
-  it('gives a worker a task of its own that notes who started it, a step only when asked, and global for a project the brain does not know', async () => {
+  it('gives a worker a task of its own that notes who started it, a step only when asked, and the requester\'s project and owners for a project the brain does not know', async () => {
     const { ledger, brain, tasks } = setup({ shared: false }, fakeBrain(['global', 'project.eml']))
+    brain.tasks.set('parent-task', { id: 'parent-task', scope: 'project.eml', properties: { assignee_ids: ['dominik'] } })
     ledger.recordSpawn(id(2), null, 'bp-eml', 'claude', false, 'parent-task')
     ledger.setAgentTitle(id(2), 'Email Lord')
     ledger.expectParent(id(3), id(2))
     ledger.recordSpawn(id(3), null, 'bp-unknown', 'claude', true)
     await tasks.context(id(3))
     let created = brain.posts.filter((p) => p.path === '/engram/task')
-    expect(created.map((p) => p.body.scope)).toEqual(['project.unknown', 'global'])
+    expect(created.map((p) => p.body.scope)).toEqual(['project.unknown', 'project.eml'])
+    expect(created[1].body.assignee_ids).toEqual(['dominik'])
     expect(created[1].body).not.toHaveProperty('parent_id')
     expect(created[1].body.content).toContain('Started by session Email Lord (its task parent-task)')
 
@@ -93,6 +95,14 @@ describe('session task', () => {
     await tasks.context(id(4))
     created = brain.posts.filter((p) => p.path === '/engram/task')
     expect(created.at(-1)!.body.parent_id).toBe('parent-task')
+  })
+
+  it('makes no task outside every project: a folder-only project without a task to take one from leaves the session without one', async () => {
+    const { ledger, brain, tasks } = setup({ shared: false })
+    ledger.recordSpawn(id(7), null, 'folder-abc', 'claude')
+    expect(await tasks.context(id(7))).toBe('')
+    expect(brain.posts.filter((p) => p.path === '/engram/task')).toHaveLength(0)
+    expect(ledger.get(id(7))?.taskId ?? null).toBeNull()
   })
 
   it('keeps a task the session was started with, and does not mark it as created by the cockpit', async () => {

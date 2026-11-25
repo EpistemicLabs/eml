@@ -47,7 +47,7 @@ export interface SpawnDeps {
   /** A session named itself: its placeholder task takes the name (application/session-task.ts). */
   sessionNamed?: (sessionId: string, title: string) => void
   /** Task system: create a brain task in the space (spawn newTask); its id, or an error text. */
-  createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string }) => Promise<{ id: string } | { error: string }>
+  createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string; fromTaskId?: string }) => Promise<{ id: string } | { error: string }>
 }
 
 const MAX_PROMPT = 50_000
@@ -121,10 +121,12 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     const inProject = typeof newTask.in === 'string' && newTask.in.trim() ? await resolveProject(space, newTask.in.trim()) : projectId
     if (!inProject) return fail(404, 'UNKNOWN_PROJECT', `Unknown project "${String(newTask.in)}" for the new task`)
     const brainId = brainIdFromProjectId(inProject)
+    // A task belongs to a project of the brain; a folder-only project has none.
+    if (!brainId) return fail(400, 'NEW_TASK_NEEDS_PROJECT', `The new task needs a project of the brain, and ${typeof newTask.in === 'string' && newTask.in.trim() ? `"${newTask.in.trim()}"` : 'this session\'s project'} is a folder only. Name one with in.`)
     const requester = fromSessionId ? deps.ledger.get(fromSessionId) : undefined
     const from = fromSessionId ? ` Started by session ${requester?.title ?? requester?.agentTitle ?? fromSessionId}.` : ''
     const text = typeof newTask.text === 'string' && newTask.text.trim() ? newTask.text.trim() : title
-    const created = await deps.createTask(space, { title, content: `${text}${from}`, scope: brainId ? `project.${brainId}` : 'global' })
+    const created = await deps.createTask(space, { title, content: `${text}${from}`, scope: `project.${brainId}`, ...(requester?.taskId ? { fromTaskId: requester.taskId } : {}) })
     if ('error' in created) return fail(400, 'NEW_TASK_FAILED', `The task could not be created: ${created.error}`)
     givenTask = created.id
   }
