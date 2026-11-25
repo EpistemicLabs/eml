@@ -72,6 +72,17 @@ describe('task runner', () => {
     expect(resumed).toHaveLength(1)
   })
 
+  it('continues nothing while the hand-over can still be undone', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: string[] = []
+    const { started, brain } = await run(list, undefined, undefined, undefined, {
+      held: () => true, ownSession: () => 'desk-1', resume: async (_space, sessionId) => { resumed.push(sessionId); return null },
+    })
+    expect(resumed).toEqual([])
+    expect(started).toEqual([])
+    expect(brain.posts).toEqual([])
+  })
+
   it('starts a new session when the own session does not take the prompt, or when there is none to continue', async () => {
     const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' }
     const list: T[] = [
