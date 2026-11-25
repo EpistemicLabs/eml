@@ -17,6 +17,7 @@ export async function applyWrite<N extends CommandName>(eml: EML, command: { nam
   if (sync instanceof Error) throw readOnly(`it stopped: its team file cannot be used (${sync.message})`, true)
   checkAssignees(eml, command, env, sync)
   checkDelegate(eml, command, env, sync)
+  checkAgentTask(eml, command, env, sync)
   if (sync) return await sync.write(command, env) as CommandMap[N][1]
   // a brain with a sync is shared even before its genesis arrived from the relay
   if (eml.teamBrain() !== null) throw readOnly('it is not connected to its relay')
@@ -75,6 +76,40 @@ function checkAssignees(eml: EML, command: { name: CommandName, input: unknown }
   if (unknown.length === 0) return
   const list = [...known].sort().join(', ')
   throw new CommandError('INVALID', `Invalid engram: assignee_ids names ${unknown.map(h => `"${String(h)}"`).join(', ')}, who ${unknown.length > 1 ? 'do' : 'does'} not work in this brain. Known handles: ${list || 'none'} (eml_read_object object=user · agent).`)
+}
+
+/**
+ * A task an agent writes has a project and an owner: its scope is project.<id>, and its
+ * assignee_ids name at least one person of the brain (spacePeople's users, or the writer's
+ * own handle) and no agent — an agent works on a task as its delegate, never as its owner
+ * (decision task-assignee-owner-and-agent-delegate). Applies to a create, and to a track that
+ * moves the task or replaces its owners. Checked where the write is authored, like
+ * assignee_ids, never on replay: what older ops wrote stays, and a person's own writes are free.
+ */
+function checkAgentTask(eml: EML, command: { name: CommandName, input: unknown }, env: Env, sync: Sync | undefined): void {
+  if (!env.actor.agent) return
+  const input = command.input as Record<string, unknown> | null
+  const create = command.name === 'engram.create' && input?.type === 'task'
+  if (!create && command.name !== 'task.track') return
+  const scope = input?.scope
+  if ((create || scope !== undefined) && !(typeof scope === 'string' && scope.startsWith('project.'))) {
+    throw new CommandError('INVALID', `Invalid engram: a task an agent ${create ? 'creates' : 'moves'} belongs to a project — scope project.<id>, not ${typeof scope === 'string' ? scope : 'none'}. Take the project the work is for (the parent task's project for a sub-task).`)
+  }
+  const owners = create ? (input?.properties as Record<string, unknown> | undefined)?.assignee_ids : input?.assignee_ids
+  if (!create && owners === undefined) return
+  const handles = Array.isArray(owners) ? owners.filter((h): h is string => typeof h === 'string') : []
+  const { users, agents } = spacePeople(eml, spaceMembers(sync))
+  const agentIds = new Set([...agents.map(a => a.id), env.actor.agent])
+  const people = new Set(users.map(u => u.id as string))
+  if (env.actor.handle) people.add(env.actor.handle)
+  for (const id of agentIds) if (id !== env.actor.handle) people.delete(id)
+  const asAgents = handles.filter(h => agentIds.has(h) && !people.has(h))
+  if (asAgents.length > 0) {
+    throw new CommandError('INVALID', `Invalid engram: assignee_ids names the agent ${asAgents.map(h => `"${h}"`).join(', ')} — assignee_ids is the task's owner, a person; an agent working on it is its delegate.`)
+  }
+  if (!handles.some(h => people.has(h))) {
+    throw new CommandError('INVALID', `Invalid engram: a task an agent ${create ? 'creates' : 'changes'} has an owner — assignee_ids names at least one person (${[...people].sort().join(', ') || 'none'}). Take the parent task's owner for a sub-task, else ${env.actor.handle ?? 'the person you work for'}.`)
+  }
 }
 
 /**
