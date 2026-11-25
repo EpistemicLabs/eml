@@ -76,7 +76,13 @@ describe('session task', () => {
     ledger.expectParent(worker, starter)
     ledger.recordSpawn(worker, null, 'bp-eml', 'claude', true)
     await tasks.context(worker)
-    expect(brain.posts[0].body).toMatchObject({ delegation: { agent: 'atlas', checkpoint: 'none', requested_at: '2026-11-17T10:00:00.000Z' } })
+    // requested at the session's creation, not at its first hook: the run it writes (started then) closes the request
+    const createdAt = ledger.get(worker)!.createdAt
+    expect(brain.posts[0].body).toMatchObject({ delegation: { agent: 'atlas', checkpoint: 'none', requested_at: createdAt } })
+    const { requestOpen } = await import('../src/domain/delegation.js')
+    const posted = { status: 'active', properties: { delegation: brain.posts[0].body.delegation as never } }
+    expect(requestOpen(posted, null)).toBe(true)
+    expect(requestOpen(posted, createdAt)).toBe(false)
     expect(holds.holds(ledger.get(worker)!.taskId!)).toBe(true)
     // the user's own session and a worker the runner started (no parent) get no delegate from here
     ledger.recordSpawn(own, null, 'bp-eml', 'claude')

@@ -55,7 +55,7 @@ export interface TaskRunnerDeps {
   working?(taskId: string, runs: readonly RunFacts[]): boolean
   /**
    * Its hand-over can still be undone (nothing starts until the undo window is over), or a worker is about to start on
-   * it (application/worker-task-hold.ts, keyed on its request's time until its id is known).
+   * it (application/worker-task.ts, keyed on its request's time until its id is known).
    */
   held?(taskId: string, requestedAt?: string | null): boolean
   /** A job of the task will start it at a set time. */

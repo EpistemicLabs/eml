@@ -5,7 +5,7 @@ import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
 import { MAX_RUNNING } from '../domain/runner-gate.js'
 import { parentOf } from '../domain/task-relations.js'
-import type { WorkerTaskHolds } from './worker-task.js'
+import { workerDelegation, type WorkerTaskHolds } from './worker-task.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
 import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
@@ -42,7 +42,7 @@ export interface SessionTaskDeps {
   endTurnTool(sessionId: string): boolean
   /**
    * The agent a spawned worker's new task is handed to (the space's agent), or null: then it gets no delegate. With it,
-   * the hold that keeps the runner off the task until the worker is on it (application/worker-task-hold.ts).
+   * the hold that keeps the runner off the task until the worker is on it (application/worker-task.ts).
    */
   workerDelegate?(spaceId: string | null): string | null
   workerHolds?: Pick<WorkerTaskHolds, 'start'>
@@ -191,18 +191,17 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
     // session's own project is not one of the brain (a folder-only project, or one the brain does not know).
     const originId = parentTask ?? requester?.taskId ?? null
     const origin = originId ? await brain.get(`/engram/${originId}`).catch(() => null) as (OwnedTask & { scope?: string }) | null : null
-    // A worker a session started works on its new task alone: the agent is its delegate, with checkpoint none (it
-    // closes the task itself and reports to its starter) and a request the runner is held off until the worker is on it.
+    // A worker a session started works on its new task alone (application/worker-task.ts workerDelegation). Its
+    // session exists already, so the request is its creation: the run it writes, started then, closes the request.
     const delegate = entry.worker && entry.parentSessionId && !entry.jobId ? deps.workerDelegate?.(entry.spaceId) ?? null : null
-    const requestedAt = delegate ? now().toISOString() : null
-    const hold = requestedAt ? deps.workerHolds?.start(requestedAt) : undefined
+    const handed = delegate ? workerDelegation(deps.workerHolds, delegate, entry.createdAt) : null
     const body = {
       title: placeholderTitle(sessionId, now()),
       content: `The work of cockpit session ${sessionId}; the task gets its name once the work is clear.${from}`,
       status: 'active',
       assignee_ids: ownersFor(origin, deps.me),
       ...(parentTask ? { parent_id: parentTask } : {}),
-      ...(delegate ? { delegation: { agent: delegate, checkpoint: 'none', requested_at: requestedAt } } : {}),
+      ...(handed ? { delegation: handed.delegation } : {}),
     }
     const post = (scope: string) => brain.post('/engram/task', { ...body, scope }) as Promise<Task>
     const own = brainId ? `project.${brainId}` : null
@@ -212,7 +211,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       : fallback ? await post(fallback) : null
     // No project to file it in: the session works without a task rather than with one outside every project.
     if (!task) return null
-    hold?.bind(task.id)
+    handed?.bind(task.id)
     deps.ledger.setTask(sessionId, task.id, true)
     return task.id
   }

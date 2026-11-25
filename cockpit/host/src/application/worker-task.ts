@@ -1,6 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import { ownersFor, type OwnedTask } from '../domain/task-owner.js'
-import { displayTitleOf, kebabTitle } from './session-task.js'
+import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
 
 /**
  * A task the cockpit creates for a spawned worker is handed to the agent with a request
@@ -42,6 +42,20 @@ export function createWorkerTaskHolds(now: () => number = Date.now): WorkerTaskH
   }
 }
 
+/**
+ * A spawned worker's task is the agent's alone: the agent as delegate, checkpoint none (the worker closes the task
+ * itself and reports to the session that started it) and a request. The request time is no later than the worker's
+ * run starts (its run's started_at is its session's creation), so that run closes it; the hold is taken here, before
+ * the task is written, and bound to its id once the brain answers.
+ */
+export function workerDelegation(holds: Pick<WorkerTaskHolds, 'start'> | undefined, agent: string, requestedAt: string): {
+  delegation: { agent: string; checkpoint: 'none'; requested_at: string }
+  bind(taskId: string): void
+} {
+  const hold = holds?.start(requestedAt)
+  return { delegation: { agent, checkpoint: 'none', requested_at: requestedAt }, bind: (taskId) => hold?.bind(taskId) }
+}
+
 export interface WorkerTaskInput { title: string; content: string; scope: string; fromTaskId?: string }
 
 /**
@@ -57,14 +71,14 @@ export async function createWorkerTask(
   try {
     const origin = input.fromTaskId ? await deps.brain.get(`/engram/${input.fromTaskId}`).catch(() => null) as OwnedTask | null : null
     const display = displayTitleOf(input.title)
-    const requestedAt = new Date(deps.now?.() ?? Date.now()).toISOString()
-    const hold = deps.agent ? deps.holds.start(requestedAt) : null
+    // Its worker is not queued yet: the request is now, before its session exists.
+    const handed = deps.agent ? workerDelegation(deps.holds, deps.agent, new Date(deps.now?.() ?? Date.now()).toISOString()) : null
     const created = await deps.brain.post('/engram/task', {
       title: kebabTitle(input.title) ?? input.title, ...(display ? { display_title: display } : {}), content: input.content,
       scope: input.scope, status: 'active', assignee_ids: ownersFor(origin, deps.owner),
-      ...(deps.agent ? { delegation: { agent: deps.agent, checkpoint: 'none', requested_at: requestedAt } } : {}),
+      ...(handed ? { delegation: handed.delegation } : {}),
     }) as { id: string }
-    hold?.bind(created.id)
+    handed?.bind(created.id)
     return created
   } catch (err) {
     return { error: (err as Error).message }
