@@ -84,10 +84,20 @@ describe('session task', () => {
     expect(requestOpen(posted, null)).toBe(true)
     expect(requestOpen(posted, createdAt)).toBe(false)
     expect(holds.holds(ledger.get(worker)!.taskId!)).toBe(true)
-    // the user's own session and a worker the runner started (no parent) get no delegate from here
+    // the user's own session, a worker the runner started (no parent) and a job's run get no delegate from here
     ledger.recordSpawn(own, null, 'bp-eml', 'claude')
     await tasks.context(own)
     expect(brain.posts.at(-1)!.body).not.toHaveProperty('delegation')
+    const [runnerWorker, jobRun] = ['f0000004', 'f0000005'].map((p) => `${p}-aaaa-bbbb-cccc-dddddddddddd`)
+    ledger.recordSpawn(runnerWorker, null, 'bp-eml', 'claude', true)
+    await tasks.context(runnerWorker)
+    expect(brain.posts.at(-1)!.body).not.toHaveProperty('delegation')
+    ledger.expectParent(jobRun, starter)
+    ledger.recordSpawn(jobRun, null, 'bp-eml', 'claude', true)
+    ledger.setJobId(jobRun, 'job-1')
+    const before = brain.posts.length
+    await tasks.context(jobRun)
+    expect(brain.posts.slice(before).filter((p) => p.path === '/engram/task').every((p) => !('delegation' in p.body))).toBe(true)
   })
 
   it('gives a session without a task a placeholder task in its project, once, and tells it the handoff', async () => {

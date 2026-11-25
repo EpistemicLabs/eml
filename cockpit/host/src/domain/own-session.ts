@@ -11,7 +11,11 @@
  * chose Start fresh.
  */
 
-/** From this many tokens of context on, a session counts as very long: a delegation starts a new one. */
+/**
+ * From this many tokens of context on, a session counts as very long: a delegation starts a new one. 60% of the
+ * 200k window most sessions run with, where carrying on soon means compaction; a share of each model's own window is a
+ * later refinement (1M-window sessions are rare).
+ */
 export const LONG_CONTEXT_TOKENS = 120_000
 
 export interface SessionOnTaskFacts {

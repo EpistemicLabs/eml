@@ -229,7 +229,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       startedAt.set(step.id, Date.now())
       await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: continued ? 'Continued in its own session by the task runner.' : 'Started by the task runner.' })
       started.set(group, started.get(group)! + 1)
-      deps.log(`[runner] ${continued ? `continued step ${step.id.slice(0, 8)} in session ${own!.slice(0, 8)}` : `started step ${step.id.slice(0, 8)}`} ${title} (checkpoint ${step.properties?.checkpoint})`)
+      deps.log(`[runner] ${continued ? `continued step ${step.id.slice(0, 8)} in session ${own!.slice(0, 8)}` : `started step ${step.id.slice(0, 8)}`} (checkpoint ${step.properties?.checkpoint})`)
     }
   }
 

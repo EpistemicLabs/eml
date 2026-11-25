@@ -35,9 +35,12 @@ describe('the hand-over dialog', () => {
     expect(screen.queryByRole('button', { name: 'Start fresh' })).toBeNull();
     expect(screen.getByText(/starts in a new session, from the task's journal/)).toBeTruthy();
     cleanup();
-    open(task({ ownSession: { sessionId: 's1', continues: false } }));
+    open(task({ ownSession: { sessionId: 's1', continues: false, why: 'terminal' } }));
     expect(screen.queryByRole('button', { name: 'Start fresh' })).toBeNull();
-    expect(screen.getByText(/its session is too long or runs in a terminal/)).toBeTruthy();
+    expect(screen.getByText(/starts in a new session \(its session runs in a terminal\)/)).toBeTruthy();
+    cleanup();
+    open(task({ ownSession: { sessionId: 's1', continues: false, why: 'long_context' } }));
+    expect(screen.getByText(/starts in a new session \(its session is very long\)/)).toBeTruthy();
   });
 
   it('calls working on it yourself Take over whenever the task has its own session, as the host decides it', () => {

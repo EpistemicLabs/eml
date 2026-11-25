@@ -96,7 +96,7 @@ export interface BoardTask {
    * The task's own open session (host domain/own-session.ts): Take over opens it, and Delegate continues it when
    * `continues` (else, or with Start fresh, a new session starts). Missing when it has none, or from an older host.
    */
-  ownSession?: { sessionId: string; continues: boolean };
+  ownSession?: { sessionId: string; continues: boolean; why?: 'terminal' | 'long_context' };
   /** What has to be true for it to be done; missing when it has none. */
   goal?: string;
   /** When an agent works on it again (a job's here, else the delegation's); missing from an older host. */

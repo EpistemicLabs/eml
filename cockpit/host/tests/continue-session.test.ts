@@ -58,7 +58,8 @@ describe('continuing the task\'s own session', () => {
 
   it('starts a new session instead when the context is very long, the session is a terminal, or the owner chose Start fresh', () => {
     expect(setup([entry('own')], { tokens: LONG_CONTEXT_TOKENS }).continueSession.toContinue('t1')).toBeNull()
-    expect(setup([entry('own')], { tokens: LONG_CONTEXT_TOKENS }).continueSession.boardView('t1')).toEqual({ sessionId: 'own', continues: false })
+    expect(setup([entry('own')], { tokens: LONG_CONTEXT_TOKENS }).continueSession.boardView('t1')).toEqual({ sessionId: 'own', continues: false, why: 'long_context' })
+    expect(setup([entry('own', { runtime: 'terminal' })]).continueSession.boardView('t1')).toEqual({ sessionId: 'own', continues: false, why: 'terminal' })
     expect(setup([entry('own', { runtime: 'terminal' })]).continueSession.toContinue('t1')).toBeNull()
     expect(setup([entry('own')], { fresh: true }).continueSession.toContinue('t1')).toBeNull()
     // Start fresh is the delegation's choice: the board still names the session Take over opens

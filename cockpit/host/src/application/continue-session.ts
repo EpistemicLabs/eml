@@ -25,6 +25,9 @@ export interface ContinueSessionDeps {
   now(): number
 }
 
+/** The task's own session as the board shows it (`why`: what makes a delegation start a new session instead). */
+export type OwnSessionView = { sessionId: string; continues: true } | { sessionId: string; continues: false; why: 'terminal' | 'long_context' }
+
 export interface ContinueSession {
   /** The task's own open session, with its context read for that one session only; null when it has none. */
   ownSession(taskId: string): SessionOnTaskFacts | null
@@ -35,8 +38,8 @@ export interface ContinueSession {
    * ledger keeps it): the request counts as started, also when its run is not in the brain yet or was refused.
    */
   continuedFor(taskId: string, requestedAt: string): boolean
-  /** For the board: the task's own session, and whether a delegation would continue it. */
-  boardView(taskId: string): { sessionId: string; continues: boolean } | null
+  /** For the board: the task's own session, whether a delegation would continue it, and if not, why. */
+  boardView(taskId: string): OwnSessionView | null
   /** Give the session the step's start prompt and start its new run (ResumeOutcome says what came of it). */
   resume(sessionId: string, step: RunnerStep): Promise<ResumeOutcome>
 }
@@ -69,7 +72,8 @@ export function createContinueSession(deps: ContinueSessionDeps): ContinueSessio
     boardView(taskId) {
       const own = ownSession(taskId)
       if (!own) return null
-      return { sessionId: own.sessionId, continues: newSessionReason(own, false) === null }
+      const why = newSessionReason(own, false)
+      return why === 'terminal' || why === 'long_context' ? { sessionId: own.sessionId, continues: false, why } : { sessionId: own.sessionId, continues: true }
     },
     async resume(sessionId, step) {
       const at = new Date(deps.now()).toISOString()

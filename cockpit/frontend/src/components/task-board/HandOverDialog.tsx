@@ -193,7 +193,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                 {mode === 'now'
                   ? `${continuable && !fresh
                     ? `${agentName(agent)} carries on in the task's session, with what was said there, once the few seconds to undo are over.`
-                    : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ' (its session is too long or runs in a terminal)' : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
+                    : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in a terminal' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
                   : then === 'goal'
                     ? `${agentName(agent)} starts then and keeps going until the goal is reached. Until then the task sits in Agent scheduled under Missions, on every device and for every member. You're asked only for a question, a review or a failed run.`
                     : then === 'repeat'
