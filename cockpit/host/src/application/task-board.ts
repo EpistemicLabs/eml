@@ -198,8 +198,8 @@ export interface TaskBoardDeps {
   reopenedWith?(taskId: string): ReopenItem[]
   /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
   runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
-  /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
-  runnerHeld?(taskId: string): boolean
+  /** The runner's held check: an undoable hand-over, the owner works on it with the agent, or a worker is about to start on it. */
+  runnerHeld?(taskId: string, requestedAt?: string | null): boolean
   /** When the runner last started the task (application/task-runner.ts startedAt), before its run is in the brain. */
   runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
@@ -553,7 +553,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id, row.properties?.delegation?.requested_at ?? null) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
         })
       }
 

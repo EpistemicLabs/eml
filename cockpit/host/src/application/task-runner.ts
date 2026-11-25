@@ -53,8 +53,11 @@ export interface TaskRunnerDeps {
   busy?(taskId: string, runs: readonly RunFacts[]): boolean
   /** A session works on this task right now: one of this cockpit's sessions is in a turn, or another cockpit's run on it is working. */
   working?(taskId: string, runs: readonly RunFacts[]): boolean
-  /** Its hand-over can still be undone: nothing starts until the undo window is over. */
-  held?(taskId: string): boolean
+  /**
+   * Its hand-over can still be undone (nothing starts until the undo window is over), or a worker is about to start on
+   * it (application/worker-task-hold.ts, keyed on its request's time until its id is known).
+   */
+  held?(taskId: string, requestedAt?: string | null): boolean
   /** A job of the task will start it at a set time. */
   scheduled?(taskId: string): boolean
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
@@ -181,7 +184,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
-        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id),
+        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id, step.properties?.delegation?.requested_at ?? null),
         // A job here, or a schedule in its delegation, starts it at its time (domain/task-schedule.ts).
         scheduled: deps.scheduled?.(step.id) || Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
       })

@@ -314,6 +314,20 @@ describe('the task board', () => {
     expect(of('theirs')).toMatchObject({ turn: 'agent_scheduled', group: 'runner', runner: { kind: 'other_member', owner: 'dominik' } })
   })
 
+  it('names the cap when the tasks of five spawned workers fill it: they count like any delegated task', async () => {
+    // A task the cockpit made for a spawned worker: the agent's with checkpoint none and a request (application/worker-task.ts).
+    const workers = Array.from({ length: 5 }, (_, i) => mine(`worker-${i}`, {
+      delegate: 'atlas', checkpoint: 'none', delegation: { agent: 'atlas', checkpoint: 'none', requested_at: '2026-11-19T09:30:00.000Z' },
+    }))
+    const { board } = setup({
+      main: [...workers, mine('lasses', { delegate: 'atlas', checkpoint: 'after', goal: 'Shipped' }, 'planned')],
+      working: workers.map((w) => w.id),
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'lasses')).toMatchObject({ turn: 'agent_scheduled', group: 'blocked', runner: { kind: 'cap', running: 5, max: 5, standalone: true } })
+    expect(model.tasks.find((t) => t.id === 'worker-0')).toMatchObject({ turn: 'agent_working' })
+  })
+
   it('counts a slot as the runner does: tasks waiting on an answer and another member\'s tasks hold none, a fresh start does', async () => {
     const theirs = (id: string): Row => ({ id, status: 'active', properties: { assignee_ids: ['dominik'], delegate: 'motti', checkpoint: 'after' } })
     const own = (id: string, props: Record<string, unknown> = {}) => mine(id, { delegate: 'atlas', checkpoint: 'after', ...props })
