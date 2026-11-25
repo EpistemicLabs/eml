@@ -61,6 +61,23 @@ export function nextRunOfJobs(jobs: ReadonlyArray<Pick<Job, 'paused' | 'pendingA
   return jobs.filter((j) => !j.endedAt && !isHeld(j) && j.nextRunAt).map((j) => j.nextRunAt!).sort()[0] ?? null
 }
 
+/**
+ * The task's schedule is still on: a job of this cockpit's has not ended, whatever its state (due, paused, waiting for
+ * the user's OK, or woken by mail only), or another member's cockpit fires a schedule that has a run coming up. Such a
+ * task is not closed: a review approves one run, Close is refused, End schedule ends its jobs and closes it.
+ *
+ * The schedule in the delegation is a mirror (application/schedule-mirror.ts) that the owner's cockpit writes from its
+ * own jobs. So on a task `me` owns, or one nobody owns, only the jobs here count: a mirrored schedule without a job
+ * is a leftover. Only on another member's task does it stand for a job on their cockpit.
+ */
+export function hasSchedule(
+  task: { jobs: ReadonlyArray<Pick<Job, 'endedAt'>>; schedule?: ScheduleFields | null; owner?: string }, me: string | undefined, now: number,
+): boolean {
+  if (task.jobs.some((j) => !j.endedAt)) return true
+  const elsewhere = Boolean(task.owner) && task.owner !== me
+  return elsewhere && nextRunOfSchedule(task.schedule, now) !== null
+}
+
 /** The same schedule, whatever the key order or the ISO form of at. */
 export function sameSchedule(a: ScheduleFields | null | undefined, b: ScheduleFields | null | undefined): boolean {
   if (!a || !b) return !a && !b

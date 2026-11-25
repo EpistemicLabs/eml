@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, earlierRunLine, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'acme-cancellation-rescue', status: 'active', parentId: null, updatedAt: local(19, 9),
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, owner: 'lasse', ...patch,
 });
 
 describe('times', () => {
@@ -249,6 +249,48 @@ describe('the task state screens (v0.23)', () => {
     expect(cols.find((c) => c.turn === 'agent_scheduled')!.groups.map((g) => g.group)).toEqual(['mission', 'routine', 'at_time']);
     const working = cols.find((c) => c.turn === 'agent_working')!;
     expect([working.tasks.map((t) => t.id).sort(), working.groups.map((g) => g.group)]).toEqual([['s', 'w'], ['stale']]);
+  });
+});
+
+describe('a task whose schedule is still on', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is scheduled while it is open and the host says its schedule is on, with or without a next run', () => {
+    const next = new Date(NOW + DAY_MS).toISOString();
+    expect(isScheduled(task({ hasSchedule: true, nextRunAt: next }))).toBe(true);
+    expect(isScheduled(task({ turn: 'review', hasSchedule: true }))).toBe(true);
+    // a paused job, or one only mail wakes: no run is coming up, the schedule is on all the same
+    expect(isScheduled(task({ hasSchedule: true, nextRunAt: null, schedule: { cron: '0 8 * * 1-5', paused: true } }))).toBe(true);
+    expect(isScheduled(task())).toBe(false);
+    // a next run alone does not decide it: the host does (a schedule left behind by a job that ended)
+    expect(isScheduled(task({ nextRunAt: next }))).toBe(false);
+    expect(isScheduled(task({ status: 'resolved', hasSchedule: true }))).toBe(false);
+    expect(isScheduled(task({ status: 'invalidated', hasSchedule: true }))).toBe(false);
+  });
+
+  it('says what a click that can still be undone does: a run approved, a task closed as reviewed, a schedule ended', () => {
+    const pending = (kind: string) => ({ opId: 'o', kind, undoUntil: '' });
+    // The host shows a scheduled task as still open while its review is pending, any other as closed.
+    expect(cardLine(task({ hasSchedule: true, pending: pending('review') }), NOW)).toBe('Run approved. You can undo this for a few seconds.');
+    expect(cardLine(task({ status: 'resolved', turn: 'done', pending: pending('review') }), NOW)).toBe('Closing as reviewed. You can undo this for a few seconds.');
+    expect(cardLine(task({ status: 'resolved', turn: 'done', hasSchedule: true, pending: pending('end_schedule') }), NOW)).toBe('Ending its schedule and closing. You can undo this for a few seconds.');
+  });
+
+  it('ends its schedule through end-schedule, with the op id and the space', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ opId: 'op-9', state: 'pending', undoUntil: '2026-11-19T10:35:08.000Z' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetched);
+    expect(await endSchedule({ id: 'daily brief', spaceId: 'main' }, 'op-9')).toEqual({ ok: true, opId: 'op-9', state: 'pending', undoUntil: '2026-11-19T10:35:08.000Z' });
+    const [url, init] = fetched.mock.calls[0];
+    expect(url).toBe('/api/v1/tasks/daily%20brief/end-schedule');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({ opId: 'op-9', spaceId: 'main' });
+  });
+
+  it('passes on why the host refused: Close on a scheduled task, End schedule with open steps', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } }), { status: 409 })));
+    expect(await closeTask({ id: 't', spaceId: 'main' })).toEqual({ ok: false, code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'open_steps', message: 'Two steps are still open.', retry: false } }), { status: 409 })));
+    expect(await endSchedule({ id: 't', spaceId: 'main' })).toEqual({ ok: false, code: 'open_steps', message: 'Two steps are still open.', retry: false });
   });
 });
 

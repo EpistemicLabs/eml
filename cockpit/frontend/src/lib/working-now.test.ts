@@ -12,7 +12,7 @@ const space = { id: 'space', name: 'Main', main: true, agent: 'atlas', upgrade: 
 const session = (id: string, fields: Partial<AllSession> = {}): AllSession => ({ id, spaceId: 'space', createdAt: '2026-02-01T08:00:00.000Z', summary: `Session ${id}`, ...fields });
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 't', spaceId: 'space', spaceName: 'Main', project: 'acme', title: 'acme-rescue', displayTitle: 'Rescue Acme', status: 'active', parentId: null, updatedAt: null,
-  turn: 'agent_working', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, sessionIds: [], working: true, nextRunAt: null, ...patch,
+  turn: 'agent_working', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, sessionIds: [], working: true, nextRunAt: null, hasSchedule: false, ...patch,
 });
 const board = (tasks: BoardTask[]): Pick<Board, 'tasks' | 'projects'> => ({ tasks, projects: [{ spaceId: 'space', id: 'acme', name: 'Acme' }] as Board['projects'] });
 const working = (since: string): TurnInfo => ({ state: 'working', since });

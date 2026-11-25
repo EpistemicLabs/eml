@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
-  describeTrigger, isOpenRun, JOB_LIMITS, jobTimeZone, mailKeys, nextDue,
+  describeTrigger, ENDED_BEFORE_START, isOpenRun, JOB_LIMITS, jobTimeZone, mailKeys, nextDue,
   activeGrants, type ChannelTrigger, type GrantTool, type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ReplyChannel, type ReplyMode, type ScheduleTrigger,
 } from '../domain/job.js'
 import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
@@ -236,12 +236,19 @@ export class Jobs {
     return { status: 200, text: `Deleted job "${job.name}" and its history.` }
   }
 
-  /** Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. An ended job stays as it ended, so calling it again is safe. */
+  /**
+   * Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. A run that
+   * was due but had not started is skipped: it would start on a job that has ended. One a session already has goes on.
+   * The board's End schedule calls it too; an ended job stays as it ended, so calling it again is safe.
+   */
   finish(job: Job): JobAnswer {
     const at = new Date(this.now()).toISOString()
     const lent = activeGrants(job, this.now()).map((g) => g.tool)
     const next: Job = { ...job, endedAt: job.endedAt ?? at, nextRunAt: null, grants: [], updatedAt: at }
     this.deps.store.put(next)
+    for (const run of this.deps.store.runs(job.id)) {
+      if (run.status === 'waiting') this.deps.store.updateRun({ ...run, status: 'skipped', note: ENDED_BEFORE_START, finishedAt: at })
+    }
     if (lent.length) this.deps.onGrantEnd?.(next, lent)
     return { status: 200, job: next, text: `Finished job "${job.name}": it wakes no more. A new time (update with at) brings it back.` }
   }

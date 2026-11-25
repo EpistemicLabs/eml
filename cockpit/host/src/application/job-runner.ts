@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
-  activeGrants, isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
+  activeGrants, ENDED_BEFORE_START, isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
   type GrantTool, type Job, type JobRun, type ReplyChannel,
 } from '../domain/job.js'
 import { formatDuration } from '../domain/schedule.js'
@@ -45,6 +45,11 @@ export interface JobRunnerDeps {
   deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
   /** Queue a worker under `sessionId` with the text as its first prompt; returns why it could not, or null. */
   startWorker(job: Job, sessionId: string, text: string): string | null
+  /**
+   * A run is about to start. For a job on a task the host reopens the task when it is closed (application/task-commands.ts
+   * reopenForRun): the run works and asks on it. Whatever comes of it, the run starts.
+   */
+  beforeRun?(job: Job, run: JobRun): Promise<void>
   /** Lent tools went back (their time is up, or the session reported done): the host takes them from the session. */
   onGrantEnd?(job: Job, tools: GrantTool[]): void
   /** Tell the user (notifications.ts): a run that needs them, a failure, a pause. */
@@ -260,6 +265,9 @@ export class JobRunner {
    */
   private async attempt(job: Job, run: JobRun, once = false): Promise<Attempt> {
     const now = this.now()
+    // An ended job starts nothing. A one-time job is not ended while its run is open (endIfDone), so this is one
+    // that was ended by hand (finish, the board's End schedule) with the run still due.
+    if (this.skipIfEnded(run)) return 'gone'
     if (now - Date.parse(run.dueAt) > JOB_LIMITS.retryWindowMs && run.attempts > 0) {
       this.failRun(run, `could not start within ${formatDuration(JOB_LIMITS.retryWindowMs)}: ${run.note ?? 'no room'}`)
       return 'failed'
@@ -289,6 +297,12 @@ export class JobRunner {
       this.update(run, { status: 'starting', attempts: run.attempts + 1, sessionId })
       // Named before the start: a restart in between finds the session it belongs to (recover).
       if (target.type === 'job-session') this.setJobSession(job.id, sessionId)
+      await this.prepare(job, run)
+      // Ended while the host prepared it (End schedule): the session id it named is taken back, nothing starts.
+      if (this.skipIfEnded(run)) {
+        if (target.type === 'job-session') this.setJobSession(job.id, null)
+        return 'gone'
+      }
       const problem = this.deps.startWorker(job, sessionId, text)
       if (problem) {
         if (target.type === 'job-session') this.setJobSession(job.id, null)
@@ -301,6 +315,8 @@ export class JobRunner {
     }
 
     this.update(run, { status: 'starting', attempts: run.attempts + 1, sessionId: existing })
+    await this.prepare(job, run)
+    if (this.skipIfEnded(run)) return 'gone'
     const outcome = await this.deps.deliver(existing, text)
     const current = this.current(run)
     if (outcome === 'delivered' || outcome === 'resumed') {
@@ -312,6 +328,26 @@ export class JobRunner {
     const gone = outcome === 'unknown'
     this.failRun(current, gone ? 'its session no longer exists' : 'its session cannot take messages (it does not run in the chat view)')
     return gone ? 'gone' : 'failed'
+  }
+
+  /** What the host does before a run starts (beforeRun). The run is 'starting' by now, so no other pass takes it; a failure is logged and the run starts. */
+  private async prepare(job: Job, run: JobRun): Promise<void> {
+    try {
+      await this.deps.beforeRun?.(job, run)
+    } catch (err) {
+      this.deps.log(`[jobs] ${job.name}: run ${run.number} starts although preparing it failed: ${(err as Error).message}`)
+    }
+  }
+
+  /** The run's job has ended: the run is skipped, and nothing counts as a failure. True when it was. */
+  private skipIfEnded(run: JobRun): boolean {
+    if (!this.deps.store.get(run.jobId)?.endedAt) return false
+    const current = this.current(run)
+    if (current.status === 'waiting' || current.status === 'starting') {
+      this.update(current, { status: 'skipped', note: ENDED_BEFORE_START, finishedAt: new Date(this.now()).toISOString() })
+      this.deps.log(`[jobs] ${run.jobId.slice(0, 8)}: run ${run.number} skipped, ${ENDED_BEFORE_START}`)
+    }
+    return true
   }
 
   private setJobSession(jobId: string, sessionId: string | null): void {

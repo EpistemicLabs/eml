@@ -8,7 +8,7 @@ import { buildTaskTree, deskTaskProjects, moreOpenTasks, taskState, type TaskLik
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null,
   updatedAt: null, turn: 'needs_you', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false,
-  sessionIds: [], working: false, nextRunAt: null, ...patch,
+  sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, ...patch,
 });
 const session = (id: string, patch: Partial<AllSession> = {}): AllSession => ({ id, spaceId: 'main', projectId: 'p-ui', summary: id, ...patch });
 

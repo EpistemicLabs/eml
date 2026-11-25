@@ -1,7 +1,7 @@
 import type * as http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { TaskBoard } from './application/task-board.js'
-import type { CommandInput, CommandRefusal, Submitted, TaskCommands } from './application/task-commands.js'
+import { SCHEDULE_ON, type CommandInput, type CommandRefusal, type Submitted, type TaskCommands } from './application/task-commands.js'
 import type { SplitBrief } from './application/split-brief.js'
 import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import type { SortSession } from './application/sort-session.js'
@@ -16,9 +16,14 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *   GET  /api/v1/tasks/board                        the board (application/task-board.ts)
  *   GET  /api/v1/tasks/closed?spaceId&project&limit  a project's newest closed tasks, done and dropped: { tasks, more }
  *   POST /api/v1/tasks/<id>/hand-over               { opId, spaceId, mode, delegate, checkpoint, schedule?, desk? }
- *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done
+ *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done; on a task whose schedule is on it approves
+ *                                                     that run and the task stays open
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
- *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed
+ *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed; refused (scheduled) while its
+ *                                                     schedule is on
+ *   POST /api/v1/tasks/<id>/end-schedule            { opId, spaceId }: End schedule and close: the owner ends the task's jobs on this
+ *                                                     cockpit, then the task closes as done; refused (schedule_elsewhere) when
+ *                                                     another member's cockpit fires its schedule, (not_scheduled) without a job
  *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason?, message? }: the owner reopens a closed task (active;
  *                                                     starts nothing, or with a message: its newest session gets it)
  *   POST /api/v1/tasks/<id>/follow-up               { opId, spaceId, message }: a new task spun off from this one, the message its brief
@@ -70,6 +75,9 @@ const MESSAGES: Record<CommandRefusal, string> = {
   not_owner: 'Only the task\'s owner can reopen it.',
   superseded: 'Another task replaced this one: go on there.',
   parent_closed: 'Its parent is closed: reopen the parent first.',
+  scheduled: SCHEDULE_ON,
+  schedule_elsewhere: 'Its schedule runs in another cockpit: end it there.',
+  not_scheduled: 'It has no schedule to end: close it instead.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
 }
@@ -106,6 +114,7 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
+  scheduled: 409, schedule_elsewhere: 409, not_scheduled: 409,
   no_brain: 503,
 }
 
@@ -304,7 +313,7 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|reopen|follow-up)$/.exec(pathname)
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|reopen|follow-up)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -321,6 +330,8 @@ export async function handleTasksApi(
         input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: spec, desk: str(body.desk) } }
       } else if (verb === 'review' || verb === 'close') {
         input = { ...base, kind: verb, taskId }
+      } else if (verb === 'end-schedule') {
+        input = { ...base, kind: 'end_schedule', taskId }
       } else if (verb === 'reopen') {
         const reason = str(body.reason)?.trim().slice(0, 500)
         const message = typeof body.message === 'string' ? body.message : undefined

@@ -10,7 +10,7 @@ vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect()
 Element.prototype.scrollIntoView = () => {};
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'eml', spaceName: 'EML', project: 'ui', title: id, status: 'active', parentId: null, updatedAt: null,
-  turn: 'waiting_on_others', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
+  turn: 'waiting_on_others', coverage: { ok: true, how: 'working' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, ...patch,
 });
 const board = {
   tasks: [task('phone-close-button', { turn: 'needs_you', sessionIds: ['s-here'] }), task('cockpit-media-viewer', { status: 'planned', turn: null }), task('northwind-rescue', { project: 'northwind' })],

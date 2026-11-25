@@ -106,7 +106,12 @@ export interface SortRow {
   brief?: string;
 }
 
-export type SortAnswer = { ok: true; linked: number; created: number; closed: number } | { ok: false; message: string };
+export type SortCounts = { linked: number; created: number; closed: number; kept?: number };
+export type SortAnswer = ({ ok: true } & SortCounts) | { ok: false; message: string };
+
+/** What a sort did, in a line. Kept: a task picked to drop whose schedule is still on stays open. */
+export const sortSummary = (r: SortCounts): string =>
+  `Sorted: ${r.linked} linked, ${r.created} created, ${r.closed} closed${r.kept ? `, ${r.kept} kept open: its schedule is still on` : ''}.`;
 
 export async function sortSession(sessionId: string, rows: SortRow[], opId = crypto.randomUUID()): Promise<SortAnswer> {
   try {
@@ -116,7 +121,7 @@ export async function sortSession(sessionId: string, rows: SortRow[], opId = cry
     });
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
     if (!res.ok) return { ok: false, message: errorMessage(body, res.status) };
-    return { ok: true, ...(body as { linked: number; created: number; closed: number }) };
+    return { ok: true, ...(body as SortCounts) };
   } catch {
     return { ok: false, message: 'The cockpit did not answer.' };
   }

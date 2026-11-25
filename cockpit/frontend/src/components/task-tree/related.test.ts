@@ -6,7 +6,7 @@ import { relatedOf } from './related';
 
 const t = (patch: Partial<BoardTask>): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: null,
-  turn: null, coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
+  turn: null, coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, ...patch,
 });
 
 describe('relatedOf', () => {

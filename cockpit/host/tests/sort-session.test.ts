@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createSortSession } from '../src/application/sort-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
 
-function setup(opts: { taskId?: string | null; failOnce?: string; source?: Record<string, unknown> } = {}) {
+function setup(opts: { taskId?: string | null; failOnce?: string; source?: Record<string, unknown>; scheduled?: string[] } = {}) {
   let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   let next = 0
@@ -14,13 +14,14 @@ function setup(opts: { taskId?: string | null; failOnce?: string; source?: Recor
     session: (id) => (id === 's1' ? { spaceId: null, title: 'Session review', taskId: opts.taskId === undefined ? 't-root' : opts.taskId } : null),
     space: () => ({ id: 'main' }) as never,
     brain: () => ({
-      get: async () => opts.source ?? ({ title: 'session-review-ui', scope: 'project.ui' }),
+      get: async (path: string) => ({ id: path.split('/').pop(), ...(opts.source ?? { title: 'session-review-ui', scope: 'project.ui' }) }),
       post: async (path: string, body: Record<string, unknown>) => { if (failing && path === failing) { failing = undefined; throw new Error('brain went away') } posts.push([path, body]); return path === '/engram/task' ? { id: `t-new-${++next}` } : {} },
     }) as never,
     changed: () => {},
     now: () => Date.parse('2026-11-22T10:00:00Z'),
     log: () => {},
     me: 'lasse',
+    scheduled: (task) => (opts.scheduled ?? []).includes(task.id),
   })
   return { sort, posts }
 }
@@ -39,6 +40,20 @@ describe('applying a sort', () => {
     expect(posts[1][1]).toEqual({ title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files.', scope: 'project.ui', assignee_ids: ['lasse'], status: 'planned' })
     expect(posts[4][1]).toMatchObject({ status: 'invalidated', outcome: 'Dropped when its session was sorted' })
     expect(posts[5][1]).toEqual({ text: 'This session was sorted: 1 linked, 1 created, 1 closed.' })
+  })
+
+  it('does not drop a task whose schedule is still on: it stays open, its journal and the summary say so', async () => {
+    const { sort, posts } = setup({ scheduled: ['t-daily'] })
+    const answer = await sort.apply({ opId: 'op', sessionId: 's1', rows: [
+      { topic: 'Daily brief', pick: 'drop', taskId: 't-daily' },
+      { topic: 'Top bar v2', pick: 'drop', taskId: 't-top' },
+    ] })
+    expect(answer.ok && answer.command.sort).toEqual({ linked: 0, created: 0, closed: 1, kept: 1 })
+    expect(posts).toEqual([
+      ['/task/t-daily/track', { text: 'Not dropped when the session "Session review" (task session-review-ui) was sorted: its schedule is still on. End schedule and close on the task board closes it.' }],
+      ['/task/t-top/track', expect.objectContaining({ status: 'invalidated' })],
+      ['/task/t-root/track', { text: 'This session was sorted: 0 linked, 0 created, 1 closed, 1 kept open (schedule still on).' }],
+    ])
   })
 
   it('a retry after a failure part-way resumes without repeating a step', async () => {

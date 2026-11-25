@@ -12,11 +12,11 @@ import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { stepPrompt } from './task-runner.js'
 import { trackWaits } from './task-waits.js'
-import { SNOOZED_OPEN, waitsBody } from '../domain/task-waits.js'
+import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '../domain/task-waits.js'
 
 /**
  * The task board's direct actions (decision cockpit-views-read-only-changes-via-ai, 1b): Hand over,
- * Looks good, Snooze, Close and Reopen (decision task-board-reopen-action), and from a closed task's chat Send
+ * Looks good, Snooze, Close, End schedule and Reopen (decision task-board-reopen-action), and from a closed task's chat Send
  * (Reopen with the message for its newest session) and As follow-up (a new task spun off from it). Everything
  * else stays in the chat.
  *
@@ -27,15 +27,21 @@ import { SNOOZED_OPEN, waitsBody } from '../domain/task-waits.js'
  * session in its desk with the brief this answers with, and Undo puts the task back (the page closes
  * the pane it opened). Pending commands are kept in a file, so a restart applies them instead of
  * losing them.
+ *
+ * A task whose schedule is still on (domain/task-schedule.ts hasSchedule) is not closed: Looks good approves that
+ * one run and the task stays open, Close is refused, and End schedule ends its jobs and then closes it. A run that
+ * comes due on a closed task all the same reopens it first (reopenForRun), so its questions reach the owner.
  */
 
 export const UNDO_WINDOW_MS = 8000
+/** What refuses Close on a task whose schedule is on, at the click and when it got a schedule inside the undo window. */
+export const SCHEDULE_ON = 'Its schedule is still on: use End schedule and close.'
 const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 /** Work on it now whose session never opened (the page failed): the agent is released after this. */
 export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'reopen' | 'follow_up' | 'split' | 'sort'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'end_schedule' | 'reopen' | 'follow_up' | 'split' | 'sort'
 
 /** The longest message a closed task's chat takes for Send or As follow-up. */
 export const MESSAGE_MAX = 20_000
@@ -84,9 +90,15 @@ export interface TaskCommand extends CommandInput {
     journaled?: { created?: boolean; source?: boolean; existing?: boolean }
   }
   /** A sort of a drifted session: what it did. */
-  sort?: { linked: number; created: number; closed: number }
+  sort?: { linked: number; created: number; closed: number; kept?: number }
   /** A sort's progress: the next action to apply and the tasks its creates made, for a retry. */
   sortProgress?: { next: number; created: Record<string, string>; createdSteps?: Record<string, { linked?: boolean; journaled?: boolean }>; summed?: boolean }
+  /** A review of a task whose schedule was on when it was chosen: it approves that run and never closes the task. */
+  runOnly?: true
+  /** A review: the review waits it answers, as they stood when it was chosen. Approving a run takes off these and no later one. */
+  approves?: WaitRef[]
+  /** End schedule: the jobs it ends, listed before the first is ended, so a retry after a crash names them all. */
+  endedJobs?: Array<{ id: string; name: string }>
   /** A reopen that was applied: what closed with the task and comes back only through the chat, and the steps that stay closed. */
   reopened?: { items: ReopenItem[]; closedSteps: number }
   /** Where a reopen's message went: the session that got it, or the one started with it. */
@@ -108,6 +120,9 @@ export type CommandRefusal =
   | 'not_owner'
   | 'superseded'
   | 'parent_closed'
+  | 'scheduled'
+  | 'schedule_elsewhere'
+  | 'not_scheduled'
   | 'unknown_command'
   | 'undo_expired'
 
@@ -176,11 +191,19 @@ interface BrainTask {
  * v0.23: a reopened task starts nothing on its own: a delegation keeps its agent and checkpoint but loses a request
  * that never ran, so only a new Delegate now starts it. The fields a reopen writes besides its status.
  */
-const reopenPatch = (task: BrainTask): Record<string, unknown> => {
+const reopenPatch = (task: BrainTask, scheduled: boolean): Record<string, unknown> => {
   const d = task.properties?.delegation
-  if (!d?.requested_at) return {}
+  // A schedule still on the delegation while no schedule is on is a leftover of a job that ended or is gone.
+  const stale = Boolean(d?.schedule) && !scheduled
+  if (!d || (!d.requested_at && !stale)) return {}
   const { requested_at: _request, ...rest } = d
-  return { delegation: rest }
+  return { delegation: stale ? withoutSchedule(rest) : rest }
+}
+
+/** The delegation without its schedule: what the mirror writes when no job runs the task at a time (application/schedule-mirror.ts). */
+const withoutSchedule = (d: DelegationFields): DelegationFields => {
+  const { schedule: _schedule, ...rest } = d
+  return rest
 }
 
 type Relation = { source_id: string; target_id: string; relation: string }
@@ -213,6 +236,15 @@ export interface TaskCommandsDeps {
   deliver?(sessionId: string, text: string): Promise<boolean>
   /** Start a session of the owner's own on the task with this prompt (a task without a session to wake). */
   startOnTask?(spaceId: string, taskId: string, prompt: string): Promise<string | null>
+  /**
+   * The task's schedule is still on (domain/task-schedule.ts hasSchedule): a job here that has not ended, or a schedule
+   * another member's cockpit fires. Such a task is not closed. Without it no task counts as scheduled.
+   */
+  scheduled?(task: { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }): boolean
+  /** This cockpit's jobs of the task that have not ended: what End schedule ends. */
+  openJobsOf?(taskId: string): Array<{ id: string; name: string }>
+  /** End a job: it runs no more (application/jobs.ts finish). Safe to call again. */
+  endJob?(jobId: string): void
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -322,7 +354,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     return found
   }
 
-  /** Only a task's owner may reopen it or start a follow-up of it; null when the viewer may. */
+  /** Only a task's owner may reopen it, start a follow-up of it or end its schedule; null when the viewer may. */
   const ownerRefusal = (task: BrainTask, action: string): { ok: false; refusal: CommandRefusal; message: string } | null => {
     const owner = task.properties?.assignee_ids?.[0]
     return deps.viewer && owner && owner !== deps.viewer ? { ok: false, refusal: 'not_owner', message: `Only its owner (${owner}) can ${action}.` } : null
@@ -364,6 +396,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     return { ok: true, task, closedSteps }
   }
 
+  const isScheduled = (task: BrainTask) => deps.scheduled?.(task) ?? false
+
   /** Why a task cannot be closed from the board: it has open steps, or decisions and notes bound to it; null when it can. */
   const closeRefusal = async (brain: Pick<EmlApi, 'get'>, task: BrainTaskWithRelations): Promise<{ ok: false; refusal: CommandRefusal; message: string } | null> => {
     const steps = (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
@@ -387,7 +421,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     if (OPEN.has(task.status)) return 'open'
     const checked = await checkReopen(brain, taskId)
     if (!checked.ok) return { refused: checked.refusal, message: checked.message ?? checked.refusal }
-    await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task) }, text)
+    await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task, isScheduled(checked.task)) }, text)
     return 'reopened'
   }
 
@@ -418,9 +452,14 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const task = await taskOf(brain, input.taskId)
       if (!task) return { ok: false, refusal: 'unknown_task' }
       if (task.status !== 'planned' && task.status !== 'active') return { ok: false, refusal: 'task_closed' }
+      // Which reviews it answers is fixed now: applied twice (a crash in between), or after a later run asked for its
+      // own review, it takes off these and nothing else.
+      const approves = reviewsOn(waitsOf(task.properties), deps.viewer)
+      // A task whose schedule is on stays open: the review approves that run, so what would stop a close does not stop it.
+      if (isScheduled(task)) return { ok: true, command: save({ ...base, runOnly: true, approves }) }
       const bound = await brain.get('/list', { task_id: task.id, binding: 'task', status: 'active', limit: 1 }).catch(() => null) as { engrams?: unknown[] } | null
       if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
-      return { ok: true, command: save(base) }
+      return { ok: true, command: save({ ...base, approves }) }
     }
 
     if (input.kind === 'snooze') {
@@ -442,6 +481,27 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const task = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
       if (!task) return { ok: false, refusal: 'unknown_task' }
       if (task.status !== 'planned' && task.status !== 'active') return { ok: false, refusal: 'task_closed' }
+      // Closing it would leave its job running on a closed task.
+      if (isScheduled(task)) return { ok: false, refusal: 'scheduled', message: SCHEDULE_ON }
+      const refused = await closeRefusal(brain, task)
+      if (refused) return refused
+      return { ok: true, command: save(base) }
+    }
+
+    if (input.kind === 'end_schedule') {
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      const task = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
+      if (!task) return { ok: false, refusal: 'unknown_task' }
+      if (!OPEN.has(task.status)) return { ok: false, refusal: 'task_closed' }
+      const notOwner = ownerRefusal(task, 'end its schedule')
+      if (notOwner) return notOwner
+      // Only this cockpit's jobs can be ended here: a schedule another member's cockpit fires is theirs to end. Without a
+      // job here the owner's own task is never scheduled (hasSchedule), so its owner is sent on to Close, not stuck.
+      if ((deps.openJobsOf?.(task.id) ?? []).length === 0) {
+        return isScheduled(task)
+          ? { ok: false, refusal: 'schedule_elsewhere', message: 'Its schedule runs in another cockpit: end it there.' }
+          : { ok: false, refusal: 'not_scheduled', message: 'It has no schedule to end: close it instead.' }
+      }
       const refused = await closeRefusal(brain, task)
       if (refused) return refused
       return { ok: true, command: save(base) }
@@ -539,15 +599,47 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       } else if (command.kind === 'review') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
-          await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null }, 'Looks good: the owner reviewed the result and closed the task.')
+          // Decided now, after the undo window: its schedule on when it was chosen or by now, and the task stays open.
+          if (command.runOnly || isScheduled(task)) {
+            // The reviews on the owner are answered; what others wait for, the owner's open questions and a later run's
+            // review stay. None of them left (applied before, or answered meanwhile): nothing is written.
+            await trackWaits(brain, task.id, (fresh) => {
+              if (!OPEN.has(fresh.status)) return null
+              const waits = waitsOf(fresh.properties)
+              const left = withoutWaits(waits, command.approves ?? reviewsOn(waits, deps.viewer))
+              return left.length === waits.length ? null : { ...waitsBody(left), text: 'Run reviewed by the owner: looks good.' }
+            })
+          } else {
+            await track(brain, task.id, { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null }, 'Looks good: the owner reviewed the result and closed the task.')
+          }
         }
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'close') {
         const task = await taskOf(brain, command.taskId!)
         if (task && (task.status === 'planned' || task.status === 'active')) {
+          // It got a schedule inside the undo window.
+          if (isScheduled(task)) return fail(SCHEDULE_ON)
           await track(brain, task.id, { status: 'invalidated', outcome: 'Closed by the owner on the task board', waits: null }, 'Closed on the task board by the owner: not needed.')
         }
         save({ ...command, state: 'applied' })
+      } else if (command.kind === 'end_schedule') {
+        // The jobs first: a failure in between leaves an open task without a schedule, never a closed one whose job
+        // runs on. They are listed before the first is ended, so a retry after a crash ends and names them all.
+        const current = command.endedJobs ? command : save({ ...command, endedJobs: (deps.openJobsOf?.(command.taskId!) ?? []).map((j) => ({ id: j.id, name: j.name })) })
+        const jobs = current.endedJobs ?? []
+        for (const job of jobs) deps.endJob?.(job.id)
+        const task = await taskOf(brain, current.taskId!)
+        if (task && OPEN.has(task.status)) {
+          const what = jobs.length > 0
+            ? `The owner ended its schedule (${jobs.length} job${jobs.length === 1 ? '' : 's'}: ${jobs.map((j) => j.name).join(', ')}) and closed the task.`
+            : 'Its schedule had ended already; the owner closed the task.'
+          // Its jobs have ended, so the schedule they mirrored into the delegation goes with the same write: the mirror
+          // leaves a closed task alone, and a reopened task must not count as scheduled without a job.
+          const d = task.properties?.delegation
+          const cleared = d?.schedule && !isScheduled(task) ? { delegation: withoutSchedule(d) } : {}
+          await track(brain, task.id, { status: 'resolved', outcome: 'Schedule ended and task closed by the owner', waits: null, ...cleared }, what)
+        }
+        save({ ...current, state: 'applied' })
       } else if (command.kind === 'reopen') {
         // Each part is recorded as it is done, so a retry after a crash goes on where it stopped: the message
         // is keyed on the reopened task, not on this run making the change (service-design, retries).
@@ -559,7 +651,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
           const reason = current.reason ? ` Why: ${current.reason}` : ''
           // Active, not planned: the runner starts planned tasks with a delegate, and a reopen starts nothing.
           const how = current.message ? `Reopened by writing in its chat: "${firstLine(current.message)}".` : 'Reopened on the task board by the owner.'
-          const answer = await track(brain, checked.task.id, { status: 'active', waits: null, ...reopenPatch(checked.task) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
+          const answer = await track(brain, checked.task.id, { status: 'active', waits: null, ...reopenPatch(checked.task, isScheduled(checked.task)) }, `${how}${reason}${steps}`) as { reopen_candidates?: ReopenItem[] } | null
           const items = (answer?.reopen_candidates ?? []).map((i) => ({ id: i.id, type: i.type, title: i.title ?? null }))
           current = save({ ...current, reopened: { items, closedSteps: checked.closedSteps } })
           if (items.length > 0) {
@@ -629,6 +721,36 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         return 'reopened'
       } catch (err) {
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopen by writing failed: ${(err as Error).message}`)
+        return 'refused'
+      }
+    },
+
+    /**
+     * A job's run came due on a closed task: the task reopens first, by the board's reopen rules. The run is about to
+     * work and ask on it, and a closed task waits on nobody (the router drops its questions). One that can't be
+     * reopened (replaced, gone, under a closed parent, another owner's) stays closed, and the log says why; the run
+     * starts either way. `job` is the job's name, for the task's journal; the log names the job by its id. Never throws.
+     */
+    async reopenForRun(spaceId: string, taskId: string, run: { number: number; jobId: string; job: string }): Promise<'reopened' | 'open' | 'refused'> {
+      const space = deps.space(spaceId)
+      const brain = space ? deps.brain(space) : null
+      const about = `task ${taskId.slice(0, 8)}, run ${run.number} of job ${run.jobId.slice(0, 8)}`
+      if (!brain) {
+        deps.log(`[commands] ${about}: no brain to check whether the task is closed`)
+        return 'refused'
+      }
+      try {
+        const result = await reopenClosed(brain, taskId, `Reopened: run ${run.number} of "${run.job}" came due while the task was closed. End its schedule to stop it.`)
+        if (result === 'open') return 'open'
+        if (result !== 'reopened') {
+          deps.log(`[commands] ${about}: the task stays closed (${result.refused})`)
+          return 'refused'
+        }
+        deps.changed(spaceId)
+        deps.log(`[commands] ${about}: the task was closed and is reopened`)
+        return 'reopened'
+      } catch (err) {
+        deps.log(`[commands] ${about}: reopening the task failed: ${(err as Error).message}`)
         return 'refused'
       }
     },

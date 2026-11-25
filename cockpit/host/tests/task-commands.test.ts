@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskCommands, firstLine, MESSAGE_MAX, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
+import { createTaskCommands, firstLine, MESSAGE_MAX, SCHEDULE_ON, TaskCommandStore, TOGETHER_GRACE_MS, UNDO_WINDOW_MS, type TaskCommandsDeps } from '../src/application/task-commands.js'
+import { hasSchedule } from '../src/domain/task-schedule.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'cockpit-task-commands-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -527,5 +528,342 @@ describe('writing in a closed task\'s session', () => {
     expect(w.byId.get('theirs')!.status).toBe('resolved')
     expect(w.posts.at(-1)!.body.text).toContain('stays closed')
     expect(await w.commands.reopenByWriting('elsewhere', 'done')).toBe('refused')
+  })
+})
+
+// A task whose schedule is still on is not closed: Looks good approves one run, Close is refused,
+// End schedule ends its jobs and closes it, and a run that comes due on a closed task reopens it.
+describe('a task whose schedule is still on', () => {
+  type TestJob = { id: string; name: string; endedAt?: string }
+  /** The world with this cockpit's jobs per task; whether a task's schedule is on is the domain's rule (hasSchedule). */
+  const scheduledWorld = (tasks: Task[], jobsByTask: Record<string, TestJob[]> = {}, opts: Parameters<typeof world>[1] = {}) => {
+    const w = world(tasks, opts)
+    const jobs = new Map(Object.entries(jobsByTask))
+    const ended: string[] = []
+    w.deps.scheduled = (task) => hasSchedule({ jobs: (jobs.get(task.id) ?? []).map((j) => ({ endedAt: j.endedAt ?? null })), schedule: task.properties?.delegation?.schedule, owner: task.properties?.assignee_ids?.[0] }, w.deps.viewer, w.clock.now)
+    w.deps.openJobsOf = (taskId) => (jobs.get(taskId) ?? []).filter((j) => !j.endedAt).map(({ id, name }) => ({ id, name }))
+    const end = (jobId: string) => { for (const list of jobs.values()) for (const j of list) if (j.id === jobId) j.endedAt = new Date(w.clock.now).toISOString() }
+    w.deps.endJob = (jobId) => { ended.push(jobId); end(jobId) }
+    return { ...w, scheduledJobs: jobs, ended, end }
+  }
+  const job = (id = 'j1', name = 'Daily brief'): TestJob[] => [{ id, name }]
+  const review = { id: 's1', who: 'lasse', kind: 'review', why: 'Review: brief written', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
+  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const outside = { id: 'kim', who: 'kim', kind: 'review', why: 'Kim reads the draft', since: '2026-11-19T07:00:00.000Z' }
+  const mirrored = { cron: '0 8 * * *', time_zone: 'UTC' }
+
+  it('looks good approves that one run: the owner\'s review is answered, other waits stay, the task stays open', async () => {
+    const w = scheduledWorld([owned('daily', { delegate: 'atlas', waits: [review, question, outside] }, 'active')], { daily: job() }, { bound: ['d1'] })
+    // What would stop a close (bound decisions) does not stop a review that closes nothing.
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'daily' }))
+      .toMatchObject({ ok: true, command: { runOnly: true, approves: [{ id: 's1', since: review.since }] } })
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { waits: [question, outside], text: 'Run reviewed by the owner: looks good.' } }])
+    expect(w.byId.get('daily')!.status).toBe('active')
+    expect(w.store.get('op-r')!.state).toBe('applied')
+  })
+
+  it('looks good on a scheduled task without a review to answer writes nothing; undo leaves no trace', async () => {
+    const w = scheduledWorld([owned('daily', { waits: [question] }, 'active'), owned('weekly', { waits: [review] }, 'active')], { daily: job(), weekly: job('j2') })
+    await w.commands.submit({ opId: 'op-1', kind: 'review', spaceId: 'main', taskId: 'daily' })
+    await w.commands.submit({ opId: 'op-2', kind: 'review', spaceId: 'main', taskId: 'weekly' })
+    expect(await w.commands.undo('op-2')).toEqual({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.store.get('op-1')!.state).toBe('applied')
+    expect(w.byId.get('weekly')!.properties.waits).toEqual([review])
+  })
+
+  it('approving a run applied twice (a crash before it was recorded) writes once, and never takes off a later run\'s review', async () => {
+    const w = scheduledWorld([owned('daily', { waits: [review, question] }, 'active')], { daily: job() })
+    await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'daily' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(1)
+    // The host stopped after the write and before the command was recorded as applied; meanwhile the next run of
+    // the same session handed its result over for review.
+    const next = { ...review, why: 'Review: next brief written', since: '2026-11-20T08:00:00.000Z' }
+    w.byId.get('daily')!.properties.waits = [question, next]
+    w.store.put({ ...w.store.get('op-r')!, state: 'pending' }, w.clock.now)
+    const restarted = createTaskCommands({ ...w.deps, store: new TaskCommandStore(w.store.file) })
+    await restarted.tick()
+    expect(w.posts).toHaveLength(1)
+    expect(w.byId.get('daily')!.properties.waits).toEqual([question, next])
+
+    // A review that came in inside the undo window is not what the owner approved either.
+    const late = scheduledWorld([owned('weekly', { waits: [review] }, 'active')], { weekly: job() })
+    await late.commands.submit({ opId: 'op-l', kind: 'review', spaceId: 'main', taskId: 'weekly' })
+    late.byId.get('weekly')!.properties.waits = [review, { ...next, id: 's9', session_id: 's9' }]
+    late.later(UNDO_WINDOW_MS + 1)
+    await late.commands.tick()
+    expect(late.posts.map((p) => p.body.waits)).toEqual([[{ ...next, id: 's9', session_id: 's9' }]])
+  })
+
+  it('looks good answers what the Inbox shows as a review: a wait from before kinds existed whose why says so', async () => {
+    const w = scheduledWorld([owned('daily', { waiting_on: { who: 'lasse', why: 'Review: brief written' } }, 'active')], { daily: job() })
+    await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'daily' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { waits: null, text: 'Run reviewed by the owner: looks good.' } }])
+  })
+
+  it('whether it closes is decided when it is applied: a schedule on at either end of the undo window keeps the task open', async () => {
+    // On when chosen, its job ended by the time it applies: still one run's review.
+    const ended = scheduledWorld([owned('t1', { waits: [review] }, 'active')], { t1: job() })
+    await ended.commands.submit({ opId: 'op-1', kind: 'review', spaceId: 'main', taskId: 't1' })
+    ended.end('j1')
+    ended.later(UNDO_WINDOW_MS + 1)
+    await ended.commands.tick()
+    expect(ended.byId.get('t1')!.status).toBe('active')
+    expect(ended.posts[0].body).toEqual({ waits: null, text: 'Run reviewed by the owner: looks good.' })
+
+    // Not on when chosen, a job made inside the window: not closed either.
+    const added = scheduledWorld([owned('t2', { waits: [review] }, 'active')])
+    await added.commands.submit({ opId: 'op-2', kind: 'review', spaceId: 'main', taskId: 't2' })
+    added.scheduledJobs.set('t2', job())
+    added.later(UNDO_WINDOW_MS + 1)
+    await added.commands.tick()
+    expect(added.byId.get('t2')!.status).toBe('active')
+    expect(added.posts[0].body).toEqual({ waits: null, text: 'Run reviewed by the owner: looks good.' })
+
+    // No schedule at all: Looks good closes it.
+    const plain = scheduledWorld([owned('t3', { waits: [review] }, 'active')])
+    await plain.commands.submit({ opId: 'op-3', kind: 'review', spaceId: 'main', taskId: 't3' })
+    plain.later(UNDO_WINDOW_MS + 1)
+    await plain.commands.tick()
+    expect(plain.posts[0].body).toEqual({ status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, text: 'Looks good: the owner reviewed the result and closed the task.' })
+  })
+
+  it('refuses Close while its schedule is on, and does not close one that got a job inside the undo window', async () => {
+    const w = scheduledWorld([owned('daily', {}, 'active'), owned('once', {}, 'active')], { daily: job() })
+    expect(SCHEDULE_ON).toBe('Its schedule is still on: use End schedule and close.')
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'daily' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: true })
+    w.scheduledJobs.set('once', job('j2'))
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.byId.get('once')!.status).toBe('active')
+    expect(w.store.get('op-2')).toMatchObject({ state: 'failed', error: SCHEDULE_ON })
+  })
+
+  it('a task with a one-time job that has not run is scheduled; once the job ran and ended it closes like any other', async () => {
+    const w = scheduledWorld([owned('once', { waits: [review] }, 'active'), owned('twice', {}, 'active')], { once: job('j1', 'Check reply'), twice: job('j2', 'Check again') })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: false, refusal: 'scheduled' })
+    w.end('j1')
+    w.end('j2')
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'review', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: true, command: { kind: 'review' } })
+    expect(w.store.get('op-2')!.runOnly).toBeUndefined()
+    expect(await w.commands.submit({ opId: 'op-3', kind: 'close', spaceId: 'main', taskId: 'twice' })).toMatchObject({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.byId.get('once')!.status).toBe('resolved')
+    expect(w.byId.get('twice')!.status).toBe('invalidated')
+  })
+
+  it('End schedule ends every open job of the task after the window, then closes it as done and takes the mirrored schedule off', async () => {
+    const jobs = { daily: [{ id: 'j1', name: 'Daily brief' }, { id: 'j2', name: 'Check reply' }], other: [{ id: 'j9', name: 'Other' }] }
+    const delegation = { agent: 'atlas', checkpoint: 'after', schedule: mirrored }
+    const w = scheduledWorld([owned('daily', { delegation, waits: [review] }, 'active'), owned('other', {}, 'active')], jobs)
+    expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' }))
+      .toMatchObject({ ok: true, command: { state: 'pending', undoUntil: new Date(w.clock.now + UNDO_WINDOW_MS).toISOString() } })
+    await w.commands.tick()
+    expect(w.ended).toEqual([])
+    expect(w.posts).toEqual([])
+
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    await w.commands.tick()
+    expect(w.ended).toEqual(['j1', 'j2'])
+    // One write closes it and clears the schedule its jobs mirrored into it: the mirror leaves a closed task alone.
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: {
+      status: 'resolved', outcome: 'Schedule ended and task closed by the owner', waits: null, delegation: { agent: 'atlas', checkpoint: 'after' },
+      text: 'The owner ended its schedule (2 jobs: Daily brief, Check reply) and closed the task.',
+    } }])
+    expect(w.byId.get('daily')!.status).toBe('resolved')
+    expect(w.store.get('op-e')).toMatchObject({ state: 'applied', endedJobs: [{ id: 'j1', name: 'Daily brief' }, { id: 'j2', name: 'Check reply' }] })
+    expect(await w.commands.undo('op-e')).toEqual({ ok: false, refusal: 'undo_expired' })
+  })
+
+  it('End schedule undone inside the window ends no job and leaves the task open; the same opId twice does it once', async () => {
+    const w = scheduledWorld([owned('daily', {}, 'active')], { daily: job() })
+    await w.commands.submit({ opId: 'op-u', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' })
+    expect(await w.commands.undo('op-u')).toEqual({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.ended).toEqual([])
+    expect(w.posts).toEqual([])
+
+    await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' })
+    await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.ended).toEqual(['j1'])
+    expect(w.posts.map((p) => p.body.text)).toEqual(['The owner ended its schedule (1 job: Daily brief) and closed the task.'])
+  })
+
+  it('End schedule cut off by a crash after its jobs ended still closes the task and names them', async () => {
+    const w = scheduledWorld([owned('daily', {}, 'active')], { daily: job() })
+    await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' })
+    w.later(UNDO_WINDOW_MS + 1)
+    // The host stopped after the jobs were listed and ended, before the task was closed.
+    w.store.put({ ...w.store.get('op-e')!, endedJobs: [{ id: 'j1', name: 'Daily brief' }] }, w.clock.now)
+    w.end('j1')
+    const restarted = createTaskCommands({ ...w.deps, store: new TaskCommandStore(w.store.file) })
+    await restarted.tick()
+    expect(w.ended).toEqual(['j1'])
+    expect(w.posts.map((p) => p.body.text)).toEqual(['The owner ended its schedule (1 job: Daily brief) and closed the task.'])
+    expect(w.byId.get('daily')!.status).toBe('resolved')
+  })
+
+  it('End schedule takes a task whose only job is paused or woken by mail only: no run is coming up, but the job could come back', async () => {
+    const w = scheduledWorld([owned('paused', {}, 'active')], { paused: job('j1', 'Paused job') })
+    // Its schedule is on, so it is not closed any other way.
+    expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'paused' })).toMatchObject({ ok: false, refusal: 'scheduled' })
+    expect(await w.commands.submit({ opId: 'op-p', kind: 'end_schedule', spaceId: 'main', taskId: 'paused' })).toMatchObject({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.ended).toEqual(['j1'])
+    expect(w.byId.get('paused')!.status).toBe('resolved')
+  })
+
+  it('refuses End schedule for a task without a job, a closed one, another owner\'s, and what stops a close', async () => {
+    const steps = { relations: [{ source_id: 'step', target_id: 'parent', relation: 'part_of' }] }
+    const w = scheduledWorld([
+      owned('plain', {}, 'active'), owned('done', {}, 'resolved'),
+      { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'] } },
+      { ...owned('parent', {}, 'active'), ...steps }, owned('step'),
+    ], { theirs: job('j1'), parent: job('j2'), done: job('j3') })
+    const end = (taskId: string) => w.commands.submit({ opId: `op-${taskId}`, kind: 'end_schedule', spaceId: 'main', taskId })
+    expect(await end('plain')).toEqual({ ok: false, refusal: 'not_scheduled', message: 'It has no schedule to end: close it instead.' })
+    expect(await end('done')).toEqual({ ok: false, refusal: 'task_closed' })
+    expect(await end('theirs')).toEqual({ ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can end its schedule.' })
+    expect(await end('parent')).toMatchObject({ ok: false, refusal: 'open_steps' })
+    expect(await end('gone')).toEqual({ ok: false, refusal: 'unknown_task' })
+
+    const bound = scheduledWorld([owned('daily', {}, 'active')], { daily: job() }, { bound: ['d1'] })
+    expect(await bound.commands.submit({ opId: 'op-b', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal: 'bound_items' })
+    expect(w.ended).toEqual([])
+  })
+
+  it('a schedule left on the owner\'s own task without a job does not hold it: it closes, and End schedule sends on to Close', async () => {
+    // The job ended (or was deleted) and the mirror has not cleared the schedule yet, or never will.
+    const stale = { agent: 'atlas', schedule: mirrored }
+    const w = scheduledWorld([owned('ended', { delegation: stale, waits: [review] }, 'active'), owned('deleted', { delegation: stale }, 'active'), owned('ask', { delegation: stale }, 'active')], { ended: [{ id: 'j1', name: 'Daily brief', endedAt: '2026-11-19T09:59:00.000Z' }] })
+    expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'ask' })).toEqual({ ok: false, refusal: 'not_scheduled', message: 'It has no schedule to end: close it instead.' })
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'ended' })).toMatchObject({ ok: true })
+    expect(w.store.get('op-r')!.runOnly).toBeUndefined()
+    expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'deleted' })).toMatchObject({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.byId.get('ended')!.status).toBe('resolved')
+    expect(w.byId.get('deleted')!.status).toBe('invalidated')
+  })
+
+  it('a schedule another member\'s cockpit fires holds their task here: Close is refused, and End schedule is theirs', async () => {
+    const theirs: Task = { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'atlas', schedule: mirrored } } }
+    const w = scheduledWorld([theirs])
+    expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'theirs' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
+    expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'theirs' })).toMatchObject({ ok: false, refusal: 'not_owner' })
+    // A cockpit that does not know who is at the page checks no owner: it still ends no schedule that is not its own.
+    const anyone = scheduledWorld([{ ...theirs, properties: { ...theirs.properties } }])
+    anyone.deps.viewer = undefined
+    const commands = createTaskCommands(anyone.deps)
+    expect(await commands.submit({ opId: 'op-a', kind: 'end_schedule', spaceId: 'main', taskId: 'theirs' })).toEqual({ ok: false, refusal: 'schedule_elsewhere', message: 'Its schedule runs in another cockpit: end it there.' })
+  })
+
+  it('a reopened task loses a schedule no job runs any more, and keeps the one of a job that is still on', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z', schedule: mirrored }
+    const w = scheduledWorld([owned('ended', { delegation }, 'resolved'), owned('running', { delegation }, 'resolved'), owned('written', { delegation: { agent: 'atlas', schedule: mirrored } }, 'resolved')], { ended: [{ id: 'j1', name: 'Daily brief', endedAt: '2026-11-19T09:00:00.000Z' }], running: job('j2') })
+    await w.commands.submit({ opId: 'op-1', kind: 'reopen', spaceId: 'main', taskId: 'ended' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts[0].body).toMatchObject({ status: 'active', delegation: { agent: 'atlas', checkpoint: 'after' } })
+    expect(w.byId.get('ended')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
+    // Open again, it closes like any task: nothing counts as scheduled without a job.
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'ended' })).toMatchObject({ ok: true })
+
+    // A run of a job that is still on reopens its task: the schedule is that job's and stays.
+    expect(await w.commands.reopenForRun('main', 'running', { number: 2, jobId: 'j2', job: 'Daily brief' })).toBe('reopened')
+    expect(w.byId.get('running')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: mirrored })
+    // Writing in its chat reopens it by the same rules.
+    expect(await w.commands.reopenByWriting('main', 'written')).toBe('reopened')
+    expect(w.byId.get('written')!.properties.delegation).toEqual({ agent: 'atlas' })
+  })
+
+  it('a run that comes due on a closed task reopens it, with what a reopen takes off a delegation', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z' }
+    const w = world([owned('closed', { delegation, waits: [review] }, 'resolved'), owned('dropped', {}, 'invalidated'), owned('open', {}, 'active')])
+    const run = { number: 7, jobId: 'job-1234-5678', job: 'Daily brief' }
+    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('reopened')
+    expect(w.posts).toEqual([{ path: '/task/closed/track', body: {
+      status: 'active', waits: null, delegation: { agent: 'atlas', checkpoint: 'after' },
+      text: 'Reopened: run 7 of "Daily brief" came due while the task was closed. End its schedule to stop it.',
+    } }])
+    expect(w.changed).toContain('main')
+    expect(await w.commands.reopenForRun('main', 'dropped', run)).toBe('reopened')
+    expect(w.byId.get('dropped')!.status).toBe('active')
+    // Open already (the next run, or a retry of this one): nothing is written.
+    const before = w.posts.length
+    expect(await w.commands.reopenForRun('main', 'open', run)).toBe('open')
+    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('open')
+    expect(w.posts).toHaveLength(before)
+  })
+
+  it('leaves a task another one replaced, one that is gone, one under a closed parent and another owner\'s closed, and logs why by code, without names', async () => {
+    const logs: string[] = []
+    const w = world([
+      owned('replaced', {}, 'superseded'),
+      { ...owned('old', {}, 'resolved'), relations: [{ source_id: 'new', target_id: 'old', relation: 'supersedes' }] }, owned('new', { display_title: 'The new plan' }, 'active'),
+      { ...owned('step', {}, 'resolved'), relations: [{ source_id: 'step', target_id: 'parent', relation: 'part_of' }] }, owned('parent', { display_title: 'Parent' }, 'resolved'),
+      { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } },
+      owned('closed', {}, 'resolved'),
+    ])
+    w.deps.log = (line) => logs.push(line)
+    const run = { number: 2, jobId: 'job-1234-5678', job: 'Check reply' }
+    for (const id of ['replaced', 'old', 'step', 'theirs', 'gone']) expect(await w.commands.reopenForRun('main', id, run)).toBe('refused')
+    expect(await w.commands.reopenForRun('elsewhere', 'old', run)).toBe('refused')
+    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('reopened')
+    expect(w.posts).toHaveLength(1)
+    expect(logs).toEqual([
+      '[commands] task replaced, run 2 of job job-1234: the task stays closed (superseded)',
+      '[commands] task old, run 2 of job job-1234: the task stays closed (superseded)',
+      '[commands] task step, run 2 of job job-1234: the task stays closed (parent_closed)',
+      '[commands] task theirs, run 2 of job job-1234: the task stays closed (not_owner)',
+      '[commands] task gone, run 2 of job job-1234: the task stays closed (unknown_task)',
+      '[commands] task old, run 2 of job job-1234: no brain to check whether the task is closed',
+      '[commands] task closed, run 2 of job job-1234: the task was closed and is reopened',
+    ])
+  })
+
+  it('a task that stays closed when its chat gets a message has the reason in words in its journal', async () => {
+    const w = world([{ ...owned('old', {}, 'resolved'), relations: [{ source_id: 'new', target_id: 'old', relation: 'supersedes' }] }, owned('new', { display_title: 'The new plan' }, 'active')])
+    expect(await w.commands.reopenByWriting('main', 'old')).toBe('refused')
+    expect(w.posts).toEqual([{ path: '/task/old/track', body: { text: 'Its chat got a message, but the task stays closed: "The new plan" replaced this task: go on there.' } }])
+  })
+
+  it('a brain that fails while reopening is logged, not thrown: the run starts anyway', async () => {
+    const logs: string[] = []
+    const w = world([owned('closed', {}, 'resolved')])
+    w.deps.log = (line) => logs.push(line)
+    const brain = w.deps.brain({} as never)!
+    w.deps.brain = () => ({ get: brain.get, post: async () => { throw new Error('brain is down') } })
+    expect(await w.commands.reopenForRun('main', 'closed', { number: 1, jobId: 'job-1234-5678', job: 'Daily brief' })).toBe('refused')
+    expect(logs.at(-1)).toContain('reopening the task failed: brain is down')
+  })
+
+  it('a job the hand-over makes does not restate what every run of it reads in its header: the rule is written once', async () => {
+    const { JOB_TASK_RULE } = await import('../src/domain/job.js')
+    const w = world([owned('t1')])
+    await w.commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'none', schedule: { cron: '0 8 * * 1-5', timeZone: 'UTC' } } })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.jobs[0].prompt).not.toContain(JOB_TASK_RULE)
+    expect(w.jobs[0].prompt).not.toMatch(/never close/i)
   })
 })

@@ -47,7 +47,7 @@ import { TasksCard } from './TasksCard';
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null, updatedAt: null,
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, ...patch,
 });
 const board = (): Board => ({
   at: '', viewer: 'me',

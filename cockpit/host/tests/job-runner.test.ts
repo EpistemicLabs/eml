@@ -28,6 +28,8 @@ class World {
   granted: string[] = []
   ended: string[] = []
   flagged: string[] = []
+  /** What the host does before a run starts, and what was started by then. */
+  before: ((job: Job, run: { number: number }) => Promise<void>) | null = null
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   deps(): JobRunnerDeps {
@@ -51,6 +53,7 @@ class World {
       log: () => {},
       timeZone: () => 'Asia/Makassar',
       onGrantEnd: (job, tools) => { this.ended.push(`${job.name}:${tools.join(',')}`) },
+      beforeRun: async (job, run) => { await this.before?.(job, run) },
     }
   }
 }
@@ -110,6 +113,110 @@ describe('job runner', () => {
     const named = await jobs.handle(onTask, { action: 'create', name: 'Other check', prompt: 'p', at: '2026-11-20T10:00', task_id: 'task-2' })
     expect(named.job!.taskId).toBe('task-2')
     expect((await create({ cron: '0 8 * * *' })).taskId).toBeNull()
+  })
+
+  it('lets the host prepare a run before its session starts (a closed task reopens), and starts it even when that fails', async () => {
+    const seen: string[] = []
+    world.before = async (job, run) => {
+      await Promise.resolve()
+      seen.push(`${job.name} run ${run.number} on ${job.taskId}, started so far: ${world.started.length}`)
+    }
+    const job = await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'Daily brief', prompt: 'p', cron: '0 8 * * 1-5' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    // Two passes at once: the run is taken before the host is asked, so it starts once.
+    await Promise.all([runner.tick(), runner.wake(job.job!, 'mail', 'A mail', 'key-1')])
+    expect(seen[0]).toBe('Daily brief run 1 on task-1, started so far: 0')
+    expect(world.started.map((s) => s.text.split(',')[1])).toEqual([' run 1', ' run 2'])
+
+    world.before = async () => { throw new Error('brain is down') }
+    world.states.set(world.started[0].sessionId, 'stopped')
+    world.states.set(world.started[1].sessionId, 'stopped')
+    world.now = Date.parse('2026-11-11T00:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(3)
+    expect(world.store.runs(job.job!.id).at(-1)).toMatchObject({ status: 'started', number: 3 })
+  })
+
+  it('prepares a run that goes to a session that exists too: before the message, which is delivered even when preparing fails', async () => {
+    const seen: string[] = []
+    world.before = async (job, run) => {
+      await Promise.resolve()
+      seen.push(`${job.name} run ${run.number}, delivered so far: ${world.delivered.length}`)
+    }
+    // A job that messages its maker's session, and one whose own session takes its later runs.
+    const self = (await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'To its maker', prompt: 'p', cron: '0 8 * * 1-5', target: 'self' })).job!
+    const made = await create({ cron: '0 8 * * 1-5' })
+    world.store.put({ ...made, name: 'Own session', target: { type: 'job-session', projectId: 'bp-eml', sessionId: 'kept' } })
+    world.states.set('maker', 'idle')
+    world.states.set('kept', 'stopped')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(seen).toEqual(['To its maker run 1, delivered so far: 0', 'Own session run 1, delivered so far: 1'])
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['maker', 'kept'])
+    expect(world.started).toEqual([])
+
+    world.before = async () => { throw new Error('brain is down') }
+    world.statuses.set('maker', 'done')
+    world.now = Date.parse('2026-11-11T00:00:30Z')
+    await runner.tick()
+    expect(world.delivered.filter((d) => d.sessionId === 'maker')).toHaveLength(2)
+    expect(world.store.runs(self.id).at(-1)).toMatchObject({ status: 'started', number: 2 })
+  })
+
+  it('starts no run on a job that has ended: finish skips the run that was due, and one ended while it was prepared is not started', async () => {
+    // Due, but no room yet: the run waits. Ending the job (finish, the board's End schedule) skips it.
+    const waiting = await create({ cron: '0 8 * * 1-5' })
+    world.room = false
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.store.runs(waiting.id)[0]).toMatchObject({ status: 'waiting', number: 1 })
+    jobs.finish(world.store.get(waiting.id)!)
+    expect(world.store.runs(waiting.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started', finishedAt: new Date(world.now).toISOString() })
+    world.room = true
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(world.started).toEqual([])
+
+    // Ended in the store with the run still waiting (a write the runner did not see): the runner itself skips it.
+    const direct = (await jobs.handle(caller, { action: 'create', name: 'Ended', prompt: 'p', cron: '0 8 * * 1-5' })).job!
+    world.room = false
+    world.now = Date.parse('2026-11-11T00:00:30Z')
+    await runner.tick()
+    world.store.put({ ...world.store.get(direct.id)!, endedAt: new Date(world.now).toISOString(), nextRunAt: null })
+    world.room = true
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(world.store.runs(direct.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started' })
+    expect(world.store.get(direct.id)!.failures).toBe(0)
+
+    // Ended while the host prepared the run: neither a fresh worker nor a message to its session starts.
+    const made = (await jobs.handle(caller, { action: 'create', name: 'Mid-start', prompt: 'p', cron: '0 8 * * 1-5' })).job!
+    world.store.put({ ...made, target: { type: 'job-session', projectId: 'bp-eml', sessionId: null } })
+    const self = (await jobs.handle(caller, { action: 'create', name: 'Mid-delivery', prompt: 'p', cron: '0 8 * * 1-5', target: 'self' })).job!
+    world.states.set('maker', 'idle')
+    world.before = async (job) => { jobs.finish(world.store.get(job.id)!) }
+    world.now = Date.parse('2026-11-12T00:00:30Z')
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(world.delivered).toEqual([])
+    expect(world.store.runs(made.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started' })
+    expect(world.store.runs(self.id)[0].status).toBe('skipped')
+    expect(world.store.get(made.id)!.target).toMatchObject({ type: 'job-session', sessionId: null })
+    expect(world.alerts).toEqual([])
+  })
+
+  it('tells a run of a job on a task never to close the task while the job has not ended; a job without a task reads no such rule', async () => {
+    const { JOB_TASK_RULE: rule } = await import('../src/domain/job.js')
+    expect(rule).toBe('While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.')
+    await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'On a task', prompt: 'p', cron: '0 8 * * 1-5', goal: 'Refund received' })
+    await create({ cron: '0 8 * * 1-5' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    const header = (name: string) => world.started.find((s) => s.job.name === name)!.text.split('\n')[0]
+    expect(header('On a task')).toContain('Once it is reached, end the job with finish.')
+    expect(header('On a task').endsWith(` ${rule}]`)).toBe(true)
+    expect(header('Daily brief')).not.toContain('never close its task')
   })
 
   it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
