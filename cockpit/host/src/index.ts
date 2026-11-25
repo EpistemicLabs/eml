@@ -92,6 +92,7 @@ import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
+import { createStaleRuns, sessionActivity } from './application/stale-runs.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
 import { scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
@@ -754,6 +755,12 @@ async function main() {
   // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
   setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
   runRecords.every(RUN_SYNC_MS)
+  // Hung workers: a run of this cockpit that went silent puts its task on the owner (application/stale-runs.ts), looked at as often as the runs sync.
+  createStaleRuns({
+    spaces: () => spaces.list(), brain: taskBrain, me: owner, log,
+    sessions: () => ledger.list().map((e) => ({ sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, archived: Boolean(e.archivedAt) })),
+    activityAt: (sessionId) => sessionActivity({ ledger, spaces, providers }, sessionId),
+  }).every(RUN_SYNC_MS)
 
   // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
   const taskBoard = createTaskBoard({
