@@ -26,7 +26,7 @@ describe('planning a hand-over', () => {
     const inDesk = planHandOver(task(), { mode: 'together', delegate: 'atlas', desk: 'Main' }, { ...ctx, ownSession: 's1' })
     if (!inDesk.ok) throw new Error(inDesk.refusal)
     expect(inDesk.plan.session).toEqual({ desk: 'Main', sessionId: 's1' })
-    expect(planHandOver(task(), { mode: 'together', delegate: 'atlas' }, ctx)).toEqual({ ok: false, refusal: 'desk_required' })
+    expect(planHandOver(task(), { mode: 'together', delegate: 'atlas' }, ctx)).toEqual({ ok: false, refusal: 'no_session' })
   })
 
   it('delegate now on an active task leaves its status alone: the request starts it (status moves forward only)', () => {
@@ -124,7 +124,7 @@ describe('planning a hand-over', () => {
     ['an agent of another space', task(), { mode: 'now', delegate: 'scout', checkpoint: 'after' }, ctx, 'delegate_not_in_space'],
     ['no checkpoint', task(), { mode: 'now', delegate: 'atlas' }, ctx, 'checkpoint_required'],
     ['schedule without a time', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after' }, ctx, 'schedule_required'],
-    ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'desk_required'],
+    ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'no_session'],
     ['until the goal on a task without a goal', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true } }, ctx, 'goal_required'],
     ['schedule without a checkpoint', task(), { mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx, 'checkpoint_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {

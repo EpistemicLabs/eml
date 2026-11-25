@@ -68,7 +68,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   checkpoint_required: 'Pick a checkpoint: before, after or none.',
   goal_required: 'The task has no goal yet: set one before the agent keeps at it until the goal is reached.',
   schedule_required: 'Pick when the agent starts.',
-  desk_required: 'Pick the desk to open the session in.',
+  no_session: 'The task has no open session to take over: pick a desk to start one.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
   open_steps: 'This task still has open steps: close or move them first.',
   task_open: 'The task is open already.',

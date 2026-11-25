@@ -56,7 +56,8 @@ export type HandOverRefusal =
   | 'delegate_not_in_space'
   | 'checkpoint_required'
   | 'schedule_required'
-  | 'desk_required'
+  /** Take over without a desk (from the chip or the panel), but the task has no open session of its own (any more). */
+  | 'no_session'
   /** Until the goal is reached, on a task without a goal: set the goal first. */
   | 'goal_required'
 
@@ -94,7 +95,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (req.mode !== 'together' && (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint))) return { ok: false, refusal: 'checkpoint_required' }
   if (req.mode === 'schedule' && !req.schedule) return { ok: false, refusal: 'schedule_required' }
   // A new session opens in a desk; Take over opens the task's own session where it is shown (a desk names its pane).
-  if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'desk_required' }
+  // Asked for without a desk when there is no own session (it was put away since the page looked): the page offers one.
+  if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'no_session' }
   if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
 
   const patch: TaskPatch = {}

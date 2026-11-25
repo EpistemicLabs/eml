@@ -171,7 +171,7 @@ function MainContent({
                 paneLabel={paneLabel}
                 badge={paneView === 'chat' && sessionId ? (
                   // The task's mode beside its name (with you / the agent works alone), with the one action that switches it.
-                  <span className="flex items-center gap-1"><ModeChip taskId={selectedSession?.taskId as string | null | undefined} /><LimitsBadge sessionId={sessionId} /></span>
+                  <span className="flex items-center gap-1"><ModeChip taskId={selectedSession?.taskId as string | null | undefined} sessionId={sessionId} /><LimitsBadge sessionId={sessionId} /></span>
                 ) : null}
               />
             </div>

@@ -382,11 +382,11 @@ describe('work on it now ends (B2)', () => {
     expect(commands.releasedAgent('t1')).toBe('atlas')
   })
 
-  it('work on it now on a task without an own session still needs a desk', async () => {
+  it('work on it now on a task without an own session still needs a desk: without one it is refused as no_session', async () => {
     const w = together()
     const commands = createTaskCommands({ ...w.deps, ownSession: () => null })
     expect(await commands.submit({ opId: 'op-nodesk', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas' } }))
-      .toEqual({ ok: false, refusal: 'desk_required' })
+      .toEqual({ ok: false, refusal: 'no_session' })
   })
 
   it('releases it when no session ever opened, after the grace time', async () => {

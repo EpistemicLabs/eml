@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, takeOver, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
@@ -275,7 +275,9 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
       onTakeOver={async (t) => {
         const answer = await takeOver(t);
-        answered(answer, `Taken over: ${agentName(t.delegate)} finishes the turn it is in, then the session is yours.`);
+        // Its session was put away since the board looked: the dialog starts one in a desk instead.
+        if (!answer.ok && answer.code === 'no_session') { setDialog({ taskId: t.id, mode: 'together' }); return false; }
+        answered(answer, takeOverDone(t.delegate));
         return answer.ok;
       }}
       onReview={(t) => void review(t, 'Closed as done.')}

@@ -353,6 +353,8 @@ export const handOver = (task: Pick<BoardTask, 'id' | 'spaceId'>, input: HandOve
  * Take over a task the agent works on alone: its delegation goes and its own session is the owner's from the end of
  * the turn it is in. It opens where it is shown (the panel's chat, its pane), so no desk is named.
  */
+/** What the page says once a Take over went through. */
+export const takeOverDone = (agent: string | undefined): string => `Taken over: ${agentName(agent)} finishes the turn it is in, then the session is yours.`;
 export const takeOver = (task: Pick<BoardTask, 'id' | 'spaceId' | 'delegate' | 'checkpoint'>, opId = newOpId()) =>
   handOver(task, { mode: 'together', delegate: task.delegate ?? '', checkpoint: (task.checkpoint as HandOverInput['checkpoint'] | undefined) ?? 'after' }, opId);
 /** Looks good: closes the task as done, after the undo window. On a scheduled task it approves that run only and the task stays open. */

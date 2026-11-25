@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { modeLabel, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -284,6 +284,15 @@ describe('a task whose schedule is still on', () => {
     expect(url).toBe('/api/v1/tasks/daily%20brief/end-schedule');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(String(init?.body))).toEqual({ opId: 'op-9', spaceId: 'main' });
+  });
+
+  it('takes a task over without a desk, with its delegate and checkpoint, and passes on the session it opens', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ opId: 'op-7', state: 'applied', undoUntil: '2026-11-25T10:00:08.000Z', sessionId: 's1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetched);
+    expect(await takeOver({ id: 't', spaceId: 'main', delegate: 'atlas', checkpoint: 'before' }, 'op-7')).toEqual({ ok: true, opId: 'op-7', state: 'applied', undoUntil: '2026-11-25T10:00:08.000Z', sessionId: 's1' });
+    const [url, init] = fetched.mock.calls[0];
+    expect(url).toBe('/api/v1/tasks/t/hand-over');
+    expect(JSON.parse(String(init?.body))).toEqual({ opId: 'op-7', spaceId: 'main', mode: 'together', delegate: 'atlas', checkpoint: 'before' });
   });
 
   it('passes on why the host refused: Close on a scheduled task, End schedule with open steps', async () => {
