@@ -25,6 +25,11 @@ export async function applyWrite<N extends CommandName>(eml: EML, command: { nam
   return eml.apply(command, env)
 }
 
+/** The HTTP status a rejected command is answered with, by its code (core CommandError): not found, a topic that exists, else invalid. */
+export function commandStatus(code: string): number {
+  return code === 'NOT_FOUND' ? 404 : code === 'TOPIC_EXISTS' ? 409 : 400
+}
+
 /** A write the server did not do as asked — a shared brain's refusal, a brain held by a move: its HTTP status, code and the text the caller reads. */
 export class SharedWriteError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {

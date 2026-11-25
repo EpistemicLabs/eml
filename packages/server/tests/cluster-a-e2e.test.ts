@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdtempSync, rmSync, mkdirSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { initControlDatabase, provisionUser, issueToken, revokeToken, type ProvisionResult } from '@engramprotocol/core'
@@ -536,6 +536,33 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       expect(h.body.checks[0]).toMatchObject({ kind: 'migration', since_schema: 18, findings: [] })
       expect(typeof h.body.total).toBe('number')
       expect(typeof h.body.schema).toBe('number')
+    })
+
+    it('a read that runs in the read pool answers its own status: a project that is not there is a 404', async () => {
+      const engrams = await get('/project/ghost-project/engrams')
+      expect(engrams.status).toBe(404)
+      expect(engrams.body).toEqual({ error: 'project "ghost-project" not found' })
+      expect((await get('/project/ghost-project/relations')).status).toBe(404)
+      // the checks the route keeps in front of the pool still answer
+      expect((await get('/list?type=nope')).status).toBe(400)
+      expect((await get('/list?nope=1')).body.error).toBe('unknown query params')
+    })
+
+    it('GET /hygiene answers from the kept report; fresh=true sweeps again once the brain changed', async () => {
+      const first = await get('/hygiene?fresh=true')
+      expect(first.status).toBe(200)
+      expect(typeof first.body.seq).toBe('number')
+      expect(Number.isFinite(Date.parse(first.body.computed_at))).toBe(true)
+      // kept next to the brains, for the next start
+      expect(existsSync(join(tmpDir, 'cache', 'hygiene', `${provA.brainId}.json`))).toBe(true)
+      // the kept report is from before this write
+      const written = await create(tok(), validRule({ scope: 'agent.bob', title: 'kept-report-rule', content: 'do Z' }))
+      expect(written.status).toBe(201)
+      const kept = await get('/hygiene')
+      expect(kept.body).toMatchObject({ seq: first.body.seq, computed_at: first.body.computed_at, total: first.body.total })
+      const fresh = await get('/hygiene?fresh=true')
+      expect(fresh.body.seq).toBeGreaterThan(first.body.seq)
+      expect(fresh.body.checks.map((c: { id: string }) => c.id)).toEqual(first.body.checks.map((c: { id: string }) => c.id))
     })
   })
 

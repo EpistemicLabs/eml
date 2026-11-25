@@ -71,7 +71,7 @@
  * token decides what a caller may do.
  *   GET  /head              ?after=&wait=                            → The op log's newest seq; with after and wait, held until it differs (long poll; head.ts)
  *   GET  /stats                                                      → DB statistics
- *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
+ *   GET  /hygiene           ?fresh=                                  → Brain-hygiene checks with their findings, from the kept report (hygiene-reports.ts); fresh=true waits for a sweep when the brain changed since
  *   GET  /health                                                     → Health check
  */
 
@@ -87,10 +87,6 @@ import {
   checkBrainIds,
   boot,
   projectBlock,
-  inheritedRules,
-  hygieneCheck,
-  renderRecallMarkdown,
-  renderBrainStateMarkdown,
   ALL_RULES,
   BOOT_PARTS,
   type BootPart,
@@ -104,8 +100,6 @@ import {
   recordedDismissal,
   SEED_ORIGIN,
   type EngramType,
-  type EngramStatus,
-  type Significance,
   type EntityKind,
   type ProjectStatus,
   type SubjectStatus,
@@ -114,8 +108,13 @@ import {
 import { ConnectionPool, openBrain } from './pool'
 import { authenticate as authMiddleware, type AuthContext } from './middleware/auth'
 import { route as routeMiddleware } from './middleware/routing'
-import { applyWrite, SharedWriteError, readOnly, spaceMembers } from './write'
+import { applyWrite, SharedWriteError, commandStatus, readOnly, spaceMembers } from './write'
 import { HeadReadError, headFailure, headQuery, logHead, waitForHead } from './head'
+import { HygieneReports } from './hygiene-reports'
+import { requestLabel, watchLoop } from './loop-watch'
+import { ReadPool, READ_WORKERS, readFailure } from './read-pool'
+import { readJob } from './read-worker'
+import type { HygieneSweepAnswer, ReadArgs, ReadKind } from './reads'
 import { InviteError, Sync } from './sync/sync'
 import { TeamFileError, isRelayOrigin, readTeamFile, removeTeamFile, writeTeamFile } from './sync/team-file'
 import { createTeamBrain } from './sync/create'
@@ -127,8 +126,6 @@ import { ProtocolError, UnsupportedVersionError, checkHandle, fingerprint, parse
 // v0.9.1 Cluster 1 Phase 1.3: the caller concept is removed entirely.
 // Token = identity (1 user = 1 brain), no separate caller layer anymore.
 // `AuthContext { tokenId, brainId }` suffices as the auth frame.
-
-type OrderBy = 'created_at' | 'updated_at' | 'significance' | 'score'
 
 // The body shape is heterogeneous per endpoint (untrusted JSON input). We type
 // minimally at the endpoint level; `Record<string, any>` allows the existing
@@ -171,6 +168,13 @@ const POOL_CAP = parseInt(process.env.EML_POOL_CAP || '50', 10)
 // v0.21: how long a project move waits for its import to be confirmed through the relay (one op of a few MB, applied on every replica)
 const MOVE_DEADLINE_MS = parseInt(process.env.EML_MOVE_DEADLINE_MS || String(5 * 60_000), 10)
 const POOL_IDLE_MIN = parseInt(process.env.EML_POOL_IDLE_TIMEOUT_MIN || '15', 10)
+// How many threads run the reads whose cost grows with the brain (read-pool.ts); 0 runs them on the request thread.
+const READ_WORKER_COUNT = (() => {
+  const n = parseInt(process.env.EML_READ_WORKERS ?? '', 10)
+  return Number.isInteger(n) && n >= 0 ? n : READ_WORKERS
+})()
+// A hygiene sweep reads the whole brain: it may take longer than any other read.
+const HYGIENE_SWEEP_TIMEOUT_MS = 10 * 60_000
 
 // v0.9: version from our own package.json. Loaded synchronously at module import
 // so /health calls don't hit the file system.
@@ -197,6 +201,16 @@ const pool = new ConnectionPool({
   idleTimeoutMs: POOL_IDLE_MIN * 60_000,
 })
 pool.startIdleSweep()
+// The reads whose cost grows with the brain run beside the request thread (read-pool.ts, reads.ts).
+const readPool = new ReadPool({ inline: readJob, size: READ_WORKER_COUNT, log: (line) => console.error(line) })
+// A build shipped without its worker still serves, with every read on the request thread: said once, so it is seen.
+if (READ_WORKER_COUNT > 0 && !readPool.threaded) console.error('[read-pool] no read worker next to the server (read-worker.js or read-worker.cjs); reads run on the request thread')
+// One hygiene report per brain, swept in the read pool and kept across restarts (hygiene-reports.ts).
+const hygieneReports = new HygieneReports({ dir: path.join(DATA_DIR, 'cache', 'hygiene'), version: SERVER_VERSION, log: (line) => console.error(line) })
+// Says when a handler held the request thread for a second or more, and which (loop-watch.ts).
+const loop = watchLoop({ log: (line) => console.error(line) })
+/** What each request is called in the loop watch's line. */
+const requestLabels = new WeakMap<IncomingMessage, string>()
 
 // Forward-Migration-Runner — blocking-at-startup, with backup + preflight +
 // auto-restore (see forward-migrations.ts). The "[migrations] migrating" line
@@ -284,6 +298,7 @@ function discardBrain(brainId: string, brainFile: string): void {
   syncs.delete(brainId)
   removeTeamFile(DATA_DIR, brainId)
   pool.evict(brainId)
+  hygieneReports.forget(brainId)
   const file = path.resolve(DATA_DIR, brainFile)
   for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${file}${suffix}`, { force: true })
   controlDb.prepare('DELETE FROM brains WHERE id = ?').run(brainId)
@@ -296,7 +311,11 @@ function reviewDueParam(q: Record<string, string | undefined>): boolean | undefi
   return new Error('review_due is true or false')
 }
 function json(res: ServerResponse, status: number, data: unknown): void {
-  const body = JSON.stringify(data)
+  jsonText(res, status, JSON.stringify(data))
+}
+
+/** A body that is JSON text already (a read's answer, serialized where it ran: reads.ts). */
+function jsonText(res: ServerResponse, status: number, body: string): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
@@ -309,6 +328,9 @@ function readBody(req: IncomingMessage): Promise<RequestBody> {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
+      // the handler goes on from here: what it computes now is this request's (loop-watch.ts)
+      const label = requestLabels.get(req)
+      if (label) loop.enter(label)
       const raw = Buffer.concat(chunks).toString()
       if (!raw) return resolve({})
       try { resolve(JSON.parse(raw) as RequestBody) }
@@ -451,37 +473,12 @@ const header = (req: IncomingMessage, name: string): string | null => {
   return typeof s === 'string' && s.trim() !== '' ? s.trim().slice(0, 200) : null
 }
 
-// --- Recall logic (v0.9.1: 1 user = 1 brain, no namespace filter) ---
-interface RecallResult {
-  query: string
-  engrams: number
-  markdown: string
-}
-
-function recall(eml: EML, query: string, opts: RequestBody = {}): RecallResult {
-  const results = eml.engrams.query({
-    search: query,
-    search_mode: 'or',
-    significance: opts.min_significance || undefined,
-    limit: opts.limit || 10,
-    order_by: 'score',
-    statuses: ['active', 'planned'], // v0.10.5: live knowledge + open work (decision recall-surfaces-active-and-planned)
-  })
-
-  // v0.10.5 DISPLAY: return ONLY the compact markdown (rendered in core). The full
-  // engram array is intentionally NOT returned — callTool JSON-stringifies the whole
-  // response, so returning full engrams would defeat the preview. Full body via eml_get.
-  return {
-    query,
-    engrams: results.length,
-    markdown: renderRecallMarkdown(query, results),
-  }
-}
-
 // --- Routes ---
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = (req.url ?? '').split('?')[0]
   const method = req.method
+  requestLabels.set(req, requestLabel(method, url))
+  loop.enter(requestLabel(method, url))
 
   // Health check — no auth needed (v0.9-PROPOSAL §5.10).
   // Public, no brain/DB check (health = "the process responds").
@@ -513,6 +510,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       : { error: routingResult.error })
   }
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
+  requestLabels.set(req, requestLabel(method, url, routingResult.ctx.brainId))
+  loop.enter(requestLabel(method, url, routingResult.ctx.brainId))
+  // One of the reads whose cost grows with the brain (reads.ts), run in the read pool on this brain's file.
+  const brainPath = path.resolve(DATA_DIR, routingResult.ctx.brainFile)
+  const pooled = <K extends ReadKind>(kind: K, args: ReadArgs<K>, opts: { slow?: boolean, timeoutMs?: number } = {}) =>
+    readPool.run({ file: brainPath, name: routingResult.ctx.brainName, kind, args }, opts)
+  const read = async <K extends ReadKind>(kind: K, args: ReadArgs<K>): Promise<void> => {
+    const answer = await pooled(kind, args)
+    jsonText(res, answer.status, answer.body)
+  }
   const defaultAgent = routingResult.ctx.brainName
   const sync = syncs.get(routingResult.ctx.brainId)
   // v0.21: a project move holds this brain (move.ts); its writes are refused at once
@@ -572,8 +579,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (url === '/recall' && method === 'POST') {
       const body = await readBody(req)
       if (!body.query) return json(res, 400, { error: 'query required' })
-      const result = recall(eml, body.query, body)
-      return json(res, 200, result)
+      return await read('recall', { query: body.query, min_significance: body.min_significance, limit: body.limit })
     }
 
     // v0.19: who writes. The token gives the handle; the MCP server adds the
@@ -865,50 +871,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const reviewDue = reviewDueParam(q)
       if (reviewDue instanceof Error) return json(res, 400, { error: reviewDue.message })
 
-      const results = eml.engrams.query({
-        type: q.type as EngramType | undefined,
-        scope: q.scope,
-        tag: q.tag,
-        search: q.search,
-        title: q.title,
-        significance: q.significance as Significance | undefined,
-        has_relations: q.has_relations === 'true' ? true : (q.has_relations === 'false' ? false : undefined),
-        limit: q.limit ? parseInt(q.limit) : 50,
-        offset: q.offset ? parseInt(q.offset) : 0,
-        order_by: (q.order_by as OrderBy) || 'updated_at',
-        status: q.status as EngramStatus | undefined,
-        assignee: q.assignee,
-        review_due: reviewDue,
-        subject: q.subject,
-        stage: q.stage,
-        binding: q.binding as 'task' | 'standing' | undefined,
-        task_id: q.task_id,
-        origin: q.origin,
-        session_id: q.session_id,
-        learning_state: q.state as 'collecting' | 'ripe' | 'unclear' | 'paused' | undefined,
-        waiting_on: q.waiting_on,
-        delegate: q.delegate,
-      })
-      // with_parent=true: a task names its parent task (parent_id), so a list shows plans without a call per task.
-      // with_origin=true: a task names the task it was spun off from (origin_task_id, a derived_from link to a task),
-      // so the cockpit draws task trees without a call per task.
-      // with_latest_note=true: a task carries its newest journal note (latest_note {text, at}, or null), so the
-      // cockpit shows where each task stands without a call per task.
-      if (q.with_parent === 'true' || q.with_origin === 'true' || q.with_latest_note === 'true') {
-        const linked = results.map((e) => {
-          if (e.type !== 'task') return e
-          const relations = q.with_parent === 'true' || q.with_origin === 'true' ? eml.engrams.relationsOf(e.id).filter((r) => r.source_id === e.id) : []
-          const note = q.with_latest_note === 'true' ? eml.engrams.entries(e.id, ['note']).at(-1) : undefined
-          return {
-            ...e,
-            ...(q.with_parent === 'true' ? { parent_id: relations.find((r) => r.relation === 'part_of')?.target_id ?? null } : {}),
-            ...(q.with_origin === 'true' ? { origin_task_id: relations.find((r) => r.relation === 'derived_from' && r.target_engram?.type === 'task')?.target_id ?? null } : {}),
-            ...(q.with_latest_note === 'true' ? { latest_note: note ? { text: note.text, at: note.at } : null } : {}),
-          }
-        })
-        return json(res, 200, { count: linked.length, engrams: linked })
-      }
-      return json(res, 200, { count: results.length, engrams: results })
+      return await read('list', { q, reviewDue })
     }
 
     // === v0.4: engram API completion ===
@@ -1064,36 +1027,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
       if (suffix === 'engrams') {
         if (rejectUnknownParams(res, q, ALLOWED_PROJECT_ENGRAMS_PARAMS)) return
-        const project = eml.projects.get(id)
-        if (!project) return json(res, 404, { error: `project "${id}" not found` })
-
         const reviewDue = reviewDueParam(q)
         if (reviewDue instanceof Error) return json(res, 400, { error: reviewDue.message })
-        const engrams = eml.engrams.query({
-          scope: `project.${id}`,
-          type: q.type as EngramType | undefined,
-          status: q.status as EngramStatus | undefined,
-          significance: q.significance as Significance | undefined,
-          title: q.title,
-          tag: q.tag,
-          has_relations: q.has_relations === 'true' ? true : (q.has_relations === 'false' ? false : undefined),
-          limit: q.limit ? parseInt(q.limit) : 50,
-          offset: q.offset ? parseInt(q.offset) : 0,
-          order_by: (q.order_by as OrderBy) || 'updated_at',
-          assignee: q.assignee,
-          review_due: reviewDue,
-          subject: q.subject,
-          stage: q.stage,
-        })
-        return json(res, 200, { count: engrams.length, engrams })
+        return await read('project-engrams', { id, q, reviewDue })
       }
 
-      if (suffix === 'relations') {
-        const project = eml.projects.get(id)
-        if (!project) return json(res, 404, { error: `project "${id}" not found` })
-        const relations = eml.engrams.relationsInScope(`project.${id}`)
-        return json(res, 200, { count: relations.length, relations })
-      }
+      if (suffix === 'relations') return await read('project-relations', { id })
 
       if (suffix && suffix !== '') {
         return json(res, 404, { error: 'Not found' })
@@ -1166,12 +1105,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       const q = parseQuery(req.url)
       if (rejectUnknownParams(res, q, new Set(['scope']))) return
       if (!q.scope) return json(res, 400, { error: 'scope required' })
-      // v0.10.5: return the compact dashboard markdown, not the full structured state
-      // (callTool stringifies the whole response → full engrams would blow the budget).
-      const state = eml.engrams.buildBrainState(q.scope)
-      // A project's dashboard shows its parents' rules too, marked inherited.
-      state.rules = [...(state.rules ?? []), ...inheritedRules(eml, q.scope)]
-      return json(res, 200, { scope: q.scope, markdown: renderBrainStateMarkdown(state) })
+      return await read('brain-state', { scope: q.scope })
     }
 
     // POST /project-block — the project context a host injects into a session
@@ -1190,31 +1124,23 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // GET /hygiene — every hygiene check with what it requires, how to fix an
     // entry, and its findings (core hygiene.ts). Read by the cockpit, which
-    // offers a brain-hygiene session when a check has findings.
+    // offers a brain-hygiene session when a check has findings. Answered from
+    // the brain's kept report (hygiene-reports.ts): computed_at and seq say
+    // which state of the brain it is about; fresh=true waits for a sweep when
+    // the brain changed since.
     if (url === '/hygiene' && method === 'GET') {
-      return json(res, 200, hygieneCheck(eml))
+      const brainDb = routingResult.ctx.brainDb
+      const kept = await hygieneReports.get(
+        { id: routingResult.ctx.brainId, head: () => logHead(brainDb) },
+        async (previous) => JSON.parse((await pooled('hygiene', previous ? { previous } : {}, { slow: true, timeoutMs: HYGIENE_SWEEP_TIMEOUT_MS })).body) as HygieneSweepAnswer,
+        { fresh: parseQuery(req.url).fresh === 'true' },
+      )
+      return json(res, 200, { ...kept.report, computed_at: kept.computed_at, seq: kept.seq })
     }
 
     // GET /stats
     if (url === '/stats' && method === 'GET') {
-      const all = eml.engrams.query({ limit: 10000 })
-      const types: Record<string, number> = {}
-      const scopes: Record<string, number> = {}
-      for (const c of all) {
-        types[c.type] = (types[c.type] || 0) + 1
-        scopes[c.scope] = (scopes[c.scope] || 0) + 1
-      }
-      const agents = eml.agents.list()
-      const projects = eml.projects.list()
-      const users = eml.users.list()
-      return json(res, 200, {
-        total_engrams: all.length,
-        by_type: types,
-        by_scope: scopes,
-        agents: agents.length,
-        projects: projects.length,
-        users: users.length,
-      })
+      return await read('stats', undefined)
     }
 
     // 404
@@ -1228,11 +1154,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     if (err instanceof InviteError) return json(res, err.status, { error: err.message, code: err.code })
     // v0.21: a project move the server or core refused (move.ts)
     if (err instanceof MoveRouteError) return json(res, err.status, { error: err.message, code: err.code, ...err.data })
+    // a read the pool stopped for running too long, or one core rejected where it ran (read-pool.ts readFailure)
+    const failedRead = readFailure(err)
+    if (failedRead) return json(res, failedRead.status, failedRead.body)
     // v0.20: a rejected command — nothing was written
     if (err instanceof CommandError) {
       // CONFLICT: base_rev no longer matches (v0.20) — the caller re-reads at current_rev
       if (err.code === 'CONFLICT') return json(res, 409, { error: err.message, current_rev: err.data?.current_rev })
-      return json(res, err.code === 'NOT_FOUND' ? 404 : err.code === 'TOPIC_EXISTS' ? 409 : 400, { error: err.message })
+      return json(res, commandStatus(err.code), { error: err.message })
     }
     // v0.8: validation errors from validate.ts/engrams.ts are user-input
     // errors — return them as 400 instead of 500. The patterns match the
@@ -1266,6 +1195,8 @@ ready().then(() => {
 // Graceful shutdown — close pool + control DB; per-request EML.fromConnection
 // has ownsConnection=false, so nothing is closed twice.
 function shutdown(): void {
+  loop.stop()
+  void readPool.close()
   for (const sync of syncs.values()) if (sync instanceof Sync) sync.close()
   try { pool.close() } catch { /* best-effort */ }
   try { controlDb.close() } catch { /* best-effort */ }

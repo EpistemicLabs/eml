@@ -25,6 +25,9 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  * GET /head; decision task-board-live-updates-via-brain-log-head), after every command and after a turn ended, and
  * on a slow timer as a safety net. Whenever the board comes out different, onChange tells the pages (the SSE
  * `tasks` event), with the turns that moved.
+ *
+ * A space whose brain does not answer a build (a timeout, no connection, a server error) keeps what its brain gave
+ * last and is marked stale: a brain that is slow or restarting must not read as a space without tasks.
  */
 
 export interface BoardTask {
@@ -154,7 +157,8 @@ export interface BoardEvent {
 export interface Board {
   at: string
   viewer: string
-  spaces: Array<{ id: string; name: string; agents: string[] }>
+  /** `stale`: the space's brain did not answer the last build; what the board shows of it is its last state. */
+  spaces: Array<{ id: string; name: string; agents: string[]; stale?: true }>
   projects: Array<{ spaceId: string; id: string; name: string; goal: string | null }>
   tasks: BoardTask[]
   /** Closed tasks, newest first per space: what the panel can reopen and ⌘K finds. */
@@ -211,7 +215,7 @@ export interface WatchOptions {
   probeMs?: number
   /** How long a space checks its newest task before it tries /head again (the brain may have been updated). */
   headRetryMs?: number
-  /** How long the watch rests while nobody looks, or after a failed call (doubling up to 30 s). */
+  /** How long the watch rests while nobody looks, or after a failed call (doubling up to WATCH_REST_MAX_MS). */
   restMs?: number
   /** Writes that arrive within this long make one refresh. */
   settleMs?: number
@@ -220,6 +224,8 @@ export interface WatchOptions {
 
 /** How long one long poll on a brain's /head waits. */
 const HEAD_WAIT_MS = 25_000
+/** The longest the watch rests between two tries on a brain that does not answer: it is back within seconds of the brain. */
+const WATCH_REST_MAX_MS = 10_000
 const MAX_EVENTS = 40
 const OPEN_LIMIT = 500
 const RESOLVED_LIMIT = 50
@@ -311,6 +317,35 @@ function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: 
     .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
 }
 
+/** What the board holds of one space: built as one, so a brain that does not answer leaves the space as it was. */
+interface SpaceSlice {
+  space: Board['spaces'][number]
+  projects: Board['projects']
+  tasks: BoardTask[]
+  closed: ClosedTask[]
+  lineage: LineageTask[]
+  inboxTasks: Parameters<typeof inboxItems>[0]
+}
+
+/** A read of a space's brain that got no answer (a timeout, no connection, a server error): the space keeps its last state. */
+class BrainUnreachable extends Error {}
+
+/**
+ * True when the brain answered and refused the read (a 4xx): an older server without the route or the parameter, or
+ * an engram that is not there. Anything else — a timeout, no connection, a 5xx — is a brain that did not answer.
+ */
+const refused = (err: unknown): boolean => {
+  const status = (err as { status?: unknown } | null)?.status
+  return typeof status === 'number' && status >= 400 && status < 500
+}
+
+/** The read's answer, `fallback` when the brain refused it; a brain that did not answer is BrainUnreachable. */
+const orWhenRefused = <T, F>(read: Promise<T>, fallback: F): Promise<T | F> =>
+  read.catch((err) => {
+    if (refused(err)) return fallback
+    throw new BrainUnreachable((err as Error)?.message ?? String(err))
+  })
+
 export function createTaskBoard(deps: TaskBoardDeps) {
   let current: Board | null = null
   let refreshing: Promise<Board> | null = null
@@ -319,6 +354,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   /** What the pages saw last (signature()); a build that differs tells them. */
   let shown: string | null = null
   let askedAt = -Infinity
+  /** Each space as its brain gave it last: what the board shows while that brain does not answer. */
+  const slices = new Map<string, SpaceSlice>()
+  /** The spaces whose brain did not answer the last build: said once when it starts, once when it ends. */
+  const unreachable = new Set<string>()
   const turns = new Map<string, Turn | null>()
   let events: BoardEvent[] = []
   const listeners = new Set<(events: BoardEvent[]) => void>()
@@ -328,11 +367,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     try {
       return ((await brain.get('/list', query)) as { engrams?: Row[] }).engrams ?? []
     } catch (err) {
+      // Only a refusal is worth a second try: a brain that did not answer the first would not answer it either.
+      if (!refused(err)) throw new BrainUnreachable((err as Error)?.message ?? String(err))
       // A brain server from before with_origin / with_latest_note refuses the parameter: the tasks still
       // count, without origins and status lines.
       deps.log(`[board] /list with_origin/with_latest_note failed (${(err as Error).message}); listing without them`)
       const { with_origin: _origin, with_latest_note: _note, ...plain } = query
-      return ((await brain.get('/list', plain).catch(() => ({ engrams: [] }))) as { engrams?: Row[] }).engrams ?? []
+      return ((await orWhenRefused(brain.get('/list', plain), { engrams: [] })) as { engrams?: Row[] }).engrams ?? []
     }
   }
 
@@ -340,7 +381,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
   /** One task by id with its parent and origin read from its relations; null when it can't be read. */
   const fetchLineage = async (brain: Pick<EmlApi, 'get'>, spaceId: string, id: string): Promise<LineageTask | null> => {
-    const row = await brain.get(`/engram/${encodeURIComponent(id)}`, { with_relations: 'true' }).catch(() => null) as
+    const row = await orWhenRefused(brain.get(`/engram/${encodeURIComponent(id)}`, { with_relations: 'true' }), null) as
       | (Row & { type?: string; relations?: Array<{ relation: string; source_id: string; target_id: string; target_engram?: { type?: string } }> })
       | null
     if (!row || row.type !== 'task') return null
@@ -374,7 +415,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   }
 
   const objects = async (brain: Pick<EmlApi, 'get'>, object: string) =>
-    ((await brain.get(`/object/${object}`).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
+    ((await orWhenRefused(brain.get(`/object/${object}`), { objects: [] })) as { objects?: Array<Record<string, unknown>> }).objects ?? []
 
   /** The task's next run: a job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts). */
   const nextRunOfRow = (row: Row, now: number) => deps.nextRunOf(row.id) ?? nextRunOfSchedule(row.properties?.delegation?.schedule, now)
@@ -440,13 +481,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], closed: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
 
-    for (const space of deps.spaces()) {
-      const brain = deps.brain(space)
-      const agents = brain ? (await objects(brain, 'agent')).map((a) => String(a.id)) : []
-      board.spaces.push({ id: space.id, name: space.name, agents })
-      if (!brain) continue
+    /** One space from its brain. Throws BrainUnreachable when a read got no answer: half a space would read as tasks gone. */
+    const buildSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>): Promise<SpaceSlice> => {
+      const agents = (await objects(brain, 'agent')).map((a) => String(a.id))
+      const slice: SpaceSlice = { space: { id: space.id, name: space.name, agents }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [] }
       for (const p of await objects(brain, 'project')) {
-        board.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
+        slice.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
       const origins = { with_origin: 'true' }
       const latest = { order_by: 'updated_at', ...origins }
@@ -462,7 +502,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
       // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
       // The newest runs of each task: the first is what a delegation request is checked against, the ended ones are its earlier sessions.
-      const latestRuns = ((await brain.get('/object/run', { latest: String(EARLIER_RUNS + 1) }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []
+      const latestRuns = ((await orWhenRefused(brain.get('/object/run', { latest: String(EARLIER_RUNS + 1) }), { objects: [] })) as { objects?: Array<Record<string, unknown>> }).objects ?? []
       const lastStarts = lastStartsOf(latestRuns)
       const earlier = earlierRunsByTask(latestRuns, deps.viewer)
 
@@ -472,7 +512,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const gateTask = (id: string): Promise<GateTask | null> => {
         const known = byId.get(id)
         if (known) return Promise.resolve(known)
-        if (!fetched.has(id)) fetched.set(id, (brain.get(`/engram/${encodeURIComponent(id)}`) as Promise<GateTask & { type?: string }>).then((t) => t ?? null).catch(() => null))
+        if (!fetched.has(id)) fetched.set(id, orWhenRefused(brain.get(`/engram/${encodeURIComponent(id)}`) as Promise<GateTask & { type?: string }>, null).then((t) => t ?? null))
         return fetched.get(id)!
       }
       // The runner's cap groups: a parent's steps, and the space's standalone delegated tasks, that hold a slot, counted as
@@ -506,7 +546,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
         if (CLOSED_STATUSES.has(row.status)) {
-          board.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
+          slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
           if (row.status === 'superseded') continue
         }
         const facts: TaskFacts = {
@@ -586,7 +626,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return items.length ? { reopenedWith: items } : {}
           })(),
         })
-        if (row.status !== 'resolved') inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
+        if (row.status !== 'resolved') slice.inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
       }
       // A wait on a step names where that step stands, read from the step's own card.
       for (const t of spaceTasks) {
@@ -601,9 +641,36 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           } }
         }
       }
-      board.tasks.push(...spaceTasks)
-      board.lineage.push(...await missingAncestors(brain, space.id, spaceTasks))
+      slice.tasks = spaceTasks
+      slice.lineage = await missingAncestors(brain, space.id, spaceTasks)
+      return slice
     }
+
+    for (const space of deps.spaces()) {
+      const brain = deps.brain(space)
+      let slice: SpaceSlice = { space: { id: space.id, name: space.name, agents: [] }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [] }
+      if (brain) {
+        try {
+          slice = await buildSpace(space, brain)
+          slices.set(space.id, slice)
+          if (unreachable.delete(space.id)) deps.log(`[board] ${space.name}: its brain answers again`)
+        } catch (err) {
+          if (!(err instanceof BrainUnreachable)) throw err
+          // A brain that does not answer is not a space without tasks: the space stays as its brain gave it last.
+          if (!unreachable.has(space.id)) deps.log(`[board] ${space.name}: its brain did not answer (${err.message}); showing its last state`)
+          unreachable.add(space.id)
+          const last = slices.get(space.id)
+          slice = { ...(last ?? slice), space: { ...(last ?? slice).space, name: space.name, stale: true } }
+        }
+      }
+      board.spaces.push(slice.space)
+      board.projects.push(...slice.projects)
+      board.tasks.push(...slice.tasks)
+      board.closed.push(...slice.closed)
+      board.lineage.push(...slice.lineage)
+      inboxTasks.push(...slice.inboxTasks)
+    }
+    for (const id of [...slices.keys()]) if (!board.spaces.some((sp) => sp.id === id)) slices.delete(id)
 
     const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now)
     board.inbox = inbox.live
@@ -741,6 +808,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
      * Watch every space's log head while a page looks, and refresh soon after it moves: one long poll per space on
      * GET /head, or — for a brain without it — its newest task every probeMs. Each space has its own loop, so a
      * slow or unreachable one holds up no other. Spaces that come and go are picked up within a few seconds.
+     * A brain that stops answering is asked again every few seconds, and the board refreshes once when it is back.
      */
     watch(opts: WatchOptions): () => void {
       const probeMs = opts.probeMs ?? 2_000
@@ -766,6 +834,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         let useHead = !!deps.head
         let probingSince = 0
         let rest = restMs
+        /** When the calls started to fail; null while the brain answers. Said once when it starts and once when it ends. */
+        let failingSince: number | null = null
         while (!stopped) {
           const space = deps.spaces().find((s) => s.id === spaceId)
           if (!space) break
@@ -773,7 +843,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           try {
             if (useHead) {
               const asked = deps.now()
-              const seq = await deps.head!(space, after, after === null ? 0 : HEAD_WAIT_MS)
+              // After a failed call the head is only asked for, not waited on: the answer says at once that the brain is back.
+              const seq = await deps.head!(space, after, after === null || failingSince !== null ? 0 : HEAD_WAIT_MS)
               const quick = deps.now() - asked < 1_000
               if (after !== null && seq !== after) refreshSoon(settleMs)
               // A brain that answers at once without a change does not hold the request: rest, don't spin.
@@ -787,6 +858,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
               if (deps.head && deps.now() - probingSince >= headRetryMs) { useHead = true; after = null }
             }
             rest = restMs
+            if (failingSince !== null) {
+              deps.log(`[board] watching ${space.name}: its brain answers again after ${Math.round((deps.now() - failingSince) / 1000)} s`)
+              failingSince = null
+              // Whatever was written while nobody watched: one refresh, whether or not the head says so.
+              refreshSoon(settleMs)
+            }
           } catch (err) {
             const { status, body } = err as { status?: number; body?: { code?: string } }
             if (useHead && (status === 404 || body?.code === 'NO_LOG')) {
@@ -795,9 +872,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
               deps.log(`[board] ${space.name}: its brain has no /head; checking its newest task every ${probeMs} ms instead`)
               continue
             }
-            deps.log(`[board] watching ${space.name} failed: ${(err as Error).message}; trying again in ${Math.round(rest / 1000)} s`)
+            if (failingSince === null) {
+              failingSince = deps.now()
+              deps.log(`[board] watching ${space.name} failed: ${(err as Error).message}; trying again every ${Math.round(restMs / 1000)} to ${Math.round(WATCH_REST_MAX_MS / 1000)} s`)
+            }
             await sleep(rest)
-            rest = Math.min(rest * 2, 30_000)
+            rest = Math.min(rest * 2, WATCH_REST_MAX_MS)
           }
         }
         running.delete(spaceId)

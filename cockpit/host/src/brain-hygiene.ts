@@ -97,14 +97,17 @@ export interface BrainHygieneDeps {
   spawns: SpawnQueue
   /** Whether the default agent CLI is installed and signed in; nothing is offered before. */
   isReady: () => Promise<boolean>
-  /** Fetch a space's hygiene report; default GET <url>/hygiene with its token. */
-  fetchReport?: (space: BrainSpace) => Promise<HygieneReport>
+  /**
+   * Fetch a space's hygiene report; default GET <url>/hygiene with its token. The brain server answers from the
+   * report it keeps (server hygiene-reports.ts); `fresh` makes it sweep first when the brain changed since.
+   */
+  fetchReport?: (space: BrainSpace, opts?: { fresh?: boolean }) => Promise<HygieneReport>
   now?: () => Date
   log?: (line: string) => void
 }
 
-async function fetchHygiene(space: BrainSpace): Promise<HygieneReport> {
-  const res = await fetch(`${space.url}/hygiene`, { headers: { Authorization: `Bearer ${space.token}` } })
+async function fetchHygiene(space: BrainSpace, opts: { fresh?: boolean } = {}): Promise<HygieneReport> {
+  const res = await fetch(`${space.url}/hygiene${opts.fresh ? '?fresh=true' : ''}`, { headers: { Authorization: `Bearer ${space.token}` } })
   if (!res.ok) throw new Error(`GET /hygiene → ${res.status}`)
   return (await res.json()) as HygieneReport
 }
@@ -125,12 +128,15 @@ export class BrainHygiene {
     return (this.deps.now ?? (() => new Date()))()
   }
 
-  /** The offer for `space` now, or null: not before the agent CLI is ready, not during onboarding. */
-  private async offer(space: BrainSpace): Promise<HygieneOffer | null> {
+  /**
+   * The offer for `space` now, or null: not before the agent CLI is ready, not during onboarding. `fresh`: from a
+   * report of the brain as it is now (a session works through its findings), not the one the server kept.
+   */
+  private async offer(space: BrainSpace, fresh = false): Promise<HygieneOffer | null> {
     if (!(await this.deps.isReady().catch(() => false))) return null
     const config = await readCockpitConfig()
     if (!config || config.onboarding === 'pending') return null
-    const report = await (this.deps.fetchReport ?? fetchHygiene)(space)
+    const report = await (this.deps.fetchReport ?? fetchHygiene)(space, { fresh })
     return hygieneOffer(report, config.hygiene?.[space.id] ?? {}, this.now())
   }
 
@@ -175,7 +181,7 @@ export class BrainHygiene {
     if (this.busy.has(space.id)) return { ok: false, reason: 'pending' }
     this.busy.add(space.id)
     try {
-      const offer = await this.offer(space)
+      const offer = await this.offer(space, true)
       if (!offer) return { ok: false, reason: 'nothing-due' }
       prepare(offer)
       await updateCockpitConfig((config) => config && { ...config, hygiene: { ...config.hygiene, [space.id]: offer.next } })
