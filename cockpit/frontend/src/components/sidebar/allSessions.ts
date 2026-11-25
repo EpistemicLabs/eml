@@ -3,6 +3,7 @@
 // and the rest. A worker has its own row, by its own state, saying where it comes
 // from. Pure, so the rules (no session twice, finished work staying until
 // archived) are tested without a browser.
+import { count } from '@/lib/count';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo, TurnState, WorkflowWait } from '@/stores/useTurnStateStore';
 import type { ProjectSession } from '@/types/app';
@@ -86,11 +87,9 @@ export function allSessionState(session: ProjectSession, turn: TurnInfo | undefi
   return turn?.state ?? session.turnState ?? 'idle';
 }
 
-const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-
 /** How far a workflow run's agents are: "3 agents running, 4 done"; a count of 0 is left out. */
 export function workflowProgress(run: Pick<WorkflowWait, 'running' | 'done'>): string {
-  return [run.running > 0 ? `${counted(run.running, 'agent')} running` : '', run.done > 0 ? `${run.done} done` : ''].filter(Boolean).join(', ');
+  return [run.running > 0 ? `${count(run.running, 'agent')} running` : '', run.done > 0 ? `${run.done} done` : ''].filter(Boolean).join(', ');
 }
 
 /**
@@ -102,9 +101,9 @@ export function waitingWord(turn: TurnInfo | undefined): string | null {
   if (turn?.state !== 'working') return null;
   const helpers = turn.helpers ?? 0;
   const workflows = turn.workflows ?? [];
-  if (helpers > 0 && workflows.length > 0) return `Waiting for ${counted(helpers, 'subagent')} and ${counted(workflows.length, 'workflow')}`;
-  if (helpers > 0) return `Waiting for ${counted(helpers, 'subagent')}`;
-  if (workflows.length > 1) return `Waiting for ${counted(workflows.length, 'workflow')}`;
+  if (helpers > 0 && workflows.length > 0) return `Waiting for ${count(helpers, 'subagent')} and ${count(workflows.length, 'workflow')}`;
+  if (helpers > 0) return `Waiting for ${count(helpers, 'subagent')}`;
+  if (workflows.length > 1) return `Waiting for ${count(workflows.length, 'workflow')}`;
   if (workflows.length === 1) {
     const progress = workflowProgress(workflows[0]);
     return `Waiting for ${workflows[0].name}${progress ? ` · ${progress}` : ''}`;

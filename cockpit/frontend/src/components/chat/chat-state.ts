@@ -1,6 +1,7 @@
 // The chat view's state as a pure fold over the host's events
 // (host domain/session-runtime.ts). One source: a view is rebuilt from the log,
 // never merged with anything else.
+import { count } from '@/lib/count';
 import { SORT_PICKS, type SortRow, type SplitRelation } from '@/lib/split';
 import { readable } from '@/lib/task-board';
 import { turnEndOfTool, type TurnEndCall } from './turn-end-line';
@@ -224,17 +225,15 @@ function reduceWorkflowTask(workflows: WorkflowTask[], event: Extract<ChatEvent,
   return [...workflows, { toolId: null, name: 'Workflow', status: 'running', running: 0, done: 0, phase: null, ...patch }];
 }
 
-const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
-
 /** The background chip's label: "1 workflow · 3 agents · 1 shell". Agents counts subagents and the agents running in workflow runs; null when nothing runs. */
 export function backgroundLabel(chat: Pick<ChatState, 'agents' | 'shells' | 'workflows'>): string | null {
   const workflows = chat.workflows.filter((run) => run.status === 'running');
   const agents = chat.agents.filter((agent) => agent.status === 'running').length + workflows.reduce((sum, run) => sum + run.running, 0);
   const shells = chat.shells.filter((shell) => shell.status === 'running').length;
   const parts = [
-    workflows.length ? counted(workflows.length, 'workflow') : '',
-    agents ? counted(agents, 'agent') : '',
-    shells ? counted(shells, 'shell') : '',
+    workflows.length ? count(workflows.length, 'workflow') : '',
+    agents ? count(agents, 'agent') : '',
+    shells ? count(shells, 'shell') : '',
   ].filter(Boolean);
   // A workflow run whose agents have not started yet still runs.
   return parts.length ? parts.join(' · ') : null;
