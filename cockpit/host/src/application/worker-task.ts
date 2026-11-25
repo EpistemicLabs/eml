@@ -9,9 +9,10 @@ import { displayTitleOf, kebabTitle } from '../domain/task-title.js'
  * (which then holds the runner, domain/runner-busy.ts) nothing else would.
  *
  * So the hold is taken before the task is written, keyed on the request's time the cockpit writes into it, and bound
- * to the task's id once the brain answers. It lasts WORKER_START_GRACE_MS: by then the worker's session is in the
- * ledger, and its run, which started after the request, closes it. A worker that never started leaves the task to the
- * runner after that time, which then starts it as any delegated task.
+ * to the task's id once the brain answers. A worker still in the spawn queue holds its task however long it waits;
+ * after that the hold covers the gap until its session is in the ledger, for WORKER_START_GRACE_MS from the write. Its
+ * run, which started after the request, then closes it. A worker that never started leaves the task to the runner
+ * after that time, which then starts it as any delegated task.
  */
 
 export const WORKER_START_GRACE_MS = 10 * 60 * 1000
@@ -23,7 +24,8 @@ export interface WorkerTaskHolds {
   holds(taskId: string, requestedAt?: string | null): boolean
 }
 
-export function createWorkerTaskHolds(now: () => number = Date.now): WorkerTaskHolds {
+/** `queued`: the spawn requests not claimed yet (spawn-queue.ts list): a worker waiting there holds its task. */
+export function createWorkerTaskHolds(now: () => number = Date.now, queued: () => ReadonlyArray<{ taskId?: string | null }> = () => []): WorkerTaskHolds {
   const held: Array<{ requestedAt: string; taskId: string | null; at: number }> = []
   const prune = () => {
     for (let i = held.length - 1; i >= 0; i--) if (now() - held[i].at >= WORKER_START_GRACE_MS) held.splice(i, 1)
@@ -37,7 +39,7 @@ export function createWorkerTaskHolds(now: () => number = Date.now): WorkerTaskH
     },
     holds(taskId, requestedAt) {
       prune()
-      return held.some((h) => h.taskId === taskId || (Boolean(requestedAt) && h.requestedAt === requestedAt))
+      return queued().some((r) => r.taskId === taskId) || held.some((h) => h.taskId === taskId || (Boolean(requestedAt) && h.requestedAt === requestedAt))
     },
   }
 }

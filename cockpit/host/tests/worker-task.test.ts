@@ -81,6 +81,18 @@ describe('a task the cockpit creates for a spawned worker', () => {
     expect(started).toEqual(['task-1'])
   })
 
+  it('a worker still queued after the grace time keeps holding its task; once it is claimed only the grace time does', () => {
+    let clock = 0
+    const queue: Array<{ taskId?: string }> = [{ taskId: 't1' }, {}]
+    const holds = createWorkerTaskHolds(() => clock, () => queue)
+    holds.start('2026-11-25T10:00:00.000Z').bind('t1')
+    clock = WORKER_START_GRACE_MS * 3
+    expect(holds.holds('t1')).toBe(true)
+    expect(holds.holds('t2')).toBe(false)
+    queue.splice(0, 1)
+    expect(holds.holds('t1')).toBe(false)
+  })
+
   it('holds by the request\'s time until the task has an id, then by the id, for the grace time only', () => {
     let clock = 0
     const holds = createWorkerTaskHolds(() => clock)

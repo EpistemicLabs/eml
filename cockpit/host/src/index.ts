@@ -385,7 +385,7 @@ async function main() {
   // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
   const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
   // A task the cockpit creates for a spawned worker is the agent's alone; the runner is held off it until the worker is on it.
-  const workerHolds = createWorkerTaskHolds()
+  const workerHolds = createWorkerTaskHolds(Date.now, () => spawns.list())
   const sessionTask = createSessionTask({
     ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool,
     workerDelegate: (spaceId) => spaces.resolve(spaceId).agent ?? null, workerHolds,
