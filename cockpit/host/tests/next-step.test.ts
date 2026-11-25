@@ -7,7 +7,11 @@ import { join } from 'node:path'
 const home = mkdtempSync(join(tmpdir(), 'cockpit-next-step-'))
 process.env.EML_COCKPIT_HOME = home
 
+import { reminder } from '../src/domain/turn-end.js'
+
 type NextStep = typeof import('../src/application/next-step.js')
+const NEXT = reminder(['next'], { tool: false })
+const CALL = reminder(['call'])
 type Ledger = typeof import('../src/session-ledger.js')['SessionLedger']
 
 const RUN = '2026-11-19T08:00:00.000Z'
@@ -35,7 +39,7 @@ describe('next triggers', () => {
   beforeAll(async () => { mod = await import('../src/application/next-step.js') })
 
   const facts = (patch: Partial<Parameters<NextStep['nextTriggers']>[0]> = {}) => ({
-    task: { status: 'active', properties: {} }, owner: 'lasse', runStartedAt: RUN, jobs: [], otherSession: false, steps: [], ...patch,
+    task: { status: 'active', properties: {} }, owner: 'lasse', sessionId: 'me', runStartedAt: RUN, jobs: [], otherSession: false, steps: [], ...patch,
   })
 
   it('finds none for an open task with nothing ahead', () => {
@@ -44,8 +48,16 @@ describe('next triggers', () => {
 
   it('counts a wait on the user only from this run or a newer one', () => {
     const wait = (since: string) => facts({ task: { status: 'active', properties: { waiting_on: { who: 'lasse', why: 'go?', since, session_id: 's' } } } })
-    expect(mod.nextTriggers(wait('2026-11-19T09:00:00.000Z'))).toEqual(['question'])
+    expect(mod.nextTriggers(wait('2026-11-19T09:00:00.000Z'))).toEqual(['wait'])
     expect(mod.nextTriggers(wait('2026-11-18T09:00:00.000Z'))).toEqual([])
+  })
+
+  it('counts any wait this session set since its run began, and nobody else\'s wait on someone else', () => {
+    const wait = (patch: Record<string, unknown>) => facts({ task: { status: 'active', properties: { waits: [{ id: 'me', who: 'dominik', kind: 'review', why: 'check the numbers', since: '2026-11-19T09:00:00.000Z', session_id: 'me', ...patch }] } } })
+    expect(mod.nextTriggers(wait({}))).toEqual(['wait'])
+    expect(mod.nextTriggers(wait({ who: 'Acme', kind: 'outside' }))).toEqual(['wait'])
+    expect(mod.nextTriggers(wait({ since: '2026-11-18T09:00:00.000Z' }))).toEqual([])
+    expect(mod.nextTriggers(wait({ id: 'other', session_id: 'other' }))).toEqual([])
   })
 
   it('counts a job that will run again, not an ended or held one', () => {
@@ -108,7 +120,7 @@ describe('next-step check', () => {
     const { ledger, brain, check, delivered, waited } = setup({ t1: { id: 't1', status: 'active', properties: {} } })
     ledger.recordSpawn('w1-1', null, 'bp-eml', 'claude', true, 't1')
     await check.turnEnded('w1-1')
-    expect(delivered).toEqual([`w1-1: ${mod.NEXT_STEP_PROMPT}`])
+    expect(delivered).toEqual([`w1-1: ${NEXT}`])
     expect(brain.posts).toEqual([])
     await check.turnEnded('w1-1')
     expect(delivered).toHaveLength(1)
@@ -147,7 +159,7 @@ describe('next-step check', () => {
     const { ledger, brain, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} } }, { space: { shared: true } })
     ledger.recordSpawn('w1-4', null, 'bp-eml', 'claude', true, 't1')
     await check.turnEnded('w1-4')
-    expect(delivered).toEqual([`w1-4: ${mod.NEXT_STEP_PROMPT}`])
+    expect(delivered).toEqual([`w1-4: ${NEXT}`])
     await check.turnEnded('w1-4')
     expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ who: 'lasse', why: mod.NO_NEXT_STEP })])
   })
@@ -234,7 +246,7 @@ describe('next-step check', () => {
     expect(delivered).toEqual([])
     later(state, 1)
     await check.tick()
-    expect(delivered).toEqual([`own-10: ${mod.OWN_STATUS_PROMPT}`])
+    expect(delivered).toEqual([`own-10: ${CALL}`])
     // The turn the prompt started is its answer: not checked again, and nothing waits on the user.
     await check.turnEnded('own-10', { handoff: false, endedAt: state.now.toISOString() })
     later(state, mod.UNSEEN_GRACE_MS)
@@ -287,7 +299,7 @@ describe('next-step check', () => {
     expect(delivered).toEqual([])
     state.working = false
     await check.tick()
-    expect(delivered).toEqual([`own-12: ${mod.OWN_STATUS_PROMPT}`])
+    expect(delivered).toEqual([`own-12: ${CALL}`])
   })
 
   it('checks a worker left open in a pane once its answer stays unseen, not while the user has seen it', async () => {
@@ -306,11 +318,75 @@ describe('next-step check', () => {
     expect(unseen.delivered).toEqual([])
     later(unseen.state, mod.UNSEEN_GRACE_MS)
     await unseen.check.tick()
-    expect(unseen.delivered).toEqual([`w2-13: ${mod.NEXT_STEP_PROMPT}`])
+    expect(unseen.delivered).toEqual([`w2-13: ${NEXT}`])
   })
 
-  it('asks a session for status first, then its full answer as visible text, not one line', () => {
-    expect(mod.OWN_STATUS_PROMPT).not.toContain('one line')
-    expect(mod.OWN_STATUS_PROMPT).toContain('Then write your full answer as visible text, ending with the question if there is one')
+  it('checks a session by its task: one handed to an agent gets the full check, also when the user started the session', async () => {
+    const { ledger, brain, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } })
+    ledger.recordSpawn('own-15', null, 'bp-eml', 'claude', false, 't1')
+    ledger.setRuntime('own-15', 'sdk')
+    await check.turnEnded('own-15')
+    expect(delivered).toEqual([`own-15: ${reminder(['next'])}`])
+    await check.turnEnded('own-15')
+    expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ id: 'own-15', kind: 'stopped', why: mod.NO_NEXT_STEP })])
+  })
+
+  it('sends no reminder when the turn\'s call left a next step: a wait on another member, or a check', async () => {
+    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', waits: [{ id: 'w1-16', who: 'dominik', kind: 'review', why: 'check the numbers', since: '2026-11-19T09:30:00.000Z', session_id: 'w1-16' }] } } }
+    const waited = setup(tasks)
+    waited.ledger.recordSpawn('w1-16', null, 'bp-eml', 'claude', true, 't1')
+    await waited.check.turnEnded('w1-16', { handoff: false, endedAt: waited.state.now.toISOString(), call: { result: 'Numbers are with Dominik', next: { who: 'dominik', what: 'check the numbers' } } })
+    expect(waited.delivered).toEqual([])
+    expect(waited.brain.posts).toEqual([])
+
+    // next names the agent itself with a time: the check is a job of the task by the time the turn ends.
+    const scheduled = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } }, { jobs: [job({ nextRunAt: '2026-11-27T10:00:00Z' })] })
+    scheduled.ledger.recordSpawn('w2-16', null, 'bp-eml', 'claude', true, 't1')
+    await scheduled.check.turnEnded('w2-16', { handoff: false, endedAt: scheduled.state.now.toISOString(), call: { result: 'No answer yet', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } } })
+    expect(scheduled.delivered).toEqual([])
+    expect(scheduled.brain.posts).toEqual([])
+  })
+
+  it('sends no second reminder to a turn the chat already sent back: the task waits on the user at once', async () => {
+    const { ledger, brain, check, delivered, waited, state } = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } })
+    ledger.recordSpawn('w1-17', null, 'bp-eml', 'claude', true, 't1')
+    await check.turnEnded('w1-17', { handoff: false, endedAt: state.now.toISOString(), call: { result: 'Half done' }, reminded: true })
+    expect(delivered).toEqual([])
+    expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ id: 'w1-17', kind: 'stopped', why: mod.NO_NEXT_STEP })])
+    expect(waited).toEqual(['w1-17'])
+  })
+
+  it('sends an own session nothing when its turn was already sent back', async () => {
+    const { ledger, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: {} } })
+    ledger.recordSpawn('own-18', null, 'bp-eml', 'claude', false, 't1')
+    ledger.setRuntime('own-18', 'sdk')
+    await check.turnEnded('own-18', { handoff: false, endedAt: state.now.toISOString(), reminded: true })
+    later(state, mod.UNSEEN_GRACE_MS)
+    await check.tick()
+    expect(delivered).toEqual([])
+  })
+
+  it('sends nothing when the task was closed after the turn ended, while the check was put off', async () => {
+    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } }
+    const { ledger, brain, check, delivered, state } = setup(tasks, { watched: true })
+    ledger.recordSpawn('w1-19', null, 'bp-eml', 'claude', true, 't1')
+    await check.turnEnded('w1-19')
+    tasks.t1.status = 'invalidated'
+    state.watched = false
+    await check.tick()
+    expect(delivered).toEqual([])
+    expect(brain.posts).toEqual([])
+  })
+
+  it('tells a chat session to call and a terminal the way without the tool', async () => {
+    const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: {} } })
+    ledger.recordSpawn('w1-20', null, 'bp-eml', 'claude', true, 't1')
+    ledger.recordSpawn('w2-20', null, 'bp-eml', 'claude', true, 't1')
+    ledger.setRuntime('w1-20', 'sdk')
+    ledger.archive('w2-20')
+    await check.turnEnded('w1-20')
+    expect(delivered).toEqual([`w1-20: ${reminder(['next'])}`])
+    expect(NEXT).not.toBe(reminder(['next']))
+    expect(NEXT).toContain('Handoff block')
   })
 })
