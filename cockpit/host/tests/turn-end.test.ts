@@ -24,7 +24,7 @@ describe('reading an end_turn call', () => {
     expect(error(null)).toContain('result is missing')
     expect(error({ result: 'x', next: { what: 'review' } })).toContain('next.who is missing')
     expect(error({ result: 'x', next: { who: 'outside: ', what: 'answers' } })).toContain('without a name')
-    expect(error({ result: 'x', next: { who: 'me', what: 'check', when: 'tomorrow' } })).toBe('Not recorded: next.when "tomorrow" is not a time. Write it like 2026-11-27T10:00. Call end_turn again.')
+    expect(error({ result: 'x', next: { who: 'me', what: 'check', when: 'tomorrow' } })).toBe('Not recorded: next.when "tomorrow" is not a time. Write it as YYYY-MM-DDTHH:MM. Call end_turn again.')
     expect(readEndTurn({ result: 'x', next: { who: 'me', what: 'check', when: '2026-11-27T10:00:00+01:00' } }).ok).toBe(true)
   })
 
@@ -269,7 +269,7 @@ describe('the texts', () => {
   })
 
   it('a next step for someone else without a time says the time is missing', () => {
-    const WHEN_MISSING = "A next step for anyone but the user needs a time. Call end_turn with next.when: the time you look again, like 2026-11-27T10:00 in the user's time zone."
+    const WHEN_MISSING = "A next step for anyone but the user needs a time. Call end_turn with next.when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone."
     const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.' } }
     expect(endTurnAnswer(own, deriveTurn(own, ctx), { missing: missingOf(own, { taskOpen: true, ctx }) }))
       .toBe(`Recorded: where the task stands, but no next step. ${WHEN_MISSING} Now write your reply as visible text.`)
@@ -282,7 +282,7 @@ describe('the texts', () => {
   })
 
   it('a check that could not be set is not answered as set: what was recorded, then that the check was not', () => {
-    const CALL_AGAIN = "Call end_turn again with another next.when (the time you look again, like 2026-11-27T10:00 in the user's time zone)."
+    const CALL_AGAIN = "Call end_turn again with another next.when (the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone)."
     const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.', when: '2028-01-01T10:00' } }
     expect(endTurnAnswer(own, deriveTurn(own, ctx), { checkProblem: 'at: at most a year ahead' }))
       .toBe(`Recorded: where the task stands, but no next step. The check at 2028-01-01T10:00 was NOT set: at most a year ahead. ${CALL_AGAIN} Now write your reply as visible text.`)
@@ -311,7 +311,7 @@ describe('the texts', () => {
     for (const text of texts.filter((t) => t !== reminder(['reply']))) expect(text).toContain('end_turn')
     expect(END_TURN_DESCRIPTION).toContain('Make no call for a turn that is plain conversation.')
     expect(END_TURN_DESCRIPTION).toContain('Call it first, then write your reply once as visible text, as the last thing in the turn: the user reads only that, never the call or your thinking.')
-    expect(END_TURN_DESCRIPTION).toContain("when: the time you look again, like 2026-11-27T10:00 in the user's time zone; required unless who is the user, where it is not used.")
+    expect(END_TURN_DESCRIPTION).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone; required unless who is the user, where it is not used.")
     expect(turnEndRules({ owner: 'kim', agent: 'nova', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are nova.')
   })
 

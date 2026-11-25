@@ -105,7 +105,8 @@ function writtenWho(who: string, ctx: Pick<TurnContext, 'owner' | 'agent' | 'mem
 
 // ── Reading a call ───────────────────────────────────────────────────────────
 
-const WHEN_EXAMPLE = '2026-11-27T10:00'
+/** How a when is written. A pattern, not a date: an example date would lie in the past soon, and a copy of it be refused. */
+const WHEN_FORMAT = 'YYYY-MM-DDTHH:MM'
 
 /** The tool's input as the model sends it. Loose on purpose: readEndTurn refuses with words the agent can act on. */
 export const END_TURN_INPUT = {
@@ -141,7 +142,7 @@ export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: f
   if (who) {
     if (who.toLowerCase().startsWith(OUTSIDE) && !who.slice(OUTSIDE.length).trim()) return refused(`next.who is ${OUTSIDE} without a name.`)
     // Any zone will do: whether it reads as a time does not depend on it.
-    if (when && parseAt(when, 'UTC') === null) return refused(`next.when "${when}" is not a time. Write it like ${WHEN_EXAMPLE}.`)
+    if (when && parseAt(when, 'UTC') === null) return refused(`next.when "${when}" is not a time. Write it as ${WHEN_FORMAT}.`)
     call.next = { who: who.replace(/^@/, ''), what, ...(when ? { when } : {}) }
   } else if (what || when) {
     return refused(`next.who is missing (${FIELD.who}).`)
@@ -230,7 +231,7 @@ const FIELD = {
   result: 'where the task stands now, in one sentence',
   who: `the handle of the user, of another member or agent, or your own; ${OUTSIDE}<name> for someone outside the space`,
   what: 'what they do',
-  when: `the time you look again, like ${WHEN_EXAMPLE} in the user's time zone`,
+  when: `the time you look again, as ${WHEN_FORMAT} in the user's time zone`,
   questions: 'what only the user can decide',
   failed: 'what went wrong, in one sentence',
   checked: 'what you verified yourself',
