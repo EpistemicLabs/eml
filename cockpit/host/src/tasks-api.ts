@@ -79,6 +79,7 @@ type SplitRefusalCode = Extract<SplitAnswer, { ok: false }>['refusal']
 const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
   invalid: 'The split needs an opId, a title, a brief, how it relates (spun · sub · unrelated) and when (now · park).',
   sub_needs_task: 'A sub-task needs a task to hang under, and this session has none.',
+  no_project: 'The new task needs a project of the brain, and this session has none: pick a project for it.',
   unknown_session: 'No such session.',
   unknown_project: 'No such project in this session\'s space.',
   unknown_task: 'That task is not open (or not in this space).',
@@ -89,7 +90,7 @@ const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
 }
 
 const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
-  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
+  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, no_project: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
 }
 
 function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode): void {
@@ -243,6 +244,7 @@ export async function handleTasksApi(
     else {
       const [status, message] = result.refusal === 'unknown_session' ? [404, 'No such session.']
         : result.refusal === 'no_task' ? [409, 'Sorting needs a task on the session.']
+          : result.refusal === 'no_project' ? [409, 'New tasks go into the project of the session\'s task, and it has none: move that task into a project first.']
           : result.refusal === 'in_flight' ? [409, 'This sort is still running.']
             : [503, 'The space has no brain to write to right now.']
       json(res, status, { error: { code: result.refusal, message, retry: result.refusal === 'no_brain' || result.refusal === 'in_flight' } })

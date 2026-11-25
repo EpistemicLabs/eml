@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ownerOf, runsHere } from '../src/domain/task-owner.js'
+import { ownerOf, ownersFor, projectScope, runsHere } from '../src/domain/task-owner.js'
 
 describe('who owns a task', () => {
   it('is the first assignee, else the author', () => {
@@ -16,5 +16,16 @@ describe('who owns a task', () => {
     expect([theirs, mine, nobodys].map((t) => runsHere(false, t, 'lasse'))).toEqual([true, true, true])
     expect([theirs, mine, nobodys].map((t) => runsHere(true, t, 'lasse'))).toEqual([false, true, false])
     expect([theirs, mine, nobodys].map((t) => runsHere(null, t, 'lasse'))).toEqual([false, true, false])
+  })
+
+  it('a task the cockpit makes takes the owners of the task it comes from, else the member', () => {
+    expect(ownersFor({ properties: { assignee_ids: ['dominik', 'lasse'] } }, 'lasse')).toEqual(['dominik', 'lasse'])
+    expect(ownersFor({ properties: { assignee_ids: [] }, ingested_by: 'dominik' }, 'lasse')).toEqual(['lasse'])
+    expect(ownersFor(null, 'lasse')).toEqual(['lasse'])
+  })
+
+  it('goes into a project scope only', () => {
+    expect(projectScope('project.eml')).toBe('project.eml')
+    expect([projectScope('global'), projectScope('agent.sachi'), projectScope(undefined)]).toEqual([null, null, null])
   })
 })

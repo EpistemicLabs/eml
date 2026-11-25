@@ -29,14 +29,16 @@ export interface SplitRequest {
   brief: string
   relation: SplitRelation
   when: SplitWhen
-  /** The brain scope of the new task (project.<id>). */
-  scope: string
+  /** The brain scope of the new task (project.<id>); null when the session has no project of the brain to give it. */
+  scope: string | null
+  /** The new task's owners (domain/task-owner.ts ownersFor). */
+  owners: string[]
   /** An open task the topic already has: the split goes there instead of making a new one. */
   existing?: { id: string; title: string }
 }
 
 export interface SplitPlan {
-  task: { title: string; display_title?: string; content: string; scope: string; status: 'active' | 'planned'; parent_id?: string } | null
+  task: { title: string; display_title?: string; content: string; scope: string; status: 'active' | 'planned'; assignee_ids: string[]; parent_id?: string } | null
   /** Link the new task to the session's task as the task it was spun off from (derived_from). */
   originLink: boolean
   journal: { created?: string; source?: string; existing?: string }
@@ -44,7 +46,7 @@ export interface SplitPlan {
   spawn: boolean
 }
 
-export type SplitRefusal = 'invalid' | 'sub_needs_task'
+export type SplitRefusal = 'invalid' | 'sub_needs_task' | 'no_project'
 
 export function planSplit(source: SplitSource, request: SplitRequest): { ok: true; plan: SplitPlan } | { ok: false; refusal: SplitRefusal } {
   const title = request.title.trim()
@@ -77,12 +79,17 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   const status = spawn ? 'active' as const : 'planned' as const
   const body = `${title}\n\n${brief}`
 
+  if (!hasTask && spawn) return { ok: true, plan: { task: null, originLink: false, journal: {}, spawn: true } }
+  // A new task belongs to a project of the brain.
+  const scope = request.scope
+  if (scope === null) return { ok: false, refusal: 'no_project' }
+  const owned = { scope, assignee_ids: request.owners }
+
   if (!hasTask) {
-    if (spawn) return { ok: true, plan: { task: null, originLink: false, journal: {}, spawn: true } }
     return {
       ok: true,
       plan: {
-        task: { title: anchor, ...named, content: `${body}\n\nCame up in session ${source.sessionTitle}.`, scope: request.scope, status },
+        task: { title: anchor, ...named, content: `${body}\n\nCame up in session ${source.sessionTitle}.`, ...owned, status },
         originLink: false,
         journal: {},
         spawn: false,
@@ -98,7 +105,7 @@ export function planSplit(source: SplitSource, request: SplitRequest): { ok: tru
   return {
     ok: true,
     plan: {
-      task: { title: anchor, ...named, content: body, scope: request.scope, status, ...(request.relation === 'sub' ? { parent_id: source.taskId! } : {}) },
+      task: { title: anchor, ...named, content: body, ...owned, status, ...(request.relation === 'sub' ? { parent_id: source.taskId! } : {}) },
       originLink: request.relation === 'spun',
       journal,
       spawn,

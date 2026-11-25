@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planSplit, type SplitRefusal, type SplitRelation, type SplitWhen } from '../domain/split.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
+import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 
 /**
  * Split off a topic from a session (domain/split.ts plans it): make the task and its link, write both
@@ -46,6 +47,8 @@ export interface SplitSessionDeps {
   changed(): void
   now(): number
   log(line: string): void
+  /** This cockpit's member: the new task's owner when the session's task names none. */
+  me: string
 }
 
 export type SplitAnswer =
@@ -70,7 +73,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
   const running = new Set<string>()
 
   const taskOf = async (brain: Pick<EmlApi, 'get'>, taskId: string) =>
-    (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as { title?: string | null; scope?: string; status?: string } | null
+    (await brain.get(`/engram/${encodeURIComponent(taskId)}`).catch(() => null)) as ({ title?: string | null; scope?: string; status?: string } & OwnedTask) | null
 
   return {
     async submit(input: SplitInput): Promise<SplitAnswer> {
@@ -95,8 +98,8 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const brain = deps.brain(space)
       const sourceTask = facts.taskId
       const source = sourceTask && brain ? await taskOf(brain, sourceTask) : null
-      // A folder project has no brain project: the new task goes where the session's task is.
-      const scope = brainProject ? `project.${brainProject}` : source?.scope ?? 'global'
+      // A folder project has no brain project: the new task goes into the project of the session's task, if it has one.
+      const scope = brainProject ? `project.${brainProject}` : projectScope(source?.scope)
       let existingTask: { id: string; title: string } | undefined
       if (input.existingTaskId) {
         const found = brain ? await taskOf(brain, input.existingTaskId) : null
@@ -105,7 +108,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
       }
       const planned = planSplit(
         { sessionId: input.sessionId, sessionTitle: facts.title, taskId: sourceTask, taskTitle: source?.title ?? null },
-        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope, ...(existingTask ? { existing: existingTask } : {}) },
+        { title: input.title, brief: input.brief, relation: input.relation, when: input.when, scope, owners: ownersFor(source, deps.me), ...(existingTask ? { existing: existingTask } : {}) },
       )
       if (!planned.ok) return planned
       const { plan } = planned

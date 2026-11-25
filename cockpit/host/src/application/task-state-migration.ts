@@ -148,6 +148,11 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
         if (!job || job.taskId) continue
         const projectId = job.target.type === 'session' ? null : job.target.projectId
         const brainProject = projectId ? brainIdFromProjectId(projectId) : null
+        // A task belongs to a project of the brain: a job without one keeps running without a task.
+        if (!brainProject) {
+          failed.push(`job ${job.id.slice(0, 8)}: no project of the brain, so no task`)
+          continue
+        }
         try {
           const title = routineTitle(job)
           const before = await brain.get('/list', { type: 'task', title, limit: 1 }) as { engrams?: Array<{ id: string }> }
@@ -159,7 +164,7 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
             title,
             display_title: job.name.slice(0, 80),
             content: job.prompt.slice(0, 2000),
-            scope: brainProject ? `project.${brainProject}` : 'global',
+            scope: `project.${brainProject}`,
             status: 'active',
             assignee_ids: [deps.viewer],
           }) as { id: string }

@@ -3,7 +3,7 @@ import { planSplit, type SplitSource } from '../src/domain/split.js'
 
 const withTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: 't-root', taskTitle: 'session-review-ui' }
 const noTask: SplitSource = { sessionId: 's1', sessionTitle: 'Session review', taskId: null, taskTitle: null }
-const request = { title: 'Media viewer', brief: 'Goal: open files in the cockpit.', scope: 'project.ui' }
+const request = { title: 'Media viewer', brief: 'Goal: open files in the cockpit.', scope: 'project.ui' as string | null, owners: ['lasse'] }
 
 describe('splitting off a topic', () => {
   it('spun off: its own task, linked to the task it came from, journaled on both', () => {
@@ -11,7 +11,7 @@ describe('splitting off a topic', () => {
     expect(plan).toEqual({
       ok: true,
       plan: {
-        task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', status: 'active' },
+        task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.', scope: 'project.ui', assignee_ids: ['lasse'], status: 'active' },
         originLink: true,
         journal: { created: 'Spun off from session-review-ui (session Session review).', source: 'Media viewer was spun off here as its own task.' },
         spawn: true,
@@ -40,7 +40,7 @@ describe('splitting off a topic', () => {
   it('without the task system, parking makes one ordinary task that says where it came up', () => {
     const plan = planSplit(noTask, { ...request, relation: 'unrelated', when: 'park' })
     expect(plan.ok && plan.plan).toEqual({
-      task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.\n\nCame up in session Session review.', scope: 'project.ui', status: 'planned' },
+      task: { title: 'media-viewer', display_title: 'Media viewer', content: 'Media viewer\n\nGoal: open files in the cockpit.\n\nCame up in session Session review.', scope: 'project.ui', assignee_ids: ['lasse'], status: 'planned' },
       originLink: false, journal: {}, spawn: false,
     })
   })

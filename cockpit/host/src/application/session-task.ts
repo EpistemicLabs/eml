@@ -5,6 +5,7 @@ import type { SessionLedger } from '../session-ledger.js'
 import { LEAD_HANDOFF } from '../domain/project-lead.js'
 import { MAX_RUNNING } from '../domain/runner-gate.js'
 import { parentOf } from '../domain/task-relations.js'
+import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
 
 /**
@@ -33,6 +34,8 @@ export interface SessionTaskDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The task a job is attached to (domain/job.ts taskId): a run of the job works on it. */
   jobTask?: (jobId: string) => string | null
+  /** This cockpit's member: the owner of a session's task when the task it comes from names none. */
+  me: string
   now?: () => Date
 }
 
@@ -176,7 +179,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
     return brain ? { entry, brain } : null
   }
 
-  const create = async (sessionId: string, brain: Pick<EmlApi, 'post'>): Promise<string | null> => {
+  const create = async (sessionId: string, brain: Pick<EmlApi, 'get' | 'post'>): Promise<string | null> => {
     const entry = deps.ledger.get(sessionId)!
     const parentTask = deps.ledger.expectedTaskParent(sessionId)
     const requester = entry.parentSessionId ? deps.ledger.get(entry.parentSessionId) : undefined
@@ -185,15 +188,25 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
     const from = entry.parentSessionId
       ? ` Started by session ${requester?.title ?? requester?.agentTitle ?? entry.parentSessionId}${requester?.taskId ? ` (its task ${requester.taskId})` : ''}.`
       : ''
+    // The task it comes from (its parent, else the requester's task) lends its owners, and its project when the
+    // session's own project is not one of the brain (a folder-only project, or one the brain does not know).
+    const originId = parentTask ?? requester?.taskId ?? null
+    const origin = originId ? await brain.get(`/engram/${originId}`).catch(() => null) as (OwnedTask & { scope?: string }) | null : null
     const body = {
       title: placeholderTitle(sessionId, now()),
       content: `The work of cockpit session ${sessionId}; the task gets its name once the work is clear.${from}`,
       status: 'active',
+      assignee_ids: ownersFor(origin, deps.me),
       ...(parentTask ? { parent_id: parentTask } : {}),
     }
     const post = (scope: string) => brain.post('/engram/task', { ...body, scope }) as Promise<Task>
-    // A project the brain does not know refuses the scope; the task then lives in global.
-    const task = brainId ? await post(`project.${brainId}`).catch(() => post('global')) : await post('global')
+    const own = brainId ? `project.${brainId}` : null
+    const fallback = projectScope(origin?.scope)
+    const task = own
+      ? await post(own).catch((err) => { if (fallback && fallback !== own) return post(fallback); throw err })
+      : fallback ? await post(fallback) : null
+    // No project to file it in: the session works without a task rather than with one outside every project.
+    if (!task) return null
     deps.ledger.setTask(sessionId, task.id, true)
     return task.id
   }
