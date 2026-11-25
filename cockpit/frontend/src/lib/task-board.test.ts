@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 import { setTimeZoneForTest } from './time-zone';
 
@@ -406,18 +406,27 @@ describe('an earlier session in one line', () => {
   });
 });
 
-describe('taskNamesKey', () => {
+describe('taskSessionsKey', () => {
   it('changes when any task is renamed, closed and lineage ones included, and not when only the order moves', () => {
     const a = task({ id: 'a', title: 'fix-stock', displayTitle: 'Fix the stock' });
     const b = task({ id: 'b', title: 'plain-anchor' });
     const closed = { ...task({ id: 'c', title: 'done-one' }), closedAt: null } as never;
     const lineage = { id: 'l', spaceId: 'main', project: 'acme', title: 'root', status: 'resolved', parentId: null, originId: null };
-    const key = taskNamesKey({ tasks: [a, b], closed: [closed], lineage: [lineage] });
-    expect(taskNamesKey({ tasks: [b, a], closed: [closed], lineage: [lineage] })).toBe(key);
-    expect(taskNamesKey({ tasks: [{ ...a, displayTitle: 'Fix the stock answers' }, b], closed: [closed], lineage: [lineage] })).not.toBe(key);
-    expect(taskNamesKey({ tasks: [a, { ...b, title: 'other-anchor' }], closed: [closed], lineage: [lineage] })).not.toBe(key);
-    expect(taskNamesKey({ tasks: [a, b], closed: [{ ...(closed as object), displayTitle: 'Renamed' } as never], lineage: [lineage] })).not.toBe(key);
-    expect(taskNamesKey({ tasks: [a, b], closed: [closed], lineage: [{ ...lineage, displayTitle: 'Root' }] })).not.toBe(key);
-    expect(taskNamesKey({ tasks: [a, b] })).toBe(taskNamesKey({ tasks: [a, b], closed: [], lineage: [] }));
+    const key = taskSessionsKey({ tasks: [a, b], closed: [closed], lineage: [lineage] });
+    expect(taskSessionsKey({ tasks: [b, a], closed: [closed], lineage: [lineage] })).toBe(key);
+    expect(taskSessionsKey({ tasks: [{ ...a, displayTitle: 'Fix the stock answers' }, b], closed: [closed], lineage: [lineage] })).not.toBe(key);
+    expect(taskSessionsKey({ tasks: [a, { ...b, title: 'other-anchor' }], closed: [closed], lineage: [lineage] })).not.toBe(key);
+    expect(taskSessionsKey({ tasks: [a, b], closed: [{ ...(closed as object), displayTitle: 'Renamed' } as never], lineage: [lineage] })).not.toBe(key);
+    expect(taskSessionsKey({ tasks: [a, b], closed: [closed], lineage: [{ ...lineage, displayTitle: 'Root' }] })).not.toBe(key);
+    expect(taskSessionsKey({ tasks: [a, b] })).toBe(taskSessionsKey({ tasks: [a, b], closed: [], lineage: [] }));
+  });
+
+  it('changes when a task closes or its wait moves to another session: its sessions may no longer wait for you', () => {
+    const a = task({ id: 'a', title: 'fix-stock', status: 'active' });
+    const key = taskSessionsKey({ tasks: [a] });
+    expect(taskSessionsKey({ tasks: [{ ...a, status: 'resolved' }] })).not.toBe(key);
+    const waiting = { ...a, waitingOn: { who: 'lasse', kind: 'question' as const, why: 'Which one?', since: '2026-11-25T10:00:00Z', session_id: 's1' } };
+    expect(taskSessionsKey({ tasks: [waiting] })).not.toBe(key);
+    expect(taskSessionsKey({ tasks: [{ ...waiting, waitingOn: { ...waiting.waitingOn, why: 'Reworded' } }] })).toBe(taskSessionsKey({ tasks: [waiting] }));
   });
 });

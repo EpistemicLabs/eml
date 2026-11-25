@@ -79,3 +79,31 @@ export function attentionAfterTurn(facts: TurnFacts & { reason: 'success' | 'err
   if (!facts.alone || facts.clients > 0 || facts.declared || facts.reason === 'interrupted') return null
   return facts.reason === 'error' ? 'failed' : 'review'
 }
+
+/** Where the board saw a session's task stand: open or not, the sessions its waits came from, and when it looked. */
+export interface TaskWaitsSeen {
+  open: boolean
+  /** The sessions whose turn put a wait on the task (a wait's session_id, else its id). */
+  sessions: ReadonlySet<string>
+  /** When the board read the task (ISO). */
+  at: string
+}
+
+/**
+ * Whether a session still waits for someone, as the lists show it. The session keeps why its last turn stopped
+ * (`attention`), and the router turns that into a wait on its task (application/task-router.ts). Once it has, the task
+ * is the one source: a closed task waits on nobody, a reopen clears its waits, and a wait the owner answered is gone. So
+ * a session on a task the board holds waits only while the task still has its wait. The session's own mark counts
+ * alone where the task cannot say: no task, a task the board does not hold, or a mark the router has not carried over
+ * yet (`unrouted`, or set after the board last read the task). On an open task only what asks for an answer (question,
+ * failed) is checked against its waits: the router always makes those a wait, while a review or done it may leave out.
+ */
+export function attentionShown<A extends { kind: WorkerStatus; at: string }>(
+  attention: A | null, facts: { unrouted: boolean; task: TaskWaitsSeen | null; sessionId: string },
+): A | null {
+  const { task } = facts
+  if (!attention || !task || facts.unrouted || attention.at > task.at) return attention
+  if (!task.open) return null
+  if (!needsAnswer(attention.kind)) return attention
+  return task.sessions.has(facts.sessionId) ? attention : null
+}

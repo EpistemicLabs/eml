@@ -166,6 +166,31 @@ describe('the schedule mirror', () => {
     expect(brain.reads()).toBe(1)
   })
 
+  it('clears the schedule its last job left on a closed task it owns; another member\'s closed task and a closed task whose job still runs keep theirs', async () => {
+    const schedule = { at: '2026-11-25T20:40:00.000Z', time_zone: 'UTC', session: 'resume' }
+    const tasks: Record<string, { status: string; properties: Record<string, unknown> }> = {
+      t1: { status: 'active', properties: { assignee_ids: ['lasse'], delegation: { agent: 'atlas', checkpoint: 'before' } } },
+      theirs: { status: 'resolved', properties: { assignee_ids: ['dominik'], delegation: { agent: 'motti', schedule } } },
+      running: { status: 'resolved', properties: { assignee_ids: ['lasse'], delegation: { agent: 'atlas', schedule } } },
+    }
+    const brain = brainOf(tasks)
+    // A check: a one-time job that resumes the session.
+    const check = job({ triggers: [{ type: 'schedule', at: '2026-11-25T20:40', timeZone: 'UTC' }], target: { type: 'session', sessionId: 's1' }, nextRunAt: '2026-11-25T20:40:00.000Z' })
+    const jobs = [check, job({ id: 'j-theirs', taskId: 'theirs', endedAt: '2026-11-25T14:00:00.000Z' }), job({ id: 'j-running', taskId: 'running' })]
+    const { mirror } = setup(brain, jobs)
+    await mirror.sync()
+    expect(brain.posts.map((p) => [p.path, p.body.delegation])).toEqual([['/task/t1/track', { agent: 'atlas', checkpoint: 'before', schedule }]])
+    // Its check is removed and the task closed before the next sync.
+    jobs.splice(0, 1)
+    tasks.t1.status = 'resolved'
+    brain.posts.length = 0
+    await mirror.sync()
+    expect(brain.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'before' } } }])
+    // Nothing is left to do for it: the next syncs leave it alone.
+    await mirror.sync()
+    expect(brain.posts).toHaveLength(1)
+  })
+
   it('a task without a delegation gets one for the space\'s agent, without a checkpoint or a request; a closed task is left alone', async () => {
     const brain = brainOf({ t1: { status: 'planned', properties: {} }, t2: { status: 'resolved', properties: {} } })
     const { mirror } = setup(brain, [job(), job({ id: 'j2', taskId: 't2' })])

@@ -16,7 +16,7 @@ import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
 import JobsView from '../jobs/JobsView';
 import { TaskBoard } from '../task-board/TaskBoard';
-import { taskNamesKey, useTaskBoard } from '@/lib/task-board';
+import { taskSessionsKey, useTaskBoard } from '@/lib/task-board';
 import { loadTimeZone } from '@/lib/time-zone';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
@@ -127,16 +127,17 @@ function AppContentInner() {
   projectsBySpaceRef.current = projectsBySpace;
   const refreshProjectsRef = React.useRef(refreshProjectsSilently);
   refreshProjectsRef.current = refreshProjectsSilently;
-  // A session with a task is called by its task: a task renamed anywhere renames its sessions in the list too.
+  // A session with a task is called by its task and waits for you only while its task does: a task renamed, closed or
+  // answered anywhere changes its sessions in the list too.
   const { data: taskBoard } = useTaskBoard();
-  const taskNames = taskBoard ? taskNamesKey(taskBoard) : null;
-  const seenTaskNamesRef = React.useRef<string | null>(null);
+  const taskSessions = taskBoard ? taskSessionsKey(taskBoard) : null;
+  const seenTaskSessionsRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (taskNames === null) return;
-    // The first board too: the list may have been named before the host had a board.
-    if (seenTaskNamesRef.current !== taskNames) void refreshProjectsRef.current();
-    seenTaskNamesRef.current = taskNames;
-  }, [taskNames]);
+    if (taskSessions === null) return;
+    // The first board too: the list may have been read before the host had a board.
+    if (seenTaskSessionsRef.current !== taskSessions) void refreshProjectsRef.current();
+    seenTaskSessionsRef.current = taskSessions;
+  }, [taskSessions]);
   const { data: providers } = useProviders();
   paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
   const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;

@@ -9,7 +9,7 @@ import { sameSchedule, scheduleOfJobs } from '../domain/task-schedule.js'
  * schedule lives in the brain: every member sees when it runs next, and the runner holds it meanwhile.
  *
  * Per task with a job here: the schedule its jobs give it (the running job due first). It is written when it differs
- * from what the task has; a task none of whose jobs has a time left loses its schedule. A task without a delegation
+ * from what the task has; a task none of whose jobs has a time left loses its schedule, a closed one too. A task without a delegation
  * gets one for the space's agent (no checkpoint, no request: the job starts it, not the runner). Only tasks with a job on
  * this cockpit and owned by its member (or by nobody) are touched — another member's schedules are theirs. The brain is read only when a task's schedule here
  * changed since the last sync, or every RECHECK_MS.
@@ -69,17 +69,30 @@ export function createScheduleMirror(deps: ScheduleMirrorDeps): ScheduleMirror {
       if (seen && sameSchedule(seen.schedule, wanted) && now - seen.at < RECHECK_MS) continue
       try {
         const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as Task
-        if (task.status !== 'planned' && task.status !== 'active') { known.set(key, { schedule: wanted, at: now }); mine.delete(taskId); continue }
+        const open = task.status === 'planned' || task.status === 'active'
         // One writer per schedule: the owner's cockpit (the first person in assignee_ids). Another member's job on the
         // task runs on that member's cockpit but leaves the shared schedule to the owner's.
         const owner = task.properties?.assignee_ids?.[0]
         if (owner && owner !== deps.me) {
-          if (!seen) deps.log(`[schedule] task ${taskId.slice(0, 8)}: owned by another member, its schedule is left to their cockpit`)
+          if (!seen && open) deps.log(`[schedule] task ${taskId.slice(0, 8)}: owned by another member, its schedule is left to their cockpit`)
           known.set(key, { schedule: wanted, at: now })
+          if (!open) mine.delete(taskId)
           continue
         }
         const d = task.properties?.delegation ?? (task.properties?.delegate ? { agent: task.properties.delegate, ...(task.properties.checkpoint ? { checkpoint: task.properties.checkpoint } : {}) } : undefined)
         const current = d?.schedule ?? null
+        if (!open) {
+          // A closed task gets no schedule: a job that still comes due reopens it first (task-commands.ts reopenForRun)
+          // and the next sync mirrors it then. One its last job left behind is cleared, so no member's board shows a
+          // next run on a done task.
+          if (current && !wanted && d) {
+            const { schedule: _old, ...rest } = d
+            await brain.post(`/task/${taskId}/track`, { delegation: rest })
+          }
+          known.set(key, { schedule: wanted, at: now })
+          mine.delete(taskId)
+          continue
+        }
         if (!sameSchedule(current, wanted)) {
           if (wanted) {
             const agent = d?.agent ?? deps.agentOf(space)
