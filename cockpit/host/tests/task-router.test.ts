@@ -130,6 +130,27 @@ describe('task router', () => {
     expect(ledger.get('s1')!.attention).toBeFalsy()
   })
 
+  it('does not read the chat\'s flag on a worker that said nothing as a review hand-over, but a status it gave still is one', async () => {
+    const silent = setup({ id: 't1', status: 'active', properties: { checkpoint: 'after', delegate: 'atlas' } })
+    silent.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    // attentionAfterTurn: the worker stopped without a call, a handoff or a status.
+    silent.ledger.setAttention('s1', { kind: 'review', reason: null })
+    await silent.r.turnEnded('s1', 'OK', null, { unsaid: true })
+    expect(silent.brain.posts).toHaveLength(0)
+
+    const failed = setup({ id: 't1', status: 'active', properties: {} })
+    failed.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    failed.ledger.setAttention('s1', { kind: 'failed', reason: null })
+    await failed.r.turnEnded('s1', '', null, { unsaid: true })
+    expect(waitsOfTask(failed.brain)).toMatchObject([{ who: 'lasse', kind: 'stopped' }])
+
+    const told = setup({ id: 't1', status: 'active', properties: {} })
+    told.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    told.ledger.setAttention('s1', { kind: 'review', reason: 'Report' })
+    await told.r.turnEnded('s1', 'Done.', null, { unsaid: false })
+    expect(waitsOfTask(told.brain)).toMatchObject([{ who: 'lasse', kind: 'review', why: 'Review: Report' }])
+  })
+
   describe('from an end_turn call', () => {
     const SPACE = { shared: true, agent: 'atlas' }
     const HANDLES = ['lasse', 'dominik', 'atlas', 'motti']

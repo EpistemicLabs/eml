@@ -30,6 +30,11 @@ import { NO_AGENT } from './turn-context.js'
  *     opens the session. The session itself is not marked as waiting: it
  *     finished its turn, and the question is the task's (decision
  *     handoff-questions-inbox-only).
+ *   - A worker that ended its turn without saying how it stands is flagged for
+ *     a look by the chat (domain/session-attention.ts attentionAfterTurn). That
+ *     flag is no hand-over and puts no review on the task: the next-step check
+ *     (application/next-step.ts) finds the task without a next step and puts
+ *     it on the user as stopped.
  *   - A block that names nobody is read as before: a step with checkpoint
  *     "after" that handed over a result, or any session that said review, waits
  *     for the user's review; one that said question or failed, for the user.
@@ -118,8 +123,11 @@ export function decideWaiting(facts: {
 }
 
 export interface TaskRouter {
-  /** A session's turn ended; `message` is its last reply, `call` the end_turn call it made. Never throws. */
-  turnEnded(sessionId: string, message: string, call?: EndTurn | null): Promise<void>
+  /**
+   * A session's turn ended; `message` is its last reply, `call` the end_turn call it made. `unsaid`: the session
+   * did not say how it stands in this turn, so a review flag on it is the chat's own. Never throws.
+   */
+  turnEnded(sessionId: string, message: string, call?: EndTurn | null, turn?: { unsaid?: boolean }): Promise<void>
   /** The user answered the session, or it was put away: a wait it set on its task is over. Never throws. */
   answered(sessionId: string): Promise<void>
   /**
@@ -152,7 +160,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     return !entry || !entry.archivedAt
   }
 
-  const route = async (sessionId: string, message: string, call: EndTurn | null) => {
+  const route = async (sessionId: string, message: string, call: EndTurn | null, unsaid: boolean) => {
     const entry = deps.ledger.get(sessionId)
     if (!entry?.taskId) return
     const space = deps.spaces.resolve(entry.spaceId)
@@ -163,6 +171,8 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     const handoff = call ? null : parseHandoff(message)
     let attention = entry.attention
     if (!call && !handoff && !attention) return
+    // The chat's own flag on a worker that said nothing: nobody handed anything over.
+    if (!call && !handoff && unsaid && attention!.kind === 'review') return
     // What a call left on the session is the call's, routed already: only a status of its own is routed on its own.
     if (!call && !handoff && attention!.at === fromCall.get(sessionId)) return
     // The call, the handoff, or without either the status: not the question the router itself put on the session.
@@ -243,9 +253,9 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       }
     },
 
-    async turnEnded(sessionId, message, call) {
+    async turnEnded(sessionId, message, call, turn) {
       try {
-        await route(sessionId, message, call ?? null)
+        await route(sessionId, message, call ?? null, turn?.unsaid === true)
       } catch (err) {
         deps.log(`[router] ${sessionId.slice(0, 8)} failed: ${(err as Error).message}`)
       }

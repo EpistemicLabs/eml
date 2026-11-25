@@ -480,7 +480,7 @@ async function main() {
     const result = turn?.call?.result ?? handoff?.result
     if (result) lastResults.set(sessionId, result)
     runRecords.poke()
-    void taskRouter.turnEnded(sessionId, text, turn?.call)
+    void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false })
       .then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt, call: turn?.call ?? null, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }

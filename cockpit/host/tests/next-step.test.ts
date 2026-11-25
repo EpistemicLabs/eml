@@ -356,6 +356,17 @@ describe('next-step check', () => {
     expect(waited).toEqual(['w1-17'])
   })
 
+  it('puts the task on the user as stopped when a worker stayed silent after its reminder: the chat\'s review flag is no next step', async () => {
+    const { ledger, brain, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } })
+    ledger.recordSpawn('w1-19', null, 'bp-eml', 'claude', true, 't1')
+    // What the chat leaves on a worker that said nothing (attentionAfterTurn); the router put no wait on the task for it.
+    ledger.setAttention('w1-19', { kind: 'review', reason: null })
+    await check.turnEnded('w1-19', { handoff: false, endedAt: state.now.toISOString(), call: null, reminded: true })
+    expect(delivered).toEqual([])
+    expect(brain.posts[0].body.waits).toEqual([expect.objectContaining({ id: 'w1-19', kind: 'stopped', why: mod.NO_NEXT_STEP })])
+    expect(ledger.get('w1-19')!.attention).toMatchObject({ kind: 'question', reason: mod.NO_NEXT_STEP })
+  })
+
   it('sends an own session nothing when its turn was already sent back', async () => {
     const { ledger, check, delivered, state } = setup({ t1: { id: 't1', status: 'active', properties: {} } })
     ledger.recordSpawn('own-18', null, 'bp-eml', 'claude', false, 't1')

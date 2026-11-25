@@ -83,6 +83,8 @@ export interface TurnEndFacts {
   call: EndTurn | null
   /** The turn was sent back once already (onTurnEnding): it gets no second reminder. */
   reminded: boolean
+  /** The session said how it stands in this turn (end_turn, or the older session_status); false: a flag on it is the cockpit's own (attentionAfterTurn). */
+  said: boolean
 }
 
 /** A session's limits as its views get them. */
@@ -978,7 +980,7 @@ export class ChatBridge {
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
           this.ctx.ledger.setResult(entry.sessionId, true)
-          this.ctx.turnDone?.(entry.sessionId, entry.turnText, { call: entry.call, reminded: entry.reminded })
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText, { call: entry.call, reminded: entry.reminded, said: entry.declared })
           if (!entry.stopAfterTurn) entry.worked = true
         }
         entry.turnText = ''

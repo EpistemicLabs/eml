@@ -529,8 +529,8 @@ describe('ChatBridge', () => {
       runtime.emit({ kind: 'text', blockId: 'b2', text: 'Welcome.' })
       runtime.emit({ kind: 'turn_end', reason: 'success' })
       expect(ends).toEqual([
-        ['The draft is ready.', { call, reminded: true }],
-        ['Welcome.', { call: null, reminded: false }],
+        ['The draft is ready.', { call, reminded: true, said: true }],
+        ['Welcome.', { call: null, reminded: false, said: false }],
       ])
     })
 
@@ -545,7 +545,7 @@ describe('ChatBridge', () => {
       runtime.emit({ kind: 'text', blockId: 'b2', text: 'OK' })
       expect(worker.onTurnEnding()).toBeNull()
       runtime.emit({ kind: 'turn_end', reason: 'success' })
-      expect(ends).toEqual([{ call: { result: 'Half done' }, reminded: false }, { call: null, reminded: true }])
+      expect(ends).toEqual([{ call: { result: 'Half done' }, reminded: false, said: true }, { call: null, reminded: true, said: false }])
       // Any other message starts a turn that can be reminded.
       void bridge.deliver('s1', 'and now?')
       expect(worker.onTurnEnding()).toBe(reminder(['call']))
