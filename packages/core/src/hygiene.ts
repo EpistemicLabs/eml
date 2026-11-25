@@ -4,6 +4,7 @@ import { CURRENT_BRAIN_SCHEMA_VERSION } from './control'
 import { formatProblems, PROFILE_SCOPE, RULE_CONTENT_MAX_CHARS, PROFILE_CONTENT_MAX_CHARS, RULE_TRIGGER_MAX_CHARS } from './validate'
 import { extractSalientTerms, CONFLICT_CANDIDATE_LIMIT, CONFLICT_TYPES } from './engrams'
 import { filterConflictCandidates } from './write/conflicts'
+import { spacePeople } from './objects'
 import type { Engram } from './types'
 
 type EngramRow = Record<string, any>
@@ -383,6 +384,46 @@ const SCHEMA_22_CHECKS: readonly HygieneCheck[] = [
   },
 ]
 
+// --- Task owner and project (recurring) ------------------------------------------
+//
+// A task an agent writes has a project and a person as its owner; the server refuses one without
+// (packages/server/src/write.ts checkAgentTask, decision task-assignee-owner-and-agent-delegate). That
+// check runs where a write is authored, not on replay, so the brain's schema stays and older tasks
+// keep what they had — and a person may still write a task without either. This check finds the open
+// ones, now and later.
+
+const TASK_CHECKS: readonly HygieneCheck[] = [
+  {
+    id: 'task-without-owner-or-project',
+    kind: 'review',
+    decides: 'user',
+    what:
+      'An open task belongs to a project (scope project.<id>) and has an owner: a person in assignee_ids. An agent ' +
+      'working on it is its delegate, never its owner.',
+    how:
+      'Propose for every task, in one list: the owner — the parent task\'s owner for a sub-task, else the person who ' +
+      'wrote it (ingested_by) — and the project — the parent\'s for a sub-task, else the project its content is ' +
+      'about. A task nobody needs any more: propose closing it instead (status invalidated). Ask the user to confirm ' +
+      'or change the list; then one eml_track_task per confirmed task with assignee_ids and scope, without text.',
+    detect(eml) {
+      // an agent that is also a user of the brain counts as the person
+      const { users, agents: all } = spacePeople(eml)
+      const people = new Set(users.map(u => u.id as string))
+      const agents = new Set(all.map(a => a.id).filter(id => !people.has(id)))
+      return OPEN_TASKS(eml)
+        .map(c => {
+          const owners = (c.properties?.assignee_ids as string[] | undefined) ?? []
+          const problems = [
+            ...(owners.length === 0 ? ['no owner'] : owners.every(h => agents.has(h)) ? [`only an agent as owner (${owners.join(', ')})`] : []),
+            ...(c.scope.startsWith('project.') ? [] : [`no project (scope ${c.scope})`]),
+          ]
+          return problems.length > 0 ? finding(c, `an open task with ${problems.join(' and ')}.`) : null
+        })
+        .filter((f): f is HygieneFinding => f !== null)
+    },
+  },
+]
+
 // --- Conflicts (recurring, conflict-detection phase 1) ------------------------
 //
 // The write-time scan (write/conflicts.ts) only sees the pair a fresh write
@@ -500,6 +541,7 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_21_CHECKS,
   ...SCHEMA_22_CHECKS,
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'review'),
+  ...TASK_CHECKS,
   ...LEARNING_CHECKS,
   ...CONFLICT_CHECKS,
 ]
