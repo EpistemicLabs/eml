@@ -517,6 +517,18 @@ export class SessionLedger {
       .map(([sessionId, e]) => ({ sessionId, ...e }))
   }
 
+  /** Move a space's sessions from one project to another (a folder linked to a brain project): same folder, so they resume as before. */
+  reassignProject(from: string, to: string, spaceId: string | null): number {
+    let moved = 0
+    for (const entry of Object.values(this.data.sessions)) {
+      if (entry.projectId !== from || (entry.spaceId ?? null) !== spaceId) continue
+      entry.projectId = to
+      moved++
+    }
+    if (moved > 0) this.persist()
+    return moved
+  }
+
   private persist(): void {
     try {
       fs.mkdirSync(COCKPIT_HOME, { recursive: true, mode: 0o700 })

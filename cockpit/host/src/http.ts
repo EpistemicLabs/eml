@@ -30,6 +30,7 @@ import { homeHuman, provisionSpace, type AgentNames, type Human } from './provis
 import { cancelInvite, confirmInvite, createInvite, createTeamSpace, joinTeamSpace, brainOfInviteLink, nameOfInviteLink, removeLocalSpace, removeTeamSpace, spacesBehindRelay, teamSnapshot } from './team-space.js'
 import {
   ProjectPathError,
+  isCockpitOwnFolder,
   browseFolders,
   createFolder,
   brainIdFromProjectId,
@@ -191,7 +192,7 @@ function json(res: http.ServerResponse, status: number, payload: unknown): void 
 
 function fail(res: http.ServerResponse, err: unknown): void {
   if (err instanceof ProjectPathError) {
-    const status = err.code === 'NOT_FOUND' ? 404 : 400
+    const status = err.code === 'NOT_FOUND' ? 404 : err.code === 'FOLDER_TAKEN' ? 409 : 400
     json(res, status, { error: { code: err.code, message: err.message } })
     return
   }
@@ -489,6 +490,8 @@ function projectView(deps: HostDeps, space: BrainSpace, project: ProjectEntry, b
     fullPath: project.path,
     path: project.path,
     folderKind: folderKind(project),
+    // A folder-only project of the user's: it is linked to a brain project or removed (decision cockpit-brain-project-model).
+    linkable: project.kind === 'folder' && !isCockpitOwnFolder(project),
     isStarred: project.starred,
     hidden: project.hidden,
     createdAt: project.createdAt,
@@ -1283,14 +1286,26 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       json(res, 200, { projects: await listProjects(deps, space) })
       return true
     }
+    // Every project is a brain project (decision cockpit-brain-project-model): a folder is added as a brain
+    // project's folder (PATCH path), no longer on its own.
     if (resource === 'projects' && !id && method === 'POST') {
+      json(res, 410, { error: { code: 'FOLDER_PROJECTS_GONE', message: 'A folder is added as the folder of a brain project: create the brain project, then set its folder.' } })
+      return true
+    }
+    // A folder-only project joins a brain project of this space: the brain project takes the folder and its sessions.
+    if (resource === 'projects' && id && parts[3] === 'link' && method === 'POST') {
       const body = await readJson(req)
-      const { project, created } = space.registry.create(
-        typeof body.path === 'string' ? body.path : '',
-        typeof body.customName === 'string' ? body.customName : null,
-      )
+      const brainId = typeof body.project === 'string' ? body.project.trim() : ''
+      let brain: BrainProject | undefined
+      try { brain = (await space.projects.list()).find((p) => p.id === brainId && p.status !== 'archived') } catch {
+        json(res, 502, { error: { code: 'BRAIN_UNAVAILABLE', message: 'The brain did not answer. Nothing was changed; try again.' } })
+        return true
+      }
+      if (!brain) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No open brain project "${brainId}" in this space.` } }); return true }
+      const project = space.registry.link(id, brain.id, brain.name)
+      deps.bridge.ledger.reassignProject(id, project.projectId, space.ledgerKey)
       if (project.path) trustProject(deps, space, project.path)
-      json(res, created ? 201 : 200, { success: true, created, project: projectView(deps, space, project) })
+      json(res, 200, { success: true, project: projectView(deps, space, project, brain) })
       return true
     }
     // Moving a project into a shared space (project-move.ts): the plan, then
