@@ -67,6 +67,11 @@ export interface Job {
   spaceId: string | null
   /** The session that made it; null when the user did. */
   createdBy: string | null
+  /**
+   * Set on the check an end_turn call's next.when made (application/turn-check.ts): the session's
+   * later calls move or remove it. A job the agent made with the schedule tool has none and is its own.
+   */
+  origin?: 'end_turn'
   createdAt: string
   updatedAt: string
   /** The brain task it belongs to, if any. */
