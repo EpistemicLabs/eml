@@ -716,6 +716,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       return refresh()
     },
 
+    /** Whether the task is handed to an agent (it names a delegate), from the last board; null when it holds no such task. */
+    delegated(taskId: string): boolean | null {
+      const task = current?.tasks.find((t) => t.id === taskId) ?? current?.closed.find((t) => t.id === taskId)
+      return task ? Boolean(task.delegate) : null
+    },
+
     onChange(listener: (events: BoardEvent[]) => void): () => void {
       listeners.add(listener)
       return () => { listeners.delete(listener) }

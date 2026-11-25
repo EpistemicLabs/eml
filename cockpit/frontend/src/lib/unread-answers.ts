@@ -13,8 +13,9 @@ const answeredAt = (session: AllSession) => session.attention?.at ?? session.res
 
 /**
  * The sessions for the Unread fold, newest answer first: the ones the sidebar marks as an unread
- * result. Left out are archived and snoozed ones, workers (their answer goes to the session that
- * started them), and any session the Inbox already lists, by its own item or its task's.
+ * result. Left out are archived and snoozed ones, workers that still work on their own (their answer
+ * goes to their task or to the session that started them; one whose task the owner took back is the
+ * owner's conversation and shows), and any session the Inbox already lists, by its own item or its task's.
  */
 export function unreadAnswers(
   sessions: readonly AllSession[],
@@ -29,7 +30,7 @@ export function unreadAnswers(
   return sessions
     .filter((session) =>
       !session.archivedAt
-      && !session.worker
+      && !(session.worker && session.alone !== false)
       && !(session.snoozedUntil && Date.parse(session.snoozedUntil) > now)
       && !inboxSessions.has(session.id)
       && !(session.taskId && inboxTasks.has(session.taskId))

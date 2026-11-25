@@ -72,7 +72,7 @@ describe('a session called by its task', () => {
           return true
         },
       },
-      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, refresh: async () => { refreshes += 1 } } },
+      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, delegated: () => null, refresh: async () => { refreshes += 1 } } },
     }
     server = createHostServer(deps as never, ['http://cockpit.test'])
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

@@ -164,6 +164,15 @@ describe('the task board', () => {
     expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })
   })
 
+  it('says whether a task is handed to an agent, from the last board; null for a task it does not hold', async () => {
+    const { board } = setup({ main: [mine('handed', { delegate: 'atlas', checkpoint: 'after' }), mine('mine-only')] })
+    expect(board.delegated('handed')).toBeNull()
+    await board.get(60_000)
+    expect(board.delegated('handed')).toBe(true)
+    expect(board.delegated('mine-only')).toBe(false)
+    expect(board.delegated('unknown')).toBeNull()
+  })
+
   it('names a task as the tasks card does, from open, closed and lineage tasks, and builds a board when none is there yet', async () => {
     const log: string[] = []
     const { board, brains } = setup({
