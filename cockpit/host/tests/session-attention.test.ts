@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning } from '../src/domain/session-attention.js'
+import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, wasSpawned, worksAlone } from '../src/domain/session-attention.js'
 
 describe('shouldAskForStatus', () => {
-  const quiet = { worker: true, clients: 0, declared: false, asked: false }
+  const quiet = { alone: true, clients: 0, declared: false, asked: false }
 
-  it('asks a worker that said nothing, once', () => {
+  it('asks a session that works on its own and said nothing, once', () => {
     expect(shouldAskForStatus(quiet)).toBe(true)
     expect(shouldAskForStatus({ ...quiet, asked: true })).toBe(false)
   })
@@ -12,14 +12,14 @@ describe('shouldAskForStatus', () => {
   it.each([
     ['it already said', { declared: true }],
     ['someone has it open', { clients: 1 }],
-    ['it is not a worker', { worker: false }],
+    ['it is the user\'s conversation', { alone: false }],
   ])('leaves it alone when %s', (_why, patch) => {
     expect(shouldAskForStatus({ ...quiet, ...patch })).toBe(false)
   })
 })
 
 describe('attentionAfterTurn', () => {
-  const quiet = { worker: true, clients: 0, declared: false, reason: 'success' as const }
+  const quiet = { alone: true, clients: 0, declared: false, reason: 'success' as const }
 
   it('unclear means someone should look', () => {
     expect(attentionAfterTurn(quiet)).toBe('review')
@@ -32,7 +32,7 @@ describe('attentionAfterTurn', () => {
   it.each([
     ['it said', { declared: true }],
     ['someone has it open', { clients: 1 }],
-    ['it is not a worker', { worker: false }],
+    ['it is the user\'s conversation', { alone: false }],
     ['it was interrupted', { reason: 'interrupted' as const }],
   ])('leaves nothing when %s', (_why, patch) => {
     expect(attentionAfterTurn({ ...quiet, ...patch })).toBeNull()
@@ -81,5 +81,36 @@ describe('stillRunning', () => {
     expect(stillRunning({ agents: 1, status: 'question' })).toBe(false)
     expect(stillRunning({ agents: 1, status: 'review' })).toBe(false)
     expect(stillRunning({ agents: 1, status: 'failed' })).toBe(false)
+  })
+})
+
+describe('worksAlone', () => {
+  it('goes by the task: handed to an agent, the session works on its own, whoever started it', () => {
+    expect(worksAlone({ delegated: true, worker: false, spawned: false })).toBe(true)
+    expect(worksAlone({ delegated: true, worker: true, spawned: false })).toBe(true)
+  })
+
+  it('takes the user\'s own session on a task that is not handed over as their conversation', () => {
+    expect(worksAlone({ delegated: false, worker: false, spawned: false })).toBe(false)
+    expect(worksAlone({ delegated: null, worker: false, spawned: false })).toBe(false)
+  })
+
+  it('takes a runner\'s worker whose task lost its delegate as the user\'s conversation', () => {
+    expect(worksAlone({ delegated: false, worker: true, spawned: false })).toBe(false)
+  })
+
+  it('keeps a worker a session or a job started on its own, also on a task that is not handed over', () => {
+    expect(worksAlone({ delegated: false, worker: true, spawned: true })).toBe(true)
+  })
+
+  it('goes by how the session was started when it has no task, or the task cannot be read', () => {
+    expect(worksAlone({ delegated: null, worker: true, spawned: false })).toBe(true)
+    expect(worksAlone({ delegated: null, worker: true, spawned: true })).toBe(true)
+  })
+
+  it('counts a parent session or a job as having started it', () => {
+    expect(wasSpawned({ parentSessionId: 's1', jobId: null })).toBe(true)
+    expect(wasSpawned({ parentSessionId: null, jobId: 'j1' })).toBe(true)
+    expect(wasSpawned({ parentSessionId: null, jobId: null })).toBe(false)
   })
 })

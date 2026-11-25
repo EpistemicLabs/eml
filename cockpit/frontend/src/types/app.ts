@@ -38,6 +38,8 @@ export interface ProjectSession {
   deskMain?: boolean;
   /** Started by another session. */
   worker?: boolean;
+  /** It works on its own: its task is handed to an agent, or a session or a job started it as a worker. An older host does not say. */
+  alone?: boolean;
   parentSessionId?: string | null;
   readAt?: string | null;
   /** A turn ended and nobody has seen the result. */

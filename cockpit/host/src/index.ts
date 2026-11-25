@@ -51,6 +51,7 @@ import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
+import { createSessionKind } from './application/session-kind.js'
 import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
@@ -442,6 +443,8 @@ async function main() {
     },
   })
   taskRunner.every(RUNNER_TICK_MS)
+  // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).
+  const sessionKind = createSessionKind({ ledger, spaces, brain: taskBrain })
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
     ledger, spaces, brain: taskBrain, owner, log, endTurnTool,
@@ -481,7 +484,7 @@ async function main() {
     if (result) lastResults.set(sessionId, result)
     runRecords.poke()
     void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false, ctx: turn?.ctx })
-      .then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt, call: turn?.call ?? null, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
+      .then(() => nextStep.turnEnded(sessionId, { endedAt, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -540,6 +543,7 @@ async function main() {
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
     onHelpers: (sessionId, helpers) => turns.waitOn(sessionId, helpers),
     turnDone: turnEnded,
+    worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),
     callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
     // The check a call's next.when asks for (application/turn-check.ts).

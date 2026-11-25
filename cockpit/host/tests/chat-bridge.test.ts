@@ -65,7 +65,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -123,6 +123,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     terminalBusy: opts.busy,
     handoffBeforeStop: opts.handoffBeforeStop,
     turnDone: opts.turnDone,
+    worksAlone: opts.worksAlone,
     turnContext: opts.turnContext,
     turnCheck: opts.turnCheck,
     // A fixed moment, so the times in these calls stay ahead of it.
@@ -197,7 +198,7 @@ describe('ChatBridge', () => {
     expect(known.runtimes.flatMap((r) => r.sent)).toEqual([])
   })
 
-  it('starts a worker with no client, its prompt as the first message, in auto mode', () => {
+  it('starts a worker with no client, its prompt as the first message, in auto mode', async () => {
     const { bridge, runtimes, ledgerEntries, turns } = setup()
     const problem = bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: 'Job', fromSessionId: 'r', createdAt: '' })
     expect(problem).toBeNull()
@@ -323,7 +324,7 @@ describe('ChatBridge', () => {
     expect(bridge.runningCount()).toBe(1)
   })
 
-  it('makes no room from a session at work', () => {
+  it('makes no room from a session at work', async () => {
     const { bridge } = setup()
     bridge.startWorker({ id: 'busy', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     ;(bridge as unknown as { entries: Map<string, { lastActivity: number }> }).entries.get('busy')!.lastActivity -= 10 * 60 * 1000
@@ -366,43 +367,57 @@ describe('ChatBridge', () => {
     expect(await bridge.deliver('nope', 'x')).toBe('unknown')
   })
 
-  it('a worker that ends its turn without saying is asked once, then marked for review', () => {
+  it('a worker that ends its turn without saying is asked once, then marked for review', async () => {
     const { bridge, runtimes, ledgerEntries, turns } = setup()
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const worker = runtimes[0].start.worker
-    expect(worker?.onTurnEnding()).toBe(reminder(['call']))
-    expect(worker?.onTurnEnding()).toBeNull()
+    expect(await worker?.onTurnEnding()).toBe(reminder(['call']))
+    expect(await worker?.onTurnEnding()).toBeNull()
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect((ledgerEntries.get('s1') as unknown as { attention: unknown }).attention).toEqual({ kind: 'review', reason: null })
     // Finished work waits to be looked at; it holds no turn open.
     expect(turns).not.toContainEqual(['s1', 'waiting'])
   })
 
-  it('a worker that says it needs someone keeps that until a new message comes', () => {
+  it('a worker whose task the owner took back is their conversation: not sent back, and a silent turn leaves no review', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ worksAlone: async () => false })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    expect(await runtimes[0].start.worker?.onTurnEnding()).toBeNull()
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect((ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention ?? null).toBeNull()
+  })
+
+  it('a session whose kind cannot be read goes by how it was started', async () => {
+    const { bridge, runtimes } = setup({ worksAlone: async () => { throw new Error('brain down') } })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    expect(await runtimes[0].start.worker?.onTurnEnding()).toBe(reminder(['call']))
+  })
+
+  it('a worker that says it needs someone keeps that until a new message comes', async () => {
     const { bridge, runtimes, ledgerEntries } = setup()
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const attention = () => (ledgerEntries.get('s1') as unknown as { attention: unknown }).attention
     runtimes[0].start.worker?.report('question', 'A or B?')
     runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'Which one: A or B?' })
-    expect(runtimes[0].start.worker?.onTurnEnding()).toBeNull()
+    expect(await runtimes[0].start.worker?.onTurnEnding()).toBeNull()
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toEqual({ kind: 'question', reason: 'A or B?' })
     void bridge.deliver('s1', 'A')
     expect(attention()).toBeNull()
   })
 
-  it('sends a turn back once when its reply does not ask the questions, or is missing', () => {
+  it('sends a turn back once when its reply does not ask the questions, or is missing', async () => {
     const { bridge, runtimes } = setup()
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const worker = runtimes[0].start.worker!
     worker.report('question', 'confirm start date, terms, usage')
     runtimes[0].emit({ kind: 'thinking', blockId: 't1', text: 'Which start date? Which terms?' })
     runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'I need those three answers before I change anything.' })
-    expect(worker.onTurnEnding()).toBe(reminder(['questions']))
-    expect(worker.onTurnEnding()).toBeNull()
+    expect(await worker.onTurnEnding()).toBe(reminder(['questions']))
+    expect(await worker.onTurnEnding()).toBeNull()
     void bridge.deliver('s1', 'next')
     worker.report('done', 'finished')
-    expect(worker.onTurnEnding()).toBe(reminder(['reply']))
+    expect(await worker.onTurnEnding()).toBe(reminder(['reply']))
   })
 
   describe('end_turn', () => {
@@ -446,7 +461,7 @@ describe('ChatBridge', () => {
       expect(attention() ?? null).toBeNull()
       expect(checks).toEqual([])
       // The turn then counts as one without a call.
-      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['call']))
       // A hand-over to the user sets no check: its time is not used, so a passed one refuses nothing.
       expect(await worker.endTurn({ result: 'Sent', next: { who: 'lasse', what: 'read it', when: '2026-11-25T07:59' } })).toMatchObject({ derived: { status: 'review', checkAt: null }, missing: [] })
       expect(checks).toEqual([null])
@@ -491,11 +506,11 @@ describe('ChatBridge', () => {
       expect(checks).toEqual(['2026-11-27T10:00', '2028-01-01T10:00', null])
     })
 
-    it('reminds a worker that stops without a call, once', () => {
+    it('reminds a worker that stops without a call, once', async () => {
       const { worker, runtime } = started()
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'Did it.' })
-      expect(worker.onTurnEnding()).toBe(reminder(['call']))
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('reminds for the reply when nothing visible follows the call, also when the reply was written before it', async () => {
@@ -503,8 +518,8 @@ describe('ChatBridge', () => {
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'The files are fine.' })
       runtime.emit({ kind: 'tool_call', toolId: 'c2', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'end_turn', input: {} })
       await worker.endTurn({ result: 'Read them', next: { who: 'lasse', what: 'read it' } })
-      expect(worker.onTurnEnding()).toBe(reminder(['reply']))
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply']))
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('takes the reply written after the call', async () => {
@@ -514,7 +529,7 @@ describe('ChatBridge', () => {
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'The files are fine.' })
       // Work after the reply (a note to the brain) does not take it back.
       runtime.emit({ kind: 'tool_call', toolId: 'c3', name: 'mcp__eml_brain__eml_log', toolKind: 'other', title: 'eml_log', input: {} })
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('a second call in the turn starts the reply over: what stood between the calls is not it', async () => {
@@ -523,15 +538,15 @@ describe('ChatBridge', () => {
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'One more call.' })
       runtime.emit({ kind: 'tool_call', toolId: 'c2', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'end_turn', input: {} })
       await worker.endTurn({ result: 'Half way', next: { who: 'lasse', what: 'read it' } })
-      expect(worker.onTurnEnding()).toBe(reminder(['reply']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply']))
     })
 
     it('reminds when the call has questions the reply does not ask', async () => {
       const { worker, runtime } = started()
       await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready and waits for your word.' })
-      expect(worker.onTurnEnding()).toBe(reminder(['questions']))
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBe(reminder(['questions']))
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('while someone has the session open, reminds only for a missing reply, not for unasked questions or a missing call', async () => {
@@ -540,36 +555,36 @@ describe('ChatBridge', () => {
       await flush()
       const runtime = made.runtimes[0]
       const worker = runtime.start.worker!
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBeNull()
       await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready and waits for your word.' })
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBeNull()
       runtime.emit({ kind: 'turn_end', reason: 'success' })
       void made.bridge.deliver('s1', 'next')
       await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
       // An empty answer helps nobody, watched or not; the questions are theirs to ask back.
-      expect(worker.onTurnEnding()).toBe(reminder(['reply']))
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply']))
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('never reminds twice in one turn: the call it was asked for is not sent back for its reply', async () => {
       const { worker } = started()
-      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['call']))
       await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBeNull()
     })
 
     it('names a missing reply and its unasked questions in the one reminder', async () => {
       const { worker } = started()
       await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
-      expect(worker.onTurnEnding()).toBe(reminder(['reply', 'questions']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply', 'questions']))
     })
 
     it('passes the call and the reminder on with the turn\'s end, and starts the next turn clean', async () => {
       const ends: Array<[string, unknown]> = []
       const { worker, runtime, bridge } = started({ turnDone: (_id, text, turn) => ends.push([text, turn]) })
       const call = { result: 'Draft ready', next: { who: 'lasse', what: 'read it' } }
-      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['call']))
       await worker.endTurn(call)
       runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready.' })
       runtime.emit({ kind: 'turn_end', reason: 'success' })
@@ -591,16 +606,16 @@ describe('ChatBridge', () => {
       // The next-step check's reminder (application/next-step.ts) arrives as a message.
       void bridge.deliver('s1', reminder(['next']), { reminder: true })
       runtime.emit({ kind: 'text', blockId: 'b2', text: 'OK' })
-      expect(worker.onTurnEnding()).toBeNull()
+      expect(await worker.onTurnEnding()).toBeNull()
       runtime.emit({ kind: 'turn_end', reason: 'success' })
       expect(ends).toEqual([{ call: { result: 'Half done' }, ctx, reminded: false, said: true }, { call: null, ctx: null, reminded: true, said: false }])
       // Any other message starts a turn that can be reminded.
       void bridge.deliver('s1', 'and now?')
-      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(await worker.onTurnEnding()).toBe(reminder(['call']))
     })
   })
 
-  it('a worker whose turn ends while its subagents run is not asked, flagged or handed off until they are back', () => {
+  it('a worker whose turn ends while its subagents run is not asked, flagged or handed off until they are back', async () => {
     const done: string[] = []
     const { bridge, runtimes, ledgerEntries } = setup({ turnDone: (_id, text) => done.push(text) })
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
@@ -613,23 +628,23 @@ describe('ChatBridge', () => {
     // A background shell alone would not hold it: only subagents do.
     runtime.emit({ kind: 'shell_task', taskId: 'sh1', status: 'running' })
     runtime.emit({ kind: 'text', blockId: 'b1', text: 'Waiting on batch 2.' })
-    expect(worker.onTurnEnding()).toBeNull()
+    expect(await worker.onTurnEnding()).toBeNull()
     runtime.emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toBeFalsy()
     expect(done).toEqual([])
 
     // The subagent wakes it: that turn is judged on its own and handed off.
     runtime.emit({ kind: 'agent_task', taskId: 'a2', status: 'completed' })
-    expect(worker.onTurnEnding()).toBe(reminder(['call']))
+    expect(await worker.onTurnEnding()).toBe(reminder(['call']))
     worker.report('review', 'Report ready')
     runtime.emit({ kind: 'text', blockId: 'b2', text: 'Report is ready to check.' })
-    expect(worker.onTurnEnding()).toBeNull()
+    expect(await worker.onTurnEnding()).toBeNull()
     runtime.emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toEqual({ kind: 'review', reason: 'Report ready' })
     expect(done).toEqual(['Report is ready to check.'])
   })
 
-  it('a worker that asks the user while its subagents run stops as usual', () => {
+  it('a worker that asks the user while its subagents run stops as usual', async () => {
     const done: string[] = []
     const { bridge, runtimes, ledgerEntries } = setup({ turnDone: (_id, text) => done.push(text) })
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
@@ -659,7 +674,7 @@ describe('ChatBridge', () => {
       return { ...s, runtime, held }
     }
 
-    it('waits on its helpers while they run and it asks nobody, not otherwise', () => {
+    it('waits on its helpers while they run and it asks nobody, not otherwise', async () => {
       const { bridge, runtimes } = setup()
       expect(bridge.waitsOnHelpers('unknown')).toBe(false)
       expect(bridge.holdTurnOpen('unknown')).toBe(false)
@@ -678,7 +693,7 @@ describe('ChatBridge', () => {
       expect(bridge.holdTurnOpen('s1')).toBe(false)
     })
 
-    it('says how many it waits for, and each one that comes back', () => {
+    it('says how many it waits for, and each one that comes back', async () => {
       const { runtime, held, helpers, turns } = parked(['a1', 'a2'])
       expect(held).toBe(true)
       expect(helpers).toEqual([2])
@@ -687,7 +702,7 @@ describe('ChatBridge', () => {
       expect(turns).toEqual([])
     })
 
-    it('is done a moment after the last one came back, when no turn follows', () => {
+    it('is done a moment after the last one came back, when no turn follows', async () => {
       const { runtime, helpers, turns } = parked(['a1'])
       runtime.emit(agent('a1', 'stopped'))
       expect(helpers).toEqual([1, 0])
@@ -697,7 +712,7 @@ describe('ChatBridge', () => {
       expect(turns).toHaveLength(1)
     })
 
-    it('stays working through the turn its helpers wake, and is done after it', () => {
+    it('stays working through the turn its helpers wake, and is done after it', async () => {
       vi.useFakeTimers()
       try {
         const tracker = new TurnTracker()
@@ -722,7 +737,7 @@ describe('ChatBridge', () => {
       }
     })
 
-    it('is done on its own when the woken turn never comes', () => {
+    it('is done on its own when the woken turn never comes', async () => {
       vi.useFakeTimers()
       try {
         const tracker = new TurnTracker()
@@ -736,7 +751,7 @@ describe('ChatBridge', () => {
       }
     })
 
-    it('a turn woken by text alone counts as working again', () => {
+    it('a turn woken by text alone counts as working again', async () => {
       const { runtime, turns } = parked(['a1', 'a2'])
       runtime.emit(agent('a1', 'completed'))
       runtime.emit({ kind: 'text_delta', blockId: 'b1', delta: 'Batch 1 is back.' })
@@ -744,13 +759,13 @@ describe('ChatBridge', () => {
       expect(turns).toEqual([['s1', 'working']])
     })
 
-    it('a message from the user starts a turn: working, and the wait is over', () => {
+    it('a message from the user starts a turn: working, and the wait is over', async () => {
       const { bridge, turns } = parked(['a1'])
       void bridge.deliver('s1', 'How far are you?')
       expect(turns).toEqual([['s1', 'working']])
     })
 
-    it('is done when the last helper came back between its Stop hook and its turn end', () => {
+    it('is done when the last helper came back between its Stop hook and its turn end', async () => {
       const { bridge, runtimes, turns, helpers } = setup()
       bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
       const runtime = runtimes[0]
@@ -778,14 +793,14 @@ describe('ChatBridge', () => {
       expect(turns).toEqual([['s1', 'done']])
     })
 
-    it('a crash leaves the turn state to the exit, with nothing held', () => {
+    it('a crash leaves the turn state to the exit, with nothing held', async () => {
       const { bridge, runtime, turns } = parked(['a1'])
       runtime.emit({ kind: 'runtime_exit', expected: false })
       expect(turns).toEqual([])
       expect(bridge.waitsOnHelpers('s1')).toBe(false)
     })
 
-    it('a turn that asks the user while helpers run is not held', () => {
+    it('a turn that asks the user while helpers run is not held', async () => {
       const { bridge, runtimes, turns, helpers } = setup()
       bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
       const runtime = runtimes[0]
@@ -814,7 +829,7 @@ describe('ChatBridge', () => {
     connect(own.bridge)
     await flush()
     const reporting = own.runtimes[0].start.worker
-    expect(reporting?.onTurnEnding()).toBeNull()
+    expect(await reporting?.onTurnEnding()).toBeNull()
     const entry = own.ledgerEntries.get('s1') as unknown as { attention?: unknown; result?: boolean; agentTitle?: string }
     expect(reporting?.onPrompt?.()).toContain('COCKPIT_TITLE_JS')
     entry.agentTitle = 'Named'
@@ -836,7 +851,7 @@ describe('ChatBridge', () => {
     expect((own.ledgerEntries.get('s1') as unknown as { result?: boolean }).result ?? false).toBe(false)
   })
 
-  it('a worker keeps its tool profile on the runtime', () => {
+  it('a worker keeps its tool profile on the runtime', async () => {
     const { bridge, runtimes } = setup()
     let stored: unknown
     const ctx = (bridge as unknown as { ctx: { ledger: { setToolProfile?: (id: string, profile: unknown) => void }; providers: { get: () => { launch: () => object } } } }).ctx
@@ -973,7 +988,7 @@ describe('ChatBridge', () => {
     expect(runtimes[0].sent).toEqual(['quick'])
   })
 
-  it('a worker that cannot start says why and leaves nothing behind', () => {
+  it('a worker that cannot start says why and leaves nothing behind', async () => {
     const failing = setup()
     ;(failing.bridge as unknown as { ctx: { providers: { get: () => unknown } } }).ctx.providers.get = () => ({ runtime: { problem: () => 'no binary' } })
     expect(failing.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })).toBe('no binary')
@@ -1429,7 +1444,7 @@ describe('ChatBridge', () => {
 })
 
 describe('parseAnswer', () => {
-  it('takes known decisions and drops the rest', () => {
+  it('takes known decisions and drops the rest', async () => {
     expect(parseAnswer({ decision: 'allow' })).toEqual({ decision: 'allow' })
     expect(parseAnswer({ decision: 'answer', answers: { a: 'b', c: 1 } })).toEqual({ decision: 'answer', answers: { a: 'b' } })
     expect(parseAnswer({ decision: 'yolo' })).toBeNull()

@@ -57,6 +57,13 @@ describe('unreadAnswers', () => {
     expect(pick([session('a', { snoozedUntil: EARLY })])).toEqual(['a']);
   });
 
+  it('keeps a worker whose task the owner took back, and leaves out one that still works on its own', () => {
+    expect(pick([
+      session('taken-back', { worker: true, alone: false }),
+      session('on-its-own', { worker: true, alone: true }),
+    ])).toEqual(['taken-back']);
+  });
+
   it('keeps a session the user split off another one: it is theirs, not a worker', () => {
     expect(pick([session('split', { parentSessionId: 'p' })])).toEqual(['split']);
   });

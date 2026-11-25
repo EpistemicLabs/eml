@@ -31,6 +31,7 @@ describe('a session called by its task', () => {
   let base: string
   let ledger: import('../src/session-ledger.js').SessionLedger
   const names = new Map<string, string>()
+  const delegated = new Map<string, boolean>()
   const renames: Array<[string, string]> = []
   let refreshes = 0
   let refuse: Error | null = null
@@ -72,7 +73,7 @@ describe('a session called by its task', () => {
           return true
         },
       },
-      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, refresh: async () => { refreshes += 1 } } },
+      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, delegated: (taskId: string) => delegated.get(taskId) ?? null, refresh: async () => { refreshes += 1 } } },
     }
     server = createHostServer(deps as never, ['http://cockpit.test'])
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -99,6 +100,19 @@ describe('a session called by its task', () => {
     const byId = await listed()
     expect(byId.get('tasked')).toBe('Fix the stock answers')
     expect(byId.get('plain')).toBe('First prompt')
+  })
+
+  it('says whether a session works on its own, by its task on the board', async () => {
+    const alone = async () => {
+      const { sessions } = await (await fetch(`${base}/api/sessions/all`)).json() as { sessions: Array<{ id: string; alone: boolean }> }
+      return new Map(sessions.map((s) => [s.id, s.alone]))
+    }
+    // The user's own session: theirs until its task is handed to an agent; without a task, always.
+    expect((await alone()).get('tasked')).toBe(false)
+    delegated.set('task-1', true)
+    expect((await alone()).get('tasked')).toBe(true)
+    expect((await alone()).get('plain')).toBe(false)
+    delegated.delete('task-1')
   })
 
   it('renames the task when the session is renamed, answers with the task\'s new name, and keeps no second copy', async () => {

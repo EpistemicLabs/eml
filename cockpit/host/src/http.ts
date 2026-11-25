@@ -16,7 +16,7 @@ import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
-import { needsAnswer } from './domain/session-attention.js'
+import { needsAnswer, wasSpawned, worksAlone } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
 import { sessionName } from './domain/session-name.js'
 import { sessionAddress } from './session-address.js'
@@ -362,6 +362,8 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     runtime: entry.runtime,
     attention: entry.attention,
     worker: entry.worker,
+    // It works on its own (domain/session-attention.ts worksAlone). The Unread fold leaves out a worker that does: its answer goes to its task or its starter.
+    alone: worksAlone({ delegated: entry.taskId ? deps.tasks?.board.delegated(entry.taskId) ?? null : null, worker: entry.worker, spawned: wasSpawned(entry) }),
     deskMain: entry.deskMain,
     parentSessionId: entry.parentSessionId,
     readAt: entry.readAt,
