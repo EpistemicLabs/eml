@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { TurnState } from '../domain/agent-provider.js'
-import { runOriginOf, runStateOf, runsOf, type RunEndReason, type RunState } from '../domain/runs.js'
+import { runOriginOf, runStateOf, runsOf, sessionOfRun, type RunEndReason, type RunState } from '../domain/runs.js'
 
 /**
  * Synced run records (domain/runs.ts): this host writes a run for each of its sessions on a
@@ -49,6 +49,8 @@ export interface RunRecordsDeps {
 }
 
 interface Written {
+  /** The id of the session's run as written (domain/runs.ts sessionOfRun). */
+  runId: string
   spaceId: string
   taskId: string
   state: RunState
@@ -65,6 +67,7 @@ export interface RunRecords {
 }
 
 export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number } = {}): RunRecords {
+  /** What this host wrote, by session id. */
   const written = new Map<string, Written>()
   /** Sessions the brain refused a run for: the ledger covers them. */
   const refused = new Set<string>()
@@ -87,7 +90,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
   }
 
   const put = async (brain: Pick<EmlApi, 'put'>, sessionId: string, prev: Written, patch: { state: RunState; end_reason?: RunEndReason; result?: string }) => {
-    await brain.put(`/object/run/${encodeURIComponent(sessionId)}`, patch)
+    await brain.put(`/object/run/${encodeURIComponent(prev.runId)}`, patch)
     written.set(sessionId, { ...prev, state: patch.state, result: patch.result ?? prev.result })
   }
 
@@ -96,12 +99,13 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
     const listed = await brain.get('/object/run') as { objects?: Array<Record<string, unknown>> }
     loaded.add(space.id)
     for (const run of runsOf(listed.objects ?? [])) {
-      if (run.member !== deps.me || written.has(run.id)) continue
-      const prev: Written = { spaceId: space.id, taskId: run.task_id, state: run.state as RunState, result: run.result ?? null }
-      written.set(run.id, prev)
-      if (run.state !== 'ended' && !live(run.id)) {
-        await put(brain, run.id, prev, { state: 'ended', end_reason: 'crashed' })
-          .catch((err: Error) => deps.log(`[runs] session ${run.id.slice(0, 8)}: ${err.message}`))
+      const sessionId = sessionOfRun(run.id)
+      if (run.member !== deps.me || written.has(sessionId)) continue
+      const prev: Written = { runId: run.id, spaceId: space.id, taskId: run.task_id, state: run.state as RunState, result: run.result ?? null }
+      written.set(sessionId, prev)
+      if (run.state !== 'ended' && !live(sessionId)) {
+        await put(brain, sessionId, prev, { state: 'ended', end_reason: 'crashed' })
+          .catch((err: Error) => deps.log(`[runs] session ${sessionId.slice(0, 8)}: ${err.message}`))
       }
     }
   }
@@ -112,7 +116,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
     const existing = found?.object ? runsOf([found.object])[0] : undefined
     if (existing) {
       if (existing.member === deps.me && existing.task_id === s.taskId) {
-        written.set(s.sessionId, { spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
+        written.set(s.sessionId, { runId: existing.id, spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
         return false
       }
       refuse(s.sessionId, `run ${s.sessionId} belongs to ${existing.member} on task ${existing.task_id}`)
@@ -124,7 +128,7 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
         id: s.sessionId, task_id: s.taskId, member: deps.me, ...(agent ? { agent } : {}), ...runOriginOf(s),
         state, started_at: s.createdAt, ...(result ? { result } : {}),
       })
-      written.set(s.sessionId, { spaceId: space.id, taskId: s.taskId, state, result })
+      written.set(s.sessionId, { runId: s.sessionId, spaceId: space.id, taskId: s.taskId, state, result })
     } catch (err) {
       refuse(s.sessionId, (err as Error).message)
     }

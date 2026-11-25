@@ -2,7 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
-import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
@@ -266,6 +266,7 @@ interface Row {
 
 /** A run as the board shows it: whose, its state, when it was last active, and whether it is this cockpit's. */
 export interface BoardRun {
+  /** The session's id (a later run of the same session has an id of its own, domain/runs.ts). */
   id: string
   member: string
   agent: string | null
@@ -279,6 +280,7 @@ export const EARLIER_RUNS = 10
 
 /** An ended session on a task: whose, when, how it ended and its last result line; this member's can be reopened here. */
 export interface EarlierRun {
+  /** The session's id. */
   id: string
   member: string
   agent: string | null
@@ -289,15 +291,22 @@ export interface EarlierRun {
   here: boolean
 }
 
-/** The ended runs per task from the newest runs the brain listed (newest first per task). */
+/**
+ * The ended sessions per task from the newest runs the brain listed (newest first per task), by session: a session
+ * counts by its newest run (domain/runs.ts sessionOfRun), so one whose newest run is still open is not an earlier one.
+ */
 function earlierRunsByTask(objects: ReadonlyArray<Record<string, unknown>>, viewer: string): Map<string, EarlierRun[]> {
   const byTask = new Map<string, EarlierRun[]>()
+  const seen = new Set<string>()
   for (const r of runsOf(objects)) {
+    const sessionId = sessionOfRun(r.id)
+    if (seen.has(`${r.task_id}:${sessionId}`)) continue
+    seen.add(`${r.task_id}:${sessionId}`)
     if (r.state !== 'ended') continue
     const o = r as RunFacts & { ended_at?: string | null; end_reason?: string | null }
     const list = byTask.get(r.task_id) ?? []
     if (list.length >= EARLIER_RUNS) continue
-    list.push({ id: r.id, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
+    list.push({ id: sessionId, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
     byTask.set(r.task_id, list)
   }
   return byTask
@@ -309,10 +318,10 @@ function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: 
   return runs
     .filter((r) => r.state !== 'ended')
     .map((r) => ({
-      id: r.id, member: r.member, agent: r.agent ?? null,
+      id: sessionOfRun(r.id), member: r.member, agent: r.agent ?? null,
       state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
       lastActivityAt: r.last_activity_at ?? null,
-      here: localIds.has(r.id) || r.member === viewer,
+      here: localIds.has(sessionOfRun(r.id)) || r.member === viewer,
     }))
     .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
 }

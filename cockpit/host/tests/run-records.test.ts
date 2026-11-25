@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runOriginOf, runStateOf, runsBlockRunner } from '../src/domain/runs.js'
+import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runOriginOf, runStateOf, runsBlockRunner, sessionOfRun } from '../src/domain/runs.js'
 import { createRunRecords, type RunSession } from '../src/application/run-records.js'
 import type { TurnState } from '../src/domain/agent-provider.js'
 
@@ -36,6 +36,11 @@ describe('runs as the board and the runner read them', () => {
     expect(runsBlockRunner([run('mine', 'running', T0)], new Set(['mine']), T0)).toBe(false)
     expect(runsBlockRunner([run('theirs', 'idle', T0)], new Set(), T0)).toBe(false)
     expect(runsBlockRunner([run('theirs', 'running', T0 - STALE_MS - 1)], new Set(), T0)).toBe(false)
+  })
+
+  it('names the session a run belongs to: its id, or the part before a later run\'s start', () => {
+    expect(sessionOfRun('5f0c-aa')).toBe('5f0c-aa')
+    expect(sessionOfRun('5f0c-aa_1764064800000')).toBe('5f0c-aa')
   })
 
   it('groups open runs by task and maps turns and origins', () => {

@@ -31,6 +31,18 @@ export interface RunFacts {
   result?: string | null
 }
 
+/**
+ * A run's id is its session's id. A later run of the same session (a delegation that continued it, see
+ * runIdOf) adds when it started after RUN_SEPARATOR; session ids never contain it.
+ */
+export const RUN_SEPARATOR = '_'
+
+/** The session a run belongs to. */
+export function sessionOfRun(runId: string): string {
+  const at = runId.indexOf(RUN_SEPARATOR)
+  return at === -1 ? runId : runId.slice(0, at)
+}
+
 /** Rows of GET /object/run as runs; anything without an id, task, member or state is left out. */
 export function runsOf(objects: ReadonlyArray<Record<string, unknown>>): RunFacts[] {
   return objects.filter((o): o is Record<string, unknown> & RunFacts =>
@@ -70,7 +82,7 @@ export function liveFactsOf(
   now: number,
 ): LiveFacts {
   const known = new Set(local.map((s) => s.sessionId))
-  const remote = runs.filter((r) => !known.has(r.id) && r.state !== 'ended')
+  const remote = runs.filter((r) => !known.has(sessionOfRun(r.id)) && r.state !== 'ended')
   const working = local.some((s) => s.working) || remote.some((r) => isWorking(r, now))
   return {
     working,
@@ -82,7 +94,7 @@ export function liveFactsOf(
 
 /** A working run of a session this host does not have keeps the runner from starting the task: someone works on it elsewhere. */
 export function runsBlockRunner(runs: readonly RunFacts[], localSessionIds: ReadonlySet<string>, now: number): boolean {
-  return runs.some((r) => !localSessionIds.has(r.id) && isWorking(r, now))
+  return runs.some((r) => !localSessionIds.has(sessionOfRun(r.id)) && isWorking(r, now))
 }
 
 /** A session's turn as a run state: in a turn → running, else idle (a question is a wait on the task, not a run state). */
