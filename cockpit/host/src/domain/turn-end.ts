@@ -47,7 +47,7 @@ export interface TurnWait {
 export interface DerivedTurn {
   status: WorkerStatus
   wait: TurnWait | null
-  /** The time the agent looks again, as written in the call. */
+  /** The time the agent looks again, as written in the call; null for a step of the owner's, which sets no check. */
   checkAt: string | null
 }
 
@@ -182,17 +182,19 @@ export const WHY_MAX = 300
 /** What a call means for the session, the task and the check. The first match wins. */
 export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
   const wait = (who: string, kind: WaitKind, why: string): TurnWait => ({ who, kind, why: why.slice(0, WHY_MAX) })
-  const checkAt = call.next?.when ?? null
+  const who = call.next ? whoOf(call.next.who, ctx) : null
+  // A step for the owner sets no check, whatever its when: a hand-over must not keep the task's schedule on, or its
+  // review could not close the task (domain/task-schedule.ts hasSchedule).
+  const checkAt = who && who.kind !== 'owner' ? call.next?.when ?? null : null
   if (call.failed) return { status: 'failed', wait: wait(ctx.owner, 'stopped', call.failed), checkAt: null }
   if (call.questions?.length) {
     // A step with checkpoint before asks before it acts: its question is the go.
     const kind = ctx.checkpoint === 'before' ? 'go' : 'question'
     return { status: 'question', wait: wait(ctx.owner, kind, call.questions.map(shortQuestion).join(' · ')), checkAt }
   }
-  if (call.next) {
-    const who = whoOf(call.next.who, ctx)
+  if (call.next && who) {
     const what = call.next.what
-    if (who.kind === 'owner') return { status: 'review', wait: wait(ctx.owner, 'review', what || `Review: ${call.result}`), checkAt }
+    if (who.kind === 'owner') return { status: 'review', wait: wait(ctx.owner, 'review', what || `Review: ${call.result}`), checkAt: null }
     // A step for anyone but the owner counts only with the time the agent looks again: without one nothing would
     // bring it back up, so it is no next step, from a call and from a block alike.
     if (!checkAt) return { status: 'done', wait: null, checkAt: null }
@@ -238,7 +240,7 @@ const FIELD = {
 
 const STOP = 'when you stop and the stop changes who has to act or where the task stands'
 const PLAIN = 'for a turn that is plain conversation'
-const WHEN_REQUIRED = 'required unless who is the user'
+const WHEN_REQUIRED = 'required unless who is the user, where it is not used'
 const nextRequired = (next: string, questions: string, failed: string) => `${next} is required while the task is open, unless ${questions} or ${failed} is set`
 const VISIBLE = 'as visible text'
 const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HANDOFF_LABELS.heading} block instead.`

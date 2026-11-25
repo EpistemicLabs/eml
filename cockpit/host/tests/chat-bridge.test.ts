@@ -441,6 +441,9 @@ describe('ChatBridge', () => {
       expect(checks).toEqual([])
       // The turn then counts as one without a call.
       expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      // A hand-over to the user sets no check: its time is not used, so a passed one refuses nothing.
+      expect(await worker.endTurn({ result: 'Sent', next: { who: 'lasse', what: 'read it', when: '2026-11-25T07:59' } })).toMatchObject({ derived: { status: 'review', checkAt: null }, missing: [] })
+      expect(checks).toEqual([null])
     })
 
     it('reads a call against the space\'s agent and nobody else when the host gives no context, or its context fails', async () => {

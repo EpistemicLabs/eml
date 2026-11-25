@@ -70,12 +70,17 @@ describe('what a call means (the first match wins)', () => {
   it('2: questions are a question for the owner, a go when the checkpoint is before', () => {
     const call = { ...base, questions: ['Ship it today? It is ready.', 'Which price?'], next: { who: 'sam', what: 'x', when: WHEN } }
     expect(deriveTurn(call, ctx)).toEqual({ status: 'question', wait: { who: 'kim', kind: 'question', why: 'Ship it today? · Which price?' }, checkAt: WHEN })
+    // The check goes with a step that is not the owner's; questions with a step for the owner set none.
+    expect(deriveTurn({ ...base, questions: ['Go?'], next: { who: 'me', what: 'x', when: WHEN } }, ctx).checkAt).toBe(WHEN)
+    expect(deriveTurn({ ...base, questions: ['Go?'], next: { who: 'kim', what: 'x', when: WHEN } }, ctx).checkAt).toBeNull()
     expect(deriveTurn({ ...base, questions: ['Go?'] }, { ...ctx, checkpoint: 'before' })).toEqual({ status: 'question', wait: { who: 'kim', kind: 'go', why: 'Go?' }, checkAt: null })
   })
 
   it('3: next for the owner is a review', () => {
     expect(deriveTurn({ ...base, next: { who: 'kim', what: 'Read the draft.' } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Read the draft.' }, checkAt: null })
-    expect(deriveTurn({ ...base, next: { who: 'kim', what: '', when: WHEN } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Review: The export is fixed.' }, checkAt: WHEN })
+    // A hand-over sets no check, also with a time: the review has to be able to close the task.
+    expect(deriveTurn({ ...base, next: { who: 'kim', what: '', when: WHEN } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Review: The export is fixed.' }, checkAt: null })
+    expect(deriveTurn({ ...base, next: { who: 'user', what: 'Read it.', when: WHEN } }, ctx).checkAt).toBeNull()
   })
 
   it('4: next for another member or agent waits on them like on someone outside: no review lands in their Inbox', () => {
@@ -252,6 +257,11 @@ describe('the texts', () => {
     expect(answer(call)).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
   })
 
+  it('a hand-over with a time is answered as a review, without a check', () => {
+    const review: EndTurn = { ...call, next: { who: 'kim', what: 'Read it.', when: WHEN } }
+    expect(endTurnAnswer(review, deriveTurn(review, ctx), { checkProblem: 'whatever' })).toBe('Recorded: review for kim. Now write your reply as visible text.')
+  })
+
   it('a call without a next step on an open task is not answered as done', () => {
     const answer = endTurnAnswer(call, deriveTurn(call, ctx), { missing: missingOf(call, { taskOpen: true, ctx }) })
     expect(answer).toBe('Recorded: where the task stands, but no next step. The task is still open. Call end_turn with next, questions or failed. Now write your reply as visible text.')
@@ -301,7 +311,7 @@ describe('the texts', () => {
     for (const text of texts.filter((t) => t !== reminder(['reply']))) expect(text).toContain('end_turn')
     expect(END_TURN_DESCRIPTION).toContain('Make no call for a turn that is plain conversation.')
     expect(END_TURN_DESCRIPTION).toContain('Call it first, then write your reply once as visible text, as the last thing in the turn: the user reads only that, never the call or your thinking.')
-    expect(END_TURN_DESCRIPTION).toContain("when: the time you look again, like 2026-11-27T10:00 in the user's time zone; required unless who is the user.")
+    expect(END_TURN_DESCRIPTION).toContain("when: the time you look again, like 2026-11-27T10:00 in the user's time zone; required unless who is the user, where it is not used.")
     expect(turnEndRules({ owner: 'kim', agent: 'nova', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are nova.')
   })
 
@@ -313,7 +323,7 @@ describe('the texts', () => {
     expect(rules).toContain('- [kim] <what only the user can decide>')
     expect(rules).toContain('Write no block for a turn that is plain conversation.')
     expect(rules).toContain('End your reply with this block when you stop')
-    expect(rules).toContain('required unless who is the user')
+    expect(rules).toContain('required unless who is the user, where it is not used')
   })
 
   it('the check wakes the session with what it waited for', () => {

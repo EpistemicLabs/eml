@@ -886,10 +886,11 @@ export class ChatBridge {
       },
       endTurn: async (call) => {
         const turn = await this.turnOf(entry)
-        // A time that has passed wakes nobody: the call is refused whole, so the agent names another.
-        const passed = passedWhen(call, this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone })
-        if (passed) throw new Error(passed)
         const derived = deriveTurn(call, turn.ctx)
+        // A check at a time that has passed wakes nobody: the call is refused whole, so the agent names another.
+        // A time that sets no check (a step for the user) is not looked at.
+        const passed = derived.checkAt ? passedWhen(call, this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }) : null
+        if (passed) throw new Error(passed)
         entry.declared = true
         entry.replyText = ''
         entry.status = derived.status
