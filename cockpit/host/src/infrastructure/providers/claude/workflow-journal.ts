@@ -102,8 +102,10 @@ export class WorkflowJournal {
     let file: FileHandle
     try {
       file = await open(join(this.dir, 'journal.jsonl'), 'r')
-    } catch {
-      return null
+    } catch (error) {
+      // Not written yet.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
     }
     try {
       const { size } = await file.stat()
@@ -144,25 +146,39 @@ export interface JournalWatch {
 }
 
 export interface JournalWatchRequest {
+  /** The run's task id, for the log. */
+  taskId: string
   locate: () => Promise<string | null> | string | null
   onProgress: (progress: WorkflowProgress) => void
   intervalMs?: number
+  /** Where a failed read is told; the host's stderr log by default. */
+  log?: (line: string) => void
 }
 
 /** Polls a run's journal until stopped; the runtime stops it at the run's end or its process's exit. */
 export type JournalWatcher = (request: JournalWatchRequest) => JournalWatch
 
-export const watchWorkflowJournal: JournalWatcher = ({ locate, onProgress, intervalMs = POLL_MS }) => {
+const stderrLog = (line: string) => { process.stderr.write(`${line}\n`) }
+
+export const watchWorkflowJournal: JournalWatcher = ({ taskId, locate, onProgress, intervalMs = POLL_MS, log = stderrLog }) => {
   const journal = new WorkflowJournal(locate)
   let stopped = false
   let busy = false
+  // A read that keeps failing is told once per run.
+  let logged = false
   const tick = async () => {
     if (busy || stopped) return
     busy = true
     try {
       const progress = await journal.poll()
       if (progress && !stopped) onProgress(progress)
-    } catch { /* the next tick tries again */ } finally {
+    } catch (error) {
+      // The next tick tries again.
+      if (!logged) {
+        logged = true
+        log(`[workflow] cannot read the journal of ${taskId}: ${(error as NodeJS.ErrnoException).code ?? 'unknown error'}`)
+      }
+    } finally {
       busy = false
     }
   }

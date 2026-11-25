@@ -753,6 +753,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
     const runs = workflowsDir(this.request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR, this.request.cwd, conversation)
     const locate = launch.dir ? () => launch.dir : launch.runId ? () => join(runs, launch.runId as string) : () => newestRunDir(runs, since)
     this.journals.set(launch.taskId, this.watchJournal({
+      taskId: launch.taskId,
       locate,
       onProgress: (progress) => this.emit({ kind: 'workflow_task', taskId: launch.taskId, ...progress }),
     }))

@@ -100,7 +100,7 @@ describe('watchWorkflowJournal', () => {
   it('reports progress until it is stopped', async () => {
     const seen: unknown[] = []
     writeFileSync(join(dir, 'journal.jsonl'), started(1))
-    const watch = watchWorkflowJournal({ locate: () => dir, onProgress: (progress) => seen.push(progress), intervalMs: 10 })
+    const watch = watchWorkflowJournal({ taskId: 'w1', locate: () => dir, onProgress: (progress) => seen.push(progress), intervalMs: 10 })
     await vi.waitFor(() => expect(seen).toEqual([{ running: 1, done: 0, phase: 'Review' }]))
     appendFileSync(join(dir, 'journal.jsonl'), result(1))
     await vi.waitFor(() => expect(seen).toHaveLength(2))
@@ -108,5 +108,18 @@ describe('watchWorkflowJournal', () => {
     appendFileSync(join(dir, 'journal.jsonl'), started(2))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(seen).toEqual([{ running: 1, done: 0, phase: 'Review' }, { running: 0, done: 1, phase: 'Review' }])
+  })
+
+  it('says nothing while the journal is not written, and tells a failed read once', async () => {
+    const lines: string[] = []
+    const quiet = watchWorkflowJournal({ taskId: 'w1', locate: () => join(dir, 'missing'), onProgress: () => {}, intervalMs: 10, log: (text) => lines.push(text) })
+    // A journal that is a folder cannot be read.
+    mkdirSync(join(dir, 'broken', 'journal.jsonl'), { recursive: true })
+    const broken = watchWorkflowJournal({ taskId: 'w2', locate: () => join(dir, 'broken'), onProgress: () => {}, intervalMs: 10, log: (text) => lines.push(text) })
+    await vi.waitFor(() => expect(lines).toHaveLength(1))
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    quiet.stop()
+    broken.stop()
+    expect(lines).toEqual([expect.stringMatching(/^\[workflow\] cannot read the journal of w2: E[A-Z]+$/)])
   })
 })
