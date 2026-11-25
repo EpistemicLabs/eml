@@ -342,7 +342,7 @@ describe('a shared brain through the server', () => {
       'Members:',
       '- juno · agents: pilot (you)',
       '- lasse',
-      "Assign work with assignee_ids (a member's or an agent's handle); eml_read_object object=user · agent lists them.",
+      "A task's owner (assignee_ids) is a member; an agent works on it as its delegate. eml_read_object object=user · agent lists them.",
     ].join('\n'))
     expect((await post(OTHER, '/boot', { part: 'system' })).body.markdown).not.toContain('## Shared space')
   })
