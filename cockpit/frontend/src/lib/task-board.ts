@@ -16,6 +16,22 @@ export type Coverage =
 
 export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
 
+/**
+ * Someone outside has the next move (kind outside), but the wait names the person keeping an eye on it: the owner (the
+ * task-state migration's blockers) or the viewer. Then the texts say its why, which names the outsider, instead of who.
+ */
+const keptOutside = (w: WaitingOn | undefined, keeper: Array<string | undefined>): boolean => w?.kind === 'outside' && keeper.includes(w.who);
+
+/** A text as the start of a sentence: its first letter capital, no full stop at the end. */
+const sentence = (text: string) => (text.charAt(0).toUpperCase() + text.slice(1)).replace(/\.$/, '');
+
+/** What a task waits on, in words: an outside wait its owner keeps an eye on says its why, else "waiting on <who>". */
+function waitText(task: Pick<BoardTask, 'waitingOn' | 'owner'>, fallback = 'someone'): string {
+  const w = task.waitingOn;
+  if (keptOutside(w, [task.owner])) return w?.why?.replace(/\.$/, '') || 'waiting on someone outside';
+  return `waiting on ${w?.who ?? fallback}`;
+}
+
 /** Where a step another task waits for stands (host StepState). */
 export interface StepState { turn: Turn | null; group?: TurnGroup; reason?: NobodyReason; owner?: string; delegate?: string; waitingOn?: WaitingOn }
 
@@ -476,7 +492,7 @@ function stepLine(block: Extract<RunnerBlock, { kind: 'depends' }>): string {
   if (step.group === 'at_time') return `${name}, which starts at a set time`;
   if (step.group === 'runner') return `${name}, next in line for the runner`;
   if (step.group === 'blocked') return `${name}, which waits itself`;
-  if (step.turn === 'waiting_on_others') return `${name}, which waits on ${step.waitingOn?.who ?? step.owner ?? 'someone'}`;
+  if (step.turn === 'waiting_on_others') return `${name}, which waits on ${keptOutside(step.waitingOn, [step.owner]) ? 'someone outside' : step.waitingOn?.who ?? step.owner ?? 'someone'}`;
   return name;
 }
 
@@ -509,9 +525,10 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.group === 'parent') return runnerLine(task) ?? 'Starts when its parent task is active.';
   if (task.group === 'blocked') return runnerLine(task) ?? `${agent} waits before it starts.`;
   if (task.turn === 'waiting_on_others') {
-    const who = task.waitingOn?.who ?? task.owner ?? 'someone';
-    return task.nextRunAt ? `Waiting on ${who}; ${agent} checks back ${when(task.nextRunAt, now)}.` : `Waiting on ${who}.`;
+    const waits = sentence(waitText(task, task.owner));
+    return task.nextRunAt ? `${waits}; ${agent} checks back ${when(task.nextRunAt, now)}.` : `${waits}.`;
   }
+  if (task.turn === 'agent_scheduled' && task.waitingOn?.kind === 'outside') return `${sentence(waitText(task))}; ${agent} checks again ${when(task.nextRunAt, now)}.`;
   if (task.group === 'mission') return `Until the goal is reached. ${agent} checks again ${when(task.nextRunAt, now)}.`;
   if (task.group === 'routine') return `${repeatsText(task.schedule)}. Next ${when(task.nextRunAt, now)}.`;
   if (task.group === 'at_time') return `${agent} starts ${when(task.nextRunAt, now)}.`;
@@ -608,7 +625,7 @@ export function coverageText(task: BoardTask, now: number): string {
   if (c.ok) {
     if (c.how === 'working') return `${agent} working now`;
     if (c.how === 'parked') return c.at ? `parked · back ${when(c.at, now)}` : 'parked until you bring it back';
-    if (c.how === 'checks_back') return `waiting on ${task.waitingOn?.who ?? 'someone'} · ${agent} checks ${when(c.at, now)}`;
+    if (c.how === 'checks_back') return `${waitText(task)} · ${agent} checks ${when(c.at, now)}`;
     if (c.how === 'at_time') return `${agent} · ${when(c.at, now)}`;
     const b = task.runner;
     if (b?.kind === 'depends') return `${agent} · after ${b.step?.turn === 'review' ? 'your review of ' : ''}${quoted(b.title)}`;
@@ -627,7 +644,7 @@ export function coverageText(task: BoardTask, now: number): string {
     if (c.reason === 'step_dropped') return 'waits for a step that will never finish: change the plan';
     return 'delegated without a checkpoint: set one';
   }
-  if (c.group === 'nofollow') return `waiting on ${task.waitingOn?.who ?? 'someone'} · nobody checks back`;
+  if (c.group === 'nofollow') return `${waitText(task)} · nobody checks back`;
   if (c.group === 'owner') return 'no owner: claim it or drop it';
   if (c.group === 'due') return `due ${task.due ? dueLabel(task.due, now) : ''}`.trim();
   if (c.group === 'high') return 'high · nobody on it';
@@ -772,6 +789,7 @@ export function sessionState(task: BoardTask, sessionId: string, archived: boole
 export function waitingLine(task: BoardTask, viewer: string): string {
   const w = task.waitingOn;
   if (!w) return '';
+  if (keptOutside(w, [viewer, task.owner])) return w.why ? `Outside · ${w.why}` : 'Outside';
   const who = w.who === viewer ? 'You' : w.who;
   const parts = (w.why ?? '').split(' · ').filter(Boolean);
   if (w.who === viewer && w.kind === 'question' && parts.length > 1) return `${who} · ${parts.length} questions from ${agentName(task.delegate)}`;
