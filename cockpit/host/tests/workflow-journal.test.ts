@@ -67,6 +67,12 @@ describe('WorkflowJournal', () => {
     writeFileSync(join(dir, 'journal.jsonl'), started(3, 'Verify'))
     expect(await journal.poll()).toEqual({ running: 1, done: 0, phase: 'Verify' })
   })
+
+  // Windows opens a folder like a file, so there is no portable way to fail the open there.
+  it.skipIf(process.platform === 'win32')('passes on a read that fails for another reason than a missing file', async () => {
+    mkdirSync(join(dir, 'journal.jsonl'))
+    await expect(new WorkflowJournal(() => dir).poll()).rejects.toMatchObject({ code: expect.stringMatching(/^E[A-Z]+$/) })
+  })
 })
 
 describe('finding a run\'s folder', () => {
@@ -113,9 +119,9 @@ describe('watchWorkflowJournal', () => {
   it('says nothing while the journal is not written, and tells a failed read once', async () => {
     const lines: string[] = []
     const quiet = watchWorkflowJournal({ taskId: 'w1', locate: () => join(dir, 'missing'), onProgress: () => {}, intervalMs: 10, log: (text) => lines.push(text) })
-    // A journal that is a folder cannot be read.
-    mkdirSync(join(dir, 'broken', 'journal.jsonl'), { recursive: true })
-    const broken = watchWorkflowJournal({ taskId: 'w2', locate: () => join(dir, 'broken'), onProgress: () => {}, intervalMs: 10, log: (text) => lines.push(text) })
+    // A read that fails for another reason than a missing file; the same on every platform (Windows opens a folder).
+    const denied = () => Promise.reject(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    const broken = watchWorkflowJournal({ taskId: 'w2', locate: denied, onProgress: () => {}, intervalMs: 10, log: (text) => lines.push(text) })
     await vi.waitFor(() => expect(lines).toHaveLength(1))
     await new Promise((resolve) => setTimeout(resolve, 60))
     quiet.stop()
