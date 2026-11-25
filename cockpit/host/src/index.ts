@@ -26,6 +26,7 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
+import { newSessionReason, ownSessionOf, type SessionOnTaskFacts } from './domain/own-session.js'
 import { ownersFor, type OwnedTask } from './domain/task-owner.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
@@ -428,6 +429,18 @@ async function main() {
   // What holds one of the runner's slots: a session in a turn on the task, here or in another cockpit's run (domain/runs.ts).
   const taskSessions = (taskId: string) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
     .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' }))
+  // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
+  // from the provider's summary for that one session only.
+  const ownSessionOn = (taskId: string): SessionOnTaskFacts | null => {
+    const own = ownSessionOf(ledger.list().map((e) => ({
+      sessionId: e.sessionId, taskId: e.taskId, createdAt: e.createdAt, archived: Boolean(e.archivedAt),
+      parentSessionId: e.parentSessionId, jobId: e.jobId, runtime: e.runtime, contextTokens: null,
+    })), taskId)
+    if (!own) return null
+    const entry = ledger.get(own.sessionId)
+    const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
+    return { ...own, contextTokens: providers.forSession(own.sessionId).summary(bridge.sessionRef(own.sessionId, projectPath)).contextTokens }
+  }
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
@@ -442,6 +455,19 @@ async function main() {
         projectId: step.projectId, prompt: stepPrompt(step, step.checkpoint), title: step.title, fromSessionId: null,
         origin: 'runner', taskId: step.id, ...(space.main ? {} : { spaceId: space.id }),
       })
+      return null
+    },
+    ownSession: (taskId) => {
+      const own = ownSessionOn(taskId)
+      return newSessionReason(own, taskCommands?.startFresh(taskId) ?? false) === null ? own!.sessionId : null
+    },
+    // The session gets the start prompt as any message, resuming it when stopped; its new run starts with it.
+    resume: async (_space, sessionId, step) => {
+      const at = new Date().toISOString()
+      const outcome = await deliver({ target: sessionId, text: stepPrompt({ ...step, continued: true }, step.checkpoint), from: null, caller: 'session' })
+      if (outcome !== 'delivered' && outcome !== 'resumed') return `the session did not take the start prompt (${outcome})`
+      ledger.startRun(sessionId, at)
+      runRecords.poke()
       return null
     },
   })
@@ -803,6 +829,10 @@ async function main() {
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
+    ownSessionOf: (taskId) => {
+      const own = ownSessionOn(taskId)
+      return own ? { sessionId: own.sessionId, continues: newSessionReason(own, false) === null } : null
+    },
     reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
     ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
     runnerBusy, runnerHeld,

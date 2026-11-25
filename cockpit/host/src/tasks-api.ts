@@ -327,7 +327,7 @@ export async function handleTasksApi(
         if (!mode || !HAND_OVER_MODES.includes(mode) || !delegate) { refuse(json, res, 'invalid', 'mode (now · schedule · together) and delegate are required'); return true }
         const spec = schedule(body)
         if (spec === 'invalid') { refuse(json, res, 'invalid', 'schedule.session is new or resume, schedule.untilGoal true or false'); return true }
-        input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: spec, desk: str(body.desk) } }
+        input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: spec, desk: str(body.desk), ...(body.fresh === true ? { fresh: true } : {}) } }
       } else if (verb === 'review' || verb === 'close') {
         input = { ...base, kind: verb, taskId }
       } else if (verb === 'end-schedule') {

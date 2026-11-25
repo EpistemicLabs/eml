@@ -33,6 +33,8 @@ export interface HandOverRequest {
   checkpoint?: string
   schedule?: ScheduleSpec
   desk?: string
+  /** Delegate now: start a new session even when the task has its own open session to continue (domain/own-session.ts). */
+  fresh?: boolean
 }
 
 export interface HandOverTask {
@@ -99,7 +101,7 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
     if (task.delegation?.agent || task.delegate) patch.delegation = null
     if (task.status === 'planned') patch.status = 'active'
   }
-  if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.`)
+  if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.${req.fresh ? ' It starts in a new session (Start fresh).' : ''}`)
   if (req.mode === 'schedule') {
     const when = req.schedule!.at ?? `"${req.schedule!.cron}"`
     lines.push(`Scheduled ${req.delegate} for ${when} (${req.schedule!.timeZone}) with checkpoint ${req.checkpoint}; the owner stays.`)

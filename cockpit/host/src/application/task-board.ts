@@ -82,6 +82,11 @@ export interface BoardTask {
   hasSchedule: boolean
   /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
   handTo?: string
+  /**
+   * The task's own open session (domain/own-session.ts): Take over opens it, and Delegate continues it when `continues`
+   * (else, or with Start fresh, a new session starts).
+   */
+  ownSession?: { sessionId: string; continues: boolean }
   /** A command on it still in its undo window. */
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
   /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
@@ -187,6 +192,8 @@ export interface TaskBoardDeps {
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
+  /** The task's own open session, and whether a delegation would continue it (domain/own-session.ts). */
+  ownSessionOf?(taskId: string): { sessionId: string; continues: boolean } | null
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
   /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
@@ -628,6 +635,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)
               : turn.reason === 'not_handed_over' ? facts.delegate : null
             return agent ? { handTo: agent } : {}
+          })(),
+          ...(() => {
+            const own = CLOSED_STATUSES.has(row.status) ? null : deps.ownSessionOf?.(row.id) ?? null
+            return own ? { ownSession: own } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
           ...(() => {

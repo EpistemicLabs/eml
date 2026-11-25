@@ -44,7 +44,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: boolean }> } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -71,6 +71,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
+    ownSessionOf: (taskId) => opts.own?.[taskId] ?? null,
     now: () => clock.now,
     log: (line) => { opts.log?.push(line) },
     ...(opts.head ? { head: opts.head } : {}),
@@ -103,6 +104,24 @@ describe('the task board', () => {
       { id: 'mon', member: 'lasse', agent: 'atlas', startedAt: day(16), endedAt: day(16), endReason: 'finished', result: '4 mails need you', here: true },
     ])
     expect(t.earlierRuns!.map((r) => r.id)).not.toContain('now')
+  })
+
+  it('names a task\'s own session and whether Delegate continues it; a session continued after a delegation counts once', async () => {
+    const at = (h: number) => `2026-11-18T${String(h).padStart(2, '0')}:00:00.000Z`
+    const { board } = setup({
+      main: [mine('o', { delegate: 'atlas' }), mine('n')],
+      own: { o: { sessionId: 'desk-1', continues: true } },
+      runs: [
+        { id: `desk-1_${Date.parse(at(9))}`, task_id: 'o', member: 'lasse', agent: 'atlas', state: 'running', started_at: at(9), last_activity_at: at(9) },
+        { id: 'desk-1', task_id: 'o', member: 'lasse', agent: 'atlas', state: 'ended', started_at: at(8), ended_at: at(9), end_reason: 'finished' },
+      ],
+    })
+    const tasks = (await board.refresh()).tasks
+    const o = tasks.find((x) => x.id === 'o')!
+    expect(o.ownSession).toEqual({ sessionId: 'desk-1', continues: true })
+    expect(o.runs?.map((r) => r.id)).toEqual(['desk-1'])
+    expect(o.earlierRuns).toBeUndefined()
+    expect(tasks.find((x) => x.id === 'n')!.ownSession).toBeUndefined()
   })
 
   it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {

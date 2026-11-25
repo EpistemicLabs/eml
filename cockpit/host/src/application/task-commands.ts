@@ -792,6 +792,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       return latest?.handOver?.mode === 'now' ? latest.createdAt : null
     },
 
+    /** The owner chose Start fresh in the task's latest hand-over, a Delegate now: its delegate starts in a new session. */
+    startFresh(taskId: string): boolean {
+      const latest = latestHandOver(taskId)
+      return latest?.handOver?.mode === 'now' && latest.handOver.fresh === true
+    },
+
     /** The agent released when Work on it now ended, while that is still the task's latest hand-over: the board offers "Hand to <agent>". */
     releasedAgent(taskId: string): string | null {
       const latest = latestHandOver(taskId)

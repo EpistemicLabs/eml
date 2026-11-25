@@ -45,7 +45,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; resume?: (space: never, sessionId: string, step: { id: string }) => Promise<string | null> } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -56,6 +56,42 @@ describe('task runner', () => {
     await runner.tick()
     return { started, brain, logs, runner }
   }
+
+  it('continues the task\'s own session with the start prompt instead of starting a new one, once per request', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: Array<{ sessionId: string; id: string }> = []
+    const { started, brain, runner } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'solo' ? 'desk-1' : null),
+      resume: async (_space, sessionId, step) => { resumed.push({ sessionId, id: step.id }); return null },
+    })
+    expect(resumed).toEqual([{ sessionId: 'desk-1', id: 'solo' }])
+    expect(started).toEqual([])
+    expect(brain.posts.map((p) => p.body.text)).toEqual(['Continued in its own session by the task runner.'])
+    // its run is not in the brain yet: the request counts as started here, so the prompt is not sent again
+    await runner.tick()
+    expect(resumed).toHaveLength(1)
+  })
+
+  it('starts a new session when the own session does not take the prompt, or when there is none to continue', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' }
+    const list: T[] = [
+      { id: 'refused', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'fresh', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+    ]
+    const { started, logs, brain } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'refused' ? 'desk-1' : null),
+      resume: async () => 'the session did not take the start prompt (refused)',
+    })
+    expect(started.map((s) => s.id).sort()).toEqual(['fresh', 'refused'])
+    expect(brain.posts.map((p) => p.body.text)).toEqual(['Started by the task runner.', 'Started by the task runner.'])
+    expect(logs.some((l) => l.includes('not continued in session desk-1'))).toBe(true)
+  })
+
+  it('tells a continued session to carry on alone; a new one that the runner started it', () => {
+    const step = { id: 't1', title: 'Fix it', content: 'do it' }
+    expect(mod.stepPrompt({ ...step, continued: true }, 'after').split('\n')[0]).toBe('The owner delegated "Fix it" (task t1) to you: carry on with it on your own from where this conversation stands.')
+    expect(mod.stepPrompt(step, 'after').split('\n')[0]).toBe('The task runner started you for "Fix it" (task t1).')
+  })
 
   it('starts the ready steps of an active task, and marks them active so they start once', async () => {
     const list: T[] = [

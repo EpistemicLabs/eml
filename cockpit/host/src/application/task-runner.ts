@@ -31,7 +31,10 @@ import { CHECKPOINT_STOP } from '../domain/turn-end.js'
  *     (domain/runner-gate.ts holdsSlot).
  * The checks live in domain/runner-gate.ts, which the task board asks too, so the board names the same reason.
  * Starting it marks a planned one active; the request counts as started here
- * at once and in the brain once the session's run is written. Its session gets the task
+ * at once and in the brain once the session's run is written. A task with an
+ * own open session (domain/own-session.ts) is not started in a new one: that
+ * session gets the start prompt and a run of its own from then
+ * (application/run-records.ts), which closes the request the same way. Its session gets the task
  * from its first hook: checkpoint before prepares and asks before it acts,
  * after acts and hands the result over for review, none runs to the end.
  * Ticks every interval and when a turn ended.
@@ -57,9 +60,18 @@ export interface TaskRunnerDeps {
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
   brief?(taskId: string): string | undefined
   /** Start a session on the step; an error text when it cannot. */
-  start(space: BrainSpace, step: { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string }): string | null
+  start(space: BrainSpace, step: RunnerStep): string | null
+  /**
+   * The task's own session that the step's start prompt goes to instead of a new session (domain/own-session.ts
+   * sessionToContinue), or null to start one.
+   */
+  ownSession?(taskId: string): string | null
+  /** Give that session the step's start prompt and start its run for this request; an error text when it cannot. */
+  resume?(space: BrainSpace, sessionId: string, step: RunnerStep): Promise<string | null>
   log(line: string): void
 }
+
+export interface RunnerStep { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string }
 
 interface Task {
   id: string
@@ -80,11 +92,11 @@ interface Task {
 export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
 
 /**
- * The prompt a step's session starts with; its task, the rules, how a turn ends and what happens until it is done come
+ * The prompt a step's session starts with (or, `continued`, the one its own session carries on with); its task, the rules, how a turn ends and what happens until it is done come
  * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
  * (domain/job.ts JOB_TASK_RULE).
  */
-export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean }, checkpoint: string): string {
+export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean; continued?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
     ? `Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). ${CHECKPOINT_STOP.before}`
     : checkpoint === 'after'
@@ -94,7 +106,10 @@ export function stepPrompt(step: { id: string; title: string; content: string; b
         : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   const reviewed = checkpoint === 'before' || checkpoint === 'after'
   return [
-    `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
+    // A session that already works on the task (domain/own-session.ts) carries on; any other one starts on it.
+    step.continued
+      ? `The owner delegated "${step.title}" (task ${step.id}) to you: carry on with it on your own from where this conversation stands.`
+      : `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
     ...(step.brief ? [step.brief] : []),
     step.content,
     '',
@@ -175,7 +190,13 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const brainProject = step.scope.slice('project.'.length)
       const title = step.title ?? step.id
       const brief = deps.brief?.(step.id)
-      const problem = deps.start(space, { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) })
+      const runnerStep: RunnerStep = { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) }
+      // The task's own session carries on with the start prompt; one that does not take it falls back to a new session.
+      const own = deps.resume ? deps.ownSession?.(step.id) ?? null : null
+      const resumeProblem = own ? await deps.resume!(space, own, runnerStep) : null
+      if (resumeProblem) deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${resumeProblem}`)
+      const continued = own !== null && resumeProblem === null
+      const problem = continued ? null : deps.start(space, runnerStep)
       if (problem) {
         deps.log(`[runner] step ${step.id.slice(0, 8)} not started: ${problem}`)
         continue
@@ -183,9 +204,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       // Its run is written once the session runs (application/run-records.ts); until then this request counts as started here.
       startedFor.set(step.id, requestOf(step))
       startedAt.set(step.id, Date.now())
-      await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: 'Started by the task runner.' })
+      await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: continued ? 'Continued in its own session by the task runner.' : 'Started by the task runner.' })
       started.set(group, started.get(group)! + 1)
-      deps.log(`[runner] started step ${step.id.slice(0, 8)} ${title} (checkpoint ${step.properties?.checkpoint})`)
+      deps.log(`[runner] ${continued ? `continued step ${step.id.slice(0, 8)} in session ${own!.slice(0, 8)}` : `started step ${step.id.slice(0, 8)}`} ${title} (checkpoint ${step.properties?.checkpoint})`)
     }
   }
 

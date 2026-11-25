@@ -80,6 +80,18 @@ describe('hand over', () => {
     expect(w.changed).toContain('main')
   })
 
+  it('Start fresh is the latest Delegate now\'s choice: its delegate starts in a new session, and the journal says so', async () => {
+    const w = world([owned('t1')])
+    await w.commands.submit({ opId: 'op-f', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after', fresh: true } })
+    expect(w.commands.startFresh('t1')).toBe(true)
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts[0].body.text).toBe('Handed to atlas with checkpoint after; the owner stays. It starts in a new session (Start fresh).')
+    w.later(1000)
+    await w.commands.submit({ opId: 'op-c', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(w.commands.startFresh('t1')).toBe(false)
+  })
+
   it('does the work once for the same operation id', async () => {
     const w = world([owned('t1')])
     const input = { opId: 'op-twice', kind: 'hand_over' as const, spaceId: 'main', taskId: 't1', handOver: { mode: 'now' as const, delegate: 'atlas', checkpoint: 'after' } }
