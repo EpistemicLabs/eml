@@ -73,7 +73,7 @@ const WORKER_MODE = 'auto'
 // A session started by hand without the greeting (it is off, or the session predates it) names itself this way.
 const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
 
-const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your closing summary as visible text.'
+const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your full reply as visible text: the user reads only that, never the status call or your thinking.'
 
 // What the person reads is the reply after the status, never the status call or thinking.
 const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what changed (files, links); then, for a question, the questions as a numbered list, for review what to check, for failed what went wrong.'

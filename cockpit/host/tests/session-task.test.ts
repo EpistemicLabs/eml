@@ -202,6 +202,7 @@ describe('session task', () => {
     const worker = await tasks.context('worker-1')
     expect(own).toContain('Do not end every reply with the handoff')
     expect(own).toContain('call session_status question first')
+    expect(own).toContain('then write your full answer as visible text, ending with the question')
     expect(worker).not.toContain('call session_status question first')
     expect(worker).toContain('When you stop (done, or waiting for someone)')
     expect(tasks.handoffBeforeStop(id(9))).toContain('write your handoff block now')

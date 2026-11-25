@@ -125,7 +125,7 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '## Handoff',
     unattended
       ? 'When you stop (done, or waiting for someone), end your last message with this block (leave out lines that are empty):'
-      : 'A reply that ends with a question for the user: call session_status question first, with the question as the reason, so it reaches their Inbox (in a terminal without that tool, end with the handoff\'s Questions line instead). Do not end every reply with the handoff: the user reads along. Write it only when you hand the task over for review or close it, or when the cockpit asks for it before it stops the session (leave out lines that are empty):',
+      : 'A reply that ends with a question for the user: call session_status question first, with the question as the reason, so it reaches their Inbox; then write your full answer as visible text, ending with the question, because the user reads only that, never the status call or your thinking (in a terminal without that tool, end with the handoff\'s Questions line instead). Do not end every reply with the handoff: the user reads along. Write it only when you hand the task over for review or close it, or when the cockpit asks for it before it stops the session (leave out lines that are empty):',
     '```',
     '### Handoff',
     'Result: <first sentence, at most 100 characters: where the task stands now — the cockpit shows it under the task\'s name in every list; then more if needed>',

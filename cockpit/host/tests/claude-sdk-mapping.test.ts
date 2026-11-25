@@ -21,6 +21,22 @@ describe('ClaudeEventMapper', () => {
     expect(second).toEqual([{ kind: 'text', blockId: 'm1:1', text: 'B' }])
   })
 
+  it('keeps a text written before a tool call when the turn goes on with more text', () => {
+    const mapper = new ClaudeEventMapper()
+    const call = { type: 'tool_use', id: 's1', name: 'mcp__cockpit__session_status', input: { status: 'question', reason: 'Go?' } }
+    mapper.map(stream({ type: 'message_start', message: { id: 'm1' } }))
+    mapper.map(stream({ type: 'content_block_start', index: 0, content_block: { type: 'text' } }))
+    mapper.map(stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Long' } }))
+    const before = mapper.map(assistant('m1', [{ type: 'text', text: 'Long answer' }]))
+    mapper.map(assistant('m1', [call]))
+    mapper.map(sdk({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 's1', content: 'ok' }] } }))
+    mapper.map(stream({ type: 'message_start', message: { id: 'm2' } }))
+    mapper.map(stream({ type: 'content_block_start', index: 0, content_block: { type: 'text' } }))
+    const after = mapper.map(assistant('m2', [{ type: 'text', text: 'Go?' }]))
+    const texts = [...before, ...after].filter((e) => e.kind === 'text')
+    expect(texts).toEqual([{ kind: 'text', blockId: 'm1:0', text: 'Long answer' }, { kind: 'text', blockId: 'm2:0', text: 'Go?' }])
+  })
+
   it('pairs tool calls and results by id, and an async launch is not a finish', () => {
     const mapper = new ClaudeEventMapper()
     expect(mapper.map(assistant('m', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls\n-l' } }])))
@@ -162,6 +178,18 @@ describe('historyEvents', () => {
     ])
     expect(events.map((e) => e.kind)).toEqual(['user_message', 'text', 'tool_call', 'tool_result', 'history_end'])
   })
+
+  it('keeps every text of a turn around a tool call, each under its own id', () => {
+    const events = historyEvents([
+      { type: 'assistant', uuid: 'a1', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Long answer' }] } },
+      { type: 'assistant', uuid: 'a2', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id: 's1', name: 'mcp__cockpit__session_status', input: { status: 'question' } }] } },
+      { type: 'user', uuid: 'u1', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 's1', content: 'ok' }] } },
+      { type: 'assistant', uuid: 'a3', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Go?' }] } },
+    ])
+    const texts = events.flatMap((e) => (e.kind === 'text' ? [e] : []))
+    expect(texts.map((e) => e.text)).toEqual(['Long answer', 'Go?'])
+    expect(new Set(texts.map((e) => e.blockId)).size).toBe(2)
+  })
 })
 
 describe('historyEvents with images', () => {
@@ -195,5 +223,10 @@ describe('toolTitle', () => {
 describe('status tool description', () => {
   it('tells the agent that a reply ending with a question for the user is a question', () => {
     expect(STATUS_TOOL_DESCRIPTION).toContain('question: only the user can decide, or your reply ends with a question for the user.')
+  })
+
+  it('asks for the full reply as visible text after the call, not in thinking', () => {
+    expect(STATUS_TOOL_DESCRIPTION).toContain('Call it first, then write your full reply as visible text')
+    expect(STATUS_TOOL_DESCRIPTION).toContain('It labels the reply; it does not replace it.')
   })
 })

@@ -47,7 +47,7 @@ import { trackWaits } from './task-waits.js'
 
 export const NEXT_STEP_PROMPT = 'Your task is still open but has no next step. Set a check, ask Lasse, or hand the result over for review. Close it only when Lasse told you to.'
 export const NO_NEXT_STEP = 'Agent stopped without a next step'
-export const OWN_STATUS_PROMPT = 'Your last reply did not say how you stand, and the user has not read it yet. If it asks the user something, call session_status question with the question as the reason, then ask it again in one line. Otherwise call session_status done and reply in one line.'
+export const OWN_STATUS_PROMPT = 'Your last reply did not say how you stand, and the user has not read it yet. If it asks the user something, call session_status question with the question as the reason. Otherwise call session_status done. Then write your full answer as visible text, ending with the question if there is one: the user reads only that, never the status call or your thinking.'
 /** How long an answer stays unseen before the user counts as not watching it. */
 export const UNSEEN_GRACE_MS = 30_000
 // The read mark the page sends for an answer landing on screen can beat the turn's end to the host.

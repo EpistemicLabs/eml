@@ -426,10 +426,10 @@ export function startingMode(chosen: string | null, setting: string): string {
 
 const STATUS_TOOL = 'session_status'
 export const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, whenever someone has to act; this is how people learn you need them. '
-  + 'Call it first, then write your closing reply: the person reads that reply, never this call or your thinking. '
+  + 'Call it first, then write your full reply as visible text: the explanation, the answer and any questions. The person reads that reply, never this call or your thinking: what you only thought is lost. '
   + 'done: finished, nobody needs to act. question: only the user can decide, or your reply ends with a question for the user. '
   + 'review: finished, and someone should look at the result. failed: you could not do it. '
-  + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong.'
+  + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong. It labels the reply; it does not replace it.'
 
 export const OFFER_SPLIT_TOOL = 'offer_split'
 const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
