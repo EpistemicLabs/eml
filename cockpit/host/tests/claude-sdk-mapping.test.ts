@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import { ClaudeEventMapper, STATUS_TOOL_DESCRIPTION, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { deriveTurn, endTurnAnswer, type EndTurn } from '../src/domain/turn-end.js'
+import { ClaudeEventMapper, endTurnReply, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -220,13 +221,32 @@ describe('toolTitle', () => {
   })
 })
 
-describe('status tool description', () => {
-  it('tells the agent that a reply ending with a question for the user is a question', () => {
-    expect(STATUS_TOOL_DESCRIPTION).toContain('question: only the user can decide, or your reply ends with a question for the user.')
+describe('the end_turn tool\'s answer', () => {
+  const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
+  const worker = (extra: { missing?: Array<'next' | 'when'>; replied?: boolean; note?: string } = {}) => {
+    const calls: EndTurn[] = []
+    return { calls, endTurn: async (call: EndTurn) => { calls.push(call); return { derived: deriveTurn(call, ctx), missing: extra.missing ?? [], replied: extra.replied ?? false, ...(extra.note ? { note: extra.note } : {}) } } }
+  }
+
+  it('hands a readable call on, trimmed, and says what was recorded', async () => {
+    const w = worker()
+    expect(await endTurnReply(w, { result: ' Draft ready ', questions: ['Send it today?'] })).toBe('Recorded: question for lasse. Now write your reply as visible text.')
+    expect(w.calls).toEqual([{ result: 'Draft ready', questions: ['Send it today?'] }])
   })
 
-  it('asks for the full reply as visible text after the call, not in thinking', () => {
-    expect(STATUS_TOOL_DESCRIPTION).toContain('Call it first, then write your full reply as visible text')
-    expect(STATUS_TOOL_DESCRIPTION).toContain('It labels the reply; it does not replace it.')
+  it('refuses a call it cannot read without handing it on', async () => {
+    const w = worker()
+    expect(await endTurnReply(w, { result: 'x', next: { who: 'me', what: 'look', when: 'tomorrow' } })).toMatch(/^Not recorded: next\.when "tomorrow" is not a time\./)
+    expect(w.calls).toEqual([])
+  })
+
+  it('says what the call lacks and what the host could not do, and asks for no reply that is written', async () => {
+    const call = { result: 'Half way' }
+    expect(await endTurnReply(worker({ missing: ['next'], replied: true, note: 'The check was not set.' }), call))
+      .toBe(`${endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'], replied: true })} The check was not set.`)
+  })
+
+  it('says so when the call could not be recorded', async () => {
+    expect(await endTurnReply({ endTurn: async () => { throw new Error('the brain does not answer') } }, { result: 'x' })).toBe('Not recorded: the brain does not answer. Call end_turn again.')
   })
 })

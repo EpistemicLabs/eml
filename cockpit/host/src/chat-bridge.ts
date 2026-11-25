@@ -17,7 +17,9 @@ import { unattended, type SpawnRequest } from './domain/spawn-request.js'
 import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/session-lifecycle.js'
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
-import { attentionAfterTurn, missingSummary, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
+import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
+import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, reminder, checkNotSet, type EndTurn, type Missing } from './domain/turn-end.js'
+import { NO_AGENT, type SessionTurn } from './application/turn-context.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
 
@@ -69,16 +71,19 @@ const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
 // The mode a worker runs in, as in the terminal: nobody is there to answer.
 const WORKER_MODE = 'auto'
+// The calls that say how a turn ends: the reply is written before or after them.
+const END_OF_TURN_TOOLS = [END_TURN_TOOL, LEGACY_STATUS_TOOL]
 
 // A session started by hand without the greeting (it is off, or the session predates it) names itself this way.
 const NAME_YOURSELF = 'Once this exchange shows what the session is about, name it in a few words, in the background of your work and without mentioning it: node "$COCKPIT_TITLE_JS" \'<title>\'. The title goes in single quotes.'
 
-const STATUS_REMINDER = 'You have not said how you stand. Call session_status with done, question, review or failed, and a reason of one line: the result, or what you need. Then write your full reply as visible text: the user reads only that, never the status call or your thinking.'
-
-// What the person reads is the reply after the status, never the status call or thinking.
-const SUMMARY_SHAPE = 'In a few lines: what was asked, what you did, what changed (files, links); then, for a question, the questions as a numbered list, for review what to check, for failed what went wrong.'
-const SUMMARY_REMINDER = `Your turn ends without a visible reply. Write your closing summary now, as text, not in thinking. ${SUMMARY_SHAPE}`
-const QUESTIONS_REMINDER = `You said you have a question, but your reply does not ask it. Write the questions as visible text, as a numbered list, each one answerable on its own. ${SUMMARY_SHAPE}`
+/** What a turn's end carries besides its text. */
+export interface TurnEndFacts {
+  /** The end_turn call made in the turn; null when it made none. */
+  call: EndTurn | null
+  /** The turn was sent back once already (onTurnEnding): it gets no second reminder. */
+  reminded: boolean
+}
 
 /** A session's limits as its views get them. */
 export interface SessionLimitsView {
@@ -122,19 +127,25 @@ interface ChatEntry {
   closing: boolean
   /** Resolves once a closing entry is gone. */
   closed: Promise<void> | null
-  /** This turn the worker said how it stands, or was asked to. */
+  /** This turn the session said how it stands (end_turn, or the older session_status). */
   declared: boolean
-  askedStatus: boolean
-  /** The status said this turn, and the visible text written after it: the closing summary. */
+  /** How it stands as said this turn, and the end_turn call that said it (null for session_status). */
   status: WorkerStatus | null
-  textAfterStatus: string
+  call: EndTurn | null
+  /** The call asks the user something: the reply has to ask it too. */
+  asks: boolean
+  /** The visible text around the call: what was written since the last other tool call before it, and all after it. */
+  replyText: string
+  /** The call was made: no later tool call takes the reply back. */
+  replyKept: boolean
+  /** The turn was sent back once: it is not sent back again. */
+  reminded: boolean
   /** Everything the agent wrote this turn: the task router reads the handoff at its end. */
   turnText: string
   /** A turn finished since the session last handed off (or started): there is something to hand off. */
   worked: boolean
   /** It was asked for its handoff before an idle stop: it stops once that turn is over. */
   stopAfterTurn: boolean
-  askedSummary: boolean
   /** The memory ceiling its process started with, and the kills at it already reported; null: none. */
   ceiling: { limits: SessionLimits; kills: number } | null
   /** A ceiling notice the agent has not seen yet: it goes with its next prompt. */
@@ -154,8 +165,15 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
-  /** A turn finished with this text: the task router reads its handoff (application/task-router.ts). */
-  turnDone?: (sessionId: string, text: string) => void
+  /** A turn finished with this text: the task router reads its end_turn call, else its handoff (application/task-router.ts). */
+  turnDone?: (sessionId: string, text: string, turn: TurnEndFacts) => void
+  /** Whom an end_turn call is read against, and the session's task (application/turn-context.ts); absent: the space's agent and no task. */
+  turnContext?: (sessionId: string) => Promise<SessionTurn>
+  /**
+   * The check a call's next.when asks for: set, moved, or removed when the call has none
+   * (application/turn-check.ts). Answers why it could not be set, or null.
+   */
+  turnCheck?: (sessionId: string, check: { at: string | null; call: EndTurn; turn: SessionTurn }) => Promise<string | null>
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
   /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
@@ -564,7 +582,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -701,7 +719,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -754,7 +772,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, askedStatus: false, status: null, textAfterStatus: '', turnText: '', worked: false, stopAfterTurn: false, askedSummary: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, asks: false, replyText: '', replyKept: false, reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -824,13 +842,26 @@ export class ChatBridge {
     entry.ceiling = memory.place(entry.sessionId, pid, session) ? { limits: session, kills: memory.oomKills(entry.sessionId) } : null
   }
 
-  /** A new turn starts with nothing said yet: how it stands, and whether it was asked for it. */
+  /** A new turn starts with nothing said yet: how it stands, and whether it was sent back. */
   private resetTurnStatus(entry: ChatEntry): void {
     entry.declared = false
-    entry.askedStatus = false
     entry.status = null
-    entry.textAfterStatus = ''
-    entry.askedSummary = false
+    entry.call = null
+    entry.asks = false
+    entry.replyText = ''
+    entry.replyKept = false
+    entry.reminded = false
+  }
+
+  /** Whom the session's call is read against. Without the host's word on it: the space's agent, and nobody else known. */
+  private async turnOf(entry: ChatEntry): Promise<SessionTurn> {
+    const known = await this.ctx.turnContext?.(entry.sessionId).catch((error: unknown) => {
+      this.log(`turn context of ${entry.sessionId} not read: ${error instanceof Error ? error.message : 'unknown error'}`)
+      return null
+    })
+    if (known) return known
+    const agent = this.ctx.spaces.resolve(this.ctx.ledger.get(entry.sessionId)?.spaceId ?? null).agent
+    return { ctx: { owner: 'user', agent: agent ?? NO_AGENT, members: [] }, task: null }
   }
 
   private reporting(entry: ChatEntry): NonNullable<SessionRuntimeStart['worker']> {
@@ -847,25 +878,43 @@ export class ChatBridge {
         entry.liftNote = null
         return [ceiling, lifted, name].filter(Boolean).join('\n\n') || null
       },
+      endTurn: async (call) => {
+        entry.declared = true
+        entry.replyKept = true
+        const turn = await this.turnOf(entry)
+        const derived = deriveTurn(call, turn.ctx)
+        entry.status = derived.status
+        entry.call = call
+        entry.asks = (call.questions?.length ?? 0) > 0
+        // What the lists show under the session: the question it waits on, why it failed, else where the task stands.
+        const reason = call.failed ?? call.questions?.[0] ?? call.result
+        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
+        this.ctx.ledger.setAttention(entry.sessionId, { kind: derived.status, reason })
+        const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
+        return {
+          derived,
+          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, agent: turn.ctx.agent }),
+          replied: entry.replyText.trim() !== '',
+          ...(problem && derived.checkAt ? { note: checkNotSet(derived.checkAt, problem) } : {}),
+        }
+      },
       report: (status, reason) => {
         entry.declared = true
+        entry.replyKept = true
         entry.status = status
-        entry.textAfterStatus = ''
-        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
+        entry.call = null
+        entry.asks = status === 'question'
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
       },
       onTurnEnding: () => {
         // Its subagents still run: they wake it again, and that turn says how it stands.
         if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
-        const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.askedStatus })
-        if (ask) {
-          entry.askedStatus = true
-          return STATUS_REMINDER
-        }
-        const missing = missingSummary({ status: entry.status, textAfter: entry.textAfterStatus, asked: entry.askedSummary })
-        if (!missing) return null
-        entry.askedSummary = true
-        return missing === 'questions' ? QUESTIONS_REMINDER : SUMMARY_REMINDER
+        const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.reminded })
+        const missing: Missing[] = ask ? ['call'] : missingReply({ called: entry.status !== null, questions: entry.asks, reply: entry.replyText })
+        // One reminder per turn, naming everything it lacks.
+        if (entry.reminded || missing.length === 0) return null
+        entry.reminded = true
+        return reminder(missing)
       },
     }
   }
@@ -898,8 +947,13 @@ export class ChatBridge {
         if (event.kind === 'agent_task' && event.status === 'running') entry.runningAgents.add(event.taskId)
         else if (event.status) entry.runningAgents.delete(event.taskId)
         break
+      case 'tool_call':
+        // The reply is what stands right before the call, and whatever comes after it: text from before other work is not it.
+        if (END_OF_TURN_TOOLS.some((name) => event.name === name || event.name.endsWith(`__${name}`))) entry.replyKept = true
+        else if (!entry.replyKept) entry.replyText = ''
+        break
       case 'text':
-        if (entry.status) entry.textAfterStatus += event.text
+        entry.replyText += event.text
         entry.turnText += event.text
         break
       case 'turn_end': {
@@ -923,7 +977,7 @@ export class ChatBridge {
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
           this.ctx.ledger.setResult(entry.sessionId, true)
-          this.ctx.turnDone?.(entry.sessionId, entry.turnText)
+          this.ctx.turnDone?.(entry.sessionId, entry.turnText, { call: entry.call, reminded: entry.reminded })
           if (!entry.stopAfterTurn) entry.worked = true
         }
         entry.turnText = ''

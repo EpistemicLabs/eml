@@ -9,6 +9,7 @@ import { ChatBridge, IDLE_STOP, RESTART_NOTICE, liftNotice, parseAnswer, type Ch
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
+import { checkNotSet, reminder, type EndTurn } from '../src/domain/turn-end.js'
 import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
 
 /**
@@ -63,7 +64,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: (id: string, text: string) => void } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck'] } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -116,6 +117,8 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     terminalBusy: opts.busy,
     handoffBeforeStop: opts.handoffBeforeStop,
     turnDone: opts.turnDone,
+    turnContext: opts.turnContext,
+    turnCheck: opts.turnCheck,
   } as unknown as ChatContext
   const terminal = {
     running: opts.terminalRunning === true,
@@ -359,7 +362,7 @@ describe('ChatBridge', () => {
     const { bridge, runtimes, ledgerEntries, turns } = setup()
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const worker = runtimes[0].start.worker
-    expect(worker?.onTurnEnding()).toContain('session_status')
+    expect(worker?.onTurnEnding()).toBe(reminder(['call']))
     expect(worker?.onTurnEnding()).toBeNull()
     runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
     expect((ledgerEntries.get('s1') as unknown as { attention: unknown }).attention).toEqual({ kind: 'review', reason: null })
@@ -380,18 +383,138 @@ describe('ChatBridge', () => {
     expect(attention()).toBeNull()
   })
 
-  it('sends a turn back once when its reply does not show the summary or the questions', () => {
+  it('sends a turn back once when its reply does not ask the questions, or is missing', () => {
     const { bridge, runtimes } = setup()
     bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
     const worker = runtimes[0].start.worker!
     worker.report('question', 'confirm start date, terms, usage')
     runtimes[0].emit({ kind: 'thinking', blockId: 't1', text: 'Which start date? Which terms?' })
     runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'I need those three answers before I change anything.' })
-    expect(worker.onTurnEnding()).toMatch(/numbered list/)
+    expect(worker.onTurnEnding()).toBe(reminder(['questions']))
     expect(worker.onTurnEnding()).toBeNull()
     void bridge.deliver('s1', 'next')
     worker.report('done', 'finished')
-    expect(worker.onTurnEnding()).toMatch(/closing summary/)
+    expect(worker.onTurnEnding()).toBe(reminder(['reply']))
+  })
+
+  describe('end_turn', () => {
+    const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'dominik', 'atlas', 'motti'] }
+    const started = (opts: Parameters<typeof setup>[0] = {}) => {
+      const made = setup({ turnContext: async () => ({ ctx, task: { id: 't1', name: 'Refund', open: true } }), ...opts })
+      made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const attention = () => (made.ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention
+      return { ...made, runtime: made.runtimes[0], worker: made.runtimes[0].start.worker!, attention }
+    }
+
+    it.each<[string, EndTurn, { kind: string; reason: string }]>([
+      ['failed', { result: 'Stuck at the login', failed: 'No access to the shop' }, { kind: 'failed', reason: 'No access to the shop' }],
+      ['questions', { result: 'Draft ready', questions: ['Send it today?', 'To whom?'], next: { who: 'atlas', what: 'send', when: '2026-11-27T10:00' } }, { kind: 'question', reason: 'Send it today?' }],
+      ['the owner next', { result: 'Draft ready', next: { who: 'lasse', what: 'read the draft' } }, { kind: 'review', reason: 'Draft ready' }],
+      ['another member next', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } }, { kind: 'done', reason: 'Draft ready' }],
+      ['someone outside next', { result: 'Mail sent', next: { who: 'outside:Acme', what: 'answer the mail' } }, { kind: 'done', reason: 'Mail sent' }],
+      ['itself next, at a time', { result: 'Mail sent', next: { who: 'atlas', what: 'look for the answer', when: '2026-11-27T10:00' } }, { kind: 'done', reason: 'Mail sent' }],
+      ['nothing next', { result: 'All done' }, { kind: 'done', reason: 'All done' }],
+    ])('a call with %s sets the session\'s attention', async (_row, call, expected) => {
+      const { worker, attention } = started()
+      const recorded = await worker.endTurn(call)
+      expect(attention()).toEqual(expected)
+      expect(recorded.derived.status).toBe(expected.kind)
+    })
+
+    it('answers with what the call lacks and whether the reply is still to come', async () => {
+      const { worker, runtime } = started()
+      expect(await worker.endTurn({ result: 'Half way' })).toMatchObject({ missing: ['next'], replied: false })
+      expect(await worker.endTurn({ result: 'Half way', next: { who: 'me', what: 'go on' } })).toMatchObject({ missing: ['when'] })
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Here is where it stands.' })
+      expect(await worker.endTurn({ result: 'Half way', next: { who: 'lasse', what: 'decide' } })).toMatchObject({ missing: [], replied: true })
+    })
+
+    it('a closed task asks for no next step', async () => {
+      const { worker } = started({ turnContext: async () => ({ ctx, task: { id: 't1', name: 'Refund', open: false } }) })
+      expect((await worker.endTurn({ result: 'Closed it' })).missing).toEqual([])
+    })
+
+    it('hands the check to the host and tells the agent when it could not be set', async () => {
+      const checks: Array<string | null> = []
+      const { worker } = started({ turnCheck: async (_id, check) => { checks.push(check.at); return check.at === '2020-01-01T10:00' ? 'at: 1 Jan 2020 10:00 has passed' : null } })
+      expect((await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } })).note).toBeUndefined()
+      const late = await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2020-01-01T10:00' } })
+      expect(late.note).toBe(checkNotSet('2020-01-01T10:00', 'at: 1 Jan 2020 10:00 has passed'))
+      await worker.endTurn({ result: 'Sent' })
+      // A call without a time goes there too: the check it set earlier is removed.
+      expect(checks).toEqual(['2026-11-27T10:00', '2020-01-01T10:00', null])
+    })
+
+    it('reminds a worker that stops without a call, once', () => {
+      const { worker, runtime } = started()
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Did it.' })
+      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      expect(worker.onTurnEnding()).toBeNull()
+    })
+
+    it('reminds for the reply when the call stands alone after other work', async () => {
+      const { worker, runtime } = started()
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Let me look at the files.' })
+      runtime.emit({ kind: 'tool_call', toolId: 'c1', name: 'Read', toolKind: 'read', title: 'Read a', input: {} })
+      runtime.emit({ kind: 'tool_call', toolId: 'c2', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'end_turn', input: {} })
+      expect((await worker.endTurn({ result: 'Read them' })).replied).toBe(false)
+      expect(worker.onTurnEnding()).toBe(reminder(['reply']))
+      expect(worker.onTurnEnding()).toBeNull()
+    })
+
+    it('takes a reply written before the call or after it', async () => {
+      const before = started()
+      before.runtime.emit({ kind: 'tool_call', toolId: 'c1', name: 'Read', toolKind: 'read', title: 'Read a', input: {} })
+      before.runtime.emit({ kind: 'text', blockId: 'b1', text: 'The files are fine.' })
+      before.runtime.emit({ kind: 'tool_call', toolId: 'c2', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'end_turn', input: {} })
+      await before.worker.endTurn({ result: 'Checked the files' })
+      expect(before.worker.onTurnEnding()).toBeNull()
+
+      const after = started()
+      await after.worker.endTurn({ result: 'Checked the files' })
+      after.runtime.emit({ kind: 'text', blockId: 'b1', text: 'The files are fine.' })
+      // Work after the reply (a note to the brain) does not take it back.
+      after.runtime.emit({ kind: 'tool_call', toolId: 'c3', name: 'mcp__eml_brain__eml_log', toolKind: 'other', title: 'eml_log', input: {} })
+      expect(after.worker.onTurnEnding()).toBeNull()
+    })
+
+    it('reminds when the call has questions the reply does not ask', async () => {
+      const { worker, runtime } = started()
+      await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready and waits for your word.' })
+      expect(worker.onTurnEnding()).toBe(reminder(['questions']))
+      expect(worker.onTurnEnding()).toBeNull()
+    })
+
+    it('never reminds twice in one turn: the call it was asked for is not sent back for its reply', async () => {
+      const { worker } = started()
+      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
+      expect(worker.onTurnEnding()).toBeNull()
+    })
+
+    it('names a missing reply and its unasked questions in the one reminder', async () => {
+      const { worker } = started()
+      await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
+      expect(worker.onTurnEnding()).toBe(reminder(['reply', 'questions']))
+    })
+
+    it('passes the call and the reminder on with the turn\'s end, and starts the next turn clean', async () => {
+      const ends: Array<[string, unknown]> = []
+      const { worker, runtime, bridge } = started({ turnDone: (_id, text, turn) => ends.push([text, turn]) })
+      const call = { result: 'Draft ready', next: { who: 'lasse', what: 'read it' } }
+      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+      await worker.endTurn(call)
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready.' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      void bridge.deliver('s1', 'thanks')
+      runtime.emit({ kind: 'text', blockId: 'b2', text: 'Welcome.' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(ends).toEqual([
+        ['The draft is ready.', { call, reminded: true }],
+        ['Welcome.', { call: null, reminded: false }],
+      ])
+    })
   })
 
   it('a worker whose turn ends while its subagents run is not asked, flagged or handed off until they are back', () => {
@@ -414,7 +537,7 @@ describe('ChatBridge', () => {
 
     // The subagent wakes it: that turn is judged on its own and handed off.
     runtime.emit({ kind: 'agent_task', taskId: 'a2', status: 'completed' })
-    expect(worker.onTurnEnding()).toContain('session_status')
+    expect(worker.onTurnEnding()).toBe(reminder(['call']))
     worker.report('review', 'Report ready')
     runtime.emit({ kind: 'text', blockId: 'b2', text: 'Report is ready to check.' })
     expect(worker.onTurnEnding()).toBeNull()

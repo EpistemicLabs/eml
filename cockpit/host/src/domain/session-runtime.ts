@@ -1,4 +1,5 @@
 import type { WorkerStatus } from './session-attention.js'
+import type { DerivedTurn, EndTurn, Missing } from './turn-end.js'
 /**
  * A session driven through a structured harness instead of a terminal: the port
  * the chat view runs on. It says nothing about any one agent: an adapter
@@ -192,12 +193,26 @@ export interface SessionRuntimeStart {
   worker?: {
     /** Added to the next prompt, unseen in the chat; null: nothing. */
     onPrompt?: () => string | null
+    /** An end_turn call (domain/turn-end.ts): recorded, and what its answer has to say. */
+    endTurn(call: EndTurn): Promise<EndTurnRecorded>
+    /** The older session_status call: the status as given, its reason as the result. */
     report(status: WorkerStatus, reason: string | null): void
     /** Its turn is about to end: what to tell it instead of letting it stop; null lets it stop. */
     onTurnEnding(): string | null
   }
   /** The schedule tool's actions for this session (application/jobs.ts); the answer is what the agent reads. */
   jobs?: (input: Record<string, unknown>) => Promise<string>
+}
+
+/** What the cockpit made of an end_turn call, for the tool's answer. */
+export interface EndTurnRecorded {
+  derived: DerivedTurn
+  /** What the call still lacks (missingOf). */
+  missing: readonly Missing[]
+  /** The reply is written already. */
+  replied: boolean
+  /** Something the agent has to know besides: the check could not be set. */
+  note?: string
 }
 
 export interface SessionRuntimeFactory {

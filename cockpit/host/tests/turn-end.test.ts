@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseHandoff } from '../src/domain/handoff.js'
 import {
   BEFORE_IDLE_STOP, END_TURN_DESCRIPTION, END_TURN_TOOL, JOB_HEADER_STATUS, checkJobName, checkPrompt, deriveTurn, endTurnAnswer,
-  fromHandoff, handoffBlock, missingOf, readEndTurn, reminder, turnEndRules, whoOf, type EndTurn, type Missing,
+  fromHandoff, handoffBlock, missingOf, readEndTurn, reminder, shortQuestion, turnEndRules, whoOf, checkNotSet, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing,
 } from '../src/domain/turn-end.js'
 
 const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'dominik', 'motti', 'atlas'] }
@@ -214,5 +214,19 @@ describe('the texts', () => {
     expect(checkPrompt({ next: { who: 'me', what: 'Look at the deploy.' } }, ctx)).toBe('The check you set with end_turn is due. You planned: Look at the deploy. See where the task stands and act on it.')
     expect(checkPrompt({ next: { who: 'dominik', what: 'Merges the PR.' } }, ctx)).toBe('The check you set with end_turn is due. You waited on dominik: Merges the PR. See where the task stands and act on it.')
     expect(checkPrompt({ questions: ['Ship it?'] }, ctx)).toBe('The check you set with end_turn is due. You asked lasse: Ship it? See where the task stands and act on it.')
+  })
+
+  it('a question is kept up to its first question mark', () => {
+    expect(shortQuestion('Close the task despite the open mails?You wanted it done. The brightline task was')).toBe('Close the task despite the open mails?')
+  })
+
+  it('the older status tool only points to end_turn and asks for the reply', () => {
+    expect(LEGACY_STATUS_DESCRIPTION).toBe('The older form of end_turn, kept for sessions started before it. Use end_turn instead.')
+    expect(statusAnswer('review')).toBe('Recorded: review. Now write your reply as visible text.')
+  })
+
+  it('a check that could not be set says why and what to do', () => {
+    expect(checkNotSet('2020-01-01T10:00', 'at: 1 Jan 2020 10:00 (UTC) has passed'))
+      .toBe("The check at 2020-01-01T10:00 was not set: at: 1 Jan 2020 10:00 (UTC) has passed. Call end_turn again with another next.when (the time you look again, like 2026-11-27T10:00 in the user's time zone).")
   })
 })

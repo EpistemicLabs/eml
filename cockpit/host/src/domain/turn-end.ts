@@ -55,6 +55,8 @@ export interface DerivedTurn {
 export type Missing = 'call' | 'reply' | 'questions' | 'next' | 'when'
 
 export const END_TURN_TOOL = 'end_turn'
+/** The tool end_turn replaced. A session from before still finds it. */
+export const LEGACY_STATUS_TOOL = 'session_status'
 
 /** The labels of the "### Handoff" block, for writing it (handoffBlock) and reading it (domain/handoff.ts). */
 export const HANDOFF_LABELS = {
@@ -227,6 +229,9 @@ export const END_TURN_DESCRIPTION = [
   `checked, claimed, decided: for whoever picks the task up next: ${FIELD.checked}, ${FIELD.claimed}, ${FIELD.decided}. They go to the task's journal, not the chat.`,
 ].join('\n')
 
+/** The older tool's description: it only points to end_turn. */
+export const LEGACY_STATUS_DESCRIPTION = `The older form of ${END_TURN_TOOL}, kept for sessions started before it. Use ${END_TURN_TOOL} instead.`
+
 /** What a reminder or the tool's answer says about each missing thing. */
 const MISSING: Record<Missing, string> = {
   call: `You stopped without an ${END_TURN_TOOL} call, and nobody is watching this session. Call ${END_TURN_TOOL} now.`,
@@ -272,6 +277,13 @@ function recorded(call: EndTurn, derived: DerivedTurn): string {
 export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; replied?: boolean } = {}): string {
   return [recorded(call, derived), missingText(opts.missing ?? []), opts.replied ? '' : `Now write your reply ${VISIBLE}.`].filter(Boolean).join(' ')
 }
+
+/** The older tool's answer: what was recorded, then the reply that is still to come. */
+export const statusAnswer = (status: WorkerStatus) => `Recorded: ${status}. Now write your reply ${VISIBLE}.`
+
+/** Added to the tool's answer when the check at next.when could not be set: the rest of the call is recorded. */
+export const checkNotSet = (when: string, why: string) =>
+  `The check at ${when} was not set: ${why.replace(/[.\s]+$/, '')}. Call ${END_TURN_TOOL} again with another next.when (${FIELD.when}).`
 
 /** The block's template, for a session without the tool. */
 function blockTemplate(owner: string): string[] {
