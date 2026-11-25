@@ -16,7 +16,7 @@ import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
-import { needsAnswer, wasSpawned, worksAlone } from './domain/session-attention.js'
+import { attentionShown, needsAnswer, wasSpawned, worksAlone } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
 import { sessionName } from './domain/session-name.js'
 import { sessionAddress } from './session-address.js'
@@ -285,12 +285,16 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
   } else if (action === 'stop') {
     await stop(id, 'stopped')
   } else if (action === 'archive') {
-    const plan = planArchive(id, ledger.list().map((session) => ({
-      sessionId: session.sessionId, parentSessionId: session.parentSessionId,
-      working: deps.turns.get(session.sessionId)?.state === 'working',
-      background: deps.chat.backgroundTasks(session.sessionId) > 0,
-      needsAnswer: session.attention ? needsAnswer(session.attention.kind) : deps.turns.get(session.sessionId)?.state === 'waiting',
-    })))
+    const plan = planArchive(id, ledger.list().map((session) => {
+      const shown = shownAttention(deps, session)
+      return {
+        sessionId: session.sessionId, parentSessionId: session.parentSessionId,
+        working: deps.turns.get(session.sessionId)?.state === 'working',
+        background: deps.chat.backgroundTasks(session.sessionId) > 0,
+        // A mark its task no longer holds asks nothing; a session without one may still wait in its turn.
+        needsAnswer: session.attention ? Boolean(shown && needsAnswer(shown.kind)) : deps.turns.get(session.sessionId)?.state === 'waiting',
+      }
+    }))
     if ('blockedBy' in plan) {
       const message = plan.reason === 'working' ? 'Still working. Stop it or wait until it finishes.'
         : plan.reason === 'background' ? 'A background task is still running. Stop it or wait until it finishes.'
@@ -336,6 +340,14 @@ function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string;
   return { ...answer, runtime: 'terminal', prompt: lead.prompt }
 }
 
+type LedgerEntry = ReturnType<PtyBridge['ledger']['list']>[number]
+
+/** Why the session waits, as every list shows it: its task decides once the board read it (domain/session-attention.ts attentionShown). */
+function shownAttention(deps: HostDeps, entry: LedgerEntry): LedgerEntry['attention'] {
+  const task = entry.taskId ? deps.tasks?.board.waitsSeen(entry.spaceId, entry.taskId) ?? null : null
+  return attentionShown(entry.attention, { unrouted: Boolean(entry.unrouted), task, sessionId: entry.sessionId })
+}
+
 function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: ReturnType<PtyBridge['ledger']['list']>[number]) {
   const summary = deps.providers.forSession(entry.sessionId).summary(deps.bridge.sessionRef(entry.sessionId, project?.path ?? null))
   // The last real message, not the last reattach: a reload or a click on a
@@ -361,7 +373,7 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
     jobId: entry.jobId ?? null,
     state: deps.chat.isRunning(entry.sessionId) ? deps.chat.sessionState(entry.sessionId) : deps.bridge.sessionState(entry.sessionId),
     runtime: entry.runtime,
-    attention: entry.attention,
+    attention: shownAttention(deps, entry),
     worker: entry.worker,
     // It works on its own (domain/session-attention.ts worksAlone). The Unread fold leaves out a worker that does: its answer goes to its task or its starter.
     alone: worksAlone({ delegated: entry.taskId ? deps.tasks?.board.delegated(entry.taskId) ?? null : null, worker: entry.worker, spawned: wasSpawned(entry) }),

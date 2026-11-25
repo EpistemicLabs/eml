@@ -83,8 +83,19 @@ export function hasSchedule(
   task: { jobs: ReadonlyArray<Pick<Job, 'endedAt'>>; schedule?: ScheduleFields | null; owner?: string }, me: string | undefined, now: number,
 ): boolean {
   if (task.jobs.some((j) => !j.endedAt)) return true
+  return nextRunOfSchedule(scheduleFromElsewhere(task, me), now) !== null
+}
+
+/**
+ * The schedule in the delegation as far as it stands for a job: only on another member's task, whose cockpit fires it
+ * (see hasSchedule). On a task `me` owns, or one nobody owns, it is a mirror of the jobs here, and without one of them
+ * a leftover. On a closed task too (`status` given and not open): the owner's cockpit fires nothing there, and a job
+ * that still comes due reopens the task first, which brings its schedule back.
+ */
+export function scheduleFromElsewhere(task: { schedule?: ScheduleFields | null; owner?: string; status?: string }, me: string | undefined): ScheduleFields | null {
+  const closed = task.status !== undefined && task.status !== 'planned' && task.status !== 'active'
   const elsewhere = Boolean(task.owner) && task.owner !== me
-  return elsewhere && nextRunOfSchedule(task.schedule, now) !== null
+  return elsewhere && !closed ? task.schedule ?? null : null
 }
 
 /** The same schedule, whatever the key order or the ISO form of at. */

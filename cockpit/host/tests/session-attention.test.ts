@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, wasSpawned, worksAlone } from '../src/domain/session-attention.js'
+import { attentionAfterTurn, attentionShown, missingReply, shouldAskForStatus, stillRunning, wasSpawned, worksAlone } from '../src/domain/session-attention.js'
 
 describe('shouldAskForStatus', () => {
   const quiet = { alone: true, clients: 0, declared: false, asked: false }
@@ -112,5 +112,44 @@ describe('worksAlone', () => {
     expect(wasSpawned({ parentSessionId: 's1', jobId: null })).toBe(true)
     expect(wasSpawned({ parentSessionId: null, jobId: 'j1' })).toBe(true)
     expect(wasSpawned({ parentSessionId: null, jobId: null })).toBe(false)
+  })
+})
+
+describe('attentionShown', () => {
+  const asked = { kind: 'question' as const, reason: 'Which one?', at: '2026-11-25T10:00:00.000Z' }
+  const seen = (patch: Partial<{ open: boolean; sessions: string[]; at: string }> = {}) => ({
+    open: patch.open ?? true, sessions: new Set(patch.sessions ?? ['s1']), at: patch.at ?? '2026-11-25T11:00:00.000Z',
+  })
+  const shown = (attention: Parameters<typeof attentionShown>[0], task: ReturnType<typeof seen> | null, unrouted = false) =>
+    attentionShown(attention, { unrouted, task, sessionId: 's1' })
+
+  it('shows a question while its open task still has the wait it put there', () => {
+    expect(shown(asked, seen())).toBe(asked)
+  })
+
+  it('shows nothing once the task is closed, whatever the session last said', () => {
+    expect(shown(asked, seen({ open: false }))).toBeNull()
+    expect(shown({ ...asked, kind: 'review' }, seen({ open: false }))).toBeNull()
+    expect(shown({ ...asked, kind: 'failed' }, seen({ open: false }))).toBeNull()
+  })
+
+  it('shows nothing once the open task no longer has the wait: answered, or cleared by a reopen', () => {
+    expect(shown(asked, seen({ sessions: [] }))).toBeNull()
+    expect(shown({ ...asked, kind: 'failed' }, seen({ sessions: ['s2'] }))).toBeNull()
+  })
+
+  it('leaves a review or done on an open task as the session said it: the router may not make those a wait', () => {
+    expect(shown({ ...asked, kind: 'review' }, seen({ sessions: [] }))?.kind).toBe('review')
+    expect(shown({ ...asked, kind: 'done' }, seen({ sessions: [] }))?.kind).toBe('done')
+  })
+
+  it('goes by the session\'s own mark where the task cannot say yet', () => {
+    // no task, or one the board has not read
+    expect(shown(asked, null)).toBe(asked)
+    // the router has not carried it over (the brain was down)
+    expect(shown(asked, seen({ open: false }), true)).toBe(asked)
+    // set after the board last read the task: its wait may not be there yet
+    expect(shown(asked, seen({ open: false, at: '2026-11-25T09:00:00.000Z' }))).toBe(asked)
+    expect(shown(null, seen())).toBeNull()
   })
 })

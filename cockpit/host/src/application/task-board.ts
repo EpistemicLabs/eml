@@ -5,11 +5,12 @@ import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
-import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import { nextRunOfSchedule, scheduleFromElsewhere } from '../domain/task-schedule.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import { taskNameOf } from '../domain/task-title.js'
+import type { TaskWaitsSeen } from '../domain/session-attention.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -32,7 +33,7 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
-  /** v0.23: its schedule (a job's here, else the delegation's) and its open runs. */
+  /** v0.23: its schedule (a job's here, else the one another member's cockpit fires) and its open runs. */
   schedule?: ScheduleFields
   /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
   earlierRuns?: EarlierRun[]
@@ -342,6 +343,10 @@ interface SpaceSlice {
   closed: ClosedTask[]
   lineage: LineageTask[]
   inboxTasks: Parameters<typeof inboxItems>[0]
+  /** Per task it read, open or closed: whether it is open and the sessions its waits came from (TaskBoard.waitsSeen). */
+  waits: Map<string, { open: boolean; sessions: ReadonlySet<string> }>
+  /** When the build that read `waits` started (ISO): a wait written later may be missing from it. */
+  readAt: string
 }
 
 /** A read of a space's brain that got no answer (a timeout, no connection, a server error): the space keeps its last state. */
@@ -434,8 +439,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   const objects = async (brain: Pick<EmlApi, 'get'>, object: string) =>
     ((await orWhenRefused(brain.get(`/object/${object}`), { objects: [] })) as { objects?: Array<Record<string, unknown>> }).objects ?? []
 
-  /** The task's next run: a job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts). */
-  const nextRunOfRow = (row: Row, now: number) => deps.nextRunOf(row.id) ?? nextRunOfSchedule(row.properties?.delegation?.schedule, now)
+  /**
+   * The schedule in the delegation where it stands for a job: an open task of another member's, whose cockpit mirrored
+   * it (domain/task-schedule.ts scheduleFromElsewhere). Elsewhere, without a job here, it is a leftover.
+   */
+  const elsewhereScheduleOf = (row: Row) => scheduleFromElsewhere({ schedule: row.properties?.delegation?.schedule, owner: row.properties?.assignee_ids?.[0], status: row.status }, deps.viewer)
+  /** The task's next run: a job here, else the schedule another member's cockpit fires. */
+  const nextRunOfRow = (row: Row, now: number) => deps.nextRunOf(row.id) ?? nextRunOfSchedule(elsewhereScheduleOf(row), now)
 
   /** A pending command's effect on the task, shown before it is applied. */
   const overlay = (row: Row, command: TaskCommand | undefined, agents: string[]): Row => {
@@ -505,7 +515,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     /** One space from its brain. Throws BrainUnreachable when a read got no answer: half a space would read as tasks gone. */
     const buildSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>): Promise<SpaceSlice> => {
       const agents = (await objects(brain, 'agent')).map((a) => String(a.id))
-      const slice: SpaceSlice = { space: { id: space.id, name: space.name, agents }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [] }
+      const slice: SpaceSlice = { space: { id: space.id, name: space.name, agents }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
       for (const p of await objects(brain, 'project')) {
         slice.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
@@ -519,6 +529,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       // What a task's facts read of the others: open and resolved ones, as before closed tasks were listed.
       const statusOf = new Map(rows.filter((r) => r.status === 'planned' || r.status === 'active' || r.status === 'resolved').map((r) => [r.id, r.status]))
       const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
+      for (const r of rows) {
+        const sessions = new Set(waitsOf(r.properties).map((w) => w.session_id || w.id))
+        slice.waits.set(r.id, { open: r.status === 'planned' || r.status === 'active', sessions })
+      }
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
       // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
@@ -586,8 +600,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           facts.requested = true
           facts.runner = await blockOf(row)
         }
-        // A job here, else the schedule another member's cockpit mirrored into the delegation (domain/task-schedule.ts).
-        const schedule = deps.scheduleOf?.(row.id) ?? props.delegation?.schedule ?? null
+        // A job here, else the schedule another member's cockpit fires.
+        const schedule = deps.scheduleOf?.(row.id) ?? elsewhereScheduleOf(row)
         const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], nextRunOfRow(row, now), now), schedule }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
@@ -673,7 +687,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
-      let slice: SpaceSlice = { space: { id: space.id, name: space.name, agents: [] }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [] }
+      let slice: SpaceSlice = { space: { id: space.id, name: space.name, agents: [] }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
       if (brain) {
         try {
           slice = await buildSpace(space, brain)
@@ -806,6 +820,17 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       if (queued || refreshing) return (queued ?? refreshing)!
       if (current && deps.now() - Date.parse(current.at) <= maxAgeMs) return current
       return refresh()
+    },
+
+    /**
+     * Where the board last read the task (domain/session-attention.ts attentionShown): open or not, and the sessions
+     * its waits came from. `spaceId` null is the main space. Null when no build read the task (or its space).
+     */
+    waitsSeen(spaceId: string | null, taskId: string): TaskWaitsSeen | null {
+      const space = deps.spaces().find((s) => (spaceId ? s.id === spaceId : s.main))
+      const slice = space ? slices.get(space.id) : undefined
+      const task = slice?.waits.get(taskId)
+      return slice && task ? { ...task, at: slice.readAt } : null
     },
 
     /** Whether the task is handed to an agent (it names a delegate), from the last board; null when it holds no such task. */
