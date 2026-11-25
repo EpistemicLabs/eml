@@ -378,11 +378,15 @@ export const NEW_WORK_AT_STOP = 'Name it when you end the turn, as a question fo
  * The section of the start context for a task handed to an agent: what every
  * wake-up does until the goal is reached.
  */
-export function untilDoneRules(): string {
+export function untilDoneRules(checkpoint?: string): string {
   return [
     '## Until it is done',
     '- At every wake-up, check the task against its goal first. Checks are read-only; nothing goes out without the user\'s OK.',
-    `- Reached: ${FOR_REVIEW}. Do not close it yourself.`,
+    // Checkpoint none: nobody reviews it, so the agent closes it, as the closing rule says, which also keeps a task
+    // whose schedule is still on open.
+    checkpoint === 'none'
+      ? '- Reached: close it yourself (eml_track_task with status resolved and the outcome), unless its schedule is still on (see Closing).'
+      : `- Reached: ${FOR_REVIEW}. Do not close it yourself.`,
     '- Not reached: name yourself as next, with the time you look again (when). The cockpit wakes you then: a simple check needs no schedule tool call. You decide whether and when to check again; do not ask the user about it.',
     '- Ask the user only what only they can decide. A stop without a next step (a check, a question, a review hand-over, or the task closed) is caught by the cockpit.',
   ].join('\n')

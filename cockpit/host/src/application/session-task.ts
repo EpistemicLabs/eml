@@ -130,7 +130,7 @@ export function taskContext(task: Task, placeholder: boolean, turn: TurnParty, u
     ...(unattended ? [WORKER_NEW_WORK_RULE] : []),
     '',
     ...SPLIT_RULES,
-    ...(task.properties?.delegate ? ['', untilDoneRules()] : []),
+    ...(task.properties?.delegate ? ['', untilDoneRules(task.properties.checkpoint)] : []),
     '',
     turnEndRules(turn),
   ].join('\n')
