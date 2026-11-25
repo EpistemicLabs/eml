@@ -2,7 +2,7 @@
 // the commands it takes, and the pure helpers the views share. Whose turn a task is comes from the
 // host; the page never works it out again, so every count agrees.
 import { useEffect } from 'react';
-import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, type QueryClient, type QueryKey, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DAY_MS } from '@/lib/time';
 import type { Hue } from '@/shared/view/ui/hue';
 
@@ -216,21 +216,63 @@ export const BOARD_KEY = ['task-board'] as const;
  */
 const BOARD_POLL_MS = 60_000;
 
-export async function fetchBoard(): Promise<Board> {
-  const res = await fetch('/api/v1/tasks/board', { headers: { Accept: 'application/json' } });
+/** `signal`: React Query's, so a fetch it gives up on stops downloading instead of competing with the next one. */
+export async function fetchBoard(signal?: AbortSignal): Promise<Board> {
+  const res = await fetch('/api/v1/tasks/board', { headers: { Accept: 'application/json' }, signal });
   if (!res.ok) throw new Error(`The task board did not load (HTTP ${res.status}).`);
   return res.json() as Promise<Board>;
+}
+
+/**
+ * Load a query again after a change, without throwing away a load already under way. That load may have read the
+ * host before the change, so exactly one more runs when it ends, however many changes came meanwhile. A change never
+ * cancels a load under way: while sessions work, changes come faster than a slow link loads the board.
+ *
+ * `inFlight`: per query, whether one more load is owed; shared by every change of one query client.
+ */
+function refreshAfterChange(client: QueryClient, queryKey: QueryKey, inFlight: Map<string, boolean>): void {
+  const id = JSON.stringify(queryKey);
+  if (inFlight.has(id)) { inFlight.set(id, true); return; }
+  inFlight.set(id, client.isFetching({ queryKey }) > 0);
+  void client.invalidateQueries({ queryKey }, { cancelRefetch: false }).finally(() => {
+    const again = inFlight.get(id);
+    inFlight.delete(id);
+    if (again) refreshAfterChange(client, queryKey, inFlight);
+  });
+}
+
+/** Per query client: how many hooks want the change events, and how to stop listening. */
+const changeWatches = new WeakMap<QueryClient, { users: number; stop: () => void }>();
+
+/**
+ * One `cockpit:tasks` listener per query client, however many components read the board, so one change starts one
+ * load.
+ */
+function watchTaskChanges(client: QueryClient): () => void {
+  let watch = changeWatches.get(client);
+  if (!watch) {
+    const inFlight = new Map<string, boolean>();
+    const changed = () => {
+      refreshAfterChange(client, BOARD_KEY, inFlight);
+      refreshAfterChange(client, CLOSED_KEY, inFlight);
+    };
+    window.addEventListener('cockpit:tasks', changed);
+    watch = { users: 0, stop: () => window.removeEventListener('cockpit:tasks', changed) };
+    changeWatches.set(client, watch);
+  }
+  const current = watch;
+  current.users += 1;
+  return () => {
+    current.users -= 1;
+    if (current.users === 0) { current.stop(); changeWatches.delete(client); }
+  };
 }
 
 /** The board, refreshed when the host reports a change (the `tasks` event), on reconnect, and every 60 s. */
 export function useTaskBoard() {
   const client = useQueryClient();
-  useEffect(() => {
-    const changed = () => { void client.invalidateQueries({ queryKey: BOARD_KEY }); };
-    window.addEventListener('cockpit:tasks', changed);
-    return () => window.removeEventListener('cockpit:tasks', changed);
-  }, [client]);
-  return useQuery({ queryKey: BOARD_KEY, queryFn: fetchBoard, refetchInterval: BOARD_POLL_MS });
+  useEffect(() => watchTaskChanges(client), [client]);
+  return useQuery({ queryKey: BOARD_KEY, queryFn: ({ signal }) => fetchBoard(signal), refetchInterval: BOARD_POLL_MS });
 }
 
 /**
@@ -250,9 +292,9 @@ export interface ClosedPage {
 
 export const CLOSED_KEY = ['closed-tasks'] as const;
 
-export async function fetchClosedTasks(spaceId: string, project: string, limit: number): Promise<ClosedPage> {
+export async function fetchClosedTasks(spaceId: string, project: string, limit: number, signal?: AbortSignal): Promise<ClosedPage> {
   const query = new URLSearchParams({ spaceId, project, limit: String(limit) });
-  const res = await fetch(`/api/v1/tasks/closed?${query}`, { headers: { Accept: 'application/json' } });
+  const res = await fetch(`/api/v1/tasks/closed?${query}`, { headers: { Accept: 'application/json' }, signal });
   if (!res.ok) throw new Error(`The closed tasks did not load (HTTP ${res.status}).`);
   return res.json() as Promise<ClosedPage>;
 }
@@ -260,16 +302,11 @@ export async function fetchClosedTasks(spaceId: string, project: string, limit: 
 /** The closed tasks of each project, up to its limit, while `enabled`; asked again when the board moves. */
 export function useClosedTasks(projects: Array<{ spaceId: string; project: string; limit: number }>, enabled: boolean) {
   const client = useQueryClient();
-  useEffect(() => {
-    if (!enabled) return;
-    const changed = () => { void client.invalidateQueries({ queryKey: CLOSED_KEY }); };
-    window.addEventListener('cockpit:tasks', changed);
-    return () => window.removeEventListener('cockpit:tasks', changed);
-  }, [client, enabled]);
+  useEffect(() => (enabled ? watchTaskChanges(client) : undefined), [client, enabled]);
   return useQueries({
     queries: projects.map((p) => ({
       queryKey: [...CLOSED_KEY, p.spaceId, p.project, p.limit] as const,
-      queryFn: () => fetchClosedTasks(p.spaceId, p.project, p.limit),
+      queryFn: ({ signal }: { signal: AbortSignal }) => fetchClosedTasks(p.spaceId, p.project, p.limit, signal),
       enabled,
       // A bigger page keeps the smaller one on screen while it loads.
       placeholderData: keepPreviousData,
