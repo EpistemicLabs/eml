@@ -6,6 +6,7 @@ import { MAIN_REGISTRY_FILE } from '../project-registry.js'
 import { platform } from '../infrastructure/platform/index.js'
 import { serviceStatus } from '../service.js'
 import { createRedactor } from './redact.js'
+import { newestOfEach } from '../log-times.js'
 
 /**
  * `eml-cockpit diagnose` — what a maintainer needs to work on an issue, as one
@@ -95,7 +96,8 @@ export async function diagnose(): Promise<string> {
   const update = readJson(path.join(APP_DIR, 'update.json'))
   const log = path.join(COCKPIT_HOME, 'host.log')
   const lines = readLines(log)
-  const errors = [...new Set(lines.slice(-ERROR_SCAN).filter((l) => ERROR_LINE.test(l)))].slice(-MAX_ERRORS)
+  // each error once, as its newest line: the time in front says when it last happened
+  const errors = newestOfEach(lines.slice(-ERROR_SCAN).filter((l) => ERROR_LINE.test(l))).slice(-MAX_ERRORS)
 
   const report = [
     '### Diagnostics',

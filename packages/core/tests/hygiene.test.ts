@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EML, hygieneCheck, HYGIENE_CHECKS, CURRENT_BRAIN_SCHEMA_VERSION } from '../src'
+import { EML, hygieneCheck, hygieneSweep, HYGIENE_CHECKS, CURRENT_BRAIN_SCHEMA_VERSION, type ConflictSweepState } from '../src'
 import { writes, legacyGlobalRule } from './fixtures'
+import { brainRef, exportSet } from '../src/log/move'
 
 // The brain-hygiene check (hygiene.ts).
 describe('hygieneCheck()', () => {
@@ -296,6 +297,106 @@ describe('hygieneCheck()', () => {
       const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-retired', content })
       writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-successor', content: 'quantumflux pipeline sweep threshold gate', supersedes: [a.id] })
       expect(check('conflict-scan').findings).toEqual([])
+    })
+
+    // hygieneSweep with the state of the sweep before: only what is new or changed since, and the known pairs again.
+    describe('a sweep from the last one', () => {
+      const conflicts = (previous?: ConflictSweepState) => {
+        const swept = hygieneSweep(eml, previous ? { previous } : {})
+        return { state: swept.conflicts, findings: swept.report.checks.find(c => c.id === 'conflict-scan')!.findings }
+      }
+      const gate = 'quantumflux pipeline sweep threshold gate'
+
+      it('gives the same report as hygieneCheck when it sweeps everything', () => {
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-full-a', content })
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-full-b', content: gate })
+        const now = new Date()
+        expect(hygieneSweep(eml, { now }).report).toEqual(hygieneCheck(eml, { now }))
+      })
+
+      it('keeps the rev of every engram it could compare, and both engrams of every pair', () => {
+        const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-state-a', content })
+        const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-state-b', content: gate })
+        const lone = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'unrelated', content: 'something else entirely' })
+        const { state } = conflicts()
+        expect(state.ids.sort()).toEqual([a.id, b.id].sort())
+        expect(state.revs).toMatchObject({ [a.id]: 1, [b.id]: 1, [lone.id]: 1 })
+      })
+
+      it('does not read engrams that are neither new, changed nor part of a known pair', () => {
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-old-a', content })
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-old-b', content: gate })
+        // as if the last sweep had seen both and known no pair
+        expect(conflicts({ revs: conflicts().state.revs, ids: [] }).findings).toEqual([])
+      })
+
+      it('finds the pair a write since the last sweep made', () => {
+        const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-inc-a', content })
+        const first = conflicts()
+        expect(first.findings).toEqual([])
+        const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-inc-b', content: gate })
+        const second = conflicts(first.state)
+        expect(second.findings.map(f => f.id)).toEqual([b.id])
+        expect(second.state.ids.sort()).toEqual([a.id, b.id].sort())
+      })
+
+      it('finds the pair an update of an engram made', () => {
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-upd-a', content })
+        const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-upd-b', content: 'nothing in common yet' })
+        const first = conflicts()
+        expect(first.findings).toEqual([])
+        writes(eml).update(b.id, { content: gate })
+        expect(conflicts(first.state).findings.map(f => f.id)).toEqual([b.id])
+      })
+
+      it('finds the pair of an engram moved into a scope (a rescope changes no time, only the rev)', () => {
+        writes(eml).projects.create({ id: 'other', name: 'Other' })
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-here', content })
+        const moved = writes(eml).store({ type: 'note', scope: 'project.other', title: 'qf-moved', content: gate })
+        const first = conflicts()
+        expect(first.findings).toEqual([])
+        const before = eml.engrams.get(moved.id)!.updated_at
+        eml.apply({ name: 'engram.rescope', input: { ids: [moved.id], scope: 'project.demo' } })
+        expect(eml.engrams.get(moved.id)!.updated_at).toBe(before)
+        expect(conflicts(first.state).findings.map(f => f.id)).toEqual([moved.id])
+      })
+
+      it('finds the pair of an engram that arrived with its old times (an import from another brain)', () => {
+        // written long before this brain's last sweep, in another brain
+        const from = new EML({ dbPath: ':memory:', namespace: 'assistant', clock: () => '2020-01-01T00:00:00.000Z' })
+        writes(from).agents.store({ id: 'assistant', name: 'Assistant' })
+        writes(from).projects.create({ id: 'demo', name: 'Demo' })
+        const old = writes(from).store({ type: 'note', scope: 'project.demo', title: 'qf-imported', content: gate })
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-native', content })
+        const first = conflicts()
+        expect(first.findings).toEqual([])
+        const set = exportSet((from as any).db, [old.id])
+        eml.apply({ name: 'engram.import', input: { source: brainRef((from as any).db), set_hash: set.set_hash, rows: set.rows } })
+        from.close()
+        expect(eml.engrams.get(old.id)!.created_at).toBe('2020-01-01T00:00:00.000Z')
+        expect(conflicts(first.state).findings.flatMap(f => [f.id, f.reason])).toEqual(expect.arrayContaining([expect.stringContaining(old.id.slice(0, 8))]))
+      })
+
+      it('keeps a known pair that is still open, without any write since', () => {
+        writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-keep-a', content })
+        const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-keep-b', content: gate })
+        expect(conflicts(conflicts().state).findings.map(f => f.id)).toEqual([b.id])
+      })
+
+      it('drops a known pair once it has its verdict (an edge) or lost a side (superseded)', () => {
+        const a = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-drop-a', content })
+        const b = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-drop-b', content: gate })
+        const c = writes(eml).store({ type: 'note', scope: 'project.demo', title: 'qf-drop-c', content: 'quantumflux pipeline sweep threshold again' })
+        const known = conflicts().state
+        expect(known.ids.sort()).toEqual([a.id, b.id, c.id].sort())
+        writes(eml).relate({ source_id: b.id, target_id: a.id, relation: 'related_to', explanation: 'two pipelines, judged distinct' })
+        writes(eml).update(c.id, { supersedes: [b.id] })
+        const after = conflicts(known)
+        // b is retired; a and c are still an open pair
+        expect(after.findings.map(f => f.id)).toEqual([c.id])
+        expect(after.state.ids.sort()).toEqual([a.id, c.id].sort())
+        expect(after.state.revs).not.toHaveProperty(b.id)
+      })
     })
   })
 })

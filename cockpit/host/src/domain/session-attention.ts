@@ -11,8 +11,30 @@ export function needsAnswer(kind: WorkerStatus): boolean {
   return kind === 'question' || kind === 'failed'
 }
 
+/**
+ * Whether a session works on its own (an agent session) or is the user's
+ * conversation (a desk session); decision session-kind-follows-task-delegate.
+ * Its task decides, as it stands now: handed to an agent (it names a
+ * delegate), the session works on its own, whoever started it. On a task that
+ * is not handed over, only a worker a session or a job started still does: it
+ * works for them. One the runner started lost its delegation: the owner took
+ * the task back, and it is their conversation now. `delegated` null: no task,
+ * or it cannot be read; the way the session was started decides.
+ */
+export function worksAlone(facts: { delegated: boolean | null; worker: boolean; spawned: boolean }): boolean {
+  if (facts.delegated) return true
+  if (!facts.worker) return false
+  return facts.delegated === null || facts.spawned
+}
+
+/** A session or a job started it (the runner starts its workers without either). */
+export function wasSpawned(entry: { parentSessionId?: string | null; jobId?: string | null }): boolean {
+  return Boolean(entry.parentSessionId || entry.jobId)
+}
+
 interface TurnFacts {
-  worker: boolean
+  /** It works on its own (worksAlone). */
+  alone: boolean
   /** Someone has the session open and sees for themselves. */
   clients: number
   /** It said done or why it needs someone during this turn. */
@@ -31,11 +53,11 @@ export function stillRunning(facts: { agents: number; status: WorkerStatus | nul
 }
 
 /**
- * A worker about to end its turn without saying how it stands is sent back.
+ * A session that works on its own, about to end its turn without saying how it stands, is sent back.
  * `asked`: the turn already had its one reminder.
  */
 export function shouldAskForStatus(facts: TurnFacts & { asked: boolean }): boolean {
-  return facts.worker && facts.clients === 0 && !facts.declared && !facts.asked
+  return facts.alone && facts.clients === 0 && !facts.declared && !facts.asked
 }
 
 /**
@@ -52,8 +74,8 @@ export function missingReply(facts: { called: boolean; questions: boolean; reply
   return [...(text === '' ? ['reply' as const] : []), ...(unasked ? ['questions' as const] : [])]
 }
 
-/** A turn ended: what it leaves when the worker still said nothing. Unclear means someone should look. */
+/** A turn ended: what it leaves when a session that works on its own still said nothing. Unclear means someone should look. */
 export function attentionAfterTurn(facts: TurnFacts & { reason: 'success' | 'error' | 'interrupted' }): Attention | null {
-  if (!facts.worker || facts.clients > 0 || facts.declared || facts.reason === 'interrupted') return null
+  if (!facts.alone || facts.clients > 0 || facts.declared || facts.reason === 'interrupted') return null
   return facts.reason === 'error' ? 'failed' : 'review'
 }

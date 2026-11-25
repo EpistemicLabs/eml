@@ -32,7 +32,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
         const id = path.slice('/engram/'.length)
         fetched.push(id)
         const row = [...rows, ...unlisted].find((r) => r.id === id)
-        if (!row) throw new Error('engram not found')
+        if (!row) throw Object.assign(new Error('engram not found'), { status: 404 })
         const relations = [
           ...(row.parent_id ? [{ relation: 'part_of', source_id: id, target_id: row.parent_id }] : []),
           ...(row.origin_task_id ? [{ relation: 'derived_from', source_id: id, target_id: row.origin_task_id, target_engram: { type: 'task' } }] : []),
@@ -162,6 +162,15 @@ describe('the task board', () => {
     expect(byId.get('stale')!.runs![0].state).toBe('stale')
     expect(byId.get('ended')!.runs).toBeUndefined()
     expect(byId.get('queued')).toMatchObject({ turn: 'agent_working', working: true })
+  })
+
+  it('says whether a task is handed to an agent, from the last board; null for a task it does not hold', async () => {
+    const { board } = setup({ main: [mine('handed', { delegate: 'atlas', checkpoint: 'after' }), mine('mine-only')] })
+    expect(board.delegated('handed')).toBeNull()
+    await board.get(60_000)
+    expect(board.delegated('handed')).toBe(true)
+    expect(board.delegated('mine-only')).toBe(false)
+    expect(board.delegated('unknown')).toBeNull()
   })
 
   it('names a task as the tasks card does, from open, closed and lineage tasks, and builds a board when none is there yet', async () => {
@@ -521,6 +530,93 @@ describe('the task board', () => {
     expect(model.inbox.find((i) => i.taskId === 'named')?.title).toBe('Ship the Acme widget release')
   })
 
+  describe('a brain that does not answer', () => {
+    /** Make the space's brain fail every read with `err` until the returned function is called. */
+    const breakBrain = (brain: { get: (path: string, query?: Record<string, unknown>) => Promise<unknown> }, err: () => Error) => {
+      const plainGet = brain.get.bind(brain)
+      brain.get = async () => { throw err() }
+      return () => { brain.get = plainGet }
+    }
+    const timeout = () => Object.assign(new Error('GET /list?type=task timed out after 30000ms'), { status: 0 })
+
+    it('keeps the space as its brain gave it last, marked stale, while the other spaces update', async () => {
+      const log: string[] = []
+      const { board, brains } = setup({ main: [mine('a'), mine('done', {}, 'resolved')], other: [mine('e1')], log })
+      const before = await board.refresh()
+      const mend = breakBrain(brains.get('main')!, timeout)
+      brains.get('ebisu')!.rows.push(mine('e2'))
+      const during = await board.refresh()
+      expect(during.tasks.filter((t) => t.spaceId === 'main')).toEqual(before.tasks.filter((t) => t.spaceId === 'main'))
+      expect(during.closed).toEqual(before.closed)
+      expect(during.projects).toEqual(before.projects)
+      expect(during.inbox).toEqual(before.inbox)
+      expect(during.spaces.map((sp) => [sp.id, sp.stale ?? false])).toEqual([['main', true], ['ebisu', false]])
+      expect(during.tasks.filter((t) => t.spaceId === 'ebisu').map((t) => t.id)).toEqual(['e1', 'e2'])
+      // said once, however many builds fail
+      await board.refresh()
+      expect(log.filter((l) => l.includes('Main: its brain did not answer'))).toEqual(['[board] Main: its brain did not answer (GET /list?type=task timed out after 30000ms); showing its last state'])
+      mend()
+      brains.get('main')!.rows.push(mine('b'))
+      const after = await board.refresh()
+      expect(after.tasks.filter((t) => t.spaceId === 'main').map((t) => t.id)).toEqual(['a', 'b', 'done'])
+      expect(after.spaces[0]).not.toHaveProperty('stale')
+      expect(log.filter((l) => l.includes('Main: its brain answers again'))).toHaveLength(1)
+    })
+
+    it('does not ask a second time without the new parameters: only a refusal is worth that', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      await board.refresh()
+      const brain = brains.get('main')!
+      const plainGet = brain.get.bind(brain)
+      let lists = 0
+      brain.get = async (path: string, query?: Record<string, unknown>) => {
+        if (path !== '/list') return plainGet(path, query)
+        lists++
+        throw new Error('GET /list failed: fetch failed')
+      }
+      await board.refresh()
+      // the five lists of one build, each asked once
+      expect(lists).toBe(5)
+    })
+
+    it('takes a server error as no answer too', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      await board.refresh()
+      breakBrain(brains.get('main')!, () => Object.assign(new Error('brain needs intervention'), { status: 503 }))
+      expect((await board.refresh()).tasks.map((t) => t.id)).toEqual(['a'])
+    })
+
+    it('lists the space without tasks, marked stale, when its brain never answered yet', async () => {
+      const { board, brains } = setup({ main: [mine('a')], other: [mine('e1')] })
+      breakBrain(brains.get('main')!, timeout)
+      const model = await board.refresh()
+      expect(model.spaces[0]).toEqual({ id: 'main', name: 'Main', agents: [], stale: true })
+      expect(model.tasks.map((t) => t.id)).toEqual(['e1'])
+    })
+
+    it('tells the pages when a space goes stale and when it is back', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      let told = 0
+      board.onChange(() => { told++ })
+      await board.refresh()
+      const mend = breakBrain(brains.get('main')!, timeout)
+      await board.refresh()
+      expect(told).toBe(1)
+      mend()
+      await board.refresh()
+      expect(told).toBe(2)
+    })
+
+    it('does not take a mistake of its own for a brain that is away', async () => {
+      const { board, brains } = setup({ main: [mine('a')] })
+      const brain = brains.get('main')!
+      const plainGet = brain.get.bind(brain)
+      // an answer the build cannot read: its own failure, not the brain's
+      brain.get = async (path: string, query?: Record<string, unknown>) => path === '/list' ? { engrams: [null] } : plainGet(path, query)
+      await expect(board.refresh()).rejects.toThrow(TypeError)
+    })
+  })
+
   it('still lists the tasks when the brain server does not know with_origin yet', async () => {
     const { board } = setup({ main: [mine('a'), { ...mine('b'), parent_id: 'a' }], oldBrain: true })
     const model = await board.refresh()
@@ -667,7 +763,54 @@ describe('live updates', () => {
     await until(() => seen >= 2)
     stop()
     expect(log.some((l) => l.includes('no /head'))).toBe(false)
-    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(2)
+    // said once when it starts and once when it ends, not with every try
+    expect(log.filter((l) => l.includes('watching Main failed'))).toHaveLength(1)
+    expect(log.filter((l) => l.includes('watching Main: its brain answers again after'))).toHaveLength(1)
+  })
+
+  it('refreshes once when a brain is back, whether or not its head moved, so nothing written meanwhile is missed', async () => {
+    let down = false
+    let calls = 0
+    const waits: number[] = []
+    const head: TaskBoardDeps['head'] = async (space, _after, waitMs) => {
+      if (space.id !== 'main') return 1
+      calls++
+      waits.push(waitMs)
+      if (down) throw new Error('GET /head?after=4&wait=25000 timed out after 35000ms')
+      return 4
+    }
+    const { board, brains } = setup({ main: [mine('t1')], head })
+    let told = 0
+    board.onChange(() => { told++ })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, settleMs: 5, restMs: 5, sleep: quickSleep })
+    await until(() => calls >= 2)
+    down = true
+    const failedAt = calls
+    await until(() => calls >= failedAt + 2)
+    // written while the watch got no answer; the head the watch sees afterwards is the one it knew
+    brains.get('main')!.rows.push(mine('written-meanwhile', {}, 'planned'))
+    down = false
+    await until(() => told > 0)
+    stop()
+    expect((await board.get(60_000)).tasks.map((t) => t.id)).toContain('written-meanwhile')
+    // after a failed call the head is asked for without waiting, so the answer comes as soon as the brain is back
+    expect(waits.slice(failedAt + 1, failedAt + 3)).toEqual([0, 0])
+  })
+
+  it('asks a brain that does not answer again within ten seconds at most', async () => {
+    const rests: number[] = []
+    const head: TaskBoardDeps['head'] = async (space) => {
+      if (space.id !== 'main') return 1
+      throw new Error('fetch failed')
+    }
+    const { board } = setup({ main: [mine('t1')], head })
+    await board.get(5000)
+    const stop = board.watch({ viewedMs: 60_000, restMs: 2000, sleep: (ms) => { rests.push(ms); return quickSleep(ms) } })
+    await until(() => rests.filter((ms) => ms === 10_000).length >= 2)
+    stop()
+    expect(Math.max(...rests)).toBe(10_000)
+    expect(rests.slice(0, rests.indexOf(10_000) + 1).filter((ms) => ms > 2000)).toEqual([4000, 8000, 10_000])
   })
 
   it('falls back on NO_LOG and tries /head again later', async () => {

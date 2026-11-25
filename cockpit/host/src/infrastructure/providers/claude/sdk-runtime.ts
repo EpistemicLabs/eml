@@ -599,7 +599,7 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs:
       }],
       Stop: [{
         hooks: [async () => {
-          const reason = worker.onTurnEnding()
+          const reason = await worker.onTurnEnding()
           return reason ? { decision: 'block' as const, reason } : {}
         }],
       }],

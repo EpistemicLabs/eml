@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // First: a host without a console sends its output to its log file from here on (log-file.ts).
 import './log-file.js'
+import { timeLogLines } from './log-times.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -51,6 +52,7 @@ import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
+import { createSessionKind } from './application/session-kind.js'
 import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
@@ -133,6 +135,8 @@ function portError(err: NodeJS.ErrnoException, port: number): Error {
 }
 
 async function main() {
+  // Every line the host prints from here on starts with its time (log-times.ts).
+  timeLogLines()
   log('== EML Cockpit host ====================================================')
   // The home holds the brain, tokens and transcripts: owner-only.
   fs.mkdirSync(COCKPIT_HOME, { recursive: true, mode: 0o700 })
@@ -442,6 +446,8 @@ async function main() {
     },
   })
   taskRunner.every(RUNNER_TICK_MS)
+  // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).
+  const sessionKind = createSessionKind({ ledger, spaces, brain: taskBrain })
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
     ledger, spaces, brain: taskBrain, owner, log, endTurnTool,
@@ -481,7 +487,7 @@ async function main() {
     if (result) lastResults.set(sessionId, result)
     runRecords.poke()
     void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false, ctx: turn?.ctx })
-      .then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt, call: turn?.call ?? null, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
+      .then(() => nextStep.turnEnded(sessionId, { endedAt, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -540,6 +546,7 @@ async function main() {
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
     onHelpers: (sessionId, helpers, workflows) => turns.waitOn(sessionId, helpers, workflows),
     turnDone: turnEnded,
+    worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),
     callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
     // The check a call's next.when asks for (application/turn-check.ts).

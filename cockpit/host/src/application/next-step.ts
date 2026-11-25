@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
-import { needsAnswer } from '../domain/session-attention.js'
-import { reminder, type EndTurn } from '../domain/turn-end.js'
+import { needsAnswer, wasSpawned, worksAlone } from '../domain/session-attention.js'
+import { reminder } from '../domain/turn-end.js'
 import { sameWaits, waitsBody, waitsOf, withSessionWait } from '../domain/task-waits.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { trackWaits } from './task-waits.js'
@@ -30,9 +30,9 @@ import { trackWaits } from './task-waits.js'
  * (chat-bridge.ts onTurnEnding) had its reminder: it gets no second one, and
  * the task waits on the user at once.
  *
- * Who is checked: a session whose task is handed to an agent (the task names a
- * delegate), whoever started the session; a worker counts as handed over also
- * when its task names none (a runner's or a job's worker on an older task).
+ * Who is checked: a session that works on its own (domain/session-attention.ts
+ * worksAlone): its task is handed to an agent (the task names a delegate),
+ * whoever started the session, or a session or a job started it as a worker.
  *
  * Watching is seeing: a session open in a pane counts as watched only once the
  * user has seen its answer (readAt, set when its desk is on screen in a
@@ -40,14 +40,10 @@ import { trackWaits } from './task-waits.js'
  * the runner's tick, a pane left open on a desk or not; one they saw is put
  * off until its pane is closed, and a nudge from before they looked in is void.
  *
- * A session on a task that is not handed over is the user's conversation: no
- * trigger is required of it. Only when a turn ended without saying how it
- * stands (no end_turn call, no handoff) and its answer stays unseen for
- * UNSEEN_GRACE_MS, a chat session gets the one reminder (reminder call), so a
- * question it asked reaches the Inbox. A terminal in use takes no message
- * (application/deliver-message.ts), so it gets none. The turn that reminder
- * starts is not checked again, and nothing waits on the user when it still
- * says nothing: the answer stays unread.
+ * Any other session on a task is the user's conversation (a desk session): no
+ * trigger is required of it and it gets no reminder. An answer they have not
+ * opened shows as unread; a question reaches the Inbox when the session
+ * declares it (decision session-kind-follows-task-delegate).
  *
  * A job's worker that ended done with only its next run ahead rescheduled
  * quietly: it leaves the lists (quiet), its handoff is the journal entry.
@@ -146,12 +142,8 @@ export interface NextStepDeps {
 }
 
 export interface TurnFacts {
-  /** The turn's reply carried a handoff block. */
-  handoff: boolean
   /** When the turn ended (ISO time), taken before the router's write. */
   endedAt: string
-  /** The end_turn call the turn made (domain/turn-end.ts); null or absent: none. */
-  call?: EndTurn | null
   /** The chat already sent the turn back once (chat-bridge.ts onTurnEnding): it gets no second reminder. */
   reminded?: boolean
 }
@@ -169,39 +161,12 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
   const nudged = new Map<string, string>()
   // Put off while the user had the session open, or until its answer was unseen long enough.
   const later = new Set<string>()
-  // The session's last turn: since when its answer counts as seen, whether it said how it stands
-  // (a call or a handoff; a status is on the ledger), and whether the chat already sent it back.
-  const ended = new Map<string, { at: string; said: boolean; reminded: boolean }>()
+  // The session's last turn: since when its answer counts as seen, and whether the chat already sent it back.
+  const ended = new Map<string, { at: string; reminded: boolean }>()
   const seenSince = (sessionId: string, turn: { at: string }) => deps.seen(sessionId, new Date(Date.parse(turn.at) - SEEN_SLACK_MS).toISOString())
-  // An own session reminded to say how it stands: the turn that reminder starts is not checked.
-  const askedStatus = new Set<string>()
-
   const unseenLong = (sessionId: string) => {
     const turn = ended.get(sessionId)
     return Boolean(turn) && !seenSince(sessionId, turn!) && now().getTime() - Date.parse(turn!.at) >= UNSEEN_GRACE_MS
-  }
-
-  /** A session on a task that is not handed over: the user's conversation. */
-  const checkOwn = async (sessionId: string, taskId: string, tool: boolean) => {
-    const turn = ended.get(sessionId)
-    // The user wrote since (a new turn cleared the status), it said how it stands, or it had its reminder: nothing to ask.
-    if (!turn || turn.said || turn.reminded || deps.ledger.get(sessionId)?.attention) {
-      later.delete(sessionId)
-      return
-    }
-    if (seenSince(sessionId, turn)) {
-      later.delete(sessionId)
-      return
-    }
-    if (!unseenLong(sessionId)) {
-      later.add(sessionId)
-      return
-    }
-    later.delete(sessionId)
-    askedStatus.add(sessionId)
-    const arrived = await deps.deliver(sessionId, reminder(['call'], { tool })).catch(() => false)
-    if (!arrived) askedStatus.delete(sessionId)
-    deps.log(`[next-step] ${sessionId.slice(0, 8)} task=${taskId.slice(0, 8)} own session said nothing, unseen: ${arrived ? 'reminded' : 'reminder not delivered'}`)
   }
 
   const check = async (sessionId: string) => {
@@ -221,11 +186,9 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       later.delete(sessionId)
       return
     }
-    // Handed to an agent: the task names a delegate. A worker's task counts also without one.
-    if (!task.properties?.delegate && !entry.worker) {
+    // The user's conversation: nothing is required of it.
+    if (!worksAlone({ delegated: Boolean(task.properties?.delegate), worker: entry.worker, spawned: wasSpawned(entry) })) {
       nudged.delete(sessionId)
-      // A terminal in use takes no message; its question goes through the handoff.
-      if (entry.runtime === 'sdk') return checkOwn(sessionId, task.id, deps.endTurnTool(sessionId))
       later.delete(sessionId)
       return
     }
@@ -297,13 +260,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
 
   return {
     async turnEnded(sessionId, turn) {
-      // The answer to the reminder: the session had its one ask.
-      if (askedStatus.delete(sessionId)) {
-        ended.delete(sessionId)
-        later.delete(sessionId)
-        return
-      }
-      ended.set(sessionId, { at: turn?.endedAt ?? now().toISOString(), said: Boolean(turn?.handoff || turn?.call), reminded: turn?.reminded ?? false })
+      ended.set(sessionId, { at: turn?.endedAt ?? now().toISOString(), reminded: turn?.reminded ?? false })
       await safely(sessionId)
     },
     async tick() {

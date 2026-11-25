@@ -99,6 +99,14 @@ describe('brain hygiene (cockpit offer)', () => {
       expect(await make(report(2, 1)).hygiene.view(space)).toBeNull()
     })
 
+    it('reads the kept report for the banner, and asks for a fresh one when a session starts from it', async () => {
+      const asked: Array<boolean | undefined> = []
+      const { hygiene } = make(report(2, 1), { fetchReport: async (_space, opts) => { asked.push(opts?.fresh); return report(2, 1) } })
+      await hygiene.view(space)
+      await hygiene.start(space)
+      expect(asked).toEqual([false, true])
+    })
+
     it('Start writes findings.json, queues one session in the Brain hygiene folder and records the offer', async () => {
       const { spawns, hygiene } = make(report(2, 1))
       expect(await hygiene.start(space)).toEqual({ ok: true, findings: 3 })
