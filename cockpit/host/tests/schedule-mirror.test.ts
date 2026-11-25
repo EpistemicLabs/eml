@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nextRunOfSchedule, sameSchedule, scheduleOfJob, scheduleOfJobs } from '../src/domain/task-schedule.js'
+import { nextRunOfJobs, nextRunOfSchedule, sameSchedule, scheduleOfJob, scheduleOfJobs } from '../src/domain/task-schedule.js'
 import { createScheduleMirror } from '../src/application/schedule-mirror.js'
 import type { Job } from '../src/domain/job.js'
 
@@ -39,6 +39,12 @@ describe('a task\'s schedule', () => {
     expect(nextRunOfSchedule({ at: '2026-11-20T02:00:00.000Z' }, NOW)).toBeNull()
     expect(nextRunOfSchedule({ cron: '0 8 * * *', paused: true }, NOW)).toBeNull()
     expect(sameSchedule({ at: '2026-11-28T02:00:00Z', session: 'new' }, { session: 'new', at: '2026-11-28T02:00:00.000Z' })).toBe(true)
+  })
+
+  it('has a run coming up through a job here that is not ended or held', () => {
+    const later = job({ id: 'j2', nextRunAt: '2026-11-30T09:00:00.000Z' })
+    expect(nextRunOfJobs([later, job()])).toBe('2026-11-25T00:00:00.000Z')
+    for (const off of [{ paused: true }, { pendingApproval: true }, { endedAt: '2026-11-24T09:00:00.000Z' }, { nextRunAt: null }]) expect(nextRunOfJobs([job(off)])).toBeNull()
   })
 })
 

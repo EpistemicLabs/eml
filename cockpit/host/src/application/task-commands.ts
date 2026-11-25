@@ -364,6 +364,33 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     return { ok: true, task, closedSteps }
   }
 
+  /** Why a task cannot be closed from the board: it has open steps, or decisions and notes bound to it; null when it can. */
+  const closeRefusal = async (brain: Pick<EmlApi, 'get'>, task: BrainTaskWithRelations): Promise<{ ok: false; refusal: CommandRefusal; message: string } | null> => {
+    const steps = (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
+    for (const id of steps) {
+      const step = await taskOf(brain, id)
+      if (step && OPEN.has(step.status)) return { ok: false, refusal: 'open_steps', message: 'This task still has open steps: close or move them first.' }
+    }
+    const bound = await brain.get('/list', { task_id: task.id, binding: 'task', status: 'active', limit: 1 }).catch(() => null) as { engrams?: unknown[] } | null
+    if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
+    return null
+  }
+
+  /**
+   * Closed → active by the board's reopen rules, with `text` in the journal. 'open' when it is not closed; a refusal
+   * (replaced, gone, under a closed parent, another owner's) leaves it as it is and comes back with its code and, for
+   * the task's journal, its words.
+   */
+  const reopenClosed = async (brain: Pick<EmlApi, 'get' | 'post'>, taskId: string, text: string): Promise<'reopened' | 'open' | { refused: CommandRefusal; message: string }> => {
+    const task = await taskOf(brain, taskId)
+    if (!task) return { refused: 'unknown_task', message: 'unknown_task' }
+    if (OPEN.has(task.status)) return 'open'
+    const checked = await checkReopen(brain, taskId)
+    if (!checked.ok) return { refused: checked.refusal, message: checked.message ?? checked.refusal }
+    await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task) }, text)
+    return 'reopened'
+  }
+
   const submit = async (input: CommandInput): Promise<Submitted> => {
     const existing = deps.store.get(input.opId)
     if (existing) return { ok: true, command: existing }
@@ -412,16 +439,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
 
     if (input.kind === 'close') {
       if (!input.taskId) return { ok: false, refusal: 'invalid' }
-      const task = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as (BrainTask & { relations?: Array<{ source_id: string; target_id: string; relation: string }> }) | null
+      const task = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
       if (!task) return { ok: false, refusal: 'unknown_task' }
       if (task.status !== 'planned' && task.status !== 'active') return { ok: false, refusal: 'task_closed' }
-      const steps = (task.relations ?? []).filter((r) => r.relation === 'part_of' && r.target_id === task.id).map((r) => r.source_id)
-      for (const id of steps) {
-        const step = await taskOf(brain, id)
-        if (step && (step.status === 'planned' || step.status === 'active')) return { ok: false, refusal: 'open_steps', message: 'This task still has open steps: close or move them first.' }
-      }
-      const bound = await brain.get('/list', { task_id: task.id, binding: 'task', status: 'active', limit: 1 }).catch(() => null) as { engrams?: unknown[] } | null
-      if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
+      const refused = await closeRefusal(brain, task)
+      if (refused) return refused
       return { ok: true, command: save(base) }
     }
 
@@ -596,14 +618,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const brain = space ? deps.brain(space) : null
       if (!brain) return 'refused'
       try {
-        const task = await taskOf(brain, taskId)
-        if (!task || OPEN.has(task.status)) return task ? 'open' : 'refused'
-        const checked = await checkReopen(brain, taskId)
-        if (!checked.ok) {
-          await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${checked.message ?? checked.refusal}`).catch(() => {})
+        const result = await reopenClosed(brain, taskId, 'Reopened by writing in its chat.')
+        if (result === 'open') return 'open'
+        if (result !== 'reopened') {
+          if (result.refused !== 'unknown_task') await track(brain, taskId, {}, `Its chat got a message, but the task stays closed: ${result.message}`).catch(() => {})
           return 'refused'
         }
-        await track(brain, taskId, { status: 'active', waits: null, ...reopenPatch(checked.task) }, 'Reopened by writing in its chat.')
         deps.changed(spaceId)
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopened by writing in its chat`)
         return 'reopened'

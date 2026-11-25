@@ -93,7 +93,7 @@ import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
-import { scheduleOfJobs } from './domain/task-schedule.js'
+import { nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
@@ -761,8 +761,7 @@ async function main() {
     brain: taskBrain,
     viewer: owner,
     sessionsOn: taskSessions,
-    nextRunOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt)
-      .map((job) => job.nextRunAt!).sort()[0] ?? null,
+    nextRunOf: (taskId) => nextRunOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
     scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],

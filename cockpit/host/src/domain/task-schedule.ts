@@ -56,6 +56,11 @@ export function nextRunOfSchedule(schedule: ScheduleFields | null | undefined, n
   }
 }
 
+/** When the task's jobs here run next (ISO): the earliest of those that have not ended and are not held; null without one. */
+export function nextRunOfJobs(jobs: ReadonlyArray<Pick<Job, 'paused' | 'pendingApproval' | 'endedAt' | 'nextRunAt'>>): string | null {
+  return jobs.filter((j) => !j.endedAt && !isHeld(j) && j.nextRunAt).map((j) => j.nextRunAt!).sort()[0] ?? null
+}
+
 /** The same schedule, whatever the key order or the ISO form of at. */
 export function sameSchedule(a: ScheduleFields | null | undefined, b: ScheduleFields | null | undefined): boolean {
   if (!a || !b) return !a && !b

@@ -236,8 +236,8 @@ export class Jobs {
     return { status: 200, text: `Deleted job "${job.name}" and its history.` }
   }
 
-  /** Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. */
-  private finish(job: Job): JobAnswer {
+  /** Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. An ended job stays as it ended, so calling it again is safe. */
+  finish(job: Job): JobAnswer {
     const at = new Date(this.now()).toISOString()
     const lent = activeGrants(job, this.now()).map((g) => g.tool)
     const next: Job = { ...job, endedAt: job.endedAt ?? at, nextRunAt: null, grants: [], updatedAt: at }
