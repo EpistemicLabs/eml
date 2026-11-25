@@ -446,6 +446,81 @@ interface ConflictPair {
   lineage: boolean
 }
 
+/** Every unresolved pair the write-time filter finds for the active engrams, each once. */
+function conflictPairs(eml: EML, now: Date): ConflictPair[] {
+  const byScope = new Map<string, EngramRow[]>()
+  for (const e of ACTIVE(eml)) {
+    const list = byScope.get(e.scope)
+    if (list) list.push(e)
+    else byScope.set(e.scope, [e])
+  }
+  const pairs = new Map<string, ConflictPair>() // pairKey → the pair, once
+  for (const [scope, engrams] of byScope) {
+    const rels = eml.engrams.relationsInScope(scope)
+    // Any typed edge to the engram is a prior verdict about that pair —
+    // built once per scope (not per engram).
+    const linkedOf = new Map<string, Set<string>>()
+    for (const r of rels) {
+      for (const [a, b] of [[r.source_id, r.target_id], [r.target_id, r.source_id]] as const) {
+        let set = linkedOf.get(a)
+        if (!set) linkedOf.set(a, set = new Set())
+        set.add(b)
+      }
+    }
+    // Mirrors the write-time boundTaskOf: the bound task of any status,
+    // also in another scope.
+    const boundTask = new Map(eml.engrams.taskBindings(scope).map(b => [b.id, b.task]))
+    for (const e of engrams) {
+      // The write-time scan runs for CONFLICT_TYPES only — log and learning
+      // are never sweep subjects either (they stay candidates, never owners).
+      if (!CONFLICT_TYPES.has(e.type)) continue
+      const salient = extractSalientTerms(e.title, e.content)
+      if (salient.length === 0) continue
+      const candidates = eml.engrams.query({
+        search: salient.join(' '),
+        search_mode: 'or',
+        scope,
+        statuses: ['active', 'planned'],
+        order_by: 'score',
+        limit: CONFLICT_CANDIDATE_LIMIT,
+        now: now.toISOString(),
+      })
+      const rawBy = new Map(candidates.map(c => [c.id, c]))
+      for (const cand of filterConflictCandidates({ engram: e as Engram, linkedOf: id => linkedOf.get(id) ?? EMPTY_SET, boundTask: id => boundTask.get(id) }, candidates)) {
+        const c = rawBy.get(cand.id)! // the filter's view drops status/created_at
+        const key = [e.id, c.id].sort().join('|')
+        const prev = pairs.get(key)
+        if (prev) {
+          prev.coverage = Math.max(prev.coverage, cand.coverage)
+          prev.lineage = prev.lineage || cand.lineage === true
+          continue
+        }
+        // One finding per pair: the newer active engram carries it (a planned
+        // candidate is never a sweep subject, so the active side owns it).
+        const cNewer = c.status === 'active' && (String(c.created_at) > String(e.created_at)
+          || (String(c.created_at) === String(e.created_at) && (c as EngramRow).ord > e.ord)) // one time, two writes: insertion order
+        pairs.set(key, {
+          owner: cNewer ? c : e,
+          other: cNewer ? e : c,
+          coverage: cand.coverage,
+          lineage: cand.lineage === true,
+        })
+      }
+    }
+  }
+  return [...pairs.values()]
+}
+
+/** The conflict-scan check's findings for `pairs`: the closest ones, up to the cap. */
+function conflictFindings(pairs: ConflictPair[]): HygieneFinding[] {
+  return [...pairs]
+    .sort((p, q) => q.coverage - p.coverage)
+    .slice(0, CONFLICT_SCAN_MAX_FINDINGS)
+    .map(p => finding(p.owner,
+      `possible conflict with ${p.other.id.slice(0, 8)} (${p.other.type}${p.other.title ? ` · ${p.other.title}` : ''}): ` +
+      `${Math.round(p.coverage * 100)} % word overlap${p.lineage ? '; same title — check the lineage link' : ''}.`))
+}
+
 const CONFLICT_CHECKS: readonly HygieneCheck[] = [
   {
     id: 'conflict-scan',
@@ -463,78 +538,11 @@ const CONFLICT_CHECKS: readonly HygieneCheck[] = [
       'distinct_from and the reason as explanation, which keeps the pair off the next sweep. When unsure, ask the ' +
       'user instead of dismissing.',
     detect(eml, now) {
-      const active = ACTIVE(eml)
-      const byScope = new Map<string, EngramRow[]>()
-      for (const e of active) {
-        const list = byScope.get(e.scope)
-        if (list) list.push(e)
-        else byScope.set(e.scope, [e])
-      }
-      const pairs = new Map<string, ConflictPair>() // pairKey → the pair, once
-      for (const [scope, engrams] of byScope) {
-        const rels = eml.engrams.relationsInScope(scope)
-        // Any typed edge to the engram is a prior verdict about that pair —
-        // built once per scope (not per engram).
-        const linkedOf = new Map<string, Set<string>>()
-        for (const r of rels) {
-          for (const [a, b] of [[r.source_id, r.target_id], [r.target_id, r.source_id]] as const) {
-            let set = linkedOf.get(a)
-            if (!set) linkedOf.set(a, set = new Set())
-            set.add(b)
-          }
-        }
-        // Mirrors the write-time boundTaskOf: the bound task of any status,
-        // also in another scope.
-        const boundTask = new Map(eml.engrams.taskBindings(scope).map(b => [b.id, b.task]))
-        for (const e of engrams) {
-          // The write-time scan runs for CONFLICT_TYPES only — log and learning
-          // are never sweep subjects either (they stay candidates, never owners).
-          if (!CONFLICT_TYPES.has(e.type)) continue
-          const salient = extractSalientTerms(e.title, e.content)
-          if (salient.length === 0) continue
-          const candidates = eml.engrams.query({
-            search: salient.join(' '),
-            search_mode: 'or',
-            scope,
-            statuses: ['active', 'planned'],
-            order_by: 'score',
-            limit: CONFLICT_CANDIDATE_LIMIT,
-            now: now.toISOString(),
-          })
-          const rawBy = new Map(candidates.map(c => [c.id, c]))
-          for (const cand of filterConflictCandidates({ engram: e as Engram, linkedOf: id => linkedOf.get(id) ?? EMPTY_SET, boundTask: id => boundTask.get(id) }, candidates)) {
-            const c = rawBy.get(cand.id)! // the filter's view drops status/created_at
-            const key = [e.id, c.id].sort().join('|')
-            const prev = pairs.get(key)
-            if (prev) {
-              prev.coverage = Math.max(prev.coverage, cand.coverage)
-              prev.lineage = prev.lineage || cand.lineage === true
-              continue
-            }
-            // One finding per pair: the newer active engram carries it (a planned
-            // candidate is never a sweep subject, so the active side owns it).
-            const cNewer = c.status === 'active' && (String(c.created_at) > String(e.created_at)
-              || (String(c.created_at) === String(e.created_at) && (c as EngramRow).ord > e.ord)) // one time, two writes: insertion order
-            pairs.set(key, {
-              owner: cNewer ? c : e,
-              other: cNewer ? e : c,
-              coverage: cand.coverage,
-              lineage: cand.lineage === true,
-            })
-          }
-        }
-      }
-      return [...pairs.values()]
-        .sort((p, q) => q.coverage - p.coverage)
-        .slice(0, CONFLICT_SCAN_MAX_FINDINGS)
-        .map(p => finding(p.owner,
-          `possible conflict with ${p.other.id.slice(0, 8)} (${p.other.type}${p.other.title ? ` · ${p.other.title}` : ''}): ` +
-          `${Math.round(p.coverage * 100)} % word overlap${p.lineage ? '; same title — check the lineage link' : ''}.`))
+      return conflictFindings(conflictPairs(eml, now))
     },
   },
 ]
 
-/** Every check, migration checks by schema, then the recurring review. */
 export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
   ...SCHEMA_18_CHECKS.filter(c => c.kind === 'migration'),
   ...SCHEMA_19_CHECKS,
