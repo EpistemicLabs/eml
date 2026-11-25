@@ -43,6 +43,12 @@ export function sessionOfRun(runId: string): string {
   return at === -1 ? runId : runId.slice(0, at)
 }
 
+/** The id of a session's run: the session's id, or for a later run (it started at `runStartedAt`) that and its start. */
+export function runIdOf(sessionId: string, runStartedAt: string | null): string {
+  const at = runStartedAt ? Date.parse(runStartedAt) : NaN
+  return Number.isFinite(at) ? `${sessionId}${RUN_SEPARATOR}${at}` : sessionId
+}
+
 /** Rows of GET /object/run as runs; anything without an id, task, member or state is left out. */
 export function runsOf(objects: ReadonlyArray<Record<string, unknown>>): RunFacts[] {
   return objects.filter((o): o is Record<string, unknown> & RunFacts =>
@@ -102,8 +108,12 @@ export function runStateOf(turn: TurnState | undefined): Exclude<RunState, 'ende
   return turn === 'working' ? 'running' : 'idle'
 }
 
-/** Who started a session and who drives it, from its ledger entry. */
-export function runOriginOf(entry: { jobId: string | null; worker: boolean; parentSessionId: string | null }): { origin: RunOrigin; driver: RunDriver } {
+/**
+ * Who started a session's run and who drives it, from its ledger entry. A later run (runStartedAt) is the runner's:
+ * it gave the session its task's start prompt when the task was delegated.
+ */
+export function runOriginOf(entry: { jobId: string | null; worker: boolean; parentSessionId: string | null; runStartedAt?: string | null }): { origin: RunOrigin; driver: RunDriver } {
+  if (entry.runStartedAt) return { origin: 'runner', driver: 'agent' }
   if (entry.jobId) return { origin: 'job', driver: 'agent' }
   // The runner starts its workers without a parent session; a session that opens a worker is its parent.
   if (entry.worker) return { origin: entry.parentSessionId ? 'user' : 'runner', driver: 'agent' }

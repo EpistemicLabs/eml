@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { TurnState } from '../domain/agent-provider.js'
-import { runOriginOf, runStateOf, runsOf, sessionOfRun, type RunEndReason, type RunState } from '../domain/runs.js'
+import { runIdOf, runOriginOf, runStateOf, runsOf, sessionOfRun, type RunEndReason, type RunState } from '../domain/runs.js'
 
 /**
  * Synced run records (domain/runs.ts): this host writes a run for each of its sessions on a
@@ -13,7 +13,10 @@ import { runOriginOf, runStateOf, runsOf, sessionOfRun, type RunEndReason, type 
  *     handoff when that changed (the brain stamps last_activity_at on every write);
  *   - ended put_away when the session is put away, finished when it leaves the ledger;
  *   - ended crashed when the host starts and finds one of its member's open runs without a live session;
- *   - an ended run whose session runs again is resumed (the same run: it is the same session).
+ *   - an ended run whose session runs again is resumed (the same run: it is the same session);
+ *   - a session a delegation continued (application/task-runner.ts) gets a new run from then: the earlier one ends
+ *     finished, and the new one has an id and a start of its own (domain/runs.ts runIdOf), so its start closes the
+ *     delegation's request as a new session's run would.
  * Sync compares this host's sessions with what it wrote and writes the difference; with nothing changed it writes
  * nothing. The brain is read once per space, at the first sync after the host started. A run's task is fixed: a session
  * moved to another task ends its run and is left to the ledger. A write the brain refuses (no such task in it, another
@@ -30,6 +33,8 @@ export interface RunSession {
   jobId: string | null
   worker: boolean
   parentSessionId: string | null
+  /** When its current run started, when later than the session (a delegation continued it); null: its first run. */
+  runStartedAt: string | null
 }
 
 export interface RunRecordsDeps {
@@ -111,24 +116,25 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
   }
 
   const create = async (brain: Pick<EmlApi, 'get' | 'post'>, space: BrainSpace, s: RunSession & { taskId: string }, state: Exclude<RunState, 'ended'>, result: string | null) => {
-    // A run of this session may be there already (it ended before this host started): carry on with it, don't create it.
-    const found = (await brain.get(`/object/run/${encodeURIComponent(s.sessionId)}`).catch(() => null)) as { object?: Record<string, unknown> } | null
+    const runId = runIdOf(s.sessionId, s.runStartedAt)
+    // This run may be there already (it ended before this host started): carry on with it, don't create it.
+    const found = (await brain.get(`/object/run/${encodeURIComponent(runId)}`).catch(() => null)) as { object?: Record<string, unknown> } | null
     const existing = found?.object ? runsOf([found.object])[0] : undefined
     if (existing) {
       if (existing.member === deps.me && existing.task_id === s.taskId) {
-        written.set(s.sessionId, { runId: existing.id, spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
+        written.set(s.sessionId, { runId, spaceId: space.id, taskId: existing.task_id, state: existing.state as RunState, result: existing.result ?? null })
         return false
       }
-      refuse(s.sessionId, `run ${s.sessionId} belongs to ${existing.member} on task ${existing.task_id}`)
+      refuse(s.sessionId, `run ${runId} belongs to ${existing.member} on task ${existing.task_id}`)
       return true
     }
     const agent = deps.agentOf(space)
     try {
       await brain.post('/object/run', {
-        id: s.sessionId, task_id: s.taskId, member: deps.me, ...(agent ? { agent } : {}), ...runOriginOf(s),
-        state, started_at: s.createdAt, ...(result ? { result } : {}),
+        id: runId, task_id: s.taskId, member: deps.me, ...(agent ? { agent } : {}), ...runOriginOf(s),
+        state, started_at: s.runStartedAt ?? s.createdAt, ...(result ? { result } : {}),
       })
-      written.set(s.sessionId, { runId: s.sessionId, spaceId: space.id, taskId: s.taskId, state, result })
+      written.set(s.sessionId, { runId, spaceId: space.id, taskId: s.taskId, state, result })
     } catch (err) {
       refuse(s.sessionId, (err as Error).message)
     }
@@ -150,6 +156,12 @@ export function createRunRecords(deps: RunRecordsDeps, opts: { pokeMs?: number }
         if (s.archived) {
           if (prev && prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'put_away' })
           continue
+        }
+        // A delegation continued the session: its earlier run ends, and the new one is written as any first run is.
+        if (prev && prev.runId !== runIdOf(s.sessionId, s.runStartedAt)) {
+          if (prev.state !== 'ended') await put(brain, s.sessionId, prev, { state: 'ended', end_reason: 'finished' })
+          written.delete(s.sessionId)
+          prev = undefined
         }
         const isLive = live(s.sessionId)
         const state = runStateOf(deps.turnOf(s.sessionId))

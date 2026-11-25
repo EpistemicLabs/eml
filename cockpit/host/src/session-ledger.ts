@@ -96,6 +96,11 @@ export interface LedgerEntry {
   jobId: string | null
   /** The folder the agent last worked in, as its hooks report it (a worktree, say); null before the first. */
   workdir: string | null
+  /**
+   * When its current run started, when that is later than the session itself: a delegation of its task continued it
+   * (application/task-runner.ts). Its run is then a run of its own (domain/runs.ts runIdOf); null: the session's first run.
+   */
+  runStartedAt: string | null
 }
 
 interface LedgerFile {
@@ -153,6 +158,7 @@ function load(): LedgerFile {
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
           jobId: typeof entry.jobId === 'string' && entry.jobId ? entry.jobId : null,
           workdir: typeof entry.workdir === 'string' && entry.workdir ? entry.workdir : null,
+          runStartedAt: typeof entry.runStartedAt === 'string' && entry.runStartedAt ? entry.runStartedAt : null,
         }
       }
     }
@@ -236,6 +242,7 @@ export class SessionLedger {
       jobId: prev?.jobId ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
       workdir: prev?.workdir ?? null,
+      runStartedAt: prev?.runStartedAt ?? null,
     }
     this.persist()
   }
@@ -407,6 +414,14 @@ export class SessionLedger {
     entry.taskId = taskId
     if (auto) entry.taskAuto = true
     else delete entry.taskAuto
+    this.persist()
+  }
+
+  /** A new run of the session starts now (a delegation of its task continued it). */
+  startRun(sessionId: string, at: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.runStartedAt = at
     this.persist()
   }
 

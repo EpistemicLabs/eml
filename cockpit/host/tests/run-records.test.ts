@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runOriginOf, runStateOf, runsBlockRunner, sessionOfRun } from '../src/domain/runs.js'
 import { createRunRecords, type RunSession } from '../src/application/run-records.js'
+import { lastStartsOf, requestOpen } from '../src/domain/delegation.js'
 import type { TurnState } from '../src/domain/agent-provider.js'
 
 // paths.ts reads the home at import time — set it before loading the modules that use it.
@@ -51,6 +52,7 @@ describe('runs as the board and the runner read them', () => {
     expect(runOriginOf({ jobId: null, worker: true, parentSessionId: null })).toEqual({ origin: 'runner', driver: 'agent' })
     expect(runOriginOf({ jobId: null, worker: true, parentSessionId: 'p' })).toEqual({ origin: 'user', driver: 'agent' })
     expect(runOriginOf({ jobId: null, worker: false, parentSessionId: null })).toEqual({ origin: 'user', driver: 'human' })
+    expect(runOriginOf({ jobId: null, worker: false, parentSessionId: null, runStartedAt: '2026-11-24T11:00:00.000Z' })).toEqual({ origin: 'runner', driver: 'agent' })
   })
 })
 
@@ -103,7 +105,7 @@ function setup(brain: ReturnType<typeof brainOf>, sessions: RunSession[]) {
 }
 
 const session = (sessionId: string, taskId: string | null, more: Partial<RunSession> = {}): RunSession => ({
-  sessionId, taskId, spaceId: 'main', createdAt: '2026-11-24T09:00:00.000Z', archived: false, jobId: null, worker: false, parentSessionId: null, ...more,
+  sessionId, taskId, spaceId: 'main', createdAt: '2026-11-24T09:00:00.000Z', archived: false, jobId: null, worker: false, parentSessionId: null, runStartedAt: null, ...more,
 })
 
 describe('run records', () => {
@@ -162,6 +164,48 @@ describe('run records', () => {
     sessions.splice(1, 1)
     await records.sync()
     expect(brain.writes.at(-1)).toEqual({ method: 'PUT', path: '/object/run/s2', body: { state: 'ended', end_reason: 'finished' } })
+  })
+
+  it('a session a delegation continued gets a new run from then: the earlier one ends, and the new run closes the request', async () => {
+    const brain = brainOf()
+    const sessions = [session('s1', 't1')]
+    const { records, turns, processes } = setup(brain, sessions)
+    processes.add('s1')
+    await records.sync()
+    const requested = '2026-11-24T11:00:00.000Z'
+    const task = { status: 'active', properties: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: requested } } }
+    const latest = () => lastStartsOf([...brain.runs.values()].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at))))
+    expect(requestOpen(task, latest().get('t1') ?? null)).toBe(true)
+
+    sessions[0].runStartedAt = '2026-11-24T11:00:05.000Z'
+    turns.set('s1', 'working')
+    await records.sync()
+    const runId = `s1_${Date.parse('2026-11-24T11:00:05.000Z')}`
+    expect(brain.writes.slice(-2)).toEqual([
+      { method: 'PUT', path: '/object/run/s1', body: { state: 'ended', end_reason: 'finished' } },
+      { method: 'POST', path: '/object/run', body: {
+        id: runId, task_id: 't1', member: 'lasse', agent: 'atlas', origin: 'runner', driver: 'agent', state: 'running', started_at: '2026-11-24T11:00:05.000Z',
+      } },
+    ])
+    expect(requestOpen(task, latest().get('t1') ?? null)).toBe(false)
+
+    // its turns now go to the new run
+    turns.set('s1', 'done')
+    await records.sync()
+    expect(brain.writes.at(-1)).toEqual({ method: 'PUT', path: `/object/run/${runId}`, body: { state: 'idle' } })
+  })
+
+  it('after a restart, carries on with the later run of a continued session instead of crashing or recreating it', async () => {
+    const runId = `s1_${Date.parse('2026-11-24T11:00:05.000Z')}`
+    const brain = brainOf(['t1'], [
+      { id: 's1', task_id: 't1', member: 'lasse', state: 'ended' },
+      { id: runId, task_id: 't1', member: 'lasse', state: 'idle' },
+    ])
+    const { records, processes, turns } = setup(brain, [session('s1', 't1', { runStartedAt: '2026-11-24T11:00:05.000Z' })])
+    processes.add('s1')
+    turns.set('s1', 'working')
+    await records.sync()
+    expect(brain.writes).toEqual([{ method: 'PUT', path: `/object/run/${runId}`, body: { state: 'running' } }])
   })
 
   it('a process gone mid-turn leaves the run idle until it runs again', async () => {

@@ -765,7 +765,7 @@ async function main() {
     me: owner,
     sessions: () => ledger.list().map((e) => ({
       sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, createdAt: e.createdAt,
-      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId,
+      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId, runStartedAt: e.runStartedAt,
     })),
     turnOf: (sessionId) => turns.get(sessionId)?.state,
     processRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
