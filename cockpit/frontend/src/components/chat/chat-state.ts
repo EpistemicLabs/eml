@@ -3,6 +3,7 @@
 // never merged with anything else.
 import { SORT_PICKS, type SortRow, type SplitRelation } from '@/lib/split';
 import { readable } from '@/lib/task-board';
+import { turnEndOfTool, type TurnEndCall } from './turn-end-line';
 
 export type ToolStatus = 'running' | 'completed' | 'failed' | 'launched' | 'interrupted';
 export type ToolKind = 'read' | 'edit' | 'execute' | 'search' | 'fetch' | 'agent' | 'other';
@@ -351,7 +352,8 @@ export type RenderGroup =
   | { kind: 'item'; item: Exclude<ChatItem, { type: 'tool' | 'thinking' }> }
   | { kind: 'tools'; id: string; tools: FoldedItem[] }
   | { kind: 'agent'; tool: Extract<ChatItem, { type: 'tool' }> }
-  | { kind: 'status'; id: string; status: string; reason: string | null }
+  /** Where the agent ended its turn: one line under the turn's reply. */
+  | { kind: 'status'; id: string; call: TurnEndCall }
   | { kind: 'offer'; id: string; offer: SplitOffer }
   | { kind: 'sort'; id: string; rows: SortProposal[]; reason: string }
   | { kind: 'created'; id: string; taskId: string; title: string; displayTitle?: string };
@@ -417,17 +419,13 @@ export function offerOfTool(item: Extract<ChatItem, { type: 'tool' }>): SplitOff
   };
 }
 
-/** How a session said it stands (the cockpit's status tool): shown as a label, not folded away with the tools. */
-export function statusOfTool(item: Extract<ChatItem, { type: 'tool' }>): { status: string; reason: string | null } | null {
-  if (!/(^|__)session_status$/.test(item.name) || typeof item.input.status !== 'string') return null;
-  return { status: item.input.status, reason: typeof item.input.reason === 'string' ? item.input.reason : null };
-}
-
 /**
  * Looking around folds: adjacent reads, searches and thinking sit in one group, named
  * by foldSummary, and a settled card goes (its tool row keeps the decision). What
  * changes or can fail stays a row of its own: edits, commands, whatever failed. What
  * stays open: messages, answers, cards still waiting for the user, errors, subagents.
+ * The call that ends a turn is one line at the turn's end, under the reply: the agent makes
+ * the call before it writes the reply. A later call in the same turn replaces the earlier one.
  */
 export function groupItems(items: ChatItem[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
@@ -436,17 +434,22 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
     if (run.length > 0) groups.push({ kind: 'tools', id: run[0].id, tools: run });
     run = [];
   };
+  let ended: Extract<RenderGroup, { kind: 'status' }> | null = null;
+  const endTurn = () => {
+    flush();
+    if (ended) groups.push(ended);
+    ended = null;
+  };
   for (const item of items) {
     if (item.type === 'thinking') {
       if (item.text) run.push(item);
     } else if (item.type === 'tool') {
-      const said = statusOfTool(item);
+      const said = turnEndOfTool(item);
       const offer = offerOfTool(item);
       const sort = sortOfTool(item);
       const created = createdTaskOfTool(item);
       if (said) {
-        flush();
-        groups.push({ kind: 'status', id: item.id, ...said });
+        ended = { kind: 'status', id: item.id, call: said };
       } else if (offer) {
         flush();
         groups.push({ kind: 'offer', id: item.id, offer });
@@ -468,11 +471,12 @@ export function groupItems(items: ChatItem[]): RenderGroup[] {
     } else if ((item.type === 'permission' || item.type === 'question') && item.outcome) {
       continue;
     } else {
+      if (item.type === 'user') endTurn();
       flush();
       groups.push({ kind: 'item', item });
     }
   }
-  flush();
+  endTurn();
   return groups;
 }
 

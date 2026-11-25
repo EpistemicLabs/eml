@@ -1,4 +1,4 @@
-// Inbox: only what is the viewer's turn — questions and results to review.
+// Inbox: only what is the viewer's turn — questions, results to review and agents that stopped.
 // An item clears itself when its session is answered, the result reviewed or the task closed.
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
@@ -32,10 +32,13 @@ const dayOf = (iso: string, now: number) => {
   return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : new Date(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
 };
 
-const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' }> = {
+const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' | 'stopped' }> = {
   question: { label: 'question', hue: 'you' },
   review: { label: 'review', hue: 'review' },
+  stopped: { label: 'stopped', hue: 'stopped' },
 };
+/** A kind this build does not know (a newer host) reads as a question: it is the viewer's turn either way. */
+const kindOf = (item: InboxItem) => KIND[item.kind] ?? KIND.question;
 
 export function InboxView({ board, now, compact, currentTaskId, unread, onOpen, onAction }: {
   board: Board;
@@ -102,7 +105,7 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
   item: InboxItem; task: BoardTask | undefined; project: string; from: string | null; viewer: string; now: number; compact: boolean; current: boolean;
   onOpen: (item: InboxItem) => void; onAction: (action: InboxAction) => void;
 }) {
-  const kind = KIND[item.kind];
+  const kind = kindOf(item);
   return (
     // Actions wrap under the text when the list sits next to an open task or is narrow (a phone, a small window).
     <div className={cn('grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border px-3 py-3 hover:bg-muted', !compact && '@3xl:grid-cols-[auto_minmax(0,1fr)_auto]', current && 'border-l-2 border-l-mark bg-mark/10')}>
