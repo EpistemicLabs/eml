@@ -13,6 +13,8 @@ export interface MessageRequest {
    * session it could reach while running gets it. A running one answers 'running'.
    */
   onlyIfStoppedFor?: string
+  /** The cockpit's one reminder of a stop (domain/turn-end.ts): the turn it starts gets no reminder of its own. */
+  reminder?: boolean
 }
 
 export interface DeliverMessageDeps {
@@ -23,7 +25,7 @@ export interface DeliverMessageDeps {
   chatRuns(sessionId: string): boolean
   /** Whether SendMessage gets from one to the other while both run: spaces with their own agent are apart. */
   sameReach(fromSessionId: string, sessionId: string): boolean
-  deliver(sessionId: string, text: string): Promise<DeliveryOutcome>
+  deliver(sessionId: string, text: string, opts?: { reminder?: boolean }): Promise<DeliveryOutcome>
 }
 
 /**
@@ -42,7 +44,7 @@ export async function deliverMessage(deps: DeliverMessageDeps, request: MessageR
   }
   if (deps.terminalRuns(session.sessionId)) return 'busy'
   if (!deps.chatRuns(session.sessionId) && !deps.runsInChat(session.sessionId)) return 'refused'
-  return deps.deliver(session.sessionId, withSender(request))
+  return deps.deliver(session.sessionId, withSender(request), request.reminder ? { reminder: true } : undefined)
 }
 
 /** A woken session reads this as a prompt, so it has to say that no user wrote it and how to answer. */

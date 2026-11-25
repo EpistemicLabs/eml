@@ -370,7 +370,7 @@ async function main() {
       const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent
       return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
     },
-    deliver: (sessionId, text) => chat.deliver(sessionId, text),
+    deliver: (sessionId, text, opts) => chat.deliver(sessionId, text, opts),
   }, request)
   // Task system: every session works on a brain task (application/session-task.ts).
   const taskBrain = (space: BrainSpace) => {
@@ -458,7 +458,7 @@ async function main() {
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
     seen: (sessionId, since) => (ledger.get(sessionId)?.readAt ?? '') >= since,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session', reminder: true }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
     waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
     quiet: (sessionId) => {

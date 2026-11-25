@@ -533,6 +533,23 @@ describe('ChatBridge', () => {
         ['Welcome.', { call: null, reminded: false }],
       ])
     })
+
+    it('does not send back the turn a delivered reminder starts: the stop had its one reminder', async () => {
+      const ends: unknown[] = []
+      const { worker, runtime, bridge } = started({ turnDone: (_id, _text, turn) => ends.push(turn) })
+      await worker.endTurn({ result: 'Half done' })
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Half of it is done.' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      // The next-step check's reminder (application/next-step.ts) arrives as a message.
+      void bridge.deliver('s1', reminder(['next']), { reminder: true })
+      runtime.emit({ kind: 'text', blockId: 'b2', text: 'OK' })
+      expect(worker.onTurnEnding()).toBeNull()
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(ends).toEqual([{ call: { result: 'Half done' }, reminded: false }, { call: null, reminded: true }])
+      // Any other message starts a turn that can be reminded.
+      void bridge.deliver('s1', 'and now?')
+      expect(worker.onTurnEnding()).toBe(reminder(['call']))
+    })
   })
 
   it('a worker whose turn ends while its subagents run is not asked, flagged or handed off until they are back', () => {

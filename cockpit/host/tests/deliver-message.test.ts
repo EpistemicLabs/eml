@@ -19,6 +19,14 @@ function setup(patch: Partial<DeliverMessageDeps> = {}) {
 const request: MessageRequest = { target: 's1', text: 'hello', from: null, caller: 'session' }
 
 describe('deliverMessage', () => {
+  it('passes on that the text is the cockpit\'s reminder of a stop', async () => {
+    const got: unknown[] = []
+    const { deps } = setup({ deliver: async (_id, _text, opts) => { got.push(opts); return 'delivered' } })
+    await deliverMessage(deps, { ...request, reminder: true })
+    await deliverMessage(deps, request)
+    expect(got).toEqual([{ reminder: true }, undefined])
+  })
+
   it('hands the message on and reports what came of it', async () => {
     const { deps, sent } = setup()
     expect(await deliverMessage(deps, request)).toBe('resumed')

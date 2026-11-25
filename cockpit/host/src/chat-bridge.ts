@@ -753,13 +753,14 @@ export class ChatBridge {
   /**
    * A message from outside any client: to the running session, or to a stopped one,
    * which resumes first. Only reports success once the session has it.
+   * `reminder`: the text is the one reminder of a stop (application/next-step.ts), so the turn it starts is not sent back again.
    */
-  async deliver(sessionId: string, text: string): Promise<DeliveryOutcome> {
+  async deliver(sessionId: string, text: string, opts: { reminder?: boolean } = {}): Promise<DeliveryOutcome> {
     if (this.handoff().switching(sessionId)) return 'busy'
     const running = this.entries.get(sessionId)
     if (running) {
       if (running.closing) return 'busy'
-      this.sendMessage(running, text)
+      this.sendMessage(running, text, [], '', opts.reminder === true)
       return 'delivered'
     }
     const stored = this.ctx.ledger.get(sessionId)
@@ -786,7 +787,7 @@ export class ChatBridge {
       this.ctx.ledger.setRuntime(sessionId, 'sdk')
       if (stored.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
       this.startRuntime(entry, provider, space, resume)
-      this.sendMessage(entry, text)
+      this.sendMessage(entry, text, [], '', opts.reminder === true)
       this.log(`resumed ${sessionId} for a message`)
     })
     return 'resumed'
@@ -1019,7 +1020,7 @@ export class ChatBridge {
     }
   }
 
-  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = [], clientId = ''): void {
+  private sendMessage(entry: ChatEntry, message: string, imageNames: string[] = [], clientId = '', reminder = false): void {
     if (!message.trim() && imageNames.length === 0) return
     // Someone wrote to it: an idle stop it was about to make is off.
     entry.stopAfterTurn = false
@@ -1035,6 +1036,8 @@ export class ChatBridge {
     entry.lastActivity = Date.now()
     // A new turn: whoever it waited for has answered.
     this.resetTurnStatus(entry)
+    // The turn a reminder starts is the stop's second chance: it had its reminder.
+    if (reminder) entry.reminded = true
     const asked = this.ctx.ledger.get(entry.sessionId)
     if (asked?.attention || asked?.taskId) this.ctx.answered?.(entry.sessionId)
     this.ctx.ledger.setAttention(entry.sessionId, null)
