@@ -33,7 +33,7 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
-  /** v0.23: its schedule (a job's here, else the one another member's cockpit fires) and its open runs. */
+  /** Its schedule (a job's here, else the one another member's cockpit fires) and its open runs. */
   schedule?: ScheduleFields
   /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
   earlierRuns?: EarlierRun[]
@@ -531,7 +531,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const isOpen = (id: string) => { const status = statusOf.get(id); return status === 'planned' || status === 'active' }
       for (const r of rows) {
         const sessions = new Set(waitsOf(r.properties).map((w) => w.session_id || w.id))
-        slice.waits.set(r.id, { open: r.status === 'planned' || r.status === 'active', sessions })
+        slice.waits.set(r.id, { open: isOpen(r.id), sessions })
       }
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))

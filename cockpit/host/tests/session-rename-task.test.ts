@@ -32,6 +32,8 @@ describe('a session called by its task', () => {
   let ledger: import('../src/session-ledger.js').SessionLedger
   const names = new Map<string, string>()
   const delegated = new Map<string, boolean>()
+  /** Where the board last read each task (TaskBoard.waitsSeen); a task left out is one it has not read. */
+  const seen = new Map<string, import('../src/domain/session-attention.js').TaskWaitsSeen>()
   const renames: Array<[string, string]> = []
   let refreshes = 0
   let refuse: Error | null = null
@@ -44,6 +46,9 @@ describe('a session called by its task', () => {
     ledger = new SessionLedger()
     ledger.recordSpawn('tasked', null, 'p1', 'claude', false, 'task-1')
     ledger.recordSpawn('plain', null, 'p1', 'claude')
+    ledger.recordSpawn('lead', null, 'p1', 'claude')
+    ledger.expectParent('helper', 'lead')
+    ledger.recordSpawn('helper', null, 'p1', 'claude', true, 'task-2')
     const provider = {
       id: 'claude',
       summary: () => ({ messageCount: 1, lastMessageAt: null, lastActivity: null, summary: 'First prompt', aiTitle: null, lastReply: null, model: null, contextTokens: null }),
@@ -59,7 +64,7 @@ describe('a session called by its task', () => {
         sessionState: () => 'ended',
         killSession: () => {},
       },
-      chat: { isRunning: () => false, backgroundTasks: () => 0, kill: async () => {} },
+      chat: { isRunning: () => false, backgroundTasks: () => 0, kill: async () => {}, end: async () => {} },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
       spawnToken: 'spawn-token',
       hookToken: 'hook-token',
@@ -73,7 +78,7 @@ describe('a session called by its task', () => {
           return true
         },
       },
-      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, delegated: (taskId: string) => delegated.get(taskId) ?? null, waitsSeen: () => null, refresh: async () => { refreshes += 1 } } },
+      tasks: { board: { nameOf: (taskId: string) => names.get(taskId) ?? null, delegated: (taskId: string) => delegated.get(taskId) ?? null, waitsSeen: (_spaceId: string | null, taskId: string) => seen.get(taskId) ?? null, refresh: async () => { refreshes += 1 } } },
     }
     server = createHostServer(deps as never, ['http://cockpit.test'])
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -113,6 +118,28 @@ describe('a session called by its task', () => {
     expect((await alone()).get('tasked')).toBe(true)
     expect((await alone()).get('plain')).toBe(false)
     delegated.delete('task-1')
+  })
+
+  it('shows a session waiting only while its task holds the wait, and lets its starter be archived once the task is closed', async () => {
+    const attentionOf = async (id: string) => {
+      const { sessions } = await (await fetch(`${base}/api/sessions/all`)).json() as { sessions: Array<{ id: string; attention: { kind: string } | null }> }
+      return sessions.find((s) => s.id === id)?.attention ?? null
+    }
+    const archive = (id: string) => fetch(`${base}/api/sessions/${id}/archive`, { method: 'POST', headers: { origin: 'http://cockpit.test' } })
+    ledger.setAttention('helper', { kind: 'question', reason: 'Which one?' })
+    const later = new Date(Date.now() + 60_000).toISOString()
+    // The board has not read its task: the session's own mark counts, and the question holds its starter.
+    expect((await attentionOf('helper'))?.kind).toBe('question')
+    expect((await archive('lead')).status).toBe(409)
+    // Its task holds the wait: still waiting.
+    seen.set('task-2', { open: true, sessions: new Set(['helper']), at: later })
+    expect((await attentionOf('helper'))?.kind).toBe('question')
+    // The task is closed: nothing waits, in the list and for the archive.
+    seen.set('task-2', { open: false, sessions: new Set(['helper']), at: later })
+    expect(await attentionOf('helper')).toBeNull()
+    const res = await archive('lead')
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { archived: string[] }).archived).toEqual(expect.arrayContaining(['lead', 'helper']))
   })
 
   it('renames the task when the session is renamed, answers with the task\'s new name, and keeps no second copy', async () => {
