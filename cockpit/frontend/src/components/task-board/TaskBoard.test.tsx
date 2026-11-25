@@ -298,6 +298,21 @@ describe('the task board', () => {
     await waitFor(() => expect(document.getElementById('task-board-title')?.textContent).toContain('Kit v4 rollout'));
   });
 
+  it('shows an Inbox item of a kind this build does not know as a question: it is the viewer\'s turn either way', async () => {
+    const newer = { key: 'task:running@x', kind: 'handover', space: 'main', title: 'kit-v4-rollout', text: 'Take over the rollout', since: iso(3), taskId: 'running' };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), inbox: [...board().inbox, newer], counts: { needsYou: 3, inbox: 2 } }), { status: 200 });
+      return new Response('{}', { status: 404 });
+    }));
+    setTaskView('inbox');
+    mount();
+    const row = (await screen.findByText('Take over the rollout')).closest('button')!;
+    expect(within(row).getByText('question')).toBeTruthy();
+    expect(within(row).queryByText('handover')).toBeNull();
+    fireEvent.click(row);
+    await waitFor(() => expect(document.getElementById('task-board-title')?.textContent).toContain('Kit v4 rollout'));
+  });
+
   it('counts a session shown in the task panel as seen, as on its desk', async () => {
     live.sessions = [{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: iso(1) }];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

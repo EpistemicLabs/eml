@@ -31,7 +31,7 @@ export interface TurnEndContext {
 }
 
 export interface TurnEndLine {
-  /** The state in a word or two: "Review", "Waiting on Dominik". */
+  /** The state in a word or two: "Review", "Waiting on Kim". */
   label: string;
   detail: string | null;
 }
@@ -59,16 +59,19 @@ export function turnEndOfTool(tool: { name: string; input: Record<string, unknow
 }
 
 const handle = (value: string | null | undefined): string => (value ?? '').trim().replace(/^@/, '').toLowerCase();
-/** What an agent may call itself instead of its handle (host domain/turn-end.ts). */
-const SELF = new Set(['me', 'self', 'agent']);
+/** What an agent may call itself, and the user, instead of a handle: the host's lists (domain/turn-end.ts whoOf). */
+const SELF = new Set(['me', 'self', 'agent', 'myself']);
+const OWNER = new Set(['user', 'owner']);
 const OUTSIDE = /^outside:\s*/i;
 
 const LEGACY_LABEL: Record<string, string> = { done: 'Done', question: 'Inbox', review: 'Review', failed: 'Failed' };
 
 /**
- * What the line says. The first match wins: failed, questions, the owner's move, someone else's, the agent's own
- * check, done. Without the owner's handle a named who reads as "Waiting on <Name>", which holds for the owner too;
- * without the agent's handle only me / self / agent count as the agent itself.
+ * What the line says. The first match wins: failed, questions, the owner's move, the agent's own check, someone
+ * else's move, done. A who is read as the host reads it (whoOf): someone outside by the prefix, then the owner (their
+ * handle, or user / owner), then the agent itself (its handle, or me / self / agent / myself), then anyone else.
+ * Without the owner's handle a named who reads as "Waiting on <Name>", which holds for the owner too; without the
+ * agent's handle only the words for itself count as the agent.
  */
 export function turnEndLine(call: TurnEndCall, ctx: TurnEndContext): TurnEndLine {
   if (call.kind === 'session_status') return { label: LEGACY_LABEL[call.status] ?? call.status, detail: call.reason };
@@ -78,17 +81,12 @@ export function turnEndLine(call: TurnEndCall, ctx: TurnEndContext): TurnEndLine
   const { next } = call;
   if (!next) return { label: 'Done', detail: result };
   const who = handle(next.who);
+  const outside = OUTSIDE.test(next.who);
   const at = next.when ? when(next.when, ctx.now) || next.when : null;
-  if (SELF.has(who) || (!!handle(ctx.agent) && who === handle(ctx.agent))) {
+  if (!outside && (OWNER.has(who) || (!!handle(ctx.owner) && who === handle(ctx.owner)))) return { label: 'Review', detail: result ?? (next.what || null) };
+  if (!outside && (SELF.has(who) || (!!handle(ctx.agent) && who === handle(ctx.agent)))) {
     return at ? { label: 'Check scheduled', detail: at } : { label: 'Done', detail: result };
   }
-  if (!OUTSIDE.test(next.who) && who === handle(ctx.owner)) return { label: 'Review', detail: result ?? (next.what || null) };
-  const name = OUTSIDE.test(next.who) ? next.who.replace(OUTSIDE, '').trim() || 'someone outside' : agentName(who);
+  const name = outside ? next.who.replace(OUTSIDE, '').trim() || 'someone outside' : agentName(who);
   return { label: `Waiting on ${name}`, detail: [next.what, at ? `checks ${at}` : ''].filter(Boolean).join(' · ') || null };
 }
-
-/** The line as one string: "Review · Draft is ready". */
-export const turnEndText = (call: TurnEndCall, ctx: TurnEndContext): string => {
-  const { label, detail } = turnEndLine(call, ctx);
-  return detail ? `${label} · ${detail}` : label;
-};
