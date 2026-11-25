@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { latestUserMessageId, wasAtBottom, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
+import { backgroundLabel, latestUserMessageId, wasAtBottom, workflowDetail, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
@@ -88,6 +88,40 @@ describe('background shells', () => {
 
   it('goes with the process', () => {
     expect(fold([started, { kind: 'runtime_exit', expected: true }]).shells[0].status).toBe('stopped');
+  });
+});
+
+describe('workflow runs', () => {
+  const started: ChatEvent = { kind: 'workflow_task', taskId: 'w', toolId: 't', name: 'review-changes', status: 'running' };
+
+  it('a run outlives its turn, an interruption too, and shows how far its agents are until it ends', () => {
+    const state = fold([started, { kind: 'turn_end', reason: 'interrupted' }, { kind: 'workflow_task', taskId: 'w', running: 3, done: 4, phase: 'Review' }]);
+    expect(state.workflows).toEqual([{ taskId: 'w', toolId: 't', name: 'review-changes', status: 'running', running: 3, done: 4, phase: 'Review' }]);
+    expect(fold([{ kind: 'workflow_task', taskId: 'w', status: 'completed' }], state).workflows[0]).toMatchObject({ name: 'review-changes', status: 'completed', done: 4 });
+  });
+
+  it('goes with the process, and with the conversation', () => {
+    expect(fold([started, { kind: 'runtime_exit', expected: true }]).workflows[0].status).toBe('stopped');
+    expect(fold([started, { kind: 'conversation_reset', conversationId: 'c2' }]).workflows).toEqual([]);
+  });
+
+  it('says what runs in the background, workflow runs first, their agents counted with the subagents', () => {
+    const subagent: ChatEvent = { kind: 'agent_task', taskId: 'a', toolId: 't2', description: 'Look', status: 'running', background: true };
+    const shell: ChatEvent = { kind: 'shell_task', taskId: 's', toolId: 't3', description: 'npm run dev', status: 'running' };
+    const progress: ChatEvent = { kind: 'workflow_task', taskId: 'w', running: 3, done: 4 };
+    expect(backgroundLabel(EMPTY_CHAT)).toBeNull();
+    expect(backgroundLabel(fold([started]))).toBe('1 workflow');
+    expect(backgroundLabel(fold([started, progress]))).toBe('1 workflow · 3 agents');
+    expect(backgroundLabel(fold([started, progress, subagent, shell]))).toBe('1 workflow · 4 agents · 1 shell');
+    expect(backgroundLabel(fold([subagent]))).toBe('1 agent');
+    expect(backgroundLabel(fold([started, progress, { kind: 'workflow_task', taskId: 'w', status: 'completed' }]))).toBeNull();
+  });
+
+  it('a run\'s line says its phase and how far its agents are, leaving out a count of 0', () => {
+    expect(workflowDetail({ phase: 'Review', running: 3, done: 4 })).toBe('Review · 3 running, 4 done');
+    expect(workflowDetail({ phase: 'Verify', running: 0, done: 2 })).toBe('Verify · 2 done');
+    expect(workflowDetail({ phase: null, running: 1, done: 0 })).toBe('1 running');
+    expect(workflowDetail({ phase: null, running: 0, done: 0 })).toBeNull();
   });
 });
 

@@ -544,7 +544,7 @@ async function main() {
     runtimes: sdkRuntimes,
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
-    onHelpers: (sessionId, helpers) => turns.waitOn(sessionId, helpers),
+    onHelpers: (sessionId, helpers, workflows) => turns.waitOn(sessionId, helpers, workflows),
     turnDone: turnEnded,
     worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart } from '../src/domain/session-runtime.js'
+import type { JournalWatcher, JournalWatchRequest } from '../src/infrastructure/providers/claude/workflow-journal.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-chat-agent-test-'))
@@ -13,11 +14,16 @@ process.env.EML_COCKPIT_HOME = home
 const sdk = vi.hoisted(() => ({
   options: [] as Array<Record<string, unknown>>,
   dirs: [] as Array<string | undefined>,
+  /** Set before a start: the next query's messages come from here until it ends; else it has none. */
+  stream: null as null | { push(message: unknown): void; end(): void; messages: AsyncIterable<unknown> },
 }))
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (params: { options: Record<string, unknown> }) => {
     sdk.options.push(params.options)
-    return { [Symbol.asyncIterator]: async function* () { /* no messages */ }, close: () => {}, interrupt: async () => {} }
+    const stream = sdk.stream
+    sdk.stream = null
+    const messages = stream?.messages ?? { [Symbol.asyncIterator]: async function* () { /* no messages */ } }
+    return { [Symbol.asyncIterator]: () => messages[Symbol.asyncIterator](), close: () => {}, interrupt: async () => {} }
   },
   getSessionMessages: async () => {
     const dir = process.env.CLAUDE_CONFIG_DIR
@@ -43,6 +49,29 @@ class FakeSocket extends EventEmitter {
   close(): void { this.readyState = WebSocket.CLOSED }
   client(frame: object): void { this.emit('message', Buffer.from(JSON.stringify(frame)), false) }
   errors(): unknown[] { return this.frames.filter((f) => f.type === 'error').map((f) => f.message) }
+}
+
+/** A stream of SDK messages the test writes to. */
+function scriptedStream() {
+  const queue: unknown[] = []
+  let ended = false
+  let wake: (() => void) | null = null
+  const stream = {
+    push(message: unknown) { queue.push(message); wake?.() },
+    end() { ended = true; wake?.() },
+    messages: {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          while (queue.length > 0) yield queue.shift()
+          if (ended) return
+          await new Promise<void>((resolve) => { wake = resolve })
+          wake = null
+        }
+      },
+    },
+  }
+  sdk.stream = stream
+  return stream
 }
 
 const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)) }
@@ -200,6 +229,84 @@ describe('the chat view in a space with its own agent', () => {
     writeFileSync(join(dir, '.claude.json'), JSON.stringify({}))
     factory.start({ ...start, strictMcp: true, chrome: true })
     expect(chromeArg()).toHaveProperty('chrome', null)
+  })
+
+  describe('the SDK runtime follows a workflow run\'s journal', () => {
+    type Watch = { request: JournalWatchRequest; stopped: boolean }
+    const setup = (configDir: string) => {
+      const watches: Watch[] = []
+      const fake: JournalWatcher = (request) => {
+        const watch: Watch = { request, stopped: false }
+        watches.push(watch)
+        return { stop: () => { watch.stopped = true } }
+      }
+      const events: RuntimeEvent[] = []
+      const stream = scriptedStream()
+      const runtime = createClaudeSdkRuntimes(fake).start({
+        sessionId: 's', resume: false, cwd: '/work', env: { CLAUDE_CONFIG_DIR: configDir }, address: 'a',
+        files: { mcpConfig: '/m', settings: '/s' }, onEvent: (event) => events.push(event),
+      })
+      return { watches, events, stream, runtime }
+    }
+    const started = (taskId: string, toolId: string) => ({ type: 'system', subtype: 'task_started', task_id: taskId, tool_use_id: toolId, task_type: 'local_workflow', workflow_name: 'review-changes', description: 'Review' })
+    const launched = (taskId: string, toolId: string, result: object) => ({
+      type: 'user', parent_tool_use_id: null, session_id: 'c1',
+      tool_use_result: { status: 'async_launched', taskId, taskType: 'local_workflow', workflowName: 'review-changes', ...result },
+      message: { content: [{ type: 'tool_result', tool_use_id: toolId, content: 'launched' }] },
+    })
+    const ended = (taskId: string) => ({ type: 'system', subtype: 'task_notification', task_id: taskId, status: 'completed', output_file: '', summary: '' })
+
+    it('reads the folder the call\'s result names, reports its progress and stops at the run\'s end', async () => {
+      const { watches, events, stream } = setup('/cfg')
+      stream.push(started('w1', 't1'))
+      stream.push(launched('w1', 't1', { runId: 'wf_1', transcriptDir: '/runs/wf_1' }))
+      await flush()
+      expect(watches).toHaveLength(1)
+      expect(watches[0].request.taskId).toBe('w1')
+      expect(await watches[0].request.locate()).toBe('/runs/wf_1')
+      watches[0].request.onProgress({ running: 2, done: 1, phase: 'Review' })
+      expect(events).toContainEqual({ kind: 'workflow_task', taskId: 'w1', running: 2, done: 1, phase: 'Review' })
+      stream.push(ended('w1'))
+      await flush()
+      expect(watches[0].stopped).toBe(true)
+      expect(events).toContainEqual({ kind: 'workflow_task', taskId: 'w1', status: 'completed' })
+      // A launch read after the end starts nothing.
+      stream.push(launched('w1', 't1', { runId: 'wf_1', transcriptDir: '/runs/wf_1' }))
+      await flush()
+      expect(watches).toHaveLength(1)
+      stream.end()
+    })
+
+    it('finds the folder by the run id, else the newest run folder since the run started, and stops at the process\'s exit', async () => {
+      const dir = mkdtempSync(join(home, 'workflow-config-'))
+      const { watches, events, stream } = setup(dir)
+      const runs = join(dir, 'projects', '-work', 'c1', 'subagents', 'workflows')
+      stream.push(started('w2', 't2'))
+      stream.push(launched('w2', 't2', { runId: 'wf_2' }))
+      stream.push(started('w3', 't3'))
+      stream.push(launched('w3', 't3', {}))
+      await flush()
+      expect(watches.map((watch) => watch.request.taskId)).toEqual(['w2', 'w3'])
+      expect(await watches[0].request.locate()).toBe(join(runs, 'wf_2'))
+      // Not made yet.
+      expect(await watches[1].request.locate()).toBeNull()
+      mkdirSync(join(runs, 'wf_3'), { recursive: true })
+      expect(await watches[1].request.locate()).toBe(join(runs, 'wf_3'))
+      stream.end()
+      await flush()
+      expect(watches.map((watch) => watch.stopped)).toEqual([true, true])
+      expect(events.at(-1)).toEqual({ kind: 'runtime_exit', expected: false })
+    })
+
+    it('stops following when the session is closed', async () => {
+      const { watches, stream, runtime } = setup('/cfg')
+      stream.push(started('w4', 't4'))
+      stream.push(launched('w4', 't4', { transcriptDir: '/runs/wf_4' }))
+      await flush()
+      await runtime.close()
+      expect(watches[0].stopped).toBe(true)
+      stream.end()
+    })
   })
 
   it('reads history from each session\'s own folder, one read at a time', async () => {

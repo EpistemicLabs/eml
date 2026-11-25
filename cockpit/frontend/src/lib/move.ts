@@ -6,6 +6,7 @@
 // how each answer reads. The reasons a move is refused are the server's texts
 // shown as they are; the sentences here are the only wording of the UI's own.
 // No DOM in this module, so it is unit-tested as it is.
+import { count } from './count';
 import { errorText, hostCall, stateTitle, writable, type HostAnswer, type Team } from './team';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 
@@ -51,7 +52,6 @@ export const MOVE_LIMIT_BYTES = 16 * 1024 * 1024;
 
 /** Bytes as the size line says them: whole KB under a megabyte, else MB with one decimal; the limit as a whole number. */
 const size = (bytes: number): string => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
-const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
 /** A target the chooser offers: a shared space of this cockpit, chosen only while it takes writes. */
 export interface MoveTargetOption {

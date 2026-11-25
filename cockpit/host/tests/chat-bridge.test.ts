@@ -11,7 +11,7 @@ import { SessionHandoff } from '../src/application/session-handoff.js'
 import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import { reminder, type EndTurn } from '../src/domain/turn-end.js'
-import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
+import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -88,6 +88,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   }
   const turns: Array<[string, string] | [string, string, number]> = []
   const helpers: number[] = []
+  const workflows: WorkflowWait[][] = []
   const ctx = {
     ledger: {
       has: (id: string) => ledgerEntries.has(id),
@@ -119,7 +120,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       turns.push(settleMs ? [id, state, settleMs] : [id, state])
       opts.tracker?.apply({ sessionId: id, state, settleMs })
     },
-    onHelpers: (id: string, count: number) => { helpers.push(count); opts.tracker?.waitOn(id, count) },
+    onHelpers: (id: string, count: number, waits: WorkflowWait[]) => { helpers.push(count); workflows.push(waits); opts.tracker?.waitOn(id, count, waits) },
     terminalBusy: opts.busy,
     handoffBeforeStop: opts.handoffBeforeStop,
     turnDone: opts.turnDone,
@@ -138,7 +139,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   let handoff: SessionHandoff
   const bridge = new ChatBridge(ctx, () => handoff)
   handoff = new SessionHandoff({ terminal, sdk: bridge })
-  return { bridge, runtimes, ledgerEntries, turns, helpers, terminal, handoff }
+  return { bridge, runtimes, ledgerEntries, turns, helpers, workflows, terminal, handoff }
 }
 
 function connect(bridge: ChatBridge, init: object = {}): FakeSocket {
@@ -812,6 +813,124 @@ describe('ChatBridge', () => {
       runtime.emit(agent('a1', 'completed'))
       expect(turns).toEqual([])
       expect(helpers).toEqual([])
+    })
+  })
+
+  describe('a session whose turn ended while a workflow run goes on', () => {
+    const workflow = (taskId: string, status?: 'running' | 'completed' | 'failed' | 'stopped', progress: { running?: number; done?: number; phase?: string } = {}): RuntimeEvent =>
+      status === 'running'
+        ? { kind: 'workflow_task', taskId, toolId: 't1', name: 'review-changes', status }
+        : { kind: 'workflow_task', taskId, ...(status ? { status } : {}), ...progress }
+    const start = (opts: Parameters<typeof setup>[0] = {}) => {
+      const s = setup(opts)
+      s.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      return { ...s, runtime: s.runtimes[0] }
+    }
+
+    it('waits on a running workflow like on a subagent, and counts it as running in the background', () => {
+      const { bridge, runtime } = start()
+      runtime.emit(workflow('w1', 'running'))
+      expect(bridge.waitsOnHelpers('s1')).toBe(true)
+      expect(bridge.backgroundTasks('s1')).toBe(1)
+      // How far it is changes nothing about that.
+      runtime.emit(workflow('w1', undefined, { running: 2, done: 1, phase: 'Review' }))
+      expect(bridge.waitsOnHelpers('s1')).toBe(true)
+      runtime.emit(workflow('w1', 'completed'))
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+      expect(bridge.backgroundTasks('s1')).toBe(0)
+    })
+
+    it('is not asked, flagged or handed off while the run goes on, and says how far its agents are', async () => {
+      const done: string[] = []
+      const { bridge, runtime, ledgerEntries, turns, helpers, workflows } = start({ turnDone: (_id, text) => done.push(text) })
+      const worker = runtime.start.worker!
+      runtime.emit(workflow('w1', 'running'))
+      runtime.emit(workflow('w1', undefined, { running: 3, done: 0, phase: 'Review' }))
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'The review runs.' })
+      expect(await worker.onTurnEnding()).toBeNull()
+      expect(bridge.holdTurnOpen('s1')).toBe(true)
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect((ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toBeFalsy()
+      expect(done).toEqual([])
+      expect(helpers).toEqual([0])
+      expect(workflows).toEqual([[{ name: 'review-changes', running: 3, done: 0 }]])
+      turns.length = 0
+      runtime.emit(workflow('w1', undefined, { running: 2, done: 1, phase: 'Review' }))
+      expect(workflows.at(-1)).toEqual([{ name: 'review-changes', running: 2, done: 1 }])
+      // Its end: done a moment later, unless the turn it wakes starts.
+      runtime.emit(workflow('w1', 'completed'))
+      expect(workflows.at(-1)).toEqual([])
+      expect(turns).toEqual([['s1', 'done', HELPERS_BACK_SETTLE_MS]])
+    })
+
+    it('waits for the subagents and the workflow together, until the last of them is back', () => {
+      const { runtime, turns, helpers, workflows, bridge } = start()
+      runtime.emit(workflow('w1', 'running'))
+      runtime.emit({ kind: 'agent_task', taskId: 'a1', toolId: null, description: 'research', agentType: null, status: 'running', background: true })
+      bridge.holdTurnOpen('s1')
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      turns.length = 0
+      expect(helpers).toEqual([1])
+      runtime.emit({ kind: 'agent_task', taskId: 'a1', status: 'completed' })
+      expect(helpers.at(-1)).toBe(0)
+      expect(workflows.at(-1)).toHaveLength(1)
+      expect(turns).toEqual([])
+      runtime.emit(workflow('w1', 'stopped'))
+      expect(turns).toEqual([['s1', 'done', HELPERS_BACK_SETTLE_MS]])
+    })
+
+    it('shows the wait in the turn state, and ends it with the run', () => {
+      vi.useFakeTimers()
+      try {
+        const tracker = new TurnTracker()
+        const { runtime, bridge } = start({ tracker })
+        runtime.emit(workflow('w1', 'running'))
+        bridge.holdTurnOpen('s1')
+        tracker.apply({ sessionId: 's1', state: 'working' })
+        runtime.emit({ kind: 'turn_end', reason: 'success' })
+        expect(tracker.get('s1')).toMatchObject({ state: 'working', workflows: [{ name: 'review-changes', running: 0, done: 0 }] })
+        expect(tracker.get('s1')?.helpers).toBeUndefined()
+        runtime.emit(workflow('w1', undefined, { running: 4, done: 2 }))
+        expect(tracker.get('s1')?.workflows).toEqual([{ name: 'review-changes', running: 4, done: 2 }])
+        runtime.emit(workflow('w1', 'completed'))
+        expect(tracker.get('s1')?.workflows).toBeUndefined()
+        vi.advanceTimersByTime(HELPERS_BACK_SETTLE_MS)
+        expect(tracker.get('s1')?.state).toBe('done')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('progress of a run it does not know, or before the turn ended, says nothing', () => {
+      const { runtime, helpers } = start()
+      runtime.emit(workflow('w9', undefined, { running: 1, done: 0 }))
+      runtime.emit(workflow('w1', 'running'))
+      runtime.emit(workflow('w1', undefined, { running: 1, done: 0 }))
+      expect(helpers).toEqual([])
+    })
+
+    it('a turn that asks the user while the run goes on is a stop', () => {
+      const done: string[] = []
+      const { runtime, bridge, ledgerEntries } = start({ turnDone: (_id, text) => done.push(text) })
+      runtime.emit(workflow('w1', 'running'))
+      runtime.start.worker!.report('question', 'A or B?')
+      expect(bridge.holdTurnOpen('s1')).toBe(false)
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Which one: A or B?' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect((ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toEqual({ kind: 'question', reason: 'A or B?' })
+      expect(done).toEqual(['Which one: A or B?'])
+    })
+
+    it('the run goes with the process: nothing is held after it exits', () => {
+      const { runtime, bridge, turns } = start()
+      runtime.emit(workflow('w1', 'running'))
+      bridge.holdTurnOpen('s1')
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      turns.length = 0
+      runtime.emit({ kind: 'runtime_exit', expected: true })
+      expect(turns).toEqual([['s1', 'done']])
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+      expect(bridge.backgroundTasks('s1')).toBe(0)
     })
   })
 

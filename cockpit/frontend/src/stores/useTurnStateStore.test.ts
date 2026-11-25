@@ -47,6 +47,20 @@ describe('the turn event stream', () => {
     disconnect();
   });
 
+  it('keeps the workflow runs a working session waits for, and drops them once there are none', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const disconnect = connectTurnEvents();
+    const since = '2026-02-01T11:00:00.000Z';
+    const review = { name: 'review-changes', running: 3, done: 4 };
+    FakeEventSource.last!.send('snapshot', [{ sessionId: 'a', state: 'working', since, workflows: [review] }]);
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'working', since, workflows: [review] });
+    FakeEventSource.last!.send('turn', { sessionId: 'a', state: 'working', since, helpers: 1, workflows: [review] });
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'working', since, helpers: 1, workflows: [review] });
+    FakeEventSource.last!.send('turn', { sessionId: 'a', state: 'working', since, workflows: [] });
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'working', since });
+    disconnect();
+  });
+
   it('passes a tasks event on to the board', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const seen: unknown[] = [];

@@ -62,6 +62,13 @@ export interface ImageInput {
 
 export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
 
+/** A workflow run in the background, as a session waiting on it shows it: its agents started dynamically, so no total. */
+export interface WorkflowWait {
+  name: string
+  running: number
+  done: number
+}
+
 /** A tool server the session has, as the user manages it. Holds no address or credentials. */
 export interface ToolServer {
   name: string
@@ -95,6 +102,20 @@ export type RuntimeEvent =
     tokens?: number
     toolUses?: number
     durationMs?: number
+  }
+  /**
+   * A workflow run (the Workflow tool) in the background, started, ended, or how far its agents are
+   * (`running`, `done`, and the phase of the latest one started): a field left out did not change.
+   */
+  | {
+    kind: 'workflow_task'
+    taskId: string
+    toolId?: string | null
+    name?: string
+    status?: AgentTaskStatus
+    running?: number
+    done?: number
+    phase?: string | null
   }
   /** A shell running in the background, started or changed: a field left out did not change. */
   | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }

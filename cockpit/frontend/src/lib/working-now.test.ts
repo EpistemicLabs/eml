@@ -45,6 +45,13 @@ describe('workingNow', () => {
     expect(back.waiting).toBeNull();
   });
 
+  it('says so when a session waits for a workflow run, with how far its agents are', () => {
+    const since = '2026-02-01T11:00:00.000Z';
+    const workflows = [{ name: 'review-changes', running: 3, done: 4 }];
+    const [row] = workingNow([session('w')], { w: { state: 'working', since, workflows } }, board([]), [space]);
+    expect(row.waiting).toBe('Waiting for review-changes · 3 agents running, 4 done');
+  });
+
   it('keeps a desk session without a task, by its own name', () => {
     const [row] = workingNow([session('d')], { d: working('2026-02-01T11:00:00.000Z') }, board([]), [space]);
     expect(row).toMatchObject({ name: 'Session d', kind: 'desk', step: null });
