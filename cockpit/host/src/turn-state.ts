@@ -20,6 +20,8 @@ export type { TurnState }
 export interface TurnInfo {
   state: TurnState
   since: string
+  /** Working, but its own turn is over: it waits for this many subagents it started (chat-bridge.ts). */
+  helpers?: number
 }
 
 export interface TurnEvent extends TurnInfo {
@@ -56,6 +58,19 @@ export class TurnTracker extends EventEmitter {
     }, change.settleMs)
     timer.unref()
     this.pending.set(change.sessionId, timer)
+  }
+
+  /**
+   * A working session's own turn ended and it waits for this many of its subagents; 0: no longer.
+   * Its state and `since` stay, and a change about to take effect (`settleMs`) still does. Any
+   * other change ends the wait.
+   */
+  waitOn(sessionId: string, helpers: number): void {
+    const info = this.turns.get(sessionId)
+    if (!info || info.state !== 'working' || (info.helpers ?? 0) === helpers) return
+    const next: TurnInfo = { state: info.state, since: info.since, ...(helpers > 0 ? { helpers } : {}) }
+    this.turns.set(sessionId, next)
+    this.emit('turn', { sessionId, ...next } satisfies TurnEvent)
   }
 
   private cancelPending(sessionId: string): void {

@@ -5,9 +5,10 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import './setup-home.js'
 import { GREETING_PROMPT } from '../src/session-greeting.js'
-import { ChatBridge, IDLE_STOP, RESTART_NOTICE, liftNotice, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
+import { ChatBridge, HELPERS_BACK_SETTLE_MS, IDLE_STOP, RESTART_NOTICE, liftNotice, parseAnswer, type ChatContext } from '../src/chat-bridge.js'
 import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
+import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer } from '../src/domain/session-runtime.js'
 
@@ -63,7 +64,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: (id: string, text: string) => void } = {}) {
+function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: (id: string, text: string) => void; tracker?: TurnTracker } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -84,7 +85,8 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     registry: { get: () => ({ projectId: 'p1', path: '/work' }) },
     projects: { cached: () => [] },
   }
-  const turns: Array<[string, string]> = []
+  const turns: Array<[string, string] | [string, string, number]> = []
+  const helpers: number[] = []
   const ctx = {
     ledger: {
       has: (id: string) => ledgerEntries.has(id),
@@ -112,7 +114,11 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     sessionEnv: { COCKPIT_URL: 'http://host' },
     runtimes: factory,
     events: new InMemoryEventStore(),
-    onTurn: (id: string, state: string) => turns.push([id, state]),
+    onTurn: (id: string, state: 'working' | 'done' | 'waiting', settleMs?: number) => {
+      turns.push(settleMs ? [id, state, settleMs] : [id, state])
+      opts.tracker?.apply({ sessionId: id, state, settleMs })
+    },
+    onHelpers: (id: string, count: number) => { helpers.push(count); opts.tracker?.waitOn(id, count) },
     terminalBusy: opts.busy,
     handoffBeforeStop: opts.handoffBeforeStop,
     turnDone: opts.turnDone,
@@ -126,7 +132,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   let handoff: SessionHandoff
   const bridge = new ChatBridge(ctx, () => handoff)
   handoff = new SessionHandoff({ terminal, sdk: bridge })
-  return { bridge, runtimes, ledgerEntries, turns, terminal, handoff }
+  return { bridge, runtimes, ledgerEntries, turns, helpers, terminal, handoff }
 }
 
 function connect(bridge: ChatBridge, init: object = {}): FakeSocket {
@@ -434,6 +440,164 @@ describe('ChatBridge', () => {
     runtime.emit({ kind: 'turn_end', reason: 'success' })
     expect((ledgerEntries.get('s1') as unknown as { attention?: unknown }).attention).toEqual({ kind: 'question', reason: 'A or B?' })
     expect(done).toEqual(['Which one: A or B?'])
+  })
+
+  describe('a session whose turn ended while its subagents run', () => {
+    const agent = (taskId: string, status: 'running' | 'completed' | 'stopped' = 'running'): RuntimeEvent =>
+      status === 'running'
+        ? { kind: 'agent_task', taskId, toolId: null, description: taskId, agentType: null, status, background: true }
+        : { kind: 'agent_task', taskId, status }
+    /** A worker with these subagents running whose Stop hook came and whose turn then ended. */
+    const parked = (agents: string[], opts: Parameters<typeof setup>[0] = {}) => {
+      const s = setup(opts)
+      s.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const runtime = s.runtimes[0]
+      for (const id of agents) runtime.emit(agent(id))
+      const held = s.bridge.holdTurnOpen('s1')
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      s.turns.length = 0
+      return { ...s, runtime, held }
+    }
+
+    it('waits on its helpers while they run and it asks nobody, not otherwise', () => {
+      const { bridge, runtimes } = setup()
+      expect(bridge.waitsOnHelpers('unknown')).toBe(false)
+      expect(bridge.holdTurnOpen('unknown')).toBe(false)
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const runtime = runtimes[0]
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+      // A background shell is not a helper.
+      runtime.emit({ kind: 'shell_task', taskId: 'sh1', status: 'running' })
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+      runtime.emit(agent('a1'))
+      expect(bridge.waitsOnHelpers('s1')).toBe(true)
+      runtime.start.worker!.report('done', null)
+      expect(bridge.waitsOnHelpers('s1')).toBe(true)
+      runtime.start.worker!.report('question', 'A or B?')
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+      expect(bridge.holdTurnOpen('s1')).toBe(false)
+    })
+
+    it('says how many it waits for, and each one that comes back', () => {
+      const { runtime, held, helpers, turns } = parked(['a1', 'a2'])
+      expect(held).toBe(true)
+      expect(helpers).toEqual([2])
+      runtime.emit(agent('a1', 'completed'))
+      expect(helpers).toEqual([2, 1])
+      expect(turns).toEqual([])
+    })
+
+    it('is done a moment after the last one came back, when no turn follows', () => {
+      const { runtime, helpers, turns } = parked(['a1'])
+      runtime.emit(agent('a1', 'stopped'))
+      expect(helpers).toEqual([1, 0])
+      expect(turns).toEqual([['s1', 'done', HELPERS_BACK_SETTLE_MS]])
+      // The same end, said twice by the runtime: one done.
+      runtime.emit(agent('a1', 'stopped'))
+      expect(turns).toHaveLength(1)
+    })
+
+    it('stays working through the turn its helpers wake, and is done after it', () => {
+      vi.useFakeTimers()
+      try {
+        const tracker = new TurnTracker()
+        const states: string[] = []
+        tracker.on('turn', (event: { state: string; helpers?: number }) => states.push(event.helpers ? `${event.state}:${event.helpers}` : event.state))
+        const { runtime, bridge } = parked(['a1'], { tracker })
+        expect(tracker.get('s1')).toMatchObject({ state: 'working', helpers: 1 })
+        runtime.emit(agent('a1', 'completed'))
+        vi.advanceTimersByTime(HELPERS_BACK_SETTLE_MS - 1)
+        // The turn the helper woke: the done about to show is taken back.
+        runtime.emit({ kind: 'activity', state: 'working' })
+        vi.advanceTimersByTime(HELPERS_BACK_SETTLE_MS * 2)
+        expect(tracker.get('s1')).toMatchObject({ state: 'working' })
+        expect(tracker.get('s1')?.helpers).toBeUndefined()
+        expect(states).not.toContain('done')
+        // Its Stop hook is applied now: nothing holds it.
+        expect(bridge.holdTurnOpen('s1')).toBe(false)
+        runtime.emit({ kind: 'turn_end', reason: 'success' })
+        expect(states).toEqual(['working', 'working:1', 'working', 'working'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('is done on its own when the woken turn never comes', () => {
+      vi.useFakeTimers()
+      try {
+        const tracker = new TurnTracker()
+        const { runtime } = parked(['a1'], { tracker })
+        runtime.emit(agent('a1', 'completed'))
+        expect(tracker.get('s1')?.state).toBe('working')
+        vi.advanceTimersByTime(HELPERS_BACK_SETTLE_MS)
+        expect(tracker.get('s1')?.state).toBe('done')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a turn woken by text alone counts as working again', () => {
+      const { runtime, turns } = parked(['a1', 'a2'])
+      runtime.emit(agent('a1', 'completed'))
+      runtime.emit({ kind: 'text_delta', blockId: 'b1', delta: 'Batch 1 is back.' })
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Batch 1 is back.' })
+      expect(turns).toEqual([['s1', 'working']])
+    })
+
+    it('a message from the user starts a turn: working, and the wait is over', () => {
+      const { bridge, turns } = parked(['a1'])
+      void bridge.deliver('s1', 'How far are you?')
+      expect(turns).toEqual([['s1', 'working']])
+    })
+
+    it('is done when the last helper came back between its Stop hook and its turn end', () => {
+      const { bridge, runtimes, turns, helpers } = setup()
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const runtime = runtimes[0]
+      runtime.emit(agent('a1'))
+      expect(bridge.holdTurnOpen('s1')).toBe(true)
+      runtime.emit(agent('a1', 'completed'))
+      turns.length = 0
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(turns).toEqual([['s1', 'done']])
+      expect(helpers).toEqual([])
+    })
+
+    it('is done when the user stops it, not left working', async () => {
+      const { runtime, turns } = parked(['a1'])
+      await runtime.interrupt()
+      expect(turns).toEqual([['s1', 'done']])
+      // Its helper ending later tells nothing new.
+      runtime.emit(agent('a1', 'completed'))
+      expect(turns).toEqual([['s1', 'done']])
+    })
+
+    it('is done when its process is closed: nothing wakes it any more', async () => {
+      const { bridge, turns } = parked(['a1'])
+      await bridge.end('s1', IDLE_STOP)
+      expect(turns).toEqual([['s1', 'done']])
+    })
+
+    it('a crash leaves the turn state to the exit, with nothing held', () => {
+      const { bridge, runtime, turns } = parked(['a1'])
+      runtime.emit({ kind: 'runtime_exit', expected: false })
+      expect(turns).toEqual([])
+      expect(bridge.waitsOnHelpers('s1')).toBe(false)
+    })
+
+    it('a turn that asks the user while helpers run is not held', () => {
+      const { bridge, runtimes, turns, helpers } = setup()
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const runtime = runtimes[0]
+      runtime.emit(agent('a1'))
+      runtime.start.worker!.report('question', 'A or B?')
+      expect(bridge.holdTurnOpen('s1')).toBe(false)
+      turns.length = 0
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      runtime.emit(agent('a1', 'completed'))
+      expect(turns).toEqual([])
+      expect(helpers).toEqual([])
+    })
   })
 
   it('a worker that says done stays listed without a turn held open', async () => {
