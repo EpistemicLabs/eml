@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { deriveTurn, endTurnAnswer, type EndTurn } from '../src/domain/turn-end.js'
-import { ClaudeEventMapper, endTurnReply, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { ClaudeEventMapper, endTurnReply, historyEvents, startingMode, toolTitle, workflowLaunch } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -163,6 +163,64 @@ describe('ClaudeEventMapper, shells', () => {
     const mapper = new ClaudeEventMapper()
     system(mapper, 'task_started', { ...started, is_backgrounded: false })
     expect(system(mapper, 'task_notification', { status: 'completed' })).toEqual([])
+  })
+})
+
+describe('ClaudeEventMapper, workflows', () => {
+  const system = (mapper: ClaudeEventMapper, subtype: string, extra: object) => mapper.map(sdk({ type: 'system', subtype, task_id: 'w1', ...extra }))
+  const started = { task_type: 'local_workflow', tool_use_id: 't1', description: 'Review the branch', workflow_name: 'review-changes' }
+
+  it('shows a workflow run from its start to its end, said once', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(system(mapper, 'task_started', started)).toEqual([
+      { kind: 'workflow_task', taskId: 'w1', toolId: 't1', name: 'review-changes', status: 'running' },
+    ])
+    expect(system(mapper, 'task_updated', { patch: { status: 'running' } })).toEqual([])
+    expect(system(mapper, 'task_updated', { patch: { status: 'completed' } })).toEqual([{ kind: 'workflow_task', taskId: 'w1', status: 'completed' }])
+    expect(system(mapper, 'task_notification', { status: 'completed' })).toEqual([])
+  })
+
+  it('ends a run that was stopped or failed, by notification alone', () => {
+    const stopped = new ClaudeEventMapper()
+    system(stopped, 'task_started', started)
+    expect(system(stopped, 'task_notification', { status: 'stopped' })).toEqual([{ kind: 'workflow_task', taskId: 'w1', status: 'stopped' }])
+    const killed = new ClaudeEventMapper()
+    system(killed, 'task_started', started)
+    expect(system(killed, 'task_updated', { patch: { status: 'killed' } })).toEqual([{ kind: 'workflow_task', taskId: 'w1', status: 'stopped' }])
+    const failed = new ClaudeEventMapper()
+    system(failed, 'task_started', started)
+    expect(system(failed, 'task_notification', { status: 'failed' })).toEqual([{ kind: 'workflow_task', taskId: 'w1', status: 'failed' }])
+  })
+
+  it('names a run without a workflow name by its description, and leaves housekeeping out', () => {
+    const mapper = new ClaudeEventMapper()
+    expect(system(mapper, 'task_started', { ...started, workflow_name: undefined })).toMatchObject([{ name: 'Review the branch' }])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'task_started', task_id: 'w2', ...started, ambient: true }))).toEqual([])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'task_started', task_id: 'w3', ...started, skip_transcript: true }))).toEqual([])
+    expect(mapper.map(sdk({ type: 'system', subtype: 'task_notification', task_id: 'w2', status: 'completed' }))).toEqual([])
+  })
+})
+
+describe('workflowLaunch', () => {
+  const result = (toolUseResult: unknown, extra: object = {}) => sdk({
+    type: 'user', parent_tool_use_id: null, session_id: 'c1', tool_use_result: toolUseResult,
+    message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'launched' }] }, ...extra,
+  })
+  const launched = { status: 'async_launched', taskId: 'w1', taskType: 'local_workflow', workflowName: 'review-changes', runId: 'wf_1', transcriptDir: '/cfg/projects/p/c1/subagents/workflows/wf_1' }
+
+  it('reads the run and its folder from a Workflow call\'s result', () => {
+    expect(workflowLaunch(result(launched))).toEqual({ taskId: 'w1', runId: 'wf_1', dir: '/cfg/projects/p/c1/subagents/workflows/wf_1', sessionId: 'c1' })
+    expect(workflowLaunch(result({ ...launched, transcriptDir: undefined }))).toEqual({ taskId: 'w1', runId: 'wf_1', dir: null, sessionId: 'c1' })
+    // An older CLI names no task type.
+    expect(workflowLaunch(result({ ...launched, taskType: undefined }))).toMatchObject({ taskId: 'w1', runId: 'wf_1' })
+  })
+
+  it('is nothing for any other result', () => {
+    expect(workflowLaunch(result({ status: 'async_launched', taskId: 'a1' }))).toBeNull()
+    expect(workflowLaunch(result({ ...launched, taskType: 'remote_agent' }))).toBeNull()
+    expect(workflowLaunch(result(launched, { parent_tool_use_id: 'x' }))).toBeNull()
+    expect(workflowLaunch(result(null))).toBeNull()
+    expect(workflowLaunch(success)).toBeNull()
   })
 })
 

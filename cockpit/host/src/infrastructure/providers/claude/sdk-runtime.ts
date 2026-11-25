@@ -11,6 +11,7 @@ import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
 import { END_TURN_DESCRIPTION, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
+import { newestRunDir, watchWorkflowJournal, workflowsDir, type JournalWatch, type JournalWatcher } from './workflow-journal.js'
 import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
 import { SPLIT_RELATIONS } from '../../../domain/split.js'
 import { SORT_PICKS } from '../../../domain/sort.js'
@@ -26,6 +27,8 @@ import { SORT_PICKS } from '../../../domain/sort.js'
 const EXIT_TIMEOUT_MS = 8_000
 const MAX_TOOL_OUTPUT = 20_000
 const STDERR_TAIL = 2_000
+// A run's folder may be made a moment before its task_started arrives.
+const WORKFLOW_DIR_SLACK_MS = 5_000
 
 const TOOL_KINDS: Record<string, ToolKind> = {
   Read: 'read', NotebookRead: 'read',
@@ -168,6 +171,8 @@ export class ClaudeEventMapper {
   private sawSessionState = false
   private interrupted = false
   private agentTasks = new Set<string>()
+  // Workflow runs that have started and not ended yet.
+  private workflowTasks = new Set<string>()
   // Every shell task; only one running in the background is shown (`shown`).
   private shellTasks = new Map<string, { toolId: string | null; description: string; shown: boolean }>()
   private conversationId: string | null = null
@@ -214,6 +219,20 @@ export class ClaudeEventMapper {
       if (!shell.shown) return []
       if (start) return [{ kind: 'shell_task', taskId: message.task_id, toolId: shell.toolId, description: shell.description, status: ended ?? 'running' }]
       return ended ? [{ kind: 'shell_task', taskId: message.task_id, status: ended }] : []
+    }
+    if (message.subtype === 'task_started' && message.task_type === 'local_workflow') {
+      if (message.skip_transcript || message.ambient) return []
+      const name = message.workflow_name || message.description || 'Workflow'
+      this.workflowTasks.add(message.task_id)
+      return [{ kind: 'workflow_task', taskId: message.task_id, toolId: message.tool_use_id ?? null, name, status: 'running' }]
+    }
+    if ((message.subtype === 'task_updated' || message.subtype === 'task_notification') && this.workflowTasks.has(message.task_id)) {
+      const status = message.subtype === 'task_notification' ? message.status : message.patch.status
+      const ended = status === 'completed' || status === 'failed' ? status : status === 'killed' || status === 'stopped' ? 'stopped' : undefined
+      if (!ended) return []
+      // Its end comes as an update and again as a notification: said once.
+      this.workflowTasks.delete(message.task_id)
+      return [{ kind: 'workflow_task', taskId: message.task_id, status: ended }]
     }
     if (message.subtype === 'task_started') {
       if (message.task_type !== 'local_agent' || message.skip_transcript || message.ambient) return []
@@ -345,6 +364,28 @@ export class ClaudeEventMapper {
     if (!this.sawSessionState) events.push({ kind: 'activity', state: 'idle' })
     return events
   }
+}
+
+/** Where a Workflow call's run writes its journal, from the call's result (WorkflowOutput in sdk-tools.d.ts). */
+export interface WorkflowLaunch {
+  taskId: string
+  runId: string | null
+  /** The run's folder; null from a CLI that does not name it. */
+  dir: string | null
+  /** The conversation it ran in; null when the message does not say. */
+  sessionId: string | null
+}
+
+/** A Workflow call's result: the run it launched in the background; null for any other message. */
+export function workflowLaunch(message: SDKMessage): WorkflowLaunch | null {
+  if (message.type !== 'user' || message.parent_tool_use_id) return null
+  const result = message.tool_use_result as { taskId?: unknown; taskType?: unknown; runId?: unknown; transcriptDir?: unknown } | null | undefined
+  if (!result || typeof result !== 'object' || typeof result.taskId !== 'string') return null
+  const runId = typeof result.runId === 'string' && result.runId ? result.runId : null
+  // An older CLI names no task type; a run id only a workflow has.
+  if (result.taskType !== 'local_workflow' && !(result.taskType === undefined && runId)) return null
+  const dir = typeof result.transcriptDir === 'string' && result.transcriptDir ? result.transcriptDir : null
+  return { taskId: result.taskId, runId, dir, sessionId: message.session_id || null }
 }
 
 /** A stored conversation as events. Rendered from this alone, never merged with live data. */
@@ -581,8 +622,11 @@ class ClaudeSdkRuntime implements SessionRuntime {
   private commands: SlashCommand[] = []
   private terminalCommands = new Set<string>()
   private models: Array<{ value: string; resolvedModel?: string }> = []
+  // The journals of running workflow runs, by task id, and when each run started (for finding its folder).
+  private journals = new Map<string, JournalWatch>()
+  private workflowStarts = new Map<string, number>()
 
-  constructor(private request: SessionRuntimeStart) {
+  constructor(private request: SessionRuntimeStart, private watchJournal: JournalWatcher = watchWorkflowJournal) {
     this.exited = new Promise((resolve) => { this.markExited = resolve })
     this.query = query({
       prompt: this.input,
@@ -669,6 +713,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
   /** What the view needs from a message beyond its mapping. */
   private observe(message: SDKMessage): void {
     if (message.type === 'result') void this.refreshContext()
+    const launch = workflowLaunch(message)
+    if (launch) this.followWorkflow(launch)
     if (message.type !== 'system') return
     if (message.subtype === 'compact_boundary') void this.refreshContext()
     else if (message.subtype === 'init') {
@@ -681,7 +727,40 @@ class ClaudeSdkRuntime implements SessionRuntime {
   }
 
   private emit(event: RuntimeEvent): void {
+    if (event.kind === 'workflow_task') this.trackWorkflow(event)
     this.request.onEvent(event)
+  }
+
+  /** A workflow run started or ended: an end stops following its journal. */
+  private trackWorkflow(event: Extract<RuntimeEvent, { kind: 'workflow_task' }>): void {
+    if (event.status === 'running' && !this.workflowStarts.has(event.taskId)) this.workflowStarts.set(event.taskId, Date.now())
+    else if (event.status && event.status !== 'running') {
+      this.journals.get(event.taskId)?.stop()
+      this.journals.delete(event.taskId)
+      // Kept with its time unset: a launch read after the end starts nothing.
+      this.workflowStarts.set(event.taskId, -1)
+    }
+  }
+
+  /**
+   * Follows a launched run's journal: in the folder the call's result names, else the
+   * run's folder by its id, else the newest run folder made since the run started.
+   */
+  private followWorkflow(launch: WorkflowLaunch): void {
+    if (this.journals.has(launch.taskId) || this.workflowStarts.get(launch.taskId) === -1) return
+    const since = (this.workflowStarts.get(launch.taskId) ?? Date.now()) - WORKFLOW_DIR_SLACK_MS
+    const conversation = launch.sessionId ?? this.request.conversationId ?? this.request.sessionId
+    const runs = workflowsDir(this.request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR, this.request.cwd, conversation)
+    const locate = launch.dir ? () => launch.dir : launch.runId ? () => join(runs, launch.runId as string) : () => newestRunDir(runs, since)
+    this.journals.set(launch.taskId, this.watchJournal({
+      locate,
+      onProgress: (progress) => this.emit({ kind: 'workflow_task', taskId: launch.taskId, ...progress }),
+    }))
+  }
+
+  private stopJournals(): void {
+    for (const watch of this.journals.values()) watch.stop()
+    this.journals.clear()
   }
 
   private async pump(): Promise<void> {
@@ -698,6 +777,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
       }
     }
     this.cancelOpenRequests()
+    // The runs went with the process.
+    this.stopJournals()
     if (!this.exitReported) {
       this.exitReported = true
       this.emit({ kind: 'runtime_exit', expected: this.closing })
@@ -817,6 +898,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
     this.input.end()
     this.query.close()
     this.cancelOpenRequests()
+    this.stopJournals()
     if (!this.child) return
     const timer = setTimeout(() => { try { this.child?.kill('SIGKILL') } catch { /* gone */ } }, EXIT_TIMEOUT_MS)
     await this.exited
@@ -824,13 +906,13 @@ class ClaudeSdkRuntime implements SessionRuntime {
   }
 }
 
-export function createClaudeSdkRuntimes(): SessionRuntimeFactory {
+export function createClaudeSdkRuntimes(watchJournal: JournalWatcher = watchWorkflowJournal): SessionRuntimeFactory {
   // getSessionMessages takes the config dir only from this process's environment,
   // and agents have folders of their own: one read at a time, each under its own
   // folder. No session inherits the variable (baseAgentEnv).
   let reads: Promise<unknown> = Promise.resolve()
   return {
-    start: (request) => new ClaudeSdkRuntime(request),
+    start: (request) => new ClaudeSdkRuntime(request, watchJournal),
     history(conversationId, cwd, runtime) {
       const configDir = runtime ? runtime.configDirs.claude : CONFIG_DIR
       if (!configDir) return Promise.reject(new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`))
