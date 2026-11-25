@@ -951,6 +951,8 @@ export class ChatBridge {
         const reason = call.failed ?? call.questions?.[0] ?? call.result
         // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
         this.ctx.ledger.setAttention(entry.sessionId, { kind: derived.status, reason })
+        // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
+        this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx: turn.ctx })
         const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
         return {
           derived,
@@ -966,6 +968,7 @@ export class ChatBridge {
         entry.callCtx = null
         entry.asks = status === 'question'
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
+        this.ctx.ledger.setUnrouted(entry.sessionId, { call: null, ctx: null })
       },
       onTurnEnding: async () => {
         // Read now: its task may have been handed over or taken back during the turn. The turn's end reads it from here.
@@ -1093,6 +1096,8 @@ export class ChatBridge {
         if (attention) {
           this.ctx.ledger.setAttention(entry.sessionId, { kind: attention, reason: null })
         }
+        // A host going down: what the turn said stays unrouted in the ledger and is routed once the host is back.
+        if (entry.closing && this.ctx.ledger.get(entry.sessionId)?.unrouted) this.log(`turn of ${entry.sessionId} ended while it closed: routed after the restart`)
         // An interrupted turn left nothing to look at, and a host going down is not its end.
         if (!entry.closing && event.reason !== 'interrupted') {
           this.ctx.ledger.setResult(entry.sessionId, true)

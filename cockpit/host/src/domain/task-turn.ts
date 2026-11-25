@@ -20,7 +20,7 @@ export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'sto
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
 export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale'
 
-export type NobodyReason = 'stopped' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped'
+export type NobodyReason = 'stopped' | 'idle' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped'
 
 export interface WaitingOn {
   who: string
@@ -130,13 +130,13 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   if (task.delegate) {
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: scheduledGroup(live) }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
-    // The runner starts planned tasks only. One in progress is the open session's, between its turns,
-    // or nobody's once its session is gone. Sessions are only known on this machine: in a shared space
+    // The runner starts planned tasks only. One in progress that no session works on is the owner's to move on:
+    // its session is open but idle (between its turns, nothing asked, nothing scheduled), or it is gone. Only a
+    // working session makes it Agent working (above). Sessions are only known on this machine: in a shared space
     // the delegate may work on the owner's machine, so for anyone else it is the owner's.
     if (task.status === 'active' && !task.requested) {
-      if (live.sessions > 0) return { turn: 'agent_working' }
       if (task.owner && task.owner !== viewer) return { turn: 'waiting_on_others' }
-      return { turn: 'needs_you', group: 'nobody', reason: 'stopped' }
+      return { turn: 'needs_you', group: 'nobody', reason: live.sessions > 0 ? 'idle' : 'stopped' }
     }
     if (task.parentActive === false) return { turn: 'needs_you', group: 'parent' }
     // v0.23: delegated but never handed over (no request, no schedule): nothing starts it until the owner does.
@@ -188,7 +188,7 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
   if (live.working) return { ok: true, how: 'working' }
   if (t?.group === 'asked') return { ok: false, group: 'ask' }
   if (t?.turn === 'review') return { ok: false, group: 'review' }
-  if (t?.reason === 'stopped') return { ok: false, group: 'stopped', reason: 'stopped' }
+  if (t?.reason === 'stopped' || t?.reason === 'idle') return { ok: false, group: 'stopped', reason: t.reason }
   if (t?.group === 'parent') return { ok: false, group: 'blocked', reason: 'parent' }
   if (stepsWaiting > 0 && task.status !== 'active') return { ok: false, group: 'blocked', reason: 'steps_wait', steps: stepsWaiting }
   const othersMove = Boolean(task.waitingOn?.who) && !isViewersMove(task.waitingOn, viewer)
@@ -207,7 +207,7 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
 /** An important task for Plan's two boxes: asked, stopped, the viewer's own, due within two weeks, or high. */
 export function isImportant(task: TaskFacts, live: LiveFacts, viewer: string, now: number): boolean {
   const t = turnOf(task, live, viewer, now)
-  return t?.group === 'asked' || t?.turn === 'review' || t?.reason === 'stopped' || t?.group === 'own'
+  return t?.group === 'asked' || t?.turn === 'review' || t?.reason === 'stopped' || t?.reason === 'idle' || t?.group === 'own'
     || (Boolean(task.due) && daysUntil(task.due!, now) <= DUE_SOON_DAYS) || task.priority === 'high'
 }
 

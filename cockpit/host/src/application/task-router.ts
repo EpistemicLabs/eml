@@ -65,6 +65,8 @@ export interface TaskRouterDeps {
   handles?(space: BrainSpace): Promise<readonly string[]>
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
+  /** What the session said up to `at` is in its task now (session-ledger.ts clearUnrouted). */
+  routed?(sessionId: string, at: string): void
   log(line: string): void
   now?: () => Date
 }
@@ -73,6 +75,13 @@ export interface TaskRouterDeps {
 export function reopenedAt(task: { entries?: Array<{ kind?: string; at?: string; text?: string }> }): string | null {
   const last = (task.entries ?? []).filter((e) => e.kind === 'change' && typeof e.text === 'string' && e.text.startsWith('reopened') && e.at).at(-1)
   return last?.at ?? null
+}
+
+type JournaledTask = { entries?: Array<{ kind?: string; at?: string; text?: string | null }> }
+
+/** The task's journal has this note from `since` on: what a session said there was written already. */
+export function journaledSince(task: JournaledTask, text: string, since: string): boolean {
+  return (task.entries ?? []).some((e) => e.kind === 'note' && e.text === text && (e.at ?? '') >= since)
 }
 
 export interface WaitingOn {
@@ -127,6 +136,8 @@ export interface TaskRouter {
    * against for its answer; the wait is derived from the same. Never throws.
    */
   turnEnded(sessionId: string, message: string, call?: EndTurn | null, turn?: { unsaid?: boolean; ctx?: TurnContext | null }): Promise<void>
+  /** Whether a turn end of the session is being routed right now (application/unrouted-turns.ts leaves it alone). */
+  routing(sessionId: string): boolean
   /** The user answered the session, or it was put away: a wait it set on its task is over. Never throws. */
   answered(sessionId: string): Promise<void>
   /**
@@ -142,6 +153,8 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
   const lastRouted = new Map<string, string>()
   // The status a routed call left on its session (its time): a later turn without a call must not route it again as a plain status.
   const fromCall = new Map<string, string>()
+  // Turn ends being routed, per session.
+  const inFlight = new Map<string, number>()
   // One write per task at a time on this host: the next one reads what the last one wrote.
   const queues = new Map<string, Promise<unknown>>()
   const serial = <T>(taskId: string, work: () => Promise<T>): Promise<T> => {
@@ -159,7 +172,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     return !entry || !entry.archivedAt
   }
 
-  const route = async (sessionId: string, message: string, call: EndTurn | null, unsaid: boolean, callCtx: TurnContext | null) => {
+  const route = async (sessionId: string, message: string, call: EndTurn | null, unsaid: boolean, callCtx: TurnContext | null, saidAt: string | null) => {
     const entry = deps.ledger.get(sessionId)
     if (!entry?.taskId) return
     const space = deps.spaces.resolve(entry.spaceId)
@@ -204,8 +217,9 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       after = waiting ? withSessionWait(kept, waiting) : withoutSession(kept, sessionId)
       const body: Record<string, unknown> = {}
       // The journal keeps the block: the one the call stands for, or the one the session wrote.
-      if (call) body.text = handoffBlock(call, who)
-      else if (handoff) body.text = handoff.text
+      const text = call ? handoffBlock(call, who) : handoff?.text
+      // A route tried again (application/unrouted-turns.ts) whose write landed before: its block is in the journal once.
+      if (text && !(saidAt && journaledSince(task as JournaledTask, text, saidAt))) body.text = text
       if (!sameWaits(after, waits)) Object.assign(body, waitsBody(after))
       return Object.keys(body).length > 0 ? body : null
     }))
@@ -256,12 +270,22 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     },
 
     async turnEnded(sessionId, message, call, turn) {
+      // What it said up to now: once routed, it is no longer left over (a failed route keeps it for the next try).
+      const said = deps.ledger.get(sessionId)?.unrouted?.at ?? null
+      inFlight.set(sessionId, (inFlight.get(sessionId) ?? 0) + 1)
       try {
-        await route(sessionId, message, call ?? null, turn?.unsaid === true, turn?.ctx ?? null)
+        await route(sessionId, message, call ?? null, turn?.unsaid === true, turn?.ctx ?? null, said)
+        if (said) deps.routed?.(sessionId, said)
       } catch (err) {
         deps.log(`[router] ${sessionId.slice(0, 8)} failed: ${(err as Error).message}`)
+      } finally {
+        const left = (inFlight.get(sessionId) ?? 1) - 1
+        if (left > 0) inFlight.set(sessionId, left)
+        else inFlight.delete(sessionId)
       }
     },
+
+    routing: (sessionId) => inFlight.has(sessionId),
 
     async adoptHeldWaits(file = path.join(COCKPIT_HOME, 'held-waits.json')) {
       let held: Record<string, unknown>

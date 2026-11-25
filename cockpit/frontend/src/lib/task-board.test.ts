@@ -326,6 +326,16 @@ describe('the task panel logic (v0.23)', () => {
   });
 });
 
+describe('a delegated task whose session is open but idle', () => {
+  it('says the session waits and times the card by its last activity', () => {
+    const at = new Date(NOW - 45 * 60_000).toISOString();
+    const idle = task({ turn: 'needs_you', group: 'nobody', reason: 'idle', delegate: 'atlas', runs: [{ id: 's1', member: 'lasse', agent: 'atlas', state: 'idle' as const, lastActivityAt: at, here: true }] });
+    expect(cardLine(idle, NOW)).toBe('Its session is open but idle: nothing asked, nothing scheduled. Write to it or close the task.');
+    expect(cardTime(idle, NOW)?.label).toBe(`idle since ${when(at, NOW)}`);
+    expect(hueOf(idle)).toBe('stopped');
+  });
+});
+
 describe('an earlier session in one line', () => {
   it('says the agent, when, how it ended and its result line', () => {
     const run = { id: 'r', member: 'lasse', agent: 'atlas', startedAt: new Date(NOW - DAY_MS).toISOString(), endedAt: null, endReason: 'finished', result: '4 mails need you', here: true };
