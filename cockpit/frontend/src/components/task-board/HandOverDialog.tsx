@@ -1,5 +1,8 @@
 // Hand over: give a task to an agent now, at a time, or work on it together in a desk. The owner stays.
 // An open question is never dropped: the dialog says so, and the host carries it into the brief.
+// Delegate now continues the task's own session when it has one the agent can carry on in, or starts a new one when
+// the owner chooses Start fresh; the dialog says which happens. On a task the agent works on alone, with its own
+// session, working on it yourself is Take over: that session opens, no new one starts.
 import { useState } from 'react';
 
 import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, LINK, PRIMARY, RadioCard } from '@/shared/view/ui';
@@ -18,7 +21,10 @@ const CHECKPOINTS = {
 } as const;
 type Checkpoint = keyof typeof CHECKPOINTS;
 
-const MODES: Array<[HandOverMode, string, string]> = [['now', 'Delegate now', 'agent starts'], ['schedule', 'Schedule', 'agent starts later'], ['together', 'Work on it now', 'with an agent']];
+const modes = (takeOver: boolean): Array<[HandOverMode, string, string]> => [
+  ['now', 'Delegate now', 'agent starts'], ['schedule', 'Schedule', 'agent starts later'],
+  takeOver ? ['together', 'Take over', 'its session opens'] : ['together', 'Work on it now', 'with an agent'],
+];
 const PILL = cn('min-h-(--target-comfortable) rounded-full border border-border bg-card px-3 text-body aria-pressed:border-foreground aria-pressed:bg-foreground aria-pressed:text-background', FOCUS);
 const FIELD = 'rounded-lg border border-input bg-background px-2 py-1.5 text-body text-foreground';
 const NEW_DESK = '__new';
@@ -51,6 +57,11 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const [resume, setResume] = useState(true);
   const [desk, setDesk] = useState(desks[0]?.id ?? NEW_DESK);
   const [deskName, setDeskName] = useState(taskName(task));
+  // The task's own session goes on unless the owner starts fresh (only when there is one the agent can carry on in).
+  const continuable = task.ownSession?.continues === true;
+  const [fresh, setFresh] = useState(false);
+  // The host takes over the task's own session whenever it has one (host domain/hand-over.ts), delegated or not.
+  const takeOver = Boolean(task.ownSession);
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -64,13 +75,13 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
 
   const submit = () => {
     if (!agent) return;
-    const input: HandOverInput = { mode, delegate: agent, checkpoint, ...(mode === 'schedule' ? { schedule: schedule() } : {}) };
+    const input: HandOverInput = { mode, delegate: agent, checkpoint, ...(mode === 'schedule' ? { schedule: schedule() } : {}), ...(mode === 'now' && continuable && fresh ? { fresh: true } : {}) };
     const chosen = mode !== 'together' ? null : desk === NEW_DESK ? { name: deskName.trim() || taskName(task) } : { id: desk };
     if (mode === 'together') input.desk = chosen && 'name' in chosen ? chosen.name : desks.find((d) => d.id === desk)?.name ?? 'Main';
     onSubmit(input, chosen);
   };
 
-  const go = (mode === 'now' ? `Delegate to ${agentName(agent)}` : mode === 'schedule' ? 'Schedule' : 'Open the panel') + (question ? ' anyway' : '');
+  const go = (mode === 'now' ? `Delegate to ${agentName(agent)}` : mode === 'schedule' ? 'Schedule' : takeOver ? 'Take over' : 'Open the panel') + (question ? ' anyway' : '');
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -82,7 +93,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
         </header>
         <div className="px-5 pb-3 pt-0.5 text-ui text-muted-foreground">{taskName(task)} · owner stays <b className="text-foreground">{task.owner ? 'you' : 'nobody'}</b></div>
         <div className="grid grid-cols-3 border-y border-border">
-          {MODES.map(([m, label, small]) => (
+          {modes(takeOver).map(([m, label, small]) => (
             <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}
               className={cn('flex flex-col items-center gap-0.5 border-b-2 border-transparent px-2 py-2.5 text-body text-muted-foreground aria-pressed:border-foreground aria-pressed:font-semibold aria-pressed:text-foreground', FOCUS)}>
               {label}<small className="text-caption">{small}</small>
@@ -169,9 +180,20 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                   </div>
                 )}
               </div>
+              {mode === 'now' && continuable && (
+                <div className="flex flex-col gap-1.5">
+                  <span className={LABEL}>Session</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button type="button" aria-pressed={!fresh} onClick={() => setFresh(false)} className={PILL}>Continue its session</button>
+                    <button type="button" aria-pressed={fresh} onClick={() => setFresh(true)} className={PILL}>Start fresh</button>
+                  </div>
+                </div>
+              )}
               <p className="m-0 text-caption text-muted-foreground">
                 {mode === 'now'
-                  ? `${agentName(agent)} starts in the background once the few seconds to undo are over. You stay the owner; the card moves to Agent working, then to Review.`
+                  ? `${continuable && !fresh
+                    ? `${agentName(agent)} carries on in the task's session, with what was said there, once the few seconds to undo are over.`
+                    : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in a terminal' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
                   : then === 'goal'
                     ? `${agentName(agent)} starts then and keeps going until the goal is reached. Until then the task sits in Agent scheduled under Missions, on every device and for every member. You're asked only for a question, a review or a failed run.`
                     : then === 'repeat'
@@ -182,7 +204,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
           ) : (
             <>
               <div className="flex flex-col gap-1.5">
-                <span className={LABEL}>Open the panel in which desk?</span>
+                <span className={LABEL}>{takeOver ? 'Open its session in which desk?' : 'Open the panel in which desk?'}</span>
                 <div role="radiogroup" className="flex flex-col gap-1.5">
                   {desks.map((d) => (
                     <RadioCard key={d.id} name="desk" value={d.id} checked={desk === d.id} onChange={() => setDesk(d.id)} title={d.name} />
@@ -193,7 +215,9 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                   </RadioCard>
                 </div>
               </div>
-              <p className="m-0 text-caption text-muted-foreground">A session starts on the task with its journal and last handoff, in a new pane on that desk. You work on it together; you stay the owner.</p>
+              <p className="m-0 text-caption text-muted-foreground">{takeOver
+                ? `The task's session opens in a new pane on that desk, and ${agentName(task.delegate)} no longer works on it alone. A turn it is in finishes first; then the session is yours.`
+                : 'A session starts on the task with its journal and last handoff, in a new pane on that desk. You work on it together; you stay the owner.'}</p>
             </>
           )}
         </div>

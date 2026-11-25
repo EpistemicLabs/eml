@@ -9,14 +9,14 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
 import { nextRuns, type WorkingRow, workingNow } from '@/lib/working-now';
 import { Sheet } from '@/shared/view/ui/Sheet';
 import { Toast, type ToastMessage } from '@/shared/view/ui/Toast';
-import { addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
+import { addPaneToDesk, addWorkerPane, ensureDeskBySlug, getActiveSpaceId, removePane, useDesks } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, useSpaces } from '@/stores/useSpaceStore';
 import { openItemIn, type OpenItem, setFold, setOpenItem, useTaskBoardPage } from '@/stores/useTaskBoardPageStore';
 import { clearTaskPanelRequest, getTaskView, setTaskView, taskPanelRequestTask, useTaskPanelRequest, useTaskView, type TaskView } from '@/stores/useTaskViewStore';
@@ -156,9 +156,16 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       answered(answer, input.mode === 'now' ? `Delegated to ${name} with checkpoint ${input.checkpoint}. You stay the owner.` : `Scheduled: ${name} starts then. The card is in Agent scheduled.`);
       return;
     }
-    // Work on it now: the session opens in the chosen desk, with the brief the host answered with.
+    // Work on it now: the session opens in the chosen desk, with the brief the host answered with. Take over: the
+    // task's own session opens there instead.
     const deskId = desk && 'id' in desk ? desk.id : ensureDeskBySlug(`task-${t.title}`, { name: desk?.name ?? taskName(t) });
     const space = spaces.find((s) => s.id === t.spaceId);
+    if (answer.sessionId) {
+      const own = sessions?.find((s) => s.id === answer.sessionId);
+      const ownPane = addPaneToDesk(deskId, { sessionId: answer.sessionId, projectId: own?.__projectId ?? (t.project ? projectIdOfBrain(t.project) : null), paneView: 'chat' });
+      answered(answer, `Taken over: its session is open in desk ${input.desk}.`, () => removePane(ownPane));
+      return;
+    }
     const paneId = t.project ? addWorkerPane({
       fromSessionId: null, projectId: projectIdOfBrain(t.project), title: taskName(t), deskId, taskId: t.id,
       prompt: [answer.brief, `Work on task ${t.id} ("${taskName(t)}") together with the user, who owns it. Start by saying where it stands and what you would do next. When the work is done, hand it over for review; close the task only when the user tells you to.`,
@@ -168,7 +175,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       ...(space ? { spaceId: paneSpaceKey(space) } : {}),
     }) : null;
     answered(answer, `Opened in desk ${input.desk}.`, () => { if (paneId) removePane(paneId); });
-  }, [answered, spaces]);
+  }, [answered, spaces, sessions]);
 
   // Parking puts the snooze on the task's wait in the brain, so it holds on every device and for every member.
   const park = useCallback(async (item: InboxItem, when: 'tomorrow' | 'monday' | 'open' | 'now') => {
@@ -266,6 +273,13 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       sessionId={open?.sessionId}
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
+      onTakeOver={async (t) => {
+        const answer = await takeOver(t);
+        // Its session was put away since the board looked: the dialog starts one in a desk instead.
+        if (!answer.ok && answer.code === 'no_session') { setDialog({ taskId: t.id, mode: 'together' }); return false; }
+        answered(answer, takeOverDone(t.delegate));
+        return answer.ok;
+      }}
       onReview={(t) => void review(t, 'Closed as done.')}
       onEndSchedule={(t) => void endTaskSchedule(t)}
       onDrop={async (t) => answered(await closeTask(t), 'Closed: not needed.')}

@@ -63,6 +63,43 @@ describe('session task', () => {
   }
   const id = (n: number) => `0000000${n}-aaaa-bbbb-cccc-dddddddddddd`
 
+  it('hands a spawned worker\'s new task to the space\'s agent with checkpoint none, held off the runner until the worker has it', async () => {
+    const { createWorkerTaskHolds } = await import('../src/application/worker-task.js')
+    const ledger = new mods.SessionLedger()
+    const [starter, worker, own] = ['f0000001', 'f0000002', 'f0000003'].map((p) => `${p}-aaaa-bbbb-cccc-dddddddddddd`)
+    const brain = fakeBrain()
+    const holds = createWorkerTaskHolds()
+    const tasks = mods.createSessionTask({
+      ledger, spaces: { resolve: () => ({ shared: false }) as never }, brain: () => brain, me: 'lasse', endTurnTool: () => false,
+      now: () => new Date('2026-11-17T10:00:00Z'), workerDelegate: () => 'atlas', workerHolds: holds,
+    })
+    ledger.expectParent(worker, starter)
+    ledger.recordSpawn(worker, null, 'bp-eml', 'claude', true)
+    await tasks.context(worker)
+    // requested at the session's creation, not at its first hook: the run it writes (started then) closes the request
+    const createdAt = ledger.get(worker)!.createdAt
+    expect(brain.posts[0].body).toMatchObject({ delegation: { agent: 'atlas', checkpoint: 'none', requested_at: createdAt } })
+    const { requestOpen } = await import('../src/domain/delegation.js')
+    const posted = { status: 'active', properties: { delegation: brain.posts[0].body.delegation as never } }
+    expect(requestOpen(posted, null)).toBe(true)
+    expect(requestOpen(posted, createdAt)).toBe(false)
+    expect(holds.holds(ledger.get(worker)!.taskId!)).toBe(true)
+    // the user's own session, a worker the runner started (no parent) and a job's run get no delegate from here
+    ledger.recordSpawn(own, null, 'bp-eml', 'claude')
+    await tasks.context(own)
+    expect(brain.posts.at(-1)!.body).not.toHaveProperty('delegation')
+    const [runnerWorker, jobRun] = ['f0000004', 'f0000005'].map((p) => `${p}-aaaa-bbbb-cccc-dddddddddddd`)
+    ledger.recordSpawn(runnerWorker, null, 'bp-eml', 'claude', true)
+    await tasks.context(runnerWorker)
+    expect(brain.posts.at(-1)!.body).not.toHaveProperty('delegation')
+    ledger.expectParent(jobRun, starter)
+    ledger.recordSpawn(jobRun, null, 'bp-eml', 'claude', true)
+    ledger.setJobId(jobRun, 'job-1')
+    const before = brain.posts.length
+    await tasks.context(jobRun)
+    expect(brain.posts.slice(before).filter((p) => p.path === '/engram/task').every((p) => !('delegation' in p.body))).toBe(true)
+  })
+
   it('gives a session without a task a placeholder task in its project, once, and tells it the handoff', async () => {
     const { ledger, brain, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(1), null, 'bp-eml', 'claude')

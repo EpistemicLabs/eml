@@ -8,8 +8,9 @@ import type Database from 'better-sqlite3'
 // something happens — the start, each turn end, the end, a crash found at a
 // restart — never as a heartbeat: every write is an op kept forever. It is an object,
 // not an engram: no content, not in recall or the engram lists, no journal of
-// its own — its start and end are journaled on its task. Its id is the
-// session id. Only the member it names writes it (commands/object-*.ts), so
+// its own — its start and end are journaled on its task. Its id is its
+// session's id, or <session id>_<start ms> for a later run of the same session
+// (a delegation that continued it). Only the member it names writes it (commands/object-*.ts), so
 // every replica refuses another member's change to it.
 
 export const RUN_ORIGINS = ['user', 'runner', 'job'] as const

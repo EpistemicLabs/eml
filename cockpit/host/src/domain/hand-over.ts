@@ -1,11 +1,13 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
+import { PLACEHOLDER_TITLE } from './task-title.js'
 
 /**
  * Hand over: give a task to an agent while its owner stays (decision task-assignee-owner-and-agent-delegate).
  * Three modes: now (the runner starts the delegate), schedule (a job starts it at a time), together
- * (Work on it now: a session in a desk, with the owner in the chat). This file plans the change; the use case
+ * (Work on it now: a session in a desk, with the owner in the chat; on a task with its own open session it is Take
+ * over, which opens that session instead of starting one). This file plans the change; the use case
  * (application/task-commands.ts) carries it out and keeps it undoable.
  *
  * v0.23 (task state model): a delegation always means the agent works on its own. Delegate now writes
@@ -33,11 +35,16 @@ export interface HandOverRequest {
   checkpoint?: string
   schedule?: ScheduleSpec
   desk?: string
+  /** Delegate now: start a new session even when the task has its own open session to continue (domain/own-session.ts). */
+  fresh?: boolean
 }
 
 export interface HandOverTask {
   id: string
   status: string
+  /** The kebab title and the name people read: a placeholder name (domain/task-title.ts) is no name yet. */
+  title?: string | null
+  displayTitle?: string
   owner?: string
   delegate?: string
   checkpoint?: string
@@ -53,9 +60,12 @@ export type HandOverRefusal =
   | 'delegate_not_in_space'
   | 'checkpoint_required'
   | 'schedule_required'
-  | 'desk_required'
+  /** Take over without a desk (from the chip or the panel), but the task has no open session of its own (any more). */
+  | 'no_session'
   /** Until the goal is reached, on a task without a goal: set the goal first. */
   | 'goal_required'
+  /** Delegate now or Schedule on a task without a name or a goal: an agent alone needs to know what done means. */
+  | 'not_ready'
 
 export interface TaskPatch {
   status?: string
@@ -70,7 +80,8 @@ export interface HandOverPlan {
   /** What the delegate reads first when it starts. */
   brief?: string
   job?: ScheduleSpec
-  session?: { desk: string }
+  /** Work on it now: a new session in `desk`. Take over: the task's own session (`sessionId`), opened in `desk` when named. */
+  session?: { desk?: string; sessionId?: string }
 }
 
 export interface HandOverContext {
@@ -78,6 +89,8 @@ export interface HandOverContext {
   agents: string[]
   /** The time of the hand-over (ISO): a Delegate now's request. */
   now: string
+  /** The task's own open session (domain/own-session.ts), or null: Take over opens it instead of starting one. */
+  ownSession?: string | null
 }
 
 const CHECKPOINTS = new Set(['before', 'after', 'none'])
@@ -87,8 +100,12 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (!ctx.agents.includes(req.delegate)) return { ok: false, refusal: 'delegate_not_in_space' }
   if (req.mode !== 'together' && (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint))) return { ok: false, refusal: 'checkpoint_required' }
   if (req.mode === 'schedule' && !req.schedule) return { ok: false, refusal: 'schedule_required' }
-  if (req.mode === 'together' && !req.desk) return { ok: false, refusal: 'desk_required' }
+  // A new session opens in a desk; Take over opens the task's own session where it is shown (a desk names its pane).
+  // Asked for without a desk when there is no own session (it was put away since the page looked): the page offers one.
+  if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'no_session' }
   if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
+  // The agent works on it alone: only a task with a name and a goal is handed over (decision session-kind-follows-task-delegate).
+  if (req.mode !== 'together' && !readyToDelegate(task)) return { ok: false, refusal: 'not_ready' }
 
   const patch: TaskPatch = {}
   const lines: string[] = []
@@ -99,14 +116,17 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
     if (task.delegation?.agent || task.delegate) patch.delegation = null
     if (task.status === 'planned') patch.status = 'active'
   }
-  if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.`)
+  if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.${req.fresh ? ' It starts in a new session (Start fresh).' : ''}`)
   if (req.mode === 'schedule') {
     const when = req.schedule!.at ?? `"${req.schedule!.cron}"`
     lines.push(`Scheduled ${req.delegate} for ${when} (${req.schedule!.timeZone}) with checkpoint ${req.checkpoint}; the owner stays.`)
   }
   if (req.mode === 'together') {
     const was = task.delegation?.agent ?? task.delegate
-    lines.push(`Working on it with ${req.delegate} in desk ${req.desk}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`)
+    const where = req.desk ? ` in desk ${req.desk}` : ''
+    lines.push(ctx.ownSession
+      ? `Taken over by the owner in its session${where}.${was ? ` ${was} is no longer delegated, so it does not go on alone; a turn it is in finishes first.` : ''}`
+      : `Working on it with ${req.delegate}${where}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`)
   }
 
   const plan: HandOverPlan = { patch, journal: '' }
@@ -123,9 +143,22 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   }
   plan.journal = lines.join(' ')
   if (req.mode === 'schedule') plan.job = req.schedule
-  if (req.mode === 'together') plan.session = { desk: req.desk! }
+  if (req.mode === 'together') plan.session = { ...(req.desk ? { desk: req.desk } : {}), ...(ctx.ownSession ? { sessionId: ctx.ownSession } : {}) }
   return { ok: true, plan }
 }
+
+/** A task can be handed to an agent alone: it has a goal and a name (not the placeholder a session's task starts with). */
+export function readyToDelegate(task: Pick<HandOverTask, 'title' | 'displayTitle' | 'goal'>): boolean {
+  const named = Boolean(task.displayTitle?.trim()) || !PLACEHOLDER_TITLE.test(task.title ?? '')
+  return Boolean(task.goal?.trim()) && named
+}
+
+/**
+ * What a continued session reads first about a question carried over in the hand-over: it asked that question itself,
+ * so it settles it, or asks again what only the owner can answer.
+ */
+export const continuedBrief = (question: string): string =>
+  `Your question was still open when the owner delegated this task: "${question}". Settle it yourself where you can; ask it again only if only the owner can answer it.`
 
 const waitsOfTask = (task: HandOverTask): Wait[] => task.waits ?? waitsOf({ waiting_on: task.waitingOn })
 

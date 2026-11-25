@@ -1,5 +1,6 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
-// the one thing to do here, so answering comes first; Hand over and Looks good are the direct actions,
+// the one thing to do here, so answering comes first; Delegate (a task with you) or Take over (one the agent works on
+// alone), Hand over and Looks good are the direct actions,
 // Done and Not needed sit in the ⋯ menu. A task whose schedule is still on is not closed that way: Looks good
 // approves the run, and the menu has End schedule and close instead. A closed task keeps its chat: writing there reopens it or starts
 // a follow-up (decision task-closing-and-continuation-rules), and Reopen still reopens without a message.
@@ -52,7 +53,7 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onReview, onDrop, onEndSchedule, onReopen, onContinue, onPark }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onTakeOver, onReview, onDrop, onEndSchedule, onReopen, onContinue, onPark }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -64,6 +65,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onClose: () => void;
   onOpenTask: (task: BoardTask) => void;
   onHandOver: (task: BoardTask, mode: HandOverMode) => void;
+  /** Take over a task the agent works on alone: its own session, shown here, is the owner's from its turn's end. True once done. */
+  onTakeOver?: (task: BoardTask) => Promise<boolean>;
   /** Close an open task as done (Looks good, done; the ⋯ menu's Done). On a scheduled task: approve this run, the task stays open. */
   onReview: (task: BoardTask) => void;
   /** Close an open task as not needed (dropped). */
@@ -120,7 +123,9 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
         if (a === 'looks_good') return <button key={a} type="button" className={cls} title={scheduled ? 'Approves this run. The task stays open until its schedule ends.' : undefined} onClick={() => onReview(task)}>{scheduled ? 'Looks good' : 'Looks good, done'}</button>;
         if (a === 'hand_to') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Hand to {agentName(task.handTo)}</button>;
         if (a === 'run_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Run {agentName(task.delegate)} now</button>;
-        if (a === 'delegate_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Delegate now</button>;
+        if (a === 'delegate_now') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'now')}>Delegate</button>;
+        // Take over shows the task's own session here: the chat on the right is where the owner goes on.
+        if (a === 'take_over') return <button key={a} type="button" className={cls} onClick={() => { void onTakeOver?.(task).then((done) => { if (done && task.ownSession) setPick(task.ownSession.sessionId); }); }}>Take over</button>;
         if (a === 'schedule') return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'schedule')}>Schedule…</button>;
         return <button key={a} type="button" className={cls} onClick={() => onHandOver(task, 'together')}>Work on it now</button>;
       })}

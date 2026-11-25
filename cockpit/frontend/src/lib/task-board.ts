@@ -92,6 +92,11 @@ export interface BoardTask {
   hasSchedule: boolean;
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
+  /**
+   * The task's own open session (host domain/own-session.ts): Take over opens it, and Delegate continues it when
+   * `continues` (else, or with Start fresh, a new session starts). Missing when it has none, or from an older host.
+   */
+  ownSession?: { sessionId: string; continues: boolean; why?: 'terminal' | 'long_context' };
   /** What has to be true for it to be done; missing when it has none. */
   goal?: string;
   /** When an agent works on it again (a job's here, else the delegation's); missing from an older host. */
@@ -315,7 +320,8 @@ export function useClosedTasks(projects: Array<{ spaceId: string; project: strin
 }
 
 export type CommandAnswer =
-  | { ok: true; opId: string; state: string; undoUntil: string; carriedQuestion?: string; brief?: string }
+  /** sessionId: the task's own session a Take over opens. */
+  | { ok: true; opId: string; state: string; undoUntil: string; carriedQuestion?: string; brief?: string; sessionId?: string }
   | { ok: false; code: string; message: string; retry: boolean };
 
 export const newOpId = (): string => crypto.randomUUID();
@@ -374,10 +380,20 @@ export interface HandOverInput {
   /** session: each run continues the last session or starts a new one; untilGoal: the agent keeps at it until the goal is reached. */
   schedule?: { at?: string; cron?: string; timeZone: string; session?: 'new' | 'resume'; untilGoal?: boolean };
   desk?: string;
+  /** Delegate now: start a new session even when the task has its own session to continue (Start fresh). */
+  fresh?: boolean;
 }
 
 export const handOver = (task: Pick<BoardTask, 'id' | 'spaceId'>, input: HandOverInput, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/hand-over`, { opId, spaceId: task.spaceId, ...input });
+/**
+ * Take over a task the agent works on alone: its delegation goes and its own session is the owner's from the end of
+ * the turn it is in. It opens where it is shown (the panel's chat, its pane), so no desk is named.
+ */
+/** What the page says once a Take over went through. */
+export const takeOverDone = (agent: string | undefined): string => `Taken over: ${agentName(agent)} finishes the turn it is in, then the session is yours.`;
+export const takeOver = (task: Pick<BoardTask, 'id' | 'spaceId' | 'delegate' | 'checkpoint'>, opId = newOpId()) =>
+  handOver(task, { mode: 'together', delegate: task.delegate ?? '', checkpoint: (task.checkpoint as HandOverInput['checkpoint'] | undefined) ?? 'after' }, opId);
 /** Looks good: closes the task as done, after the undo window. On a scheduled task it approves that run only and the task stays open. */
 export const reviewDone = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/review`, { opId, spaceId: task.spaceId });
@@ -861,19 +877,52 @@ export function waitingLine(task: BoardTask, viewer: string): string {
   return w.why ? `${who} · ${w.why}` : who;
 }
 
+/**
+ * A task's mode (decision session-kind-follows-task-delegate): handed to an agent (it names a delegate), the agent
+ * works on it alone; else it is with its owner. Only Delegate and Take over change it.
+ */
+export type TaskMode = 'alone' | 'with_you';
+export const taskMode = (task: Pick<BoardTask, 'delegate'>): TaskMode => (task.delegate ? 'alone' : 'with_you');
+
+/** The mode in a few words, for the chip next to a session's task: "With you" or "Atlas works alone". */
+export const modeLabel = (task: Pick<BoardTask, 'delegate'>): string => (task.delegate ? `${agentName(task.delegate)} works alone` : 'With you');
+
+/** The name a session's task has until the work is clear (host domain/task-title.ts PLACEHOLDER_TITLE). */
+const PLACEHOLDER_TITLE = /^session-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/;
+
+/** Delegate is offered only on a task with a name and a goal: an agent alone needs to know what done means. */
+export const canDelegate = (task: Pick<BoardTask, 'title' | 'displayTitle' | 'goal'>): boolean =>
+  Boolean(task.goal?.trim()) && !(PLACEHOLDER_TITLE.test(task.title) && !task.displayTitle?.trim());
+
+export type PanelAction = 'looks_good' | 'hand_to' | 'run_now' | 'delegate_now' | 'schedule' | 'together' | 'take_over';
+
+/** Working on the task yourself: Take over on a task the agent works on alone with its own session, Work on it now on one without a session. */
+function workAction(task: BoardTask): Array<'together' | 'take_over'> {
+  if (task.delegate) return [task.ownSession ? 'take_over' : 'together'];
+  return task.ownSession ? [] : ['together'];
+}
+
+/** The actions that hand the task to an agent alone, which the host refuses on a task without a name or a goal. */
+const DELEGATING = new Set<PanelAction>(['hand_to', 'run_now', 'delegate_now', 'schedule']);
+
 /** The actions a task's state calls for: none while an agent asks (the chat answers), Hand to after Work on it now, … */
-export function panelActions(task: BoardTask, hasSession: boolean): Array<'looks_good' | 'hand_to' | 'run_now' | 'delegate_now' | 'schedule' | 'together'> {
+export function panelActions(task: BoardTask, hasSession: boolean): PanelAction[] {
+  const ready = canDelegate(task);
+  return actionsFor(task, hasSession).filter((a) => ready || !DELEGATING.has(a));
+}
+
+function actionsFor(task: BoardTask, hasSession: boolean): PanelAction[] {
   // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
   if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
   if (task.turn === 'review') return ['looks_good'];
-  if (task.handTo) return ['hand_to', 'schedule', 'together'];
-  if (task.turn === 'agent_working' && task.group !== 'stale') return ['together'];
+  if (task.handTo) return ['hand_to', 'schedule', ...workAction(task)];
+  if (task.turn === 'agent_working' && task.group !== 'stale') return workAction(task);
   if (task.turn === 'parked') return [];
   if (task.delegate) {
     // Scheduled: the Delegate line changes the schedule; run it now or work on it.
-    if (task.nextRunAt || task.schedule) return ['run_now', 'together'];
-    return ['run_now', 'schedule', 'together'];
+    if (task.nextRunAt || task.schedule) return ['run_now', ...workAction(task)];
+    return ['run_now', 'schedule', ...workAction(task)];
   }
-  return ['delegate_now', 'schedule', 'together'];
+  return ['delegate_now', 'schedule', ...workAction(task)];
 }
 

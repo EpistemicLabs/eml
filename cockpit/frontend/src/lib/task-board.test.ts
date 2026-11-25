@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
@@ -286,6 +286,15 @@ describe('a task whose schedule is still on', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ opId: 'op-9', spaceId: 'main' });
   });
 
+  it('takes a task over without a desk, with its delegate and checkpoint, and passes on the session it opens', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ opId: 'op-7', state: 'applied', undoUntil: '2026-11-25T10:00:08.000Z', sessionId: 's1' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetched);
+    expect(await takeOver({ id: 't', spaceId: 'main', delegate: 'atlas', checkpoint: 'before' }, 'op-7')).toEqual({ ok: true, opId: 'op-7', state: 'applied', undoUntil: '2026-11-25T10:00:08.000Z', sessionId: 's1' });
+    const [url, init] = fetched.mock.calls[0];
+    expect(url).toBe('/api/v1/tasks/t/hand-over');
+    expect(JSON.parse(String(init?.body))).toEqual({ opId: 'op-7', spaceId: 'main', mode: 'together', delegate: 'atlas', checkpoint: 'before' });
+  });
+
   it('passes on why the host refused: Close on a scheduled task, End schedule with open steps', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } }), { status: 409 })));
     expect(await closeTask({ id: 't', spaceId: 'main' })).toEqual({ ok: false, code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false });
@@ -312,9 +321,32 @@ describe('the task panel logic (v0.23)', () => {
     expect(waitingLine(task({ waitingOn: { who: 'kim', kind: 'outside', why: 'reply to the offer' } }), 'lasse')).toBe('kim · reply to the offer');
     expect(waitingLine(task({ waitingOn: { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier' } }), 'lasse')).toBe('Outside · Waiting for the supplier');
     expect(panelActions(task({ group: 'asked' }), true)).toEqual([]);
-    expect(panelActions(task({ group: 'asked', delegate: 'atlas' }), false)).toEqual(['together', 'run_now']);
-    expect(panelActions(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString() }), true)).toEqual(['run_now', 'together']);
-    expect(panelActions(task({ group: 'own' }), true)).toEqual(['delegate_now', 'schedule', 'together']);
+    expect(panelActions(task({ group: 'asked', delegate: 'atlas', goal: 'Kept' }), false)).toEqual(['together', 'run_now']);
+    expect(panelActions(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Sent', nextRunAt: new Date(NOW + DAY_MS).toISOString() }), true)).toEqual(['run_now', 'together']);
+    expect(panelActions(task({ group: 'own', goal: 'Shipped' }), true)).toEqual(['delegate_now', 'schedule', 'together']);
+  });
+
+  it('offers Delegate on a task with you that has a name and a goal, and Take over on one the agent works on alone', () => {
+    const own = { sessionId: 's1', continues: true };
+    // with you: Delegate only with a goal and never on a placeholder; no Work on it now while it has its own session
+    expect(panelActions(task({ group: 'own', goal: 'Shipped', ownSession: own }), true)).toEqual(['delegate_now', 'schedule']);
+    // nothing that hands it to an agent alone (Delegate, Schedule, Run, Hand to) without a goal or on a placeholder
+    expect(panelActions(task({ group: 'own' }), true)).toEqual(['together']);
+    expect(panelActions(task({ group: 'own', goal: 'Shipped', title: 'session-2026-11-25-2ee4035f' }), true)).toEqual(['together']);
+    expect(panelActions(task({ group: 'own', handTo: 'atlas' }), true)).toEqual(['together']);
+    expect(panelActions(task({ group: 'asked', delegate: 'atlas' }), false)).toEqual(['together']);
+    expect(panelActions(task({ group: 'own', goal: 'Shipped', title: 'session-2026-11-25-2ee4035f', displayTitle: 'Fix the sync' }), true)).toEqual(['delegate_now', 'schedule', 'together']);
+    // the agent works alone: Take over opens its session; Work on it now only without one
+    expect(panelActions(task({ turn: 'agent_working', group: undefined, delegate: 'atlas', ownSession: own }), true)).toEqual(['take_over']);
+    expect(panelActions(task({ turn: 'agent_working', group: undefined, delegate: 'atlas' }), true)).toEqual(['together']);
+    expect(panelActions(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Sent', ownSession: own, nextRunAt: new Date(NOW + DAY_MS).toISOString() }), true)).toEqual(['run_now', 'take_over']);
+  });
+
+  it('names the mode: with you, or the agent works alone', () => {
+    expect(taskMode(task())).toBe('with_you');
+    expect(modeLabel(task())).toBe('With you');
+    expect(taskMode(task({ delegate: 'atlas' }))).toBe('alone');
+    expect(modeLabel(task({ delegate: 'atlas' }))).toBe('Atlas works alone');
   });
 
   it('times a working card by its last activity: a running run first, then any run, then the task', () => {

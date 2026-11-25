@@ -60,7 +60,8 @@ function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id:
   return { commands, posts, byId, clock, later, jobs, changed, store, deps }
 }
 
-const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
+// A task ready to hand over has a name and a goal.
+const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], goal: 'Done', ...props } })
 
 describe('hand over', () => {
   it('waits out the undo window, then writes the delegation with its request and the journal once', async () => {
@@ -78,6 +79,18 @@ describe('hand over', () => {
     expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: new Date(w.clock.now).toISOString() }, text: 'Handed to atlas with checkpoint after; the owner stays.' } }])
     expect(w.commands.held('t1')).toBe(false)
     expect(w.changed).toContain('main')
+  })
+
+  it('Start fresh is the latest Delegate now\'s choice: its delegate starts in a new session, and the journal says so', async () => {
+    const w = world([owned('t1')])
+    await w.commands.submit({ opId: 'op-f', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after', fresh: true } })
+    expect(w.commands.startFresh('t1')).toBe(true)
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts[0].body.text).toBe('Handed to atlas with checkpoint after; the owner stays. It starts in a new session (Start fresh).')
+    w.later(1000)
+    await w.commands.submit({ opId: 'op-c', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(w.commands.startFresh('t1')).toBe(false)
   })
 
   it('does the work once for the same operation id', async () => {
@@ -116,6 +129,7 @@ describe('hand over', () => {
     expect(w.posts[0].body).not.toHaveProperty('status')
     expect(w.posts[0].body.text).toContain('Handed over with the open question: "Count it?"')
     expect(w.commands.briefOf('t1')).toContain('Count it?')
+    expect(w.commands.questionOf('t1')).toBe('Count it?')
   })
 
   it('schedule makes a job on the task when the window is over', async () => {
@@ -348,6 +362,33 @@ describe('work on it now ends (B2)', () => {
     expect(w.commands.releasedAgent('t1')).toBe('atlas')
     await w.commands.tick()
     expect(w.posts).toHaveLength(1)
+  })
+
+  it('take over opens the task\'s own session: no desk needed, the delegation goes, and it lasts while that session is open', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-19T09:00:00.000Z' }
+    const base = together({ delegate: 'atlas', delegation }, 'active')
+    let open = true
+    const commands = createTaskCommands({ ...base.deps, ownSession: (id) => (id === 't1' ? 'desk-1' : null), sessionOpen: (id) => id === 'desk-1' && open })
+    const r = await commands.submit({ opId: 'op-take', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas' } })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', tookOver: 'desk-1' } })
+    expect(base.posts[0].body).toMatchObject({ delegation: null })
+    expect(base.posts[0].body.text).toBe('Taken over by the owner in its session. atlas is no longer delegated, so it does not go on alone; a turn it is in finishes first.')
+    expect(commands.together('t1')).toBe(true)
+    // no session opened since, but the one it took over is open: it outlasts the grace time
+    base.later(TOGETHER_GRACE_MS + 1000)
+    await commands.tick()
+    expect(commands.together('t1')).toBe(true)
+    open = false
+    await commands.tick()
+    expect(commands.together('t1')).toBe(false)
+    expect(commands.releasedAgent('t1')).toBe('atlas')
+  })
+
+  it('work on it now on a task without an own session still needs a desk: without one it is refused as no_session', async () => {
+    const w = together()
+    const commands = createTaskCommands({ ...w.deps, ownSession: () => null })
+    expect(await commands.submit({ opId: 'op-nodesk', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas' } }))
+      .toEqual({ ok: false, refusal: 'no_session' })
   })
 
   it('releases it when no session ever opened, after the grace time', async () => {
