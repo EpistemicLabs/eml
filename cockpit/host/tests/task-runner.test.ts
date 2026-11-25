@@ -240,6 +240,9 @@ describe('task runner', () => {
     expect(mod.stepPrompt(step, 'none')).not.toContain('Never close the task yourself')
     expect(mod.stepPrompt(step, 'none')).toContain('close it')
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
+    // A job's run never closes its task: the job's prompt does not ask for it.
+    expect(mod.stepPrompt({ ...step, ofJob: true }, 'none')).toContain('to the end on your own')
+    expect(mod.stepPrompt({ ...step, ofJob: true }, 'none')).not.toMatch(/close it|Closing means/)
   })
 })
 

@@ -589,7 +589,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         if (!planned.ok) return fail(planned.refusal)
         let effects: TaskCommand['effects']
         if (planned.plan.job) {
-          const prompt = stepPrompt({ id: planned.task.id, title: planned.task.title ?? planned.task.id, content: planned.task.content ?? '', brief: planned.plan.brief, startedBy: 'A scheduled job' }, command.handOver!.checkpoint!)
+          const prompt = stepPrompt({ id: planned.task.id, title: planned.task.title ?? planned.task.id, content: planned.task.content ?? '', brief: planned.plan.brief, startedBy: 'A scheduled job', ofJob: true }, command.handOver!.checkpoint!)
           const job = await deps.createJob(space, planned.task, planned.plan.job, prompt)
           if ('error' in job) return fail(job.error)
           effects = { jobId: job.jobId }
