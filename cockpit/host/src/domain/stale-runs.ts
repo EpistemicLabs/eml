@@ -35,6 +35,20 @@ export function isStaleWait(w: Wait): boolean {
   return waitKind(w) === 'stopped' && w.why === STALE_WHY && (w.session_id ?? w.id) === w.id
 }
 
+/**
+ * The sessions whose run on this task went silent. Such a session still says it is in a turn; the
+ * board and the runner both ask here, so neither counts it as working: its task shows under Needs
+ * you, and it holds none of the runner's slots.
+ */
+export function hungOn(properties: { waits?: unknown; waiting_on?: unknown } | null | undefined): ReadonlySet<string> {
+  return new Set(waitsOf(properties ?? undefined).filter(isStaleWait).map((w) => w.id))
+}
+
+/** A task's sessions with the hung ones (hungOn) as not working. */
+export function withoutHung<T extends { sessionId: string; working: boolean }>(sessions: readonly T[], hung: ReadonlySet<string>): T[] {
+  return sessions.map((s) => (s.working && hung.has(s.sessionId) ? { ...s, working: false } : s))
+}
+
 export interface OwnSession {
   sessionId: string
   taskId: string | null

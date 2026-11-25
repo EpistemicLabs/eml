@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { STALE_WHY, withoutHung } from '../src/domain/stale-runs.js'
 
 // paths.ts reads the home at import time — set it before loading the host modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-task-runner-'))
@@ -9,14 +10,14 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; waits?: Array<Record<string, unknown>>; parent?: string }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
 function brainOf(list: T[], runs: Array<Record<string, unknown>> = []) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}), ...(t.waits ? { waits: t.waits } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -45,7 +46,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string, runs?: unknown, hung?: ReadonlySet<string>) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string, runs?: unknown, hung?: ReadonlySet<string>) => boolean } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -153,6 +154,30 @@ describe('task runner', () => {
         { id: 'free', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
       ], undefined, () => null, () => false, { working: (id) => id.startsWith('w-') })
       expect(started.map((s) => s.id)).toEqual(['free'])
+    })
+
+    it('frees the slot of a task whose worker went silent: its session still says it is in a turn', async () => {
+      const hungWait = (id: string) => [{ id: `s-${id}`, who: 'lasse', kind: 'stopped', why: STALE_WHY, since: '2026-11-19T09:30:00.000Z', session_id: `s-${id}` }]
+      const list = (hung: boolean): T[] => [
+        ...['w-1', 'w-2', 'w-3', 'w-4', 'w-5'].map((id) => active(id, hung && id === 'w-1' ? { waits: hungWait(id) } : {})),
+        { id: 'free', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'] },
+      ]
+      // As the host counts: every task's session is in a turn, and one the task's waits call hung is not working.
+      const asked: Array<[string, string[]]> = []
+      const working = (id: string, _runs?: unknown, hung?: ReadonlySet<string>) => {
+        asked.push([id, [...(hung ?? [])]])
+        return withoutHung([{ sessionId: `s-${id}`, working: true }], hung ?? new Set()).some((s) => s.working)
+      }
+      expect((await run(list(false), undefined, () => null, () => false, { working })).started).toEqual([])
+      expect((await run(list(true), undefined, () => null, () => false, { working })).started.map((s) => s.id)).toEqual(['free'])
+      expect(asked).toContainEqual(['w-1', ['s-w-1']])
+    })
+
+    it('tells the busy check which of the task\'s sessions are hung', async () => {
+      const seen: string[][] = []
+      await run([{ id: 'again', status: 'planned', checkpoint: 'after', delegate: 'atlas', assignee_ids: ['lasse'], waits: [{ id: 's-1', who: 'lasse', kind: 'stopped', why: STALE_WHY, since: '2026-11-19T09:30:00.000Z', session_id: 's-1' }] }],
+        undefined, () => null, (_id, _runs, hung) => { seen.push([...(hung ?? [])]); return false })
+      expect(seen).toEqual([['s-1']])
     })
 
     it('gives another member\'s tasks in a shared space no slot, even while their run works on the other cockpit', async () => {

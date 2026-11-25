@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { STALE_MS } from '../src/domain/runs.js'
-import { hungSessions, isStaleWait, spanText, staleWaitsAfter, STALE_WHY } from '../src/domain/stale-runs.js'
+import { hungOn, hungSessions, isStaleWait, spanText, staleWaitsAfter, STALE_WHY, withoutHung } from '../src/domain/stale-runs.js'
 import { inboxItems } from '../src/domain/inbox.js'
 import { turnOf } from '../src/domain/task-turn.js'
 import { urgentWaitOf, waitsOf } from '../src/domain/task-waits.js'
@@ -235,5 +235,20 @@ describe('hung workers (the tick)', () => {
     await broken.tick()
     await broken.tick()
     expect(w.log).toEqual(['[stale] Main: runs not readable — unknown object run'])
+  })
+})
+
+describe('a hung session is not working', () => {
+  it('names the sessions whose stale wait is on the task, and no other stopped wait', () => {
+    const waits = [staleWait(), staleWait({ id: 's2', session_id: 's2', why: 'Agent stopped without a next step' }), { id: 's3', who: 'lasse', kind: 'question', why: 'Go?', session_id: 's3' }]
+    expect([...hungOn({ waits })]).toEqual(['s1'])
+    expect([...hungOn({})]).toEqual([])
+    expect([...hungOn(null)]).toEqual([])
+  })
+
+  it('takes the hung sessions out of the working ones, for the board and the runner alike', () => {
+    const sessions = [{ sessionId: 's1', working: true }, { sessionId: 's2', working: true }, { sessionId: 's3', working: false }]
+    expect(withoutHung(sessions, new Set(['s1', 's3']))).toEqual([{ sessionId: 's1', working: false }, { sessionId: 's2', working: true }, { sessionId: 's3', working: false }])
+    expect(withoutHung(sessions, new Set())).toEqual(sessions)
   })
 })
