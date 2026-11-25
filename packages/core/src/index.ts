@@ -220,5 +220,5 @@ export {
 export { renderLogContent, LEARNING_CONTENT_MAX_CHARS, type EngramPatch, type LearnInput, type LearnResult } from './engrams'
 export { projectBlock, projectScopeChain, inheritedRules, type ProjectBlockResult, type ProjectBlockOptions, type ProjectBlockBudgetReport } from './project-block'
 export { recordedDismissal, DISMISSAL_VERB, DISMISSAL_EXPLANATION_PREFIX } from './write/conflicts'
-export { hygieneCheck, HYGIENE_CHECKS, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
+export { hygieneCheck, hygieneSweep, HYGIENE_CHECKS, type ConflictSweepState, type HygieneCheck, type HygieneCheckKind, type HygieneDecider, type HygieneCheckResult, type HygieneFinding, type HygieneReport } from './hygiene'
 export { ALL_RULES, BEHAVIOR_DEFAULTS, SYSTEM_RULES, type SystemRule } from './system-rules'

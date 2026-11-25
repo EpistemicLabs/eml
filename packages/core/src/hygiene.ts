@@ -437,6 +437,7 @@ const TASK_CHECKS: readonly HygieneCheck[] = [
 // surfaces the rest.
 
 const CONFLICT_SCAN_MAX_FINDINGS = 20
+const CONFLICT_SCAN = 'conflict-scan'
 const EMPTY_SET = new Set<string>()
 
 interface ConflictPair {
@@ -446,16 +447,40 @@ interface ConflictPair {
   lineage: boolean
 }
 
-/** Every unresolved pair the write-time filter finds for the active engrams, each once. */
-function conflictPairs(eml: EML, now: Date): ConflictPair[] {
+/**
+ * What a sweep over a part of the brain starts from (hygieneSweep): the active
+ * engrams the last sweep saw, each with its rev, and the engrams its pairs
+ * named. The next sweep compares the engrams that are new to it or changed —
+ * every write to an engram raises its rev, whenever it was made and however it
+ * arrived (a rescope, an import, an op another member wrote earlier) — and
+ * those of the known pairs again: a pair that got its verdict, or lost an
+ * engram, drops out.
+ */
+export interface ConflictSweepState {
+  /** The rev of every active engram the sweep could compare (id → rev). */
+  revs: Record<string, number>
+  /** Both engrams of every unresolved pair that sweep knew. */
+  ids: string[]
+}
+
+/**
+ * Every unresolved pair the write-time filter finds for the active engrams
+ * `subject` accepts (default: all of them), each once. Scopes without a
+ * subject are not read.
+ */
+function conflictPairs(eml: EML, now: Date, subject: (e: EngramRow) => boolean = () => true): ConflictPair[] {
   const byScope = new Map<string, EngramRow[]>()
   for (const e of ACTIVE(eml)) {
-    const list = byScope.get(e.scope)
-    if (list) list.push(e)
-    else byScope.set(e.scope, [e])
+    // The write-time scan runs for CONFLICT_TYPES only — log and learning
+    // are never sweep subjects either (they stay candidates, never owners).
+    // Every scope in the order its first engram comes, so a sweep over all gives the pairs in one order.
+    let list = byScope.get(e.scope)
+    if (!list) byScope.set(e.scope, list = [])
+    if (CONFLICT_TYPES.has(e.type) && subject(e)) list.push(e)
   }
   const pairs = new Map<string, ConflictPair>() // pairKey → the pair, once
   for (const [scope, engrams] of byScope) {
+    if (engrams.length === 0) continue
     const rels = eml.engrams.relationsInScope(scope)
     // Any typed edge to the engram is a prior verdict about that pair —
     // built once per scope (not per engram).
@@ -471,9 +496,6 @@ function conflictPairs(eml: EML, now: Date): ConflictPair[] {
     // also in another scope.
     const boundTask = new Map(eml.engrams.taskBindings(scope).map(b => [b.id, b.task]))
     for (const e of engrams) {
-      // The write-time scan runs for CONFLICT_TYPES only — log and learning
-      // are never sweep subjects either (they stay candidates, never owners).
-      if (!CONFLICT_TYPES.has(e.type)) continue
       const salient = extractSalientTerms(e.title, e.content)
       if (salient.length === 0) continue
       const candidates = eml.engrams.query({
@@ -523,7 +545,7 @@ function conflictFindings(pairs: ConflictPair[]): HygieneFinding[] {
 
 const CONFLICT_CHECKS: readonly HygieneCheck[] = [
   {
-    id: 'conflict-scan',
+    id: CONFLICT_SCAN,
     kind: 'review',
     decides: 'agent',
     what:
@@ -556,7 +578,30 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
 
 /** Run every hygiene check against the brain. */
 export function hygieneCheck(eml: EML, opts: { now?: Date } = {}): HygieneReport {
+  return hygieneSweep(eml, opts).report
+}
+
+/**
+ * Every hygiene check, and what the next sweep starts from. The conflict scan
+ * costs one search per engram, so a caller that keeps the report (the server,
+ * which sweeps in the background) passes the state of its last sweep as
+ * `previous`: the scan then compares only the engrams that are new or changed
+ * since (by rev) and those of the pairs it knew. A pair only the unchanged
+ * side would find is seen by the next sweep without `previous`; the caller
+ * runs one from time to time.
+ */
+export function hygieneSweep(eml: EML, opts: { now?: Date, previous?: ConflictSweepState } = {}): { report: HygieneReport, conflicts: ConflictSweepState } {
   const now = opts.now ?? new Date(eml.now())
-  const checks = HYGIENE_CHECKS.map(({ detect, ...meta }) => ({ ...meta, findings: detect(eml, now) }))
-  return { schema: CURRENT_BRAIN_SCHEMA_VERSION, checks, total: checks.reduce((n, c) => n + c.findings.length, 0) }
+  const previous = opts.previous
+  const known = new Set(previous?.ids)
+  const revs: Record<string, number> = {}
+  const pairs = conflictPairs(eml, now, (e) => {
+    revs[e.id] = e.rev
+    return !previous || known.has(e.id) || previous.revs[e.id] !== e.rev
+  })
+  const checks = HYGIENE_CHECKS.map(({ detect, ...meta }) => ({ ...meta, findings: meta.id === CONFLICT_SCAN ? conflictFindings(pairs) : detect(eml, now) }))
+  return {
+    report: { schema: CURRENT_BRAIN_SCHEMA_VERSION, checks, total: checks.reduce((n, c) => n + c.findings.length, 0) },
+    conflicts: { revs, ids: [...new Set(pairs.flatMap(p => [p.owner.id, p.other.id]))] },
+  }
 }
