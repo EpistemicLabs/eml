@@ -60,7 +60,7 @@ export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, on
             {row.since && <time title="Working since the turn started" className="tabular-nums">{workingFor(row.since, now)}</time>}
           </span>
           <span className="col-start-2 line-clamp-1 text-caption text-muted-foreground">
-            {row.step ? <><span className="font-medium text-foreground">Now:</span> {row.step}</> : 'No status line yet'}
+            {row.waiting ?? (row.step ? <><span className="font-medium text-foreground">Now:</span> {row.step}</> : 'No status line yet')}
           </span>
         </button>
       ))}
@@ -99,7 +99,7 @@ export function WorkingStrip({ rows, now, onOpen }: { rows: WorkingRow[]; now: n
             <Letter row={row} small />
             <span className="truncate text-ui font-semibold">{row.name}</span>
             <time className="text-caption tabular-nums text-muted-foreground">{workingFor(row.since, now)}</time>
-            <span className="col-span-2 col-start-2 truncate text-caption text-muted-foreground">{row.step ?? row.where}</span>
+            <span className="col-span-2 col-start-2 truncate text-caption text-muted-foreground">{row.waiting ?? row.step ?? row.where}</span>
           </button>
         ))}
       </div>

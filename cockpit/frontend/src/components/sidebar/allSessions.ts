@@ -86,6 +86,13 @@ export function allSessionState(session: ProjectSession, turn: TurnInfo | undefi
   return turn?.state ?? session.turnState ?? 'idle';
 }
 
+/** What a working session's dot says: its own turn may be over while subagents it started still run. */
+export function workingWord(turn: TurnInfo | undefined): string {
+  const helpers = turn?.state === 'working' ? turn.helpers ?? 0 : 0;
+  if (helpers <= 0) return 'Working';
+  return `Waiting for ${helpers} ${helpers === 1 ? 'subagent' : 'subagents'}`;
+}
+
 /**
  * How the session stands for the user. The one model for every session: a request
  * stays until it is dealt with; a result without a request stays until someone has

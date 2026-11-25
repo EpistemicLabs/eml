@@ -1,6 +1,6 @@
 // The Inbox's Working now column: every session that works at this moment, across all spaces, and
 // the next scheduled runs. Pure, so which sessions count and in what order is tested without a browser.
-import { agentLabel, agentLetter, allSessionState, type AllSession } from '@/components/sidebar/allSessions';
+import { agentLabel, agentLetter, allSessionState, workingWord, type AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { projectNameOf } from '@/lib/open-task';
 import { agentName, type Board, type BoardTask, readable, taskName } from '@/lib/task-board';
@@ -26,6 +26,8 @@ export interface WorkingRow {
   since: string | null;
   /** The task's status line, when it has one. */
   step: string | null;
+  /** Its own turn is over and it waits for subagents it started: the words for it ("Waiting for 2 subagents"). */
+  waiting: string | null;
 }
 
 /** Sessions working now: this cockpit's own (the live turn state), then other members' runs from the board. Oldest first, so rows stay put while agents work. */
@@ -47,6 +49,7 @@ export function workingNow(sessions: AllSession[], turns: Record<string, TurnInf
       kind: s.worker ? 'worker' : 'desk',
       since: turns[s.id]?.since ?? s.turnSince ?? null,
       step: task?.statusLine?.now ?? null,
+      waiting: turns[s.id]?.helpers ? workingWord(turns[s.id]) : null,
     });
   }
   for (const task of board.tasks) {
@@ -65,6 +68,7 @@ export function workingNow(sessions: AllSession[], turns: Record<string, TurnInf
         member: run.member,
         since: null,
         step: task.statusLine?.now ?? null,
+        waiting: null,
       });
     }
   }
