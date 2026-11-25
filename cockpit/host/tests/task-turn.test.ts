@@ -16,7 +16,9 @@ describe('whose turn a task is', () => {
     ['it starts later', { delegate: 'atlas', checkpoint: 'after' }, { nextRunAt: '2026-11-20T09:00:00Z', schedule: { at: '2026-11-20T09:00:00Z', session: 'new' } }, { turn: 'agent_scheduled', group: 'at_time' }],
     ['an agent finished with checkpoint after', { delegate: 'atlas', checkpoint: 'after', waitingOn: { who: 'lasse', kind: 'review' } }, {}, { turn: 'review' }],
     ['a session works on it', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
-    ['a delegated task in progress with its session open between turns', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'agent_working' }],
+    ['a delegated task in progress with its session open but idle: the owner\'s move', { delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 }, { turn: 'needs_you', group: 'nobody', reason: 'idle' }],
+    ['someone else\'s delegated task in progress with an idle session here', { delegate: 'atlas', checkpoint: 'after', owner: 'dominik' }, { sessions: 1 }, { turn: 'waiting_on_others' }],
+    ['a delegated task in progress whose session waits for its own subagents', { delegate: 'atlas', checkpoint: 'after' }, { working: true, sessions: 1 }, { turn: 'agent_working' }],
     ['a delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after' }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
     ['someone else\'s delegated task in progress with no session here (B1)', { delegate: 'atlas', checkpoint: 'after', owner: 'dominik' }, {}, { turn: 'waiting_on_others' }],
     ['an unowned delegated task in progress that nothing runs', { delegate: 'atlas', checkpoint: 'after', owner: undefined }, {}, { turn: 'needs_you', group: 'nobody', reason: 'stopped' }],
@@ -107,6 +109,7 @@ describe('coverage: does anything move an important task without the owner', () 
     expect(cover({ waitingOn: { who: 'kim', kind: 'outside' } })).toEqual({ ok: false, group: 'nofollow' })
     expect(cover({ delegate: 'atlas', status: 'planned' })).toEqual({ ok: false, group: 'idle', reason: 'no_checkpoint' })
     expect(cover({ delegate: 'atlas', checkpoint: 'after' })).toEqual({ ok: false, group: 'stopped', reason: 'stopped' })
+    expect(cover({ delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 })).toEqual({ ok: false, group: 'stopped', reason: 'idle' })
     expect(cover({ owner: undefined })).toEqual({ ok: false, group: 'owner', reason: 'no_owner' })
     expect(cover({ due: '2026-11-24' })).toEqual({ ok: false, group: 'due' })
     expect(cover({ priority: 'high' })).toEqual({ ok: false, group: 'high' })
@@ -123,6 +126,7 @@ describe('Plan: importance and urgency', () => {
     expect(important({ delegate: 'atlas', checkpoint: 'after', status: 'planned', due: '2026-11-25' })).toBe(true)
     expect(important({ delegate: 'atlas', checkpoint: 'after', status: 'planned', priority: 'high' })).toBe(true)
     expect(important({ delegate: 'atlas', checkpoint: 'after', status: 'planned', due: '2027-02-15' })).toBe(false)
+    expect(important({ delegate: 'atlas', checkpoint: 'after' }, { sessions: 1 })).toBe(true)
     expect(important({ owner: 'dominik' })).toBe(false)
     expect(important({ waitingOn: { who: 'lasse', kind: 'outside' } })).toBe(false)
   })

@@ -110,6 +110,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       unarchive: () => {},
       setResult: (id: string, waiting: boolean) => { const entry = ledgerEntries.get(id) as unknown as { result?: boolean } | undefined; if (entry) entry.result = waiting },
       setAttention: (id: string, attention: unknown) => { const entry = ledgerEntries.get(id) as unknown as { attention?: unknown } | undefined; if (entry) entry.attention = attention },
+      setUnrouted: (id: string, said: unknown) => { const entry = ledgerEntries.get(id) as unknown as { unrouted?: unknown } | undefined; if (entry) entry.unrouted = said },
     },
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
     spaces: { get: () => space, main: space, resolve: () => space, movedAway: (ledgerSpaceId?: string | null) => (ledgerSpaceId ? `This session moved to ${ledgerSpaceId}. Open it there.` : null) },
@@ -445,6 +446,13 @@ describe('ChatBridge', () => {
       expect(recorded.derived.status).toBe(expected.kind)
     })
 
+    it('keeps the call and its context in the ledger until the router wrote it into the task', async () => {
+      const { worker, ledgerEntries } = started()
+      const call: EndTurn = { result: 'Draft ready', questions: ['Send it today?'] }
+      await worker.endTurn(call)
+      expect((ledgerEntries.get('s1') as unknown as { unrouted?: unknown }).unrouted).toEqual({ call, ctx })
+    })
+
     it('answers with what the call lacks', async () => {
       const { worker } = started()
       expect(await worker.endTurn({ result: 'Half way' })).toMatchObject({ missing: ['next'] })
@@ -643,6 +651,22 @@ describe('ChatBridge', () => {
     runtime.emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toEqual({ kind: 'review', reason: 'Report ready' })
     expect(done).toEqual(['Report is ready to check.'])
+  })
+
+  it('keeps a status unrouted, and a turn that ends while the session closes leaves it for after the restart', async () => {
+    const done: string[] = []
+    const { bridge, runtimes, ledgerEntries } = setup({ turnDone: (_id, text) => done.push(text) })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    const runtime = runtimes[0]
+    runtime.start.worker!.report('question', 'Install alpha.15?')
+    expect((ledgerEntries.get('s1') as unknown as { unrouted?: unknown }).unrouted).toEqual({ call: null, ctx: null })
+    runtime.emit({ kind: 'text', blockId: 'b1', text: 'Please install alpha.15.' })
+    // The host goes down: the session closes, and its turn ends meanwhile.
+    const closing = bridge.end('s1', 'host shutdown')
+    runtime.emit({ kind: 'turn_end', reason: 'success' })
+    await closing
+    expect(done).toEqual([])
+    expect((ledgerEntries.get('s1') as unknown as { unrouted?: unknown }).unrouted).toEqual({ call: null, ctx: null })
   })
 
   it('a worker that asks the user while its subagents run stops as usual', async () => {

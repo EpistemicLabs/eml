@@ -168,7 +168,7 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
   })
 
-  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale or idle one does not work', async () => {
+  it('reads other members\' open runs: a working one shows as working and holds the runner, a stale one does not work, an idle one is the owner\'s move', async () => {
     const run = (id: string, task_id: string, state: string, at: string) => ({ id, task_id, member: 'dominik', agent: 'motti', state, last_activity_at: at })
     const delegated = { delegate: 'atlas', checkpoint: 'after' }
     const { board } = setup({
@@ -187,7 +187,7 @@ describe('the task board', () => {
     const model = await board.refresh()
     const byId = new Map(model.tasks.map((t) => [t.id, t]))
     expect(byId.get('elsewhere')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: [] })
-    expect(byId.get('between-turns')).toMatchObject({ turn: 'agent_working', working: false })
+    expect(byId.get('between-turns')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'idle', working: false })
     expect(byId.get('stale')).toMatchObject({ turn: 'agent_working', working: false })
     expect(byId.get('ended')).toMatchObject({ turn: 'needs_you', reason: 'stopped' })
     expect(byId.get('local')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
