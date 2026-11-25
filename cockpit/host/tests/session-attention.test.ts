@@ -69,3 +69,17 @@ describe('missingReply', () => {
     expect(missingReply({ clients: 0, called: false, questions: false, reply: '' })).toEqual([])
   })
 })
+
+describe('stillRunning', () => {
+  it('a turn that ends while its subagents run, asking nobody, is no stop', () => {
+    expect(stillRunning({ agents: 2, status: null })).toBe(true)
+    expect(stillRunning({ agents: 1, status: 'done' })).toBe(true)
+  })
+
+  it('without subagents, or when it asks someone, it is a stop', () => {
+    expect(stillRunning({ agents: 0, status: null })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'question' })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'review' })).toBe(false)
+    expect(stillRunning({ agents: 1, status: 'failed' })).toBe(false)
+  })
+})

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Jobs, type JobCaller } from '../src/application/jobs.js'
 import { checkName, createTurnCheck } from '../src/application/turn-check.js'
-import { scheduleOfJob } from '../src/domain/task-schedule.js'
+import { hasSchedule, scheduleOfJob } from '../src/domain/task-schedule.js'
 import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
@@ -163,6 +163,25 @@ describe('the check an end_turn call sets', () => {
     expect(store.list()[0].nextRunAt).toBe('2026-11-27T10:00:00.000Z')
     expect(await check.settle('nobody', wanted('2026-11-27T10:00'))).toBe('the cockpit does not know this session')
     expect(await check.settle('nobody', wanted(null))).toBeNull()
+  })
+
+  it('keeps the task\'s schedule on while the check is set, and off once a call without a time took it away', async () => {
+    const { store, check, wanted } = setup()
+    // What the board and its commands ask (domain/task-schedule.ts): a task whose schedule is on is not closed by Looks good.
+    const scheduled = () => hasSchedule({ jobs: store.list().filter((job) => job.taskId === 't1'), owner: 'kim' }, 'kim', NOW)
+    expect(scheduled()).toBe(false)
+    await check.settle('s1', wanted('2026-11-27T10:00'))
+    expect(scheduled()).toBe(true)
+    // The hand-over for review names no time: the check goes, and the review closes the task.
+    await check.settle('s1', wanted(null))
+    expect(scheduled()).toBe(false)
+    // Also when the check's own run is still open: the check is ended, which is what counts.
+    await check.settle('s1', wanted('2026-11-27T10:00'))
+    const job = store.list()[0]
+    store.addRun({ id: 'r1', jobId: job.id, number: 1, trigger: 'schedule', dueAt: job.nextRunAt!, status: 'started', attempts: 1, nextAttemptAt: null, sessionId: 's1', startedAt: '2026-11-27T10:00:01.000Z', finishedAt: null, outcome: null, note: null })
+    await check.settle('s1', wanted(null))
+    expect(store.list()).toHaveLength(1)
+    expect(scheduled()).toBe(false)
   })
 
   it('fits the name into a job name', () => {

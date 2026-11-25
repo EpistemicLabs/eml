@@ -185,6 +185,38 @@ describe('the handoff block', () => {
     expect(fromHandoff(parseHandoff('### Handoff\nNext: [me] mail info @ acme.example')!, ctx)).toEqual({ result: 'mail info @ acme.example', next: { who: 'nova', what: 'mail info @ acme.example' } })
   })
 
+  it('reads a markdown link at the start of a question or a Next as text, not as a tag', () => {
+    const handoff = parseHandoff([
+      '### Handoff',
+      'Result: Draft is ready.',
+      'Next: [the PR](https://example.com/pr/12) needs a review',
+      'Questions:',
+      '- [the draft](https://example.com/draft) reads well, send it?',
+      '- [kim] [the offer](https://example.com/offer) too?',
+    ].join('\n'))!
+    expect(handoff.nextStep).toEqual({ who: null, what: '[the PR](https://example.com/pr/12) needs a review', when: null })
+    expect(handoff.forUser).toEqual(['[the draft](https://example.com/draft) reads well, send it?', '[the offer](https://example.com/offer) too?'])
+    // A Next that names nobody is no next step.
+    expect(fromHandoff(handoff, ctx)?.next).toBeUndefined()
+    // A tag before the link is one.
+    expect(parseHandoff('### Handoff\nNext: [sam] [the PR](https://example.com/pr/12) needs a review')!.nextStep).toEqual({ who: 'sam', what: '[the PR](https://example.com/pr/12) needs a review', when: null })
+  })
+
+  it('ends the Questions list at the next label: a Failed or Claimed line after it is that field, not a question', () => {
+    const handoff = parseHandoff([
+      '### Handoff',
+      'Result: Nothing was sent.',
+      'Questions:',
+      '- [kim] Use the other mailbox?',
+      'Failed: The mailbox refused the login.',
+      '- Claimed: the address',
+    ].join('\n'))!
+    expect(handoff.forUser).toEqual(['Use the other mailbox?'])
+    expect(handoff.failed).toBe('The mailbox refused the login.')
+    expect(handoff.claimed).toBe('the address')
+    expect(fromHandoff(handoff, ctx)).toEqual({ result: 'Nothing was sent.', questions: ['Use the other mailbox?'], failed: 'The mailbox refused the login.', claimed: 'the address' })
+  })
+
   it('is no call when the block says nothing', () => {
     expect(fromHandoff(parseHandoff('### Handoff\nDecided: nothing')!, ctx)).toBeNull()
   })
