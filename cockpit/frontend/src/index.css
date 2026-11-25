@@ -116,7 +116,6 @@
   --container-board-col-slim: 8rem;
   --container-plan-table: 52rem;
   --container-measure: 45rem;
-  --container-content: 112rem;
 
   /* Dialog animations used by the ported Dialog primitive. */
   --animate-dialog-overlay-show: dialog-overlay-show var(--duration-fast) var(--ease-out);
@@ -225,6 +224,8 @@ html.dark {
   --size-command-list: 340px;
   /* A tooltip's gap to what it explains. */
   --gap-tooltip: 6px;
+  /* The shell's one gap: around the sidebar and the tasks card, and the task views' edges and columns. */
+  --gap-shell: calc(var(--spacing) * 2);
   /* The Inbox with its Working now column on the left; open, the list and the task share the rest. */
   --grid-inbox-working: var(--size-working-column) minmax(0, 1fr);
   --grid-inbox-working-split: var(--size-working-column) minmax(0, 4fr) minmax(0, 6fr);
