@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { TurnState } from './domain/agent-provider.js'
+import type { WorkflowWait } from './domain/session-runtime.js'
 
 /**
  * Per-session turn state, fed by the session hooks of the agent provider
@@ -22,6 +23,8 @@ export interface TurnInfo {
   since: string
   /** Working, but its own turn is over: it waits for this many subagents it started (chat-bridge.ts). */
   helpers?: number
+  /** And for these workflow runs it started, with how far their agents are. Absent when none. */
+  workflows?: WorkflowWait[]
 }
 
 export interface TurnEvent extends TurnInfo {
@@ -61,14 +64,19 @@ export class TurnTracker extends EventEmitter {
   }
 
   /**
-   * A working session's own turn ended and it waits for this many of its subagents; 0: no longer.
-   * Its state and `since` stay, and a change about to take effect (`settleMs`) still does. Any
-   * other change ends the wait.
+   * A working session's own turn ended and it waits for this many of its subagents and these
+   * workflow runs; 0 and none: no longer. Its state and `since` stay, and a change about to take
+   * effect (`settleMs`) still does. Any other change ends the wait.
    */
-  waitOn(sessionId: string, helpers: number): void {
+  waitOn(sessionId: string, helpers: number, workflows: WorkflowWait[] = []): void {
     const info = this.turns.get(sessionId)
-    if (!info || info.state !== 'working' || (info.helpers ?? 0) === helpers) return
-    const next: TurnInfo = { state: info.state, since: info.since, ...(helpers > 0 ? { helpers } : {}) }
+    if (!info || info.state !== 'working') return
+    if ((info.helpers ?? 0) === helpers && JSON.stringify(info.workflows ?? []) === JSON.stringify(workflows)) return
+    const next: TurnInfo = {
+      state: info.state, since: info.since,
+      ...(helpers > 0 ? { helpers } : {}),
+      ...(workflows.length > 0 ? { workflows: workflows.map(({ name, running, done }) => ({ name, running, done })) } : {}),
+    }
     this.turns.set(sessionId, next)
     this.emit('turn', { sessionId, ...next } satisfies TurnEvent)
   }

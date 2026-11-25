@@ -20,10 +20,11 @@ interface TurnFacts {
 }
 
 /**
- * A turn ended while subagents it started in the background still run, and it
- * asks nobody anything: its run goes on, this is no stop. They wake it with a
- * new turn when they come back, and that turn is judged on its own. A turn
- * that asks the user (question, review, failed) is a stop, subagents or not.
+ * A turn ended while subagents or workflow runs it started in the background
+ * still run (`agents` counts both), and it asks nobody anything: its run goes
+ * on, this is no stop. They wake it with a new turn when they come back, and
+ * that turn is judged on its own. A turn that asks the user (question, review,
+ * failed) is a stop, helpers or not.
  */
 export function stillRunning(facts: { agents: number; status: WorkerStatus | null }): boolean {
   return facts.agents > 0 && (facts.status === null || facts.status === 'done')

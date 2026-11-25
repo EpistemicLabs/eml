@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
 import type { AgentProvider, TurnState } from './domain/agent-provider.js'
 import type {
-  EventStore, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart,
+  EventStore, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -56,6 +56,15 @@ import { toolLabel } from './domain/tool-label.js'
 
 // How long the done of a session whose last subagent came back waits for the turn that wakes it.
 export const HELPERS_BACK_SETTLE_MS = 5_000
+
+/** What a session waits on: its subagents and workflow runs, each wakes it when it ends. Background shells do not. */
+function helperCount(entry: Pick<ChatEntry, 'runningAgents' | 'runningWorkflows'>): number {
+  return entry.runningAgents.size + entry.runningWorkflows.size
+}
+
+function workflowsOf(entry: Pick<ChatEntry, 'runningWorkflows'>): WorkflowWait[] {
+  return [...entry.runningWorkflows.values()]
+}
 // How long a switch lets an interrupted turn finish on its own before closing it.
 const INTERRUPT_WAIT_MS = 3_000
 // The one reason a closed turn counts as cut off: the next host start carries it on.
@@ -124,13 +133,15 @@ interface ChatEntry {
   active: boolean
   openRequests: Set<string>
   turnEnded: (() => void) | null
-  /** Background shells and subagents still running: they end with the process. */
+  /** Background shells, subagents and workflow runs still running: they end with the process. */
   backgroundTasks: Set<string>
   /** Of those, the subagents: a turn that ends while they run is not the session's stop (stillRunning). */
   runningAgents: Set<string>
-  /** A done signal came while its subagents ran and its turn state was kept at working: the bridge owes the done. */
+  /** And the workflow runs, by task id: helpers like a subagent, each wakes it when it ends. */
+  runningWorkflows: Map<string, WorkflowWait>
+  /** A done signal came while its helpers ran and its turn state was kept at working: the bridge owes the done. */
   held: boolean
-  /** Its own turn is over and it waits for its subagents: the turn they wake shows as working again. */
+  /** Its own turn is over and it waits for its helpers: the turn they wake shows as working again. */
   parked: boolean
   lastActivity: number
   /** Being closed: a message now would go down with the process. */
@@ -174,8 +185,11 @@ export interface ChatContext {
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>, settleMs?: number) => void
-  /** Its own turn ended and it waits for this many of its subagents; 0: no longer. The turn state stays working. */
-  onHelpers?: (sessionId: string, helpers: number) => void
+  /**
+   * Its own turn ended and it waits for this many of its subagents and these workflow runs; 0 and
+   * none: no longer. The turn state stays working.
+   */
+  onHelpers?: (sessionId: string, helpers: number, workflows: WorkflowWait[]) => void
   /** A turn finished with this text: the task router reads its end_turn call, else its handoff (application/task-router.ts). */
   turnDone?: (sessionId: string, text: string, turn: TurnEndFacts) => void
   /** Whom an end_turn call is read against, and the session's task (application/turn-context.ts); absent: the space's agent and no task. */
@@ -318,12 +332,12 @@ export class ChatBridge {
   }
 
   /**
-   * Its turn asks nobody anything and subagents it started still run (stillRunning): they wake it
-   * again, so its run is not over. False for a session the bridge does not run.
+   * Its turn asks nobody anything and subagents or workflow runs it started still run (stillRunning):
+   * they wake it again, so its run is not over. False for a session the bridge does not run.
    */
   waitsOnHelpers(sessionId: string): boolean {
     const entry = this.entries.get(sessionId)
-    return entry !== undefined && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })
+    return entry !== undefined && !entry.closing && stillRunning({ agents: helperCount(entry), status: entry.status })
   }
 
   /**
@@ -618,7 +632,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -755,7 +769,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -809,7 +823,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -949,8 +963,8 @@ export class ChatBridge {
         this.ctx.ledger.setAttention(entry.sessionId, { kind: status, reason })
       },
       onTurnEnding: () => {
-        // Its subagents still run: they wake it again, and that turn says how it stands.
-        if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
+        // Its subagents or workflow runs still run: they wake it again, and that turn says how it stands.
+        if (stillRunning({ agents: helperCount(entry), status: entry.status })) return null
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.reminded })
         const missing: Missing[] = ask ? ['call'] : missingReply({ called: entry.status !== null, questions: entry.asks, reply: entry.replyText, clients: entry.clients.size })
         // One reminder per turn, naming everything it lacks: no call and unasked questions only while nobody has the session open, no reply always.
@@ -975,6 +989,17 @@ export class ChatBridge {
     if (!entry.held) return
     entry.held = false
     this.ctx.onTurn(entry.sessionId, 'done')
+  }
+
+  /** A helper started, ended or moved on while the session waits on its helpers: say so, and the done once the last is back. */
+  private helpersChanged(entry: ChatEntry): void {
+    if (!entry.parked) return
+    this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size, workflowsOf(entry))
+    // The last one is back: done, unless the turn it wakes starts within a moment (wake).
+    if (helperCount(entry) === 0 && entry.held) {
+      entry.held = false
+      this.ctx.onTurn(entry.sessionId, 'done', HELPERS_BACK_SETTLE_MS)
+    }
   }
 
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
@@ -1005,15 +1030,23 @@ export class ChatBridge {
         else if (event.status) entry.backgroundTasks.delete(event.taskId)
         if (event.kind === 'agent_task' && event.status === 'running') entry.runningAgents.add(event.taskId)
         else if (event.status) entry.runningAgents.delete(event.taskId)
-        if (event.kind === 'agent_task' && event.status && entry.parked) {
-          this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size)
-          // The last one is back: done, unless the turn it wakes starts within a moment (wake).
-          if (entry.runningAgents.size === 0 && entry.held) {
-            entry.held = false
-            this.ctx.onTurn(entry.sessionId, 'done', HELPERS_BACK_SETTLE_MS)
-          }
-        }
+        if (event.kind === 'agent_task' && event.status) this.helpersChanged(entry)
         break
+      case 'workflow_task': {
+        const known = entry.runningWorkflows.get(event.taskId)
+        if (event.status === 'running') {
+          entry.backgroundTasks.add(event.taskId)
+          entry.runningWorkflows.set(event.taskId, { name: event.name ?? known?.name ?? 'Workflow', running: event.running ?? known?.running ?? 0, done: event.done ?? known?.done ?? 0 })
+        } else if (event.status) {
+          entry.backgroundTasks.delete(event.taskId)
+          entry.runningWorkflows.delete(event.taskId)
+        } else if (known) {
+          // How far its agents are: shown while the session waits on it.
+          entry.runningWorkflows.set(event.taskId, { ...known, running: event.running ?? known.running, done: event.done ?? known.done })
+        } else break
+        this.helpersChanged(entry)
+        break
+      }
       case 'tool_call':
         // The reply comes after the call: what was written before it is not it.
         if (END_OF_TURN_TOOLS.some((name) => event.name === name || event.name.endsWith(`__${name}`))) entry.replyText = ''
@@ -1029,13 +1062,13 @@ export class ChatBridge {
         if (!entry.closing) this.ctx.ledger.setTurnInFlight(entry.sessionId, false)
         // Its subagents still run: no stop yet. No flag, no result, no handoff to route,
         // no next-step check, nothing archived; the turn they wake starts over.
-        if (event.reason !== 'interrupted' && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })) {
+        if (event.reason !== 'interrupted' && !entry.closing && stillRunning({ agents: helperCount(entry), status: entry.status })) {
           entry.turnText = ''
           this.resetTurnStatus(entry)
           // Its turn state stays working (holdTurnOpen kept the Stop hook's done back), and says what it waits for.
           entry.held = true
           entry.parked = true
-          this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size)
+          this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size, workflowsOf(entry))
           break
         }
         // The last subagent came back between the Stop hook and here, or the user stopped the turn: nothing follows.
@@ -1069,8 +1102,9 @@ export class ChatBridge {
         entry.openRequests.clear()
         entry.backgroundTasks.clear()
         entry.runningAgents.clear()
+        entry.runningWorkflows.clear()
         entry.turnEnded?.()
-        // Its subagents went with the process: nothing wakes it any more. After a crash onExit clears the state.
+        // Its helpers went with the process: nothing wakes it any more. After a crash onExit clears the state.
         if (event.expected) this.releaseHeld(entry)
         else { entry.held = false; entry.parked = false }
         // No Stop hook comes after a crash, so nothing else would end its turn state.
