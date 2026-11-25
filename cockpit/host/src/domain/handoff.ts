@@ -1,22 +1,25 @@
 import { HANDOFF_LABELS as L, readNextLine } from './turn-end.js'
 
 /**
- * The handoff a session ends with (application/session-task.ts
- * asks for it): a "### Handoff" block at the end of its last message.
+ * The handoff block: how a session without the end_turn tool (a terminal, an
+ * older session) says where its task stands when it stops, at the end of its
+ * last message. domain/turn-end.ts asks for it, and writes the same block from
+ * an end_turn call for the task's journal.
  *
  *   ### Handoff
  *   Result: …
+ *   Failed: …
  *   Checked: … · Claimed: …
  *   Decided: …
  *   Next: [who] … @ when
  *   Questions:
- *   - [lasse] …
+ *   - [owner] …
  *   - [task] …
  *
  * Read leniently: any heading level, the block inside a code fence or not,
- * labels in any case, lines left out. A question without a tag is the user's.
- * The labels and the shape of the Next line are turn-end.ts's, which also
- * writes the block from an end_turn call.
+ * labels in any case, lines left out. A question without a tag is the user's;
+ * one tagged [task] is from before end_turn and stays in the journal only.
+ * The labels and the shape of the Next line are turn-end.ts's.
  */
 
 export interface Handoff {

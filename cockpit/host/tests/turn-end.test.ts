@@ -196,7 +196,7 @@ describe('the texts', () => {
     for (const text of texts.filter((t) => t !== reminder(['reply']))) expect(text).toContain('end_turn')
     expect(END_TURN_DESCRIPTION).toContain('Make no call for a turn that is plain conversation.')
     expect(END_TURN_DESCRIPTION).toContain('the user reads only that')
-    expect(turnEndRules({ owner: 'lasse', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.')
+    expect(turnEndRules({ owner: 'lasse', agent: 'atlas', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is lasse, you are atlas.')
   })
 
   it('a session without the tool gets the block with the same fields', () => {

@@ -5,6 +5,7 @@ import { createServer, type IncomingHttpHeaders } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { BEFORE_IDLE_STOP } from '../src/domain/turn-end.js'
 
 // paths.ts reads the home at import time — set it before loading the host modules.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-session-task-'))
@@ -204,37 +205,43 @@ describe('session task', () => {
     expect(text).not.toContain('takes the session\'s name')
   })
 
-  it('asks only an attended session for its handoff before an idle stop, and tells it not to end every reply with one', async () => {
+  it('asks only an attended session where its task stands before an idle stop, and tells every session how a turn ends', async () => {
     const { ledger, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(9), null, 'bp-eml', 'claude')
     ledger.recordSpawn('worker-1', null, 'bp-eml', 'claude', true)
+    ledger.setRuntime('worker-1', 'sdk')
     const own = await tasks.context(id(9))
     const worker = await tasks.context('worker-1')
-    expect(own).toContain('Do not end every reply with the handoff')
-    expect(own).toContain('call session_status question first')
-    expect(own).toContain('then write your full answer as visible text, ending with the question')
-    expect(worker).not.toContain('call session_status question first')
-    expect(worker).toContain('When you stop (done, or waiting for someone)')
-    expect(tasks.handoffBeforeStop(id(9))).toContain('write your handoff block now')
+    // A terminal has no end_turn tool: it reads the block. A chat session of Claude reads only where the rule is.
+    expect(own).toContain('## Ending a turn\nEnd your reply with this block when you stop and the stop changes who has to act or where the task stands.')
+    expect(own).toContain('Write no block for a turn that is plain conversation.')
+    expect(own).toContain('Handles for who: the user is lasse')
+    expect(worker).toContain('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.')
+    expect(worker).not.toContain('### Handoff')
+    for (const text of [own, worker]) expect(text).not.toContain('session_status')
+    expect(tasks.handoffBeforeStop(id(9))).toBe(BEFORE_IDLE_STOP)
     expect(tasks.handoffBeforeStop('worker-1')).toBeNull()
     ledger.recordSpawn('no-task', null, 'bp-eml', 'claude')
     expect(tasks.handoffBeforeStop('no-task')).toBeNull()
   })
 
-  it('shows the task\'s goal, asks for one when it is missing, and gives only workers the follow-up rules', async () => {
+  it('shows the task\'s goal, asks for one when it is missing, and gives the follow-up rules by the task\'s delegate', async () => {
     const brain = fakeBrain()
-    brain.tasks.set('t-dw', { id: 't-dw', title: 'acme-rescue', content: 'Win Acme back.', status: 'active', properties: { goal: 'Kim confirmed the cancellation is withdrawn' } })
+    brain.tasks.set('t-dw', { id: 't-dw', title: 'acme-rescue', content: 'Win Acme back.', status: 'active', properties: { goal: 'Kim confirmed the cancellation is withdrawn', delegate: 'atlas' } })
     brain.tasks.set('t-none', { id: 't-none', title: 'other', content: 'Other work.', status: 'active', properties: {} })
     const { ledger, tasks } = setup({ shared: false }, brain)
     ledger.recordSpawn('worker-dw', null, 'bp-eml', 'claude', true, 't-dw')
-    ledger.recordSpawn(id(8), null, 'bp-eml', 'claude', false, 't-none')
+    ledger.recordSpawn(id(8), null, 'bp-eml', 'claude', false, 't-dw')
+    ledger.recordSpawn('worker-none', null, 'bp-eml', 'claude', true, 't-none')
     const worker = await tasks.context('worker-dw')
     expect(worker).toContain('Goal: Kim confirmed the cancellation is withdrawn')
     expect(worker).toContain('## Until it is done')
-    expect(worker).toContain('schedule your next check yourself')
-    const own = await tasks.context(id(8))
-    expect(own).toContain('Goal: not set yet')
-    expect(own).not.toContain('## Until it is done')
+    expect(worker).toContain('name yourself as next, with the time you look again')
+    // The user's own session on the handed-over task reads them too; a worker on a task that is not handed over does not.
+    expect(await tasks.context(id(8))).toContain('## Until it is done')
+    const none = await tasks.context('worker-none')
+    expect(none).toContain('Goal: not set yet')
+    expect(none).not.toContain('## Until it is done')
   })
 
   it('turns a title into a kebab-case anchor', () => {

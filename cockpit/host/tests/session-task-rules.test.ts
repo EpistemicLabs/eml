@@ -22,6 +22,43 @@ describe('what a session reads about its task', () => {
     expect(text).toContain('tells you explicitly in the chat to close it')
     expect(text).toContain('not when its PR is open or merged')
     expect(text).not.toContain('A task with checkpoint after you only close once')
+    expect(text).toContain('Hand the result over for review (next names the owner); its owner closes it')
+  })
+
+  it('says how a turn ends once, by what the session can do, with the handles a who can name', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const { turnEndRules } = await import('../src/domain/turn-end.js')
+    const task = { id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: {} } as never
+    const chat = taskContext(task, false, false, null, { owner: 'kim', agent: 'atlas', tool: true })
+    expect(chat.endsWith(turnEndRules({ owner: 'kim', agent: 'atlas', tool: true }))).toBe(true)
+    expect(chat).toContain('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are atlas.')
+    expect(chat).not.toContain('### Handoff')
+    const terminal = taskContext(task, false, false, null, { owner: 'kim', agent: 'atlas', tool: false })
+    expect(terminal).toContain('### Handoff')
+    expect(terminal).toContain('- [kim]')
+    expect(terminal).not.toContain('tool\'s description')
+    // Not known: both ways.
+    const unknown = taskContext(task, false)
+    expect(unknown).toContain('tool\'s description')
+    expect(unknown).toContain('### Handoff')
+    for (const text of [chat, terminal, unknown]) {
+      expect(text.match(/## Ending a turn/g)).toHaveLength(1)
+      expect(text).not.toContain('session_status')
+      expect(text).not.toMatch(/^## Handoff/m)
+    }
+  })
+
+  it('tells a session on a task handed to an agent what to do until it is done, whoever started it', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const handed = { id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: { checkpoint: 'after', delegate: 'atlas' } } as never
+    const own = { id: 't2', title: 'acme-notes', content: 'Notes.', status: 'active', properties: {} } as never
+    for (const worker of [false, true]) {
+      const text = taskContext(handed, false, worker)
+      expect(text).toContain('## Until it is done')
+      expect(text).toContain('- Reached: hand the result over for review (next names the owner). Do not close it yourself.')
+      expect(text).toContain('- Not reached: name yourself as next, with the time you look again (when). The cockpit wakes you then: a simple check needs no schedule tool call.')
+      expect(taskContext(own, false, worker)).not.toContain('## Until it is done')
+    }
   })
 
   it('tells every session, workers included, when to split work and what a sub-task holds', async () => {
@@ -42,11 +79,11 @@ describe('what a session reads about its task', () => {
     const { taskContext } = await import('../src/application/session-task.js')
     const task = { id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: {} } as never
     const worker = taskContext(task, false, true)
-    expect(worker).toContain('Name it in the handoff as a [task] question.')
+    expect(worker).toContain('do not create a task for it. Name it when you end the turn, as a question for the user.')
     expect(worker).not.toContain('offer_split')
     const attended = taskContext(task, false, false)
     expect(attended).toContain('offer_split')
-    expect(attended).not.toContain('Name it in the handoff as a [task] question.')
+    expect(attended).not.toContain('Name it when you end the turn')
   })
 
   it('names the parent and its goal for a step', async () => {

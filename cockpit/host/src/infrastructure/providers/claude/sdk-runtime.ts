@@ -10,7 +10,7 @@ import type {
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
-import { END_TURN_DESCRIPTION, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
+import { END_TURN_DESCRIPTION, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
 import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
 import { SPLIT_RELATIONS } from '../../../domain/split.js'
 import { SORT_PICKS } from '../../../domain/sort.js'
@@ -515,7 +515,7 @@ export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart[
     const { derived, missing, replied, note } = await worker.endTurn(read.call)
     return [endTurnAnswer(read.call, derived, { missing, replied }), note].filter(Boolean).join(' ')
   } catch (error: unknown) {
-    return `Not recorded: ${error instanceof Error ? error.message : 'unknown error'}. Call ${END_TURN_TOOL} again.`
+    return notRecorded(error instanceof Error ? error.message : 'unknown error')
   }
 }
 

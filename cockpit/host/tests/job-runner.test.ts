@@ -134,6 +134,8 @@ describe('job runner', () => {
     await runner.tick()
     expect(world.started).toHaveLength(1)
     expect(world.started[0].text).toMatch(/^\[Scheduled by the cockpit: job "Daily brief" .*run 1, due Tue 10 Nov 08:00 Asia\/Makassar\. Not from your user/)
+    expect(world.started[0].text).toContain('nobody may be watching: end your turn with end_turn if you have it.')
+    expect(world.started[0].text).not.toContain('session_status')
     expect(world.started[0].text).toMatch(/Write the daily brief\.$/)
     const stored = world.store.get(job.id)!
     expect(stored.nextRunAt).toBe('2026-11-11T00:00:00.000Z')

@@ -265,6 +265,10 @@ describe('task runner', () => {
     expect(mod.stepPrompt(step, 'none')).not.toContain('Never close the task yourself')
     expect(mod.stepPrompt(step, 'none')).toContain('close it')
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
+    // How a turn ends is in the session's start context: the prompt names no tool and no block.
+    expect(mod.stepPrompt(step, 'before')).toContain('Ask the user for the go and stop.')
+    expect(mod.stepPrompt(step, 'after')).toContain('Checkpoint after: do the step, then hand the result over for review (next names the owner).')
+    for (const c of ['before', 'after', 'none']) expect(mod.stepPrompt(step, c)).not.toMatch(/handoff|session_status|\[lasse\]|schedule tool/i)
   })
 })
 

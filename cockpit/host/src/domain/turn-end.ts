@@ -119,6 +119,9 @@ const text = (value: unknown): string => (typeof value === 'string' ? value.trim
 
 const refused = (what: string) => ({ ok: false as const, error: `Not recorded: ${what} Call ${END_TURN_TOOL} again.` })
 
+/** The tool's answer when recording a call failed for a reason that is not the call's. */
+export const notRecorded = (why: string): string => refused(`${why.replace(/[.\s]+$/, '')}.`).error
+
 /**
  * A call as the cockpit keeps it: trimmed, empty fields dropped. Refused with
  * the reason when it cannot be recorded: no result, a next without a who, a
@@ -308,14 +311,48 @@ function blockTemplate(owner: string): string[] {
  * whether the session has end_turn; left out, the section covers both, since
  * the start context of a terminal and of a chat is the same text.
  */
-export function turnEndRules(opts: { owner: string; tool?: boolean }): string {
+export function turnEndRules(opts: { owner: string; agent?: string | null; tool?: boolean }): string {
   const withTool = `The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`
   const block = `end your reply with this block ${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
   const lines = opts.tool === true ? [withTool]
     : opts.tool === false ? [`${block[0].toUpperCase()}${block.slice(1)}`, ...blockTemplate(opts.owner)]
       : [withTool, `Without that tool (a terminal), ${block}`, ...blockTemplate(opts.owner)]
-  return ['## Ending a turn', ...lines].join('\n')
+  // The handles a who can name here: the tool's description says what a who is, this line who is who.
+  const handles = `Handles for who: the user is ${opts.owner}${opts.agent ? `, you are ${opts.agent}` : ''}.`
+  return ['## Ending a turn', ...lines, handles].join('\n')
 }
+
+/** Whether a session can call end_turn: only Claude's chat runtime registers it (providers/claude/sdk-runtime.ts). */
+export const hasEndTurnTool = (session: { runtime: string; provider: string }): boolean => session.runtime === 'sdk' && session.provider === 'claude'
+
+/** How finished work goes to its owner. The rules about closing a task say it in these words too. */
+export const FOR_REVIEW = 'hand the result over for review (next names the owner)'
+
+/** Who sets the task's waits: said once, among the task's rules. */
+export const COCKPIT_ROUTES = 'Whose move it is you say only when you end a turn; the cockpit writes it into the task.'
+
+/** Where new work goes that a session without a user at hand comes across. */
+export const NEW_WORK_AT_STOP = 'Name it when you end the turn, as a question for the user.'
+
+/**
+ * The section of the start context for a task handed to an agent: what every
+ * wake-up does until the goal is reached.
+ */
+export function untilDoneRules(): string {
+  return [
+    '## Until it is done',
+    '- At every wake-up, check the task against its goal first. Checks are read-only; nothing goes out without the user\'s OK.',
+    `- Reached: ${FOR_REVIEW}. Do not close it yourself.`,
+    '- Not reached: name yourself as next, with the time you look again (when). The cockpit wakes you then: a simple check needs no schedule tool call. You decide whether and when to check again; do not ask the user about it.',
+    '- Ask the user only what only they can decide. A stop without a next step (a check, a question, a review hand-over, or the task closed) is caught by the cockpit.',
+  ].join('\n')
+}
+
+/** How a step's start prompt asks for each checkpoint's stop (application/task-runner.ts stepPrompt). */
+export const CHECKPOINT_STOP = {
+  before: `Ask the user for the go and stop. Once you have it, do the work and ${FOR_REVIEW}.`,
+  after: `Do the step, then ${FOR_REVIEW}.`,
+} as const
 
 /** Sent before the cockpit stops a session nobody has used for a while. */
 export const BEFORE_IDLE_STOP = `The cockpit is about to stop this session because nobody has used it for a while. Call ${END_TURN_TOOL} now, so the task shows where it stands, and reply in one line. ${NO_TOOL} The session stops after this reply.`
