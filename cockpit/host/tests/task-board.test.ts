@@ -44,7 +44,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: boolean }> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[] } ) {
   const main = { id: 'main', name: 'Main', shared: false }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -76,7 +76,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     log: (line) => { opts.log?.push(line) },
     ...(opts.head ? { head: opts.head } : {}),
     runnerBusy: (taskId, runs) => (opts.busy?.includes(taskId) ?? false) || (runs ?? []).some((r) => r.state === 'running'),
-    runnerHeld: (taskId) => opts.held?.includes(taskId) ?? false,
+    runnerHeld: (taskId, requestedAt) => (opts.held?.includes(taskId) ?? false) || (Boolean(requestedAt) && (opts.heldFor?.includes(requestedAt!) ?? false)),
     runnerStartedAt: (taskId) => opts.started?.[taskId] ?? null,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
   }
@@ -122,6 +122,21 @@ describe('the task board', () => {
     expect(o.runs?.map((r) => r.id)).toEqual(['desk-1'])
     expect(o.earlierRuns).toBeUndefined()
     expect(tasks.find((x) => x.id === 'n')!.ownSession).toBeUndefined()
+  })
+
+  it('names no own session for a closed task, and asks the held check with the task\'s request time', async () => {
+    const { board } = setup({
+      main: [
+        mine('done', {}, 'resolved'),
+        mine('fresh', { delegate: 'atlas', checkpoint: 'none', delegation: { agent: 'atlas', checkpoint: 'none', requested_at: '2026-11-19T09:59:00.000Z' } }),
+      ],
+      own: { done: { sessionId: 'old', continues: true } },
+      // a worker is about to start on it: held by its request time before its id is known
+      heldFor: ['2026-11-19T09:59:00.000Z'],
+    })
+    const tasks = (await board.refresh()).tasks
+    expect(tasks.find((x) => x.id === 'done')?.ownSession).toBeUndefined()
+    expect(tasks.find((x) => x.id === 'fresh')).toMatchObject({ group: 'blocked', runner: { kind: 'held' } })
   })
 
   it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {
@@ -366,7 +381,7 @@ describe('the task board', () => {
       main: [
         // waiting_on as an older core left it: the list wins.
         mine('two', { delegate: 'atlas', waits, waiting_on: { who: 'lasse', kind: 'question', why: 'stale' } }),
-        mine('asked-and-handed', { waits: [waits[0], { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }] }),
+        mine('asked-and-handed', { goal: 'Done', waits: [waits[0], { id: 'kim', who: 'kim', kind: 'outside', why: 'reply' }] }),
       ],
       pending: () => [
         { opId: 'op-h', kind: 'hand_over', spaceId: 'main', taskId: 'asked-and-handed', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } },
@@ -402,7 +417,7 @@ describe('the task board', () => {
 
   it('shows a pending hand-over or review at once, with its undo deadline', async () => {
     const { board } = setup({
-      main: [mine('asked', { waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } }), mine('done-soon', { waiting_on: { who: 'lasse', kind: 'review' } })],
+      main: [mine('asked', { goal: 'Done', waiting_on: { who: 'lasse', kind: 'question', why: 'Which list?' } }), mine('done-soon', { waiting_on: { who: 'lasse', kind: 'review' } })],
       pending: () => [
         { opId: 'op-1', kind: 'hand_over', spaceId: 'main', taskId: 'asked', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } },
         { opId: 'op-2', kind: 'review', spaceId: 'main', taskId: 'done-soon', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '' },
@@ -412,6 +427,14 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'asked')).toMatchObject({ delegate: 'atlas', turn: 'agent_scheduled', pending: { opId: 'op-1', kind: 'hand_over', undoUntil: '2026-11-19T10:00:08Z' } })
     expect(model.tasks.find((t) => t.id === 'done-soon')).toMatchObject({ turn: 'done', pending: { opId: 'op-2' } })
     expect(model.inbox).toEqual([])
+  })
+
+  it('shows a pending Delegate on a task without a goal as it will end: refused, so the task stays as it is', async () => {
+    const { board } = setup({
+      main: [mine('bare')],
+      pending: () => [{ opId: 'op-b', kind: 'hand_over', spaceId: 'main', taskId: 'bare', undoUntil: '2026-11-19T10:00:08Z', state: 'pending', createdAt: '', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } }],
+    })
+    expect((await board.refresh()).tasks.find((t) => t.id === 'bare')?.delegate).toBeUndefined()
   })
 
   it('says whether a task\'s schedule is still on: a job here that has not ended, whatever its state, or another member\'s schedule; not a leftover on one\'s own', async () => {

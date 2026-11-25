@@ -1,5 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
+import type { OwnSessionView } from './continue-session.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
@@ -86,7 +87,7 @@ export interface BoardTask {
    * The task's own open session (domain/own-session.ts): Take over opens it, and Delegate continues it when `continues`
    * (else, or with Start fresh, a new session starts).
    */
-  ownSession?: { sessionId: string; continues: boolean }
+  ownSession?: OwnSessionView
   /** A command on it still in its undo window. */
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
   /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
@@ -193,7 +194,7 @@ export interface TaskBoardDeps {
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
   /** The task's own open session, and whether a delegation would continue it (domain/own-session.ts). */
-  ownSessionOf?(taskId: string): { sessionId: string; continues: boolean } | null
+  ownSessionOf?(taskId: string): OwnSessionView | null
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
   /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
@@ -454,7 +455,11 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
+      // Planned as the command will be applied (application/task-commands.ts): with the task's name and goal.
+      const planned = planHandOver({
+        id: row.id, status: row.status, title: row.title, ...(props.display_title ? { displayTitle: props.display_title } : {}), ...(props.goal ? { goal: props.goal } : {}),
+        owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}),
+      }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
       const { status, waits, delegation } = planned.plan.patch
       const next = { ...props } as NonNullable<Row['properties']>
