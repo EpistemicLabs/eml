@@ -30,7 +30,8 @@ import { CreatedMarker, MessageActions, OfferCard, SortCard, SplitMarker, type S
 import { SortDialog } from './SortDialog';
 import { ChatSearch } from './ChatSearch';
 import { replyRehypePlugins } from './reply-markdown';
-import { FileChips, useChatFiles } from '@/components/media/FileChips';
+import { FileChips, openChatFile, resolvedRefs, useChatFiles } from '@/components/media/FileChips';
+import { FILE_REF_ATTR, rehypeFileRefs } from '@/components/media/inline-refs';
 import { useChatShortcuts } from './useChatShortcuts';
 import { useChatSocket, type PermissionReply } from './useChatSocket';
 
@@ -51,10 +52,32 @@ const OUTCOME_LABEL: Record<RequestOutcome, string> = {
   cancelled: 'No longer asked',
 };
 
-const Assistant = memo(function Assistant({ text, streaming }: { text: string; streaming: boolean }) {
+const Assistant = memo(function Assistant({ text, streaming, fileRefs = '', onOpenRef }: {
+  text: string;
+  streaming: boolean;
+  /** The file paths in the text to make clickable, one per line (a string, so the memo holds). */
+  fileRefs?: string;
+  onOpenRef?: (ref: string) => void;
+}) {
+  const plugins = useMemo(
+    () => (fileRefs ? [...replyRehypePlugins, rehypeFileRefs(fileRefs.split('\n'))] : replyRehypePlugins),
+    [fileRefs],
+  );
+  // One handler for every path in the reply: a click, or Enter / Space on a focused one.
+  const open = (event: React.SyntheticEvent) => {
+    const ref = (event.target as HTMLElement).closest?.(`[${FILE_REF_ATTR}]`)?.getAttribute(FILE_REF_ATTR);
+    if (!ref || !onOpenRef) return;
+    event.preventDefault();
+    onOpenRef(ref);
+  };
   return (
-    <div className="min-w-0 break-words text-foreground">
-      <Streamdown mode={streaming ? 'streaming' : 'static'} isAnimating={streaming} rehypePlugins={replyRehypePlugins}>{text}</Streamdown>
+    <div
+      className="min-w-0 break-words text-foreground"
+      onClick={fileRefs ? open : undefined}
+      onKeyDown={fileRefs ? (event) => { if (event.key === 'Enter' || event.key === ' ') open(event); } : undefined}
+    >
+      {/* Keyed by the paths: the renderer keeps its rendered blocks while the text stays, so new plugins need a fresh one. */}
+      <Streamdown key={fileRefs} mode={streaming ? 'streaming' : 'static'} isAnimating={streaming} rehypePlugins={plugins}>{text}</Streamdown>
     </div>
   );
 });
@@ -480,7 +503,12 @@ const Messages = memo(function Messages({
           case 'assistant':
             return (
               <div key={item.id} data-chat-item={item.id} className="group/msg relative">
-                <Assistant text={item.text} streaming={item.streaming} />
+                <Assistant
+                  text={item.text}
+                  streaming={item.streaming}
+                  fileRefs={item.streaming ? '' : resolvedRefs(item.text, chatFiles).join('\n')}
+                  onOpenRef={(ref) => { const file = chatFiles.byRef.get(ref); if (file) openChatFile(chatFiles, file); }}
+                />
                 {!item.streaming && <FileChips text={item.text} files={chatFiles} />}
                 {!item.streaming && <MessageActions onSplit={() => onSplit(item.id)} />}
               </div>

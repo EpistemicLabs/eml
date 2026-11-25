@@ -62,6 +62,16 @@ export function FileChip({ file, onOpen, className }: { file: FileInfo; onOpen: 
   );
 }
 
+/** Opens a file of the chat in the slide-over, the chat's other files to flip through. */
+export function openChatFile(files: ChatFiles, file: FileInfo, chat?: SourceChat | null): void {
+  openMedia({ files: files.list, index: Math.max(0, files.list.findIndex((f) => f.path === file.path)), chat: chat ?? null });
+}
+
+/** The paths a reply names that are files of the chat: the ones its text shows clickable. */
+export function resolvedRefs(text: string, files: ChatFiles): string[] {
+  return extractFileRefs(text).filter((ref) => files.byRef.has(ref));
+}
+
 /** The chips of one reply: the files its text names, out of the chat's files. */
 export function FileChips({ text, files, chat }: { text: string; files: ChatFiles; chat?: SourceChat | null }) {
   const own = useMemo(() => {
@@ -80,7 +90,7 @@ export function FileChips({ text, files, chat }: { text: string; files: ChatFile
         <FileChip
           key={file.path}
           file={file}
-          onOpen={() => openMedia({ files: files.list, index: Math.max(0, files.list.findIndex((f) => f.path === file.path)), chat: chat ?? null })}
+          onOpen={() => openChatFile(files, file, chat)}
         />
       ))}
     </div>
