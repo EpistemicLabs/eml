@@ -106,12 +106,12 @@ describe('task router', () => {
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const setup = (task: Record<string, unknown>, space: { shared: boolean } = { shared: false }) => {
+  const setup = (task: Record<string, unknown>, space: { shared: boolean; agent?: string } = { shared: false }, handles: string[] = []) => {
     const ledger = new SessionLedger()
     const brain = fakeBrain(task)
     const logs: string[] = []
     const r = router.createTaskRouter({
-      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse',
+      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse', handles: async () => handles,
       log: (l) => logs.push(l), now: () => new Date('2026-11-17T09:00:00Z'),
     })
     return { ledger, brain, r, logs }
@@ -128,6 +128,128 @@ describe('task router', () => {
     expect(brain.posts[0].body.waits).toEqual([{ id: 's1', who: 'lasse', kind: 'question', why: 'Ship the shorter headline?', since: '2026-11-17T09:00:00.000Z', session_id: 's1' }])
     expect(brain.task.properties).toMatchObject({ waiting_on: { who: 'lasse', kind: 'question', session_id: 's1' } })
     expect(ledger.get('s1')!.attention).toBeFalsy()
+  })
+
+  describe('from an end_turn call', () => {
+    const SPACE = { shared: true, agent: 'atlas' }
+    const HANDLES = ['lasse', 'dominik', 'atlas', 'motti']
+    const called = (properties: Props = {}) => {
+      const made = setup({ id: 't-c', status: 'active', properties }, SPACE, HANDLES)
+      made.ledger.recordSpawn('s-c', null, 'bp-eml', 'claude', true, 't-c')
+      return made
+    }
+    const wait = (w: Props) => ({ id: 's-c', since: '2026-11-17T09:00:00.000Z', session_id: 's-c', ...w })
+
+    it.each<[string, Record<string, unknown>, Props, Props | null]>([
+      ['a question waits on the owner', { result: 'Draft ready', questions: ['Send it today? It is long.', 'To whom?'] }, {}, { who: 'lasse', kind: 'question', why: 'Send it today? · To whom?' }],
+      ['a question of a step with checkpoint before is a go', { result: 'Plan ready', questions: ['Start?'] }, { checkpoint: 'before' }, { who: 'lasse', kind: 'go', why: 'Start?' }],
+      ['the owner next is a review', { result: 'Draft ready', next: { who: 'lasse', what: 'read the draft' } }, {}, { who: 'lasse', kind: 'review', why: 'read the draft' }],
+      ['another member next waits on them', { result: 'Draft ready', next: { who: '@Dominik', what: 'sign it' } }, {}, { who: 'dominik', kind: 'review', why: 'sign it' }],
+      ['another agent next waits on it', { result: 'Draft ready', next: { who: 'motti', what: 'translate it' } }, {}, { who: 'motti', kind: 'review', why: 'translate it' }],
+      ['someone outside next is an outside wait', { result: 'Mail sent', next: { who: 'outside:Acme support', what: 'answer the mail', when: '2026-11-27T10:00' } }, {}, { who: 'Acme support', kind: 'outside', why: 'answer the mail' }],
+      ['an unknown handle is someone outside', { result: 'Mail sent', next: { who: 'kim', what: 'answer' } }, {}, { who: 'kim', kind: 'outside', why: 'answer' }],
+      ['a failure stops on the owner', { result: 'Stuck', failed: 'No access to the shop', next: { who: 'dominik', what: 'x' } }, {}, { who: 'lasse', kind: 'stopped', why: 'No access to the shop' }],
+      ['its own next step at a time waits on nobody', { result: 'Mail sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } }, {}, null],
+      ['nothing next waits on nobody', { result: 'All done' }, { checkpoint: 'after' }, null],
+    ])('%s', async (_row, call, properties, expected) => {
+      const { brain, r } = called(properties)
+      await r.turnEnded('s-c', 'The reply, without a block.', call as never)
+      expect(waitsOfTask(brain)).toEqual(expected ? [wait(expected)] : [])
+    })
+
+    it('writes the call into the journal as its block, once, and takes the call over a block in the reply', async () => {
+      const { brain, r } = called()
+      const call = { result: 'Mail sent to Acme', checked: 'the address', decided: 'no reminder', next: { who: 'me', what: 'look for the answer', when: '2026-11-27T10:00' } }
+      await r.turnEnded('s-c', HANDOFF, call)
+      await r.turnEnded('s-c', HANDOFF, call)
+      expect(brain.posts).toEqual([{ path: '/task/t-c/track', body: {
+        text: '### Handoff\nResult: Mail sent to Acme\nChecked: the address\nDecided: no reminder\nNext: [atlas] look for the answer @ 2026-11-27T10:00',
+      } }])
+    })
+
+    it('a call replaces the wait of the session\'s last call and keeps another session\'s', async () => {
+      const { ledger, brain, r } = called({ waits: [{ id: 's-o', who: 'lasse', kind: 'review', why: 'Review: x', since: '2026-11-17T08:00:00.000Z', session_id: 's-o' }] })
+      ledger.recordSpawn('s-o', null, 'bp-eml', 'claude', false, 't-c')
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
+      await r.turnEnded('s-c', '', { result: 'Signed', next: { who: 'outside:Acme', what: 'countersign' } })
+      expect(waitsOfTask(brain).map((w) => [w.id, w.who, w.kind])).toEqual([['s-o', 'lasse', 'review'], ['s-c', 'Acme', 'outside']])
+      await r.turnEnded('s-c', '', { result: 'Countersigned, nothing left' })
+      expect(waitsOfTask(brain).map((w) => w.id)).toEqual(['s-o'])
+    })
+
+    it('a later turn without a call leaves the call\'s wait: the status the call left is not routed on its own', async () => {
+      const { ledger, brain, r } = called()
+      // What the chat does with a call: the session's attention is the call's status.
+      ledger.setAttention('s-c', { kind: 'done', reason: 'Draft ready' })
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
+      await r.turnEnded('s-c', 'Still waiting.')
+      expect(brain.posts).toHaveLength(1)
+      expect(waitsOfTask(brain)).toEqual([wait({ who: 'dominik', kind: 'review', why: 'sign it' })])
+      // An answer ends it, and the same call again is routed anew.
+      await r.answered('s-c')
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } })
+      expect(waitsOfTask(brain)).toHaveLength(1)
+    })
+
+    it('finishes a session whose call closes a closed task, and keeps one that asks', async () => {
+      const done: string[] = []
+      const finished = (call: Record<string, unknown>) => {
+        const ledger = new SessionLedger()
+        ledger.recordSpawn('s-f', null, 'bp-eml', 'claude', true, 't-f')
+        const r = router.createTaskRouter({ ledger, spaces: { resolve: () => SPACE as never }, brain: () => fakeBrain({ id: 't-f', status: 'resolved', properties: {} }), owner: 'lasse', finished: (id) => done.push(id), log: () => {} })
+        return r.turnEnded('s-f', '', call as never)
+      }
+      await finished({ result: 'Closed it', questions: ['Also the other one?'] })
+      expect(done).toEqual([])
+      await finished({ result: 'Closed it' })
+      expect(done).toEqual(['s-f'])
+    })
+  })
+
+  describe('from a block that names who is next', () => {
+    it.each<[string, string, Props | null]>([
+      ['a member', 'Next: [dominik] sign it', { who: 'dominik', kind: 'review', why: 'sign it' }],
+      ['someone outside', 'Next: [outside:Acme] countersign @ 2026-11-27T10:00', { who: 'Acme', kind: 'outside', why: 'countersign' }],
+      ['the owner', 'Next: [lasse] read it', { who: 'lasse', kind: 'review', why: 'read it' }],
+      ['the agent itself', 'Next: [atlas] look again @ 2026-11-27T10:00', null],
+      ['nobody', 'Next: review by Lasse', null],
+    ])('%s', async (_who, next, expected) => {
+      const { ledger, brain, r } = setup({ id: 't-b', status: 'active', properties: {} }, { shared: true, agent: 'atlas' }, ['lasse', 'dominik', 'atlas'])
+      ledger.recordSpawn('s-b', null, 'bp-eml', 'claude', false, 't-b')
+      const block = `### Handoff\nResult: Draft ready\n${next}`
+      await r.turnEnded('s-b', `Done.\n\n${block}`)
+      // The journal keeps the block as the session wrote it.
+      expect(brain.posts[0].body.text).toBe(block)
+      expect(waitsOfTask(brain)).toEqual(expected ? [{ id: 's-b', since: '2026-11-17T09:00:00.000Z', session_id: 's-b', ...expected }] : [])
+    })
+
+    it('a Failed line stops on the owner', async () => {
+      const { ledger, brain, r } = setup({ id: 't-b', status: 'active', properties: {} })
+      ledger.recordSpawn('s-b', null, 'bp-eml', 'claude', false, 't-b')
+      await r.turnEnded('s-b', '### Handoff\nResult: Stuck\nFailed: No access to the shop')
+      expect(waitsOfTask(brain)).toEqual([expect.objectContaining({ who: 'lasse', kind: 'stopped', why: 'No access to the shop' })])
+    })
+  })
+
+  describe('decideWaiting', () => {
+    const base = { handoff: null, attention: null, checkpoint: undefined, owner: 'lasse', sessionId: 's1', now: new Date('2026-11-17T09:00:00Z') }
+
+    it('reads a call against the handles it is given, and an unknown one as outside', () => {
+      const call = { result: 'x', next: { who: 'dominik', what: 'sign' } }
+      expect(router.decideWaiting({ ...base, call, members: ['dominik'] })).toMatchObject({ who: 'dominik', kind: 'review' })
+      expect(router.decideWaiting({ ...base, call })).toMatchObject({ who: 'dominik', kind: 'outside' })
+    })
+
+    it('a call without a wait wins over the status and the checkpoint', () => {
+      expect(router.decideWaiting({ ...base, call: { result: 'x' }, attention: { kind: 'review', reason: 'old' }, checkpoint: 'after' })).toBeNull()
+    })
+
+    it('without a call or a block, the status decides as before', () => {
+      expect(router.decideWaiting({ ...base, attention: { kind: 'question', reason: 'A or B?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'A or B?' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'failed', reason: null } })).toMatchObject({ kind: 'stopped', why: 'The session failed' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'review', reason: 'Report' } })).toMatchObject({ kind: 'review', why: 'Review: Report' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'done', reason: 'ok' } })).toBeNull()
+    })
   })
 
   it('writes with the rev it read, and redoes the change once when another write came in between', async () => {
@@ -252,7 +374,6 @@ describe('task router', () => {
   })
 
   it('keeps only the question, and removes a wait when the user answers the session that set it', async () => {
-    expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The brightline task was')).toBe('Close the task despite the open mails?')
     const { ledger, brain, r } = setup({ id: 't20', status: 'active', properties: {} })
     ledger.recordSpawn('s20', null, 'bp-eml', 'claude', false, 't20')
     ledger.recordSpawn('s21', null, 'bp-eml', 'claude', false, 't20')

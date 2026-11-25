@@ -5,25 +5,34 @@ import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { parseHandoff, type Handoff } from '../domain/handoff.js'
 import { needsAnswer } from '../domain/session-attention.js'
 import type { WaitKind } from '../domain/task-turn.js'
+import { deriveTurn, fromHandoff, handoffBlock, type EndTurn, type TurnContext } from '../domain/turn-end.js'
 import { mostUrgent, sameWaits, waitsBody, waitsOf, withoutSession, withSessionWait, type Wait } from '../domain/task-waits.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { COCKPIT_HOME } from '../paths.js'
 import { trackWaits } from './task-waits.js'
+import { NO_AGENT } from './turn-context.js'
 
 /**
  * The router (decision one-router-for-steps-and-jobs): when a session's turn
  * ends, it decides whose turn it is and
  * writes that into the session's task.
  *
- *   - The session's handoff (domain/handoff.ts) goes into the task's history.
- *   - A question for the user, or a session that said question or failed
- *     (session_status), puts the task on the user: the session's wait
- *     { id, who, kind, why, since, session_id } in the task's waits — the Inbox
- *     lists it and opens the session. The session itself is not marked as
- *     waiting: it finished its turn, and the question is the task's (decision
+ *   - It works from the turn's end_turn call (domain/turn-end.ts); without one,
+ *     from the "### Handoff" block of the reply (domain/handoff.ts), read as the
+ *     call it stands for; without either, from the status an older session gave
+ *     (session_status).
+ *   - The call goes into the task's history as the block it stands for; a block
+ *     the session wrote goes in as written.
+ *   - What the call derives to (deriveTurn) is the session's wait
+ *     { id, who, kind, why, since, session_id } in the task's waits: a question
+ *     or a failure puts the task on the user, a next step names the user for a
+ *     review, another member, or someone outside. The Inbox lists the user's and
+ *     opens the session. The session itself is not marked as waiting: it
+ *     finished its turn, and the question is the task's (decision
  *     handoff-questions-inbox-only).
- *   - A step with checkpoint "after" that handed over a result, or any session
- *     that said review, waits for the user's review the same way.
+ *   - A block that names nobody is read as before: a step with checkpoint
+ *     "after" that handed over a result, or any session that said review, waits
+ *     for the user's review; one that said question or failed, for the user.
  *   - A session has at most one wait per task (its id is the session's): its
  *     next wait replaces it, anything else removes it, and so does an answer or
  *     putting the session away. Other sessions' waits stay; a wait of a session
@@ -36,8 +45,8 @@ import { trackWaits } from './task-waits.js'
  *
  * The session never sets its waits itself (they are not among its tools); a
  * job's session is routed like any other, so a job needs no notify setting of
- * its own. A turn without a handoff and without a status changes nothing, and
- * the same handoff twice is written once.
+ * its own. A turn without a call, a handoff or a status changes nothing, and
+ * the same call or handoff twice is written once.
  */
 
 export interface TaskRouterDeps {
@@ -46,6 +55,8 @@ export interface TaskRouterDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
+  /** The handles of the space's users and agents (application/turn-context.ts); absent: any other handle reads as outside. */
+  handles?(space: BrainSpace): Promise<readonly string[]>
   /** The session closed its task and nobody waits: its work is in the task's history (auto-archive). */
   finished?(sessionId: string): void
   log(line: string): void
@@ -67,38 +78,48 @@ export interface WaitingOn {
   session_id: string
 }
 
-/** A question as the Inbox shows it: up to its first question mark, at most 160 characters. */
-export function shortQuestion(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  const mark = flat.indexOf('?')
-  const cut = mark >= 0 ? flat.slice(0, mark + 1) : flat
-  return cut.length > 160 ? `${cut.slice(0, 159)}…` : cut
-}
-
-/** Whose turn it is after this turn; null when nobody waits. Pure, for the tests. */
+/**
+ * Whose turn it is after this turn; null when nobody waits. Pure, for the tests.
+ * `call` is the turn's end_turn call; without one the handoff is read as a call,
+ * and a handoff that names nobody falls back to the status and the checkpoint.
+ */
 export function decideWaiting(facts: {
+  call?: EndTurn | null
   handoff: Handoff | null
   attention: { kind: string; reason: string | null } | null
   checkpoint: string | undefined
   owner: string
+  /** The session's agent and the space's handles: who a next step can name. */
+  agent?: string
+  members?: readonly string[]
   sessionId: string
   now: Date
 }): WaitingOn | null {
   const { handoff, attention } = facts
-  const wait = (kind: WaitKind, why: string): WaitingOn => ({ who: facts.owner, kind, why: why.slice(0, 300), since: facts.now.toISOString(), session_id: facts.sessionId })
-  // A step with checkpoint before asks before it acts: its question is the go.
-  if (handoff && handoff.forUser.length > 0) return wait(facts.checkpoint === 'before' ? 'go' : 'question', handoff.forUser.map(shortQuestion).join(' · '))
+  const ctx: TurnContext = { owner: facts.owner, agent: facts.agent ?? NO_AGENT, members: facts.members ?? [], checkpoint: facts.checkpoint }
+  const stamped = (w: { who: string; kind: WaitKind; why: string }): WaitingOn => ({ ...w, since: facts.now.toISOString(), session_id: facts.sessionId })
+  // The call says it all: without a wait in it, nobody waits.
+  if (facts.call) {
+    const { wait } = deriveTurn(facts.call, ctx)
+    return wait && stamped(wait)
+  }
+  const written = handoff && fromHandoff(handoff, ctx)
+  const derived = written ? deriveTurn(written, ctx).wait : null
+  // A status that needs an answer comes before a next step, as it did before blocks named one.
+  if (derived && (derived.kind === 'question' || derived.kind === 'go')) return stamped(derived)
+  const wait = (kind: WaitKind, why: string) => stamped({ who: facts.owner, kind, why: why.slice(0, 300) })
   if (attention && needsAnswer(attention.kind as never)) {
     return attention.kind === 'failed' ? wait('stopped', attention.reason ?? 'The session failed') : wait('question', attention.reason ?? 'The session has a question')
   }
+  if (derived) return stamped(derived)
   // A session that says review hands a result over (its goal is reached), whatever the checkpoint.
   if (attention?.kind === 'review' || (facts.checkpoint === 'after' && handoff?.result)) return wait('review', `Review: ${handoff?.result ?? attention?.reason ?? 'the result'}`)
   return null
 }
 
 export interface TaskRouter {
-  /** A session's turn ended; `message` is its last reply. Never throws. */
-  turnEnded(sessionId: string, message: string): Promise<void>
+  /** A session's turn ended; `message` is its last reply, `call` the end_turn call it made. Never throws. */
+  turnEnded(sessionId: string, message: string, call?: EndTurn | null): Promise<void>
   /** The user answered the session, or it was put away: a wait it set on its task is over. Never throws. */
   answered(sessionId: string): Promise<void>
   /**
@@ -112,6 +133,8 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
   const now = () => deps.now?.() ?? new Date()
   // What was last routed per session, so a turn that changed nothing writes nothing.
   const lastRouted = new Map<string, string>()
+  // The status a routed call left on its session (its time): a later turn without a call must not route it again as a plain status.
+  const fromCall = new Map<string, string>()
   // One write per task at a time on this host: the next one reads what the last one wrote.
   const queues = new Map<string, Promise<unknown>>()
   const serial = <T>(taskId: string, work: () => Promise<T>): Promise<T> => {
@@ -129,20 +152,26 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     return !entry || !entry.archivedAt
   }
 
-  const route = async (sessionId: string, message: string) => {
+  const route = async (sessionId: string, message: string, call: EndTurn | null) => {
     const entry = deps.ledger.get(sessionId)
     if (!entry?.taskId) return
     const space = deps.spaces.resolve(entry.spaceId)
     const brain = deps.brain(space)
     if (!brain) return
 
-    const handoff = parseHandoff(message)
+    // The call stands for the turn; a block in the same reply says the same in other words.
+    const handoff = call ? null : parseHandoff(message)
     let attention = entry.attention
-    if (!handoff && !attention) return
-    // The handoff, or without one the status: not the question the router itself put on the session.
-    const key = handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
+    if (!call && !handoff && !attention) return
+    // What a call left on the session is the call's, routed already: only a status of its own is routed on its own.
+    if (!call && !handoff && attention!.at === fromCall.get(sessionId)) return
+    // The call, the handoff, or without either the status: not the question the router itself put on the session.
+    const key = call ? `call:${JSON.stringify(call)}` : handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
+    if (call && attention) fromCall.set(sessionId, attention.at)
     if (lastRouted.get(sessionId) === key) return
 
+    const ctx = { owner: deps.owner, agent: space.agent ?? NO_AGENT, members: (await deps.handles?.(space).catch(() => [])) ?? [] }
+    const written = handoff && fromHandoff(handoff, ctx)
     let waiting: WaitingOn | null = null
     let closed = false
     let after: Wait[] = []
@@ -154,22 +183,25 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       // A status the session gave before the task was reopened belongs to the closed task: it must not
       // put a wait on the reopened one.
       const reopened = reopenedAt(task as { entries?: Array<{ kind?: string; at?: string; text?: string }> })
-      if (attention && reopened && attention.at < reopened) {
+      if (!call && attention && reopened && attention.at < reopened) {
         attention = null
         if (!handoff) return null
       }
-      waiting = decideWaiting({ handoff, attention, checkpoint: task.properties?.checkpoint, owner: deps.owner, sessionId, now: now() })
+      waiting = decideWaiting({ call, handoff, attention, checkpoint: task.properties?.checkpoint, ...ctx, sessionId, now: now() })
       const kept = waits.filter((w) => (w.session_id ?? w.id) === sessionId || stillThere(w))
       after = waiting ? withSessionWait(kept, waiting) : withoutSession(kept, sessionId)
       const body: Record<string, unknown> = {}
-      if (handoff) body.text = handoff.text
+      // The journal keeps the block: the one the call stands for, or the one the session wrote.
+      if (call) body.text = handoffBlock(call, ctx)
+      else if (handoff) body.text = handoff.text
       if (!sameWaits(after, waits)) Object.assign(body, waitsBody(after))
       return Object.keys(body).length > 0 ? body : null
     }))
     lastRouted.set(sessionId, key)
 
     if (closed) {
-      const asks = (handoff?.forUser.length ?? 0) > 0 || (attention !== null && needsAnswer(attention.kind))
+      const said = call ?? written
+      const asks = (said?.questions?.length ?? 0) > 0 || Boolean(call?.failed) || (!call && attention !== null && needsAnswer(attention.kind))
       if (!asks) {
         deps.finished?.(sessionId)
         deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} closed, finished`)
@@ -202,6 +234,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
           return waitsBody(left)
         }))
         lastRouted.delete(sessionId)
+        fromCall.delete(sessionId)
         if (!patch) return
         const up = next as Wait | undefined
         deps.log(`[router] ${sessionId.slice(0, 8)} answered: wait on task ${task.id.slice(0, 8)} cleared${up ? `, ${(up.session_id ?? up.id).slice(0, 8)}'s wait up next` : ''}`)
@@ -210,9 +243,9 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       }
     },
 
-    async turnEnded(sessionId, message) {
+    async turnEnded(sessionId, message, call) {
       try {
-        await route(sessionId, message)
+        await route(sessionId, message, call ?? null)
       } catch (err) {
         deps.log(`[router] ${sessionId.slice(0, 8)} failed: ${(err as Error).message}`)
       }
