@@ -111,6 +111,7 @@ import { route as routeMiddleware } from './middleware/routing'
 import { applyWrite, SharedWriteError, commandStatus, readOnly, spaceMembers } from './write'
 import { HeadReadError, headFailure, headQuery, logHead, waitForHead } from './head'
 import { HygieneReports } from './hygiene-reports'
+import { requestLabel, watchLoop } from './loop-watch'
 import { ReadPool, READ_WORKERS, readFailure } from './read-pool'
 import { readJob } from './read-worker'
 import type { HygieneSweepAnswer, ReadArgs, ReadKind } from './reads'
@@ -206,6 +207,10 @@ const readPool = new ReadPool({ inline: readJob, size: READ_WORKER_COUNT, log: (
 if (READ_WORKER_COUNT > 0 && !readPool.threaded) console.error('[read-pool] no read worker next to the server (read-worker.js or read-worker.cjs); reads run on the request thread')
 // One hygiene report per brain, swept in the read pool and kept across restarts (hygiene-reports.ts).
 const hygieneReports = new HygieneReports({ dir: path.join(DATA_DIR, 'cache', 'hygiene'), version: SERVER_VERSION, log: (line) => console.error(line) })
+// Says when a handler held the request thread for a second or more, and which (loop-watch.ts).
+const loop = watchLoop({ log: (line) => console.error(line) })
+/** What each request is called in the loop watch's line. */
+const requestLabels = new WeakMap<IncomingMessage, string>()
 
 // Forward-Migration-Runner — blocking-at-startup, with backup + preflight +
 // auto-restore (see forward-migrations.ts). The "[migrations] migrating" line
@@ -323,6 +328,9 @@ function readBody(req: IncomingMessage): Promise<RequestBody> {
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => chunks.push(c))
     req.on('end', () => {
+      // the handler goes on from here: what it computes now is this request's (loop-watch.ts)
+      const label = requestLabels.get(req)
+      if (label) loop.enter(label)
       const raw = Buffer.concat(chunks).toString()
       if (!raw) return resolve({})
       try { resolve(JSON.parse(raw) as RequestBody) }
@@ -469,6 +477,8 @@ const header = (req: IncomingMessage, name: string): string | null => {
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = (req.url ?? '').split('?')[0]
   const method = req.method
+  requestLabels.set(req, requestLabel(method, url))
+  loop.enter(requestLabel(method, url))
 
   // Health check — no auth needed (v0.9-PROPOSAL §5.10).
   // Public, no brain/DB check (health = "the process responds").
@@ -500,6 +510,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       : { error: routingResult.error })
   }
   const eml = EML.fromConnection(routingResult.ctx.brainDb, routingResult.ctx.brainName)
+  requestLabels.set(req, requestLabel(method, url, routingResult.ctx.brainId))
+  loop.enter(requestLabel(method, url, routingResult.ctx.brainId))
   // One of the reads whose cost grows with the brain (reads.ts), run in the read pool on this brain's file.
   const brainPath = path.resolve(DATA_DIR, routingResult.ctx.brainFile)
   const pooled = <K extends ReadKind>(kind: K, args: ReadArgs<K>, opts: { slow?: boolean, timeoutMs?: number } = {}) =>
@@ -1183,6 +1195,7 @@ ready().then(() => {
 // Graceful shutdown — close pool + control DB; per-request EML.fromConnection
 // has ownsConnection=false, so nothing is closed twice.
 function shutdown(): void {
+  loop.stop()
   void readPool.close()
   for (const sync of syncs.values()) if (sync instanceof Sync) sync.close()
   try { pool.close() } catch { /* best-effort */ }
