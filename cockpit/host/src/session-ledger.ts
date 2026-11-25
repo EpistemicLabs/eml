@@ -6,6 +6,7 @@ import { PROVIDER_IDS, type ProviderId, type SessionAgentRuntime, type SessionRe
 import type { SessionRuntimeKind } from './domain/session-runtime.js'
 import type { WorkerStatus } from './domain/session-attention.js'
 import type { ToolProfile } from './domain/tool-profile.js'
+import type { EndTurn, TurnContext } from './domain/turn-end.js'
 
 /**
  * Host-owned session ledger (decision cockpit-session-resume-strategy).
@@ -96,6 +97,18 @@ export interface LedgerEntry {
   jobId: string | null
   /** The folder the agent last worked in, as its hooks report it (a worktree, say); null before the first. */
   workdir: string | null
+  /**
+   * What the session said in a turn (its end_turn call, or a status: call null) that the router has not written into
+   * its task yet. Kept across restarts, so a turn that ended while the host went down is routed after it starts again
+   * (application/unrouted-turns.ts).
+   */
+  unrouted?: Unrouted
+}
+
+export interface Unrouted {
+  at: string
+  call: EndTurn | null
+  ctx: TurnContext | null
 }
 
 interface LedgerFile {
@@ -153,6 +166,9 @@ function load(): LedgerFile {
           turnInFlight: entry.turnInFlight ? { retried: entry.turnInFlight.retried === true } : null,
           jobId: typeof entry.jobId === 'string' && entry.jobId ? entry.jobId : null,
           workdir: typeof entry.workdir === 'string' && entry.workdir ? entry.workdir : null,
+          ...(entry.unrouted && typeof entry.unrouted.at === 'string'
+            ? { unrouted: { at: entry.unrouted.at, call: entry.unrouted.call ?? null, ctx: entry.unrouted.ctx ?? null } }
+            : {}),
         }
       }
     }
@@ -236,6 +252,7 @@ export class SessionLedger {
       jobId: prev?.jobId ?? null,
       turnInFlight: prev?.turnInFlight ?? null,
       workdir: prev?.workdir ?? null,
+      ...(prev?.unrouted ? { unrouted: prev.unrouted } : {}),
     }
     this.persist()
   }
@@ -261,6 +278,8 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry || (entry.attention === null && attention === null)) return
     entry.attention = attention && { ...attention, at: new Date().toISOString() }
+    // Nobody has anything to do any more (answered, cleared): what it said is over, routed or not.
+    if (!attention) delete entry.unrouted
     // It asks for someone again: back in the lists, even if it had been archived (done does not).
     if (attention && attention.kind !== 'done') entry.archivedAt = null
     if (attention?.reason) entry.lastStatus = { kind: attention.kind, reason: attention.reason, at: entry.attention!.at }
@@ -363,6 +382,7 @@ export class SessionLedger {
     if (!entry) return
     entry.archivedAt = new Date().toISOString()
     entry.attention = null
+    delete entry.unrouted
     entry.resultAt = null
     entry.pinned = false
     entry.deskMain = false
@@ -429,6 +449,22 @@ export class SessionLedger {
     const entry = this.data.sessions[sessionId]
     if (!entry?.turnInFlight) return
     entry.turnInFlight.retried = true
+    this.persist()
+  }
+
+  /** The session said something in its turn (a call, or a status: call null) that its task does not have yet. */
+  setUnrouted(sessionId: string, said: { call: EndTurn | null; ctx: TurnContext | null }): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry) return
+    entry.unrouted = { at: new Date().toISOString(), ...said }
+    this.persist()
+  }
+
+  /** The router wrote what the session said at `at` (or it was dropped): nothing left to route, unless it said more since. */
+  clearUnrouted(sessionId: string, at: string): void {
+    const entry = this.data.sessions[sessionId]
+    if (!entry?.unrouted || entry.unrouted.at > at) return
+    delete entry.unrouted
     this.persist()
   }
 

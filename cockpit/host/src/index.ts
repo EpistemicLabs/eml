@@ -86,6 +86,7 @@ import { createClaudeProvider } from './infrastructure/providers/claude/index.js
 import type { Notifier } from './notifications.js'
 import { PushStore } from './push-store.js'
 import { PushNotifier, notifySessions } from './application/push-notifier.js'
+import { routeUnrouted } from './application/unrouted-turns.js'
 import { sessionFacts, withProject } from './application/session-facts.js'
 import { sendPush, vapidSubject } from './infrastructure/push/web-push.js'
 import { createTaskCommands, TaskCommandStore, type TaskCommands } from './application/task-commands.js'
@@ -396,6 +397,7 @@ async function main() {
       if (!entry?.worker || entry.pinned || entry.deskMain) return
       ledger.archive(sessionId)
     },
+    routed: (sessionId, at) => ledger.clearUnrouted(sessionId, at),
   })
   // The task board's commands (application/task-commands.ts), made below; the runner asks them first.
   let taskCommands: TaskCommands | null = null
@@ -1071,6 +1073,12 @@ async function main() {
   jobRunner.start()
   // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
   void taskRouter.adoptHeldWaits()
+  // What a session said in a turn that ended while the host went down, or whose route failed, reaches its task now
+  // (application/unrouted-turns.ts): first once the brain and the resumed sessions have settled, then every minute.
+  const routeLeftovers = () => routeUnrouted({ ledger, router: taskRouter, working: (sessionId) => turns.get(sessionId)?.state === 'working', log })
+    .then((tried) => (tried > 0 ? taskBoard.refresh() : undefined)).catch((err) => log(`[router] left-over turns: ${(err as Error).message}`))
+  setTimeout(() => { void routeLeftovers() }, UNROUTED_FIRST_MS).unref?.()
+  setInterval(() => { void routeLeftovers() }, UNROUTED_TICK_MS).unref?.()
   log(`host: v${ABOUT.version}`)
 
   if (brain.onboarding === 'pending') {
@@ -1098,6 +1106,9 @@ async function main() {
   process.on('SIGTERM', () => void shutdown())
 }
 
+// Left-over turns (application/unrouted-turns.ts): the first look after the host starts, then how often.
+const UNROUTED_FIRST_MS = 20_000
+const UNROUTED_TICK_MS = 60_000
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
