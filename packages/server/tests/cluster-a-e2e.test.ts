@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdtempSync, rmSync, mkdirSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { initControlDatabase, provisionUser, issueToken, revokeToken, type ProvisionResult } from '@engramprotocol/core'
@@ -546,6 +546,23 @@ describe('Cluster-A E2E — Token-Bound Routing + Cross-Brain-Isolation', () => 
       // the checks the route keeps in front of the pool still answer
       expect((await get('/list?type=nope')).status).toBe(400)
       expect((await get('/list?nope=1')).body.error).toBe('unknown query params')
+    })
+
+    it('GET /hygiene answers from the kept report; fresh=true sweeps again once the brain changed', async () => {
+      const first = await get('/hygiene?fresh=true')
+      expect(first.status).toBe(200)
+      expect(typeof first.body.seq).toBe('number')
+      expect(Number.isFinite(Date.parse(first.body.computed_at))).toBe(true)
+      // kept next to the brains, for the next start
+      expect(existsSync(join(tmpDir, 'cache', 'hygiene', `${provA.brainId}.json`))).toBe(true)
+      // the kept report is from before this write
+      const written = await create(tok(), validRule({ scope: 'agent.bob', title: 'kept-report-rule', content: 'do Z' }))
+      expect(written.status).toBe(201)
+      const kept = await get('/hygiene')
+      expect(kept.body).toMatchObject({ seq: first.body.seq, computed_at: first.body.computed_at, total: first.body.total })
+      const fresh = await get('/hygiene?fresh=true')
+      expect(fresh.body.seq).toBeGreaterThan(first.body.seq)
+      expect(fresh.body.checks.map((c: { id: string }) => c.id)).toEqual(first.body.checks.map((c: { id: string }) => c.id))
     })
   })
 

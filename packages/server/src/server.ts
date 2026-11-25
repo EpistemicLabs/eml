@@ -71,7 +71,7 @@
  * token decides what a caller may do.
  *   GET  /head              ?after=&wait=                            → The op log's newest seq; with after and wait, held until it differs (long poll; head.ts)
  *   GET  /stats                                                      → DB statistics
- *   GET  /hygiene                                                    → Brain-hygiene checks with their findings
+ *   GET  /hygiene           ?fresh=                                  → Brain-hygiene checks with their findings, from the kept report (hygiene-reports.ts); fresh=true waits for a sweep when the brain changed since
  *   GET  /health                                                     → Health check
  */
 
@@ -110,6 +110,7 @@ import { authenticate as authMiddleware, type AuthContext } from './middleware/a
 import { route as routeMiddleware } from './middleware/routing'
 import { applyWrite, SharedWriteError, commandStatus, readOnly, spaceMembers } from './write'
 import { HeadReadError, headFailure, headQuery, logHead, waitForHead } from './head'
+import { HygieneReports } from './hygiene-reports'
 import { ReadPool, READ_WORKERS, readFailure } from './read-pool'
 import { readJob } from './read-worker'
 import type { HygieneSweepAnswer, ReadArgs, ReadKind } from './reads'
@@ -203,6 +204,8 @@ pool.startIdleSweep()
 const readPool = new ReadPool({ inline: readJob, size: READ_WORKER_COUNT, log: (line) => console.error(line) })
 // A build shipped without its worker still serves, with every read on the request thread: said once, so it is seen.
 if (READ_WORKER_COUNT > 0 && !readPool.threaded) console.error('[read-pool] no read worker next to the server (read-worker.js or read-worker.cjs); reads run on the request thread')
+// One hygiene report per brain, swept in the read pool and kept across restarts (hygiene-reports.ts).
+const hygieneReports = new HygieneReports({ dir: path.join(DATA_DIR, 'cache', 'hygiene'), version: SERVER_VERSION, log: (line) => console.error(line) })
 
 // Forward-Migration-Runner — blocking-at-startup, with backup + preflight +
 // auto-restore (see forward-migrations.ts). The "[migrations] migrating" line
@@ -290,6 +293,7 @@ function discardBrain(brainId: string, brainFile: string): void {
   syncs.delete(brainId)
   removeTeamFile(DATA_DIR, brainId)
   pool.evict(brainId)
+  hygieneReports.forget(brainId)
   const file = path.resolve(DATA_DIR, brainFile)
   for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${file}${suffix}`, { force: true })
   controlDb.prepare('DELETE FROM brains WHERE id = ?').run(brainId)
@@ -1108,10 +1112,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     // GET /hygiene — every hygiene check with what it requires, how to fix an
     // entry, and its findings (core hygiene.ts). Read by the cockpit, which
-    // offers a brain-hygiene session when a check has findings.
+    // offers a brain-hygiene session when a check has findings. Answered from
+    // the brain's kept report (hygiene-reports.ts): computed_at and seq say
+    // which state of the brain it is about; fresh=true waits for a sweep when
+    // the brain changed since.
     if (url === '/hygiene' && method === 'GET') {
-      const swept = JSON.parse((await pooled('hygiene', {}, { slow: true, timeoutMs: HYGIENE_SWEEP_TIMEOUT_MS })).body) as HygieneSweepAnswer
-      return json(res, 200, swept.report)
+      const brainDb = routingResult.ctx.brainDb
+      const kept = await hygieneReports.get(
+        { id: routingResult.ctx.brainId, head: () => logHead(brainDb) },
+        async (previous) => JSON.parse((await pooled('hygiene', previous ? { previous } : {}, { slow: true, timeoutMs: HYGIENE_SWEEP_TIMEOUT_MS })).body) as HygieneSweepAnswer,
+        { fresh: parseQuery(req.url).fresh === 'true' },
+      )
+      return json(res, 200, { ...kept.report, computed_at: kept.computed_at, seq: kept.seq })
     }
 
     // GET /stats
