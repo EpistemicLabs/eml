@@ -63,8 +63,8 @@ const Assistant = memo(function Assistant({ text, streaming, fileRefs = '', onOp
     () => (fileRefs ? [...replyRehypePlugins, rehypeFileRefs(fileRefs.split('\n'))] : replyRehypePlugins),
     [fileRefs],
   );
-  // One handler for every path in the reply: a click, or Enter / Space on a focused one.
-  const open = (event: React.SyntheticEvent) => {
+  // One handler for every path in the reply. Mouse only: the chip under the reply is the keyboard's way in.
+  const open = (event: React.MouseEvent) => {
     const ref = (event.target as HTMLElement).closest?.(`[${FILE_REF_ATTR}]`)?.getAttribute(FILE_REF_ATTR);
     if (!ref || !onOpenRef) return;
     event.preventDefault();
@@ -74,7 +74,6 @@ const Assistant = memo(function Assistant({ text, streaming, fileRefs = '', onOp
     <div
       className="min-w-0 break-words text-foreground"
       onClick={fileRefs ? open : undefined}
-      onKeyDown={fileRefs ? (event) => { if (event.key === 'Enter' || event.key === ' ') open(event); } : undefined}
     >
       {/* Keyed by the paths: the renderer keeps its rendered blocks while the text stays, so new plugins need a fresh one. */}
       <Streamdown key={fileRefs} mode={streaming ? 'streaming' : 'static'} isAnimating={streaming} rehypePlugins={plugins}>{text}</Streamdown>

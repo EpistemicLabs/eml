@@ -623,7 +623,6 @@ body {
 /* A file path in a reply opens the file (media viewer): underlined like a link, in the text colour. */
 .chat-pane .file-ref { cursor: pointer; text-decoration: underline; text-decoration-color: var(--color-border-strong); text-underline-offset: calc(var(--spacing) * .5); border-radius: calc(var(--spacing) * .5); }
 .chat-pane .file-ref:hover { text-decoration-color: currentColor; }
-.chat-pane .file-ref:focus-visible { outline: var(--focus-width) solid var(--color-ring); outline-offset: var(--focus-offset); }
 ::highlight(chat-search) { background-color: color-mix(in srgb, var(--color-foreground) var(--mix-flash), transparent); }
 /* Below --text-field-touch (16px), iOS zooms the page when a field takes the focus. */
 @media (pointer: coarse) { .chat-pane textarea, .chat-pane input { font-size: var(--text-field-touch); } }

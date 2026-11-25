@@ -99,3 +99,13 @@ describe('clickable paths in a reply', () => {
     expect(spans).toEqual(['/w/a.csv', '/w/b.png']);
   });
 });
+
+describe('a clickable path is a mouse shortcut', () => {
+  it('has no role and no tab stop: the chip is the control', async () => {
+    const { rehypeFileRefs } = await import('./inline-refs');
+    const tree = { type: 'root', children: [{ type: 'element', tagName: 'p', children: [{ type: 'text', value: 'see /w/a.csv' }] }] };
+    rehypeFileRefs(['/w/a.csv'])()(tree as never);
+    const span = (tree.children[0].children as Array<{ properties?: Record<string, unknown> }>)[1];
+    expect(span.properties).toEqual({ dataFileRef: '/w/a.csv', className: ['file-ref'], title: 'Open this file' });
+  });
+});

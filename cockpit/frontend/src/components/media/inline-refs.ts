@@ -1,6 +1,8 @@
 // File paths in a reply's text, clickable (Lasse 2026-11-25): each path that names a file the viewer
 // shows becomes a span the chat opens in the slide-over, in prose and in inline code alike. The
-// chips under the reply stay. A rehype step after the sanitizer, so the span it adds is its own.
+// chips under the reply stay, and they are the files' controls: the span is a mouse shortcut only,
+// no role and no tab stop, so a keyboard or screen reader meets each file once (at its chip).
+// A rehype step after the sanitizer, so the span it adds is its own.
 
 type HastNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastNode[]; value?: string };
 
@@ -39,7 +41,7 @@ export function rehypeFileRefs(refs: string[]) {
         const parts = splitByRefs(child.value, refs);
         if (parts.length === 1 && !parts[0].ref) return [child];
         return parts.map((part) => (part.ref
-          ? { type: 'element', tagName: 'span', properties: { dataFileRef: part.ref, role: 'button', tabIndex: 0, className: ['file-ref'], title: 'Open this file' }, children: [{ type: 'text', value: part.text }] }
+          ? { type: 'element', tagName: 'span', properties: { dataFileRef: part.ref, className: ['file-ref'], title: 'Open this file' }, children: [{ type: 'text', value: part.text }] }
           : { type: 'text', value: part.text }));
       });
     };
