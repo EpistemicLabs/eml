@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // First: a host without a console sends its output to its log file from here on (log-file.ts).
 import './log-file.js'
+import { timeLogLines } from './log-times.js'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -134,6 +135,8 @@ function portError(err: NodeJS.ErrnoException, port: number): Error {
 }
 
 async function main() {
+  // Every line the host prints from here on starts with its time (log-times.ts).
+  timeLogLines()
   log('== EML Cockpit host ====================================================')
   // The home holds the brain, tokens and transcripts: owner-only.
   fs.mkdirSync(COCKPIT_HOME, { recursive: true, mode: 0o700 })
