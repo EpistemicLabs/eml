@@ -9,6 +9,7 @@ import { TASK_STAGES, TASK_STAGE_HINTS, taskStage, type Engram, type Relation, t
 import { cn } from "@/lib/utils";
 import { FIELD, FOCUS, LABEL, PRIMARY, Select } from "@/shared/view/ui";
 import { ReviewFlag, TypeBadge } from "@/shared/view/ui/EngramType";
+import { clock, dayNumber, formatInZone, userTimeZone } from "@/lib/time-zone";
 
 // v0.15 (spec §2–§4, cockpit Cluster K): the task as a hub inside the engram
 // drawer — stage + status, outcome on close, parent / sub-tasks, the decisions
@@ -270,19 +271,19 @@ export function TaskHubBlocks({
 // linked. Only used for the link, not to tell change from note.
 const TRAILING_ID = /^(.*) \(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)$/s;
 
+/** A journal entry's time, in the user's time zone. */
 function formatAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  return `${formatInZone(at, { day: "numeric", month: "short" })} ${clock(at)}`;
 }
 
-/** A folded journal's time: the clock today, the day before that. */
-function shortAt(iso: string, now = new Date()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toDateString() === now.toDateString()
-    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+/** A folded journal's time: the clock today, the day before that (the user's today, in their time zone). */
+function shortAt(iso: string, now = Date.now()): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  const zone = userTimeZone();
+  return dayNumber(at, zone) === dayNumber(now, zone) ? clock(at, zone) : formatInZone(at, { day: "numeric", month: "short" }, zone);
 }
 
 /**

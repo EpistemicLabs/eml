@@ -8,6 +8,7 @@ import { api } from '@/utils/api';
 import { cn } from '@/lib/utils';
 import { FOCUS, LABEL, PRIMARY } from '@/shared/view/ui';
 import { splitEnded } from '@/lib/job-run-label';
+import { useTimeZone, zoneLabel } from '@/lib/time-zone';
 import { formatAgo, formatWhen, openSession, runLabel, type Job, type JobRun } from './jobs';
 
 // Colour only for meaning: amber when the run waits for you, red when it failed; fine is plain text.
@@ -24,16 +25,14 @@ const CONFIRM = cn('min-h-(--target-min) rounded-full bg-status-stopped/12 px-2.
 
 export default function JobsView() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [timeZone, setTimeZone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const response = await api.jobs();
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json() as { jobs: Job[]; timeZone: string | null };
+      const body = await response.json() as { jobs: Job[] };
       setJobs(body.jobs);
-      setTimeZone(body.timeZone);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'could not load the jobs');
@@ -48,6 +47,8 @@ export default function JobsView() {
   }, [load]);
 
   const spaces = jobs ? [...new Set(jobs.map((job) => job.spaceName))] : [];
+  // Run times show in the user's time zone; a repeating job keeps the zone it was made in (its schedule line names it).
+  const { zone } = useTimeZone();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background px-6 py-5">
@@ -55,7 +56,7 @@ export default function JobsView() {
         <h1 className="text-display font-semibold tracking-title text-foreground">Jobs</h1>
         <p className="mt-1 text-body text-muted-foreground">
           Work the cockpit wakes a session for, on a schedule. Sessions set them up with their schedule tool; times
-          read in {timeZone ?? 'your time zone'}.
+          read and show in {zoneLabel(zone)} (Settings › Preferences).
         </p>
         {error && <p role="alert" className="mt-4 text-body text-stopped-ink">Jobs could not be loaded: {error}</p>}
         {jobs && jobs.length === 0 && (
@@ -148,7 +149,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
           </div>
           {job.goal && <div className="mt-1 text-body text-foreground">Goal: {job.goal}</div>}
           <div className="mt-1 text-body text-muted-foreground">
-            {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map(formatWhen).join(' · ')}</>}
+            {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map((at) => formatWhen(at)).join(' · ')}</>}
             {job.pausedReason && <span className="text-you-ink">{job.pausedReason}</span>}
           </div>
           {last && <LastRun run={last} spaceId={job.spaceId} />}

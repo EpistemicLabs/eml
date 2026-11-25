@@ -4,6 +4,7 @@
 import { useEffect } from 'react';
 import { keepPreviousData, type QueryClient, type QueryKey, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DAY_MS } from '@/lib/time';
+import { clock, dayNumber, formatInZone, userTimeZone, wallClock, zonedTime } from '@/lib/time-zone';
 import type { Hue } from '@/shared/view/ui/hue';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
@@ -492,31 +493,32 @@ export function readable(title: string): string {
 
 // ---- times ----
 
-const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
-const hhmm = (d: Date) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-
-/** A moment as a person says it: "10:27" today, "yesterday 22:09" or "tomorrow 09:00", the weekday within a week, else day and month. */
-export function when(iso: string | null | undefined, now: number): string {
+/**
+ * A moment as a person says it: "10:27" today, "yesterday 22:09" or "tomorrow 09:00", the weekday within a week,
+ * else day and month. In the user's time zone (lib/time-zone.ts), whatever zone the browser runs in.
+ */
+export function when(iso: string | null | undefined, now: number, zone: string = userTimeZone()): string {
   if (!iso) return '';
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return '';
-  const d = new Date(at);
-  const days = Math.round((startOfDay(at) - startOfDay(now)) / DAY_MS);
-  if (days === 0) return hhmm(d);
-  if (days === 1) return `tomorrow ${hhmm(d)}`;
-  if (days === -1) return `yesterday ${hhmm(d)}`;
-  if (Math.abs(days) <= 6) return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${hhmm(d)}`;
-  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${hhmm(d)}`;
+  const hhmm = clock(at, zone);
+  const days = dayNumber(at, zone) - dayNumber(now, zone);
+  if (days === 0) return hhmm;
+  if (days === 1) return `tomorrow ${hhmm}`;
+  if (days === -1) return `yesterday ${hhmm}`;
+  if (Math.abs(days) <= 6) return `${formatInZone(at, { weekday: 'short' }, zone)} ${hhmm}`;
+  return `${formatInZone(at, { day: 'numeric', month: 'short' }, zone)} ${hhmm}`;
 }
 
-/** A due date: "today", "tomorrow", "in 3 days", "3 days late", or the date. */
-export function dueLabel(due: string, now: number): string {
-  const days = Math.round((Date.parse(`${due.slice(0, 10)}T00:00:00`) - startOfDay(now)) / DAY_MS);
+/** A due date (a calendar day, no zone of its own): "today", "tomorrow", "in 3 days", "3 days late", or the date. Today is the user's. */
+export function dueLabel(due: string, now: number, zone: string = userTimeZone()): string {
+  const date = Date.parse(`${due.slice(0, 10)}T00:00:00Z`);
+  const days = Math.round(date / DAY_MS) - dayNumber(now, zone);
   if (days === 0) return 'today';
   if (days === 1) return 'tomorrow';
   if (days > 1 && days <= 6) return `in ${days} days`;
   if (days < 0) return `${-days} day${days === -1 ? '' : 's'} late`;
-  return new Date(`${due.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return formatInZone(date, { day: 'numeric', month: 'short' }, 'UTC');
 }
 
 // ---- what a card says ----
@@ -801,11 +803,16 @@ export function quietProjects(rows: ProjectRow[], projects: Board['projects'], f
 /** Results that needed nobody: done in the last day, delegated with checkpoint none. */
 export const fyi = (tasks: BoardTask[]) => tasks.filter((t) => t.turn === 'done' && t.delegate && t.checkpoint === 'none');
 
-/** Snooze times the Inbox offers: tomorrow 09:00 and next Monday 09:00, local time. */
-export function snoozeTimes(now: number): { tomorrow: string; monday: string } {
-  const at9 = (days: number) => { const d = new Date(startOfDay(now) + days * DAY_MS); d.setHours(9, 0, 0, 0); return d.toISOString(); };
-  const weekday = new Date(now).getDay();
-  return { tomorrow: at9(1), monday: at9(((8 - weekday) % 7) || 7) };
+/** Snooze times the Inbox offers: tomorrow 09:00 and next Monday 09:00, in the user's time zone. */
+export function snoozeTimes(now: number, zone: string = userTimeZone()): { tomorrow: string; monday: string } {
+  const today = wallClock(now, zone);
+  const at9 = (days: number) => {
+    const day = new Date(Date.UTC(today.year, today.month - 1, today.day + days));
+    const at = { year: day.getUTCFullYear(), month: day.getUTCMonth() + 1, day: day.getUTCDate(), minute: 0 };
+    // 09:00 is never in a daylight-saving gap anywhere; 10:00 covers it all the same.
+    return new Date(zonedTime({ ...at, hour: 9 }, zone) ?? zonedTime({ ...at, hour: 10 }, zone) ?? now).toISOString();
+  };
+  return { tomorrow: at9(1), monday: at9(((8 - today.weekday) % 7) || 7) };
 }
 
 /** The statuses of a task that is still open. */

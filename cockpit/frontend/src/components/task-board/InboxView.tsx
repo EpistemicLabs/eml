@@ -3,7 +3,7 @@
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
 import { type Board, type BoardTask, fyi, type InboxItem, isScheduled, originName, readable, taskName, when } from '@/lib/task-board';
-import { DAY_MS } from '@/lib/time';
+import { dayNumber, formatInZone, userTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
@@ -28,8 +28,9 @@ export type InboxAction =
   | { kind: 'review'; item: InboxItem };
 
 const dayOf = (iso: string, now: number) => {
-  const days = Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / DAY_MS);
-  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : new Date(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+  const zone = userTimeZone();
+  const days = dayNumber(now, zone) - dayNumber(Date.parse(iso), zone);
+  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : formatInZone(iso, { weekday: 'long', day: 'numeric', month: 'short' }, zone);
 };
 
 const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' | 'stopped' }> = {

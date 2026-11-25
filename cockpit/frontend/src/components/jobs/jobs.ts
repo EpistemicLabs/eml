@@ -3,6 +3,7 @@ import * as paneStore from '@/stores/usePaneStore';
 import { setTopView } from '@/stores/useTopViewStore';
 
 import { runLabel as label, type RunOutcome } from '@/lib/job-run-label';
+import { formatInZone, userTimeZone, wallClock } from '@/lib/time-zone';
 
 export type { RunOutcome };
 
@@ -51,13 +52,13 @@ export type Job = {
 };
 
 
-/** "Mon 9 Nov 08:00", in this browser's zone — the zone jobs read in by default. */
-export function formatWhen(iso: string): string {
-  const at = new Date(iso);
-  const sameYear = at.getFullYear() === new Date().getFullYear();
-  return at.toLocaleString('en-GB', {
+/** "Mon 9 Nov 08:00", in the user's time zone (Settings): a repeating job keeps the zone it was made in, its runs show in this one. */
+export function formatWhen(iso: string, zone: string = userTimeZone()): string {
+  const at = Date.parse(iso);
+  const sameYear = wallClock(at, zone).year === wallClock(Date.now(), zone).year;
+  return formatInZone(at, {
     weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).replace(',', '');
+  }, zone).replace(',', '');
 }
 
 /** "5 min ago", "3 h ago", "2 days ago". */

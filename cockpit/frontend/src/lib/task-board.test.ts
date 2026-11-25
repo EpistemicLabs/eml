@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskNamesKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
+import { setTimeZoneForTest } from './time-zone';
 
 const NOW = new Date(2026, 10, 19, 10, 35).getTime(); // Thu 19 Nov 2026, 10:35 local
 const local = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -30,6 +31,35 @@ describe('times', () => {
 
   it('snoozes to tomorrow 09:00 and next Monday 09:00', () => {
     expect(snoozeTimes(NOW)).toEqual({ tomorrow: local(20, 9), monday: local(23, 9) });
+  });
+
+  describe('in the user\'s time zone, not the browser\'s (the tests run in UTC)', () => {
+    afterEach(() => setTimeZoneForTest(null));
+    // Thu 19 Nov 2026 22:00 UTC is already Fri 20 Nov 05:00 in Bangkok (UTC+7).
+    const LATE = Date.parse('2026-11-19T22:00:00Z');
+
+    it('says a moment on the user\'s clock and calendar', () => {
+      setTimeZoneForTest('Asia/Bangkok');
+      expect(when('2026-11-19T22:30:00Z', LATE)).toBe('05:30');
+      expect(when('2026-11-20T13:15:00Z', LATE)).toBe('20:15');
+      expect(when('2026-11-20T20:15:00Z', LATE)).toBe('tomorrow 03:15');
+      expect(when('2026-11-19T16:00:00Z', LATE)).toBe('yesterday 23:00');
+      // An explicit zone wins over the setting.
+      expect(when('2026-11-20T13:15:00Z', LATE, 'UTC')).toBe('tomorrow 13:15');
+    });
+
+    it('counts a due date from the user\'s today', () => {
+      setTimeZoneForTest('Asia/Bangkok');
+      expect(dueLabel('2026-11-20', LATE)).toBe('today');
+      expect(dueLabel('2026-11-19', LATE)).toBe('1 day late');
+      expect(dueLabel('2026-11-20', LATE, 'UTC')).toBe('tomorrow');
+    });
+
+    it('parks until 09:00 on the user\'s clock: tomorrow and next Monday there', () => {
+      setTimeZoneForTest('Asia/Makassar');
+      // Fri 20 Nov in Makassar (UTC+8): tomorrow is Sat 21, next Monday 23 Nov, each 09:00 = 01:00 UTC.
+      expect(snoozeTimes(LATE)).toEqual({ tomorrow: '2026-11-21T01:00:00.000Z', monday: '2026-11-23T01:00:00.000Z' });
+    });
   });
 });
 

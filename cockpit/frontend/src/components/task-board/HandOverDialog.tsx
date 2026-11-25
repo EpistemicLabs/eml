@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, LINK, PRIMARY, RadioCard } from '@/shared/view/ui';
 import { agentName, type BoardTask, type HandOverInput, type HandOverMode, snoozeTimes, taskName } from '@/lib/task-board';
+import { inputStamp, useTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 
 type When = 'tomorrow' | 'monday' | 'pick';
@@ -23,8 +24,6 @@ const PILL = cn('min-h-(--target-comfortable) rounded-full border border-border 
 const FIELD = 'rounded-lg border border-input bg-background px-2 py-1.5 text-body text-foreground';
 const NEW_DESK = '__new';
 
-const pad = (n: number) => String(n).padStart(2, '0');
-const localStamp = (iso: string) => { const d = new Date(iso); return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` }; };
 
 export function HandOverDialog({ task, mode: initialMode, agents, desks, now, onClose, onAnswerFirst, onSubmit }: {
   task: BoardTask;
@@ -37,7 +36,10 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   onAnswerFirst: () => void;
   onSubmit: (input: HandOverInput, desk: { id: string } | { name: string } | null) => void;
 }) {
-  const times = snoozeTimes(now);
+  // Every time here is read in the user's time zone (Settings), not the browser's: the host reads it so too.
+  const { zone: timeZone } = useTimeZone();
+  const times = snoozeTimes(now, timeZone);
+  const localStamp = (iso: string) => inputStamp(Date.parse(iso), timeZone);
   const [mode, setMode] = useState<HandOverMode>(initialMode);
   const preferred = task.delegate ?? task.handTo;
   const [agent, setAgent] = useState(preferred && agents.includes(preferred) ? preferred : agents[0] ?? '');
@@ -52,7 +54,6 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const [desk, setDesk] = useState(desks[0]?.id ?? NEW_DESK);
   const [deskName, setDeskName] = useState(taskName(task));
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const schedule = (): HandOverInput['schedule'] => {
     const at = when === 'pick' ? `${picked.date}T${picked.time}` : (() => { const s = localStamp(when === 'tomorrow' ? times.tomorrow : times.monday); return `${s.date}T${s.time}`; })();
@@ -117,8 +118,9 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                     </div>
                     {when === 'pick' && (
                       <div className="flex flex-wrap gap-2">
-                        <input type="date" aria-label="Date" value={picked.date} min={localStamp(new Date(now).toISOString()).date} onChange={(e) => setPicked({ ...picked, date: e.target.value })} className={FIELD} />
+                        <input type="date" aria-label="Date" value={picked.date} min={inputStamp(now, timeZone).date} onChange={(e) => setPicked({ ...picked, date: e.target.value })} className={FIELD} />
                         <input type="time" aria-label="Time" value={picked.time} onChange={(e) => setPicked({ ...picked, time: e.target.value })} className={FIELD} />
+                        <span className="self-center text-caption text-muted-foreground">{timeZone}</span>
                       </div>
                     )}
                   </div>

@@ -11,6 +11,7 @@ import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
 import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
+import { useTimeZone } from '@/lib/time-zone';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
 import { nextRuns, type WorkingRow, workingNow } from '@/lib/working-now';
@@ -56,6 +57,8 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const { view, picks } = useTaskView();
   const compact = useCompactLayout();
   const page = useTaskBoardPage();
+  // Every time on the board shows in the user's time zone: a change of it shows at once.
+  useTimeZone();
   const open = openItemIn(page, view);
   const [dialog, setDialog] = useState<{ taskId: string; mode: HandOverMode } | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);

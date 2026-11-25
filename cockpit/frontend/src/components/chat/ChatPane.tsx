@@ -15,6 +15,7 @@ import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
 import { sortSummary, undoSplit } from '@/lib/split';
 import { closeTask, useTaskBoard } from '@/lib/task-board';
+import { useTimeZone } from '@/lib/time-zone';
 import { activatePane, getDeskOfPane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
 import { useSpaces } from '@/stores/useSpaceStore';
 
@@ -394,7 +395,8 @@ function PinOnSend({ pinRef, unpinRef }: { pinRef: React.MutableRefObject<(() =>
  * reads without colour.
  */
 function TurnEnd({ call, owner, agent }: { call: TurnEndCall; owner: string | null; agent: string | null }) {
-  const { label, detail } = turnEndLine(call, { owner, agent, now: Date.now() });
+  const { zone } = useTimeZone();
+  const { label, detail } = turnEndLine(call, { owner, agent, now: Date.now(), zone });
   return (
     <div className="px-1 text-muted-foreground break-words">
       <span className="font-medium">{label}</span>{detail && ` · ${detail}`}
