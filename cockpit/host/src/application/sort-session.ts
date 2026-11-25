@@ -4,10 +4,12 @@ import { planSort, type SortRow } from '../domain/sort.js'
 import type { SessionFacts } from './split-session.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
+import type { DelegationFields } from '../domain/delegation.js'
 
 /**
  * Apply a sort of a drifted session (domain/sort.ts plans it): link, create and close as the rows say,
- * each with a journal entry, and one entry on the session's task that sums it up. Only for a session
+ * each with a journal entry, and one entry on the session's task that sums it up. A task whose schedule is
+ * still on is not dropped (it closes with End schedule on the board): it is kept, and the entries say so. Only for a session
  * with a task: sorting means putting topics next to it. Kept in the task commands' file under its
  * operation id, so a retry does the work once.
  */
@@ -22,7 +24,11 @@ export interface SortSessionDeps {
   log(line: string): void
   /** This cockpit's member: a new task's owner when the session's task names none. */
   me: string
+  /** The task's schedule is still on (domain/task-schedule.ts hasSchedule): a drop leaves it open. Without it none is. */
+  scheduled?(task: ScheduledTask): boolean
 }
+
+type ScheduledTask = { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }
 
 export type SortAnswer =
   | { ok: true; command: TaskCommand }
@@ -105,19 +111,26 @@ export function createSortSession(deps: SortSessionDeps) {
           }
           counts.created++
         } else {
-          await brain.post(`/task/${action.taskId}/track`, { status: 'invalidated', outcome: 'Dropped when its session was sorted', text: `Dropped when ${from} was sorted.` })
-          counts.closed++
+          const task = deps.scheduled ? await brain.get(`/engram/${encodeURIComponent(action.taskId)}`).catch(() => null) as ScheduledTask | null : null
+          if (task && deps.scheduled?.(task)) {
+            await brain.post(`/task/${action.taskId}/track`, { text: `Not dropped when ${from} was sorted: its schedule is still on. End schedule and close on the task board closes it.` })
+            counts.kept = (counts.kept ?? 0) + 1
+          } else {
+            await brain.post(`/task/${action.taskId}/track`, { status: 'invalidated', outcome: 'Dropped when its session was sorted', text: `Dropped when ${from} was sorted.` })
+            counts.closed++
+          }
         }
         progress.next = i + 1
         save({ sort: counts, sortProgress: progress })
       }
+      const summary = `${counts.linked} linked, ${counts.created} created, ${counts.closed} closed${counts.kept ? `, ${counts.kept} kept open (schedule still on)` : ''}`
       if (!progress.summed) {
-        await brain.post(`/task/${sourceId}/track`, { text: `This session was sorted: ${counts.linked} linked, ${counts.created} created, ${counts.closed} closed.` })
+        await brain.post(`/task/${sourceId}/track`, { text: `This session was sorted: ${summary}.` })
         progress.summed = true
       }
       save({ state: 'applied', sort: counts, sortProgress: progress })
       deps.changed()
-      deps.log(`[sort] ${input.opId.slice(0, 8)} ${input.sessionId.slice(0, 8)}: ${counts.linked} linked, ${counts.created} created, ${counts.closed} closed`)
+      deps.log(`[sort] ${input.opId.slice(0, 8)} ${input.sessionId.slice(0, 8)}: ${summary}`)
       return { ok: true, command }
     },
   }

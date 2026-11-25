@@ -78,13 +78,18 @@ interface Task {
  */
 export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
 
-/** The prompt a step's session starts with; its task and the rules come with its start hook. */
-export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string }, checkpoint: string): string {
+/**
+ * The prompt a step's session starts with; its task and the rules come with its start hook. A job's
+ * prompt (ofJob) never tells the run to close the task: its run header carries the rule (domain/job.ts JOB_TASK_RULE).
+ */
+export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
     ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it, do the work and hand the result over for review.'
     : checkpoint === 'after'
       ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review, with a [lasse] question asking him to review it.'
-      : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
+      : step.ofJob
+        ? 'No checkpoint: do this run to the end on your own; ask only when you cannot go on.'
+        : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   const reviewed = checkpoint === 'before' || checkpoint === 'after'
   return [
     `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
@@ -96,7 +101,7 @@ export function stepPrompt(step: { id: string; title: string; content: string; b
     'Until the task is done, every wake-up checks its goal: reached, hand the result over; not reached, schedule your next check (schedule tool, task_id of this task) and stop quietly.',
     reviewed
       ? 'Closing, once the owner told you to: eml_track_task with status resolved and the outcome. End every stop with the handoff.'
-      : 'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
+      : step.ofJob ? 'End every stop with the handoff.' : 'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
   ].join('\n')
 }
 

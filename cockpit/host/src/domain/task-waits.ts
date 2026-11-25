@@ -1,4 +1,4 @@
-import type { WaitingOn } from './task-turn.js'
+import { waitKind, type WaitingOn } from './task-turn.js'
 
 /**
  * A task's waits (brain schema 23): everyone the task waits on, one entry per
@@ -97,6 +97,30 @@ export function withSessionWait(waits: readonly Wait[], wait: WaitingOn & { sess
   const entry: Wait = { id: wait.session_id, ...wait }
   if (i < 0) return [...waits, entry]
   return waits.map((w, j) => (j === i ? entry : w))
+}
+
+/** What names one wait across writes: its id and the moment it began (a session's next wait keeps the id, not the since). */
+export interface WaitRef {
+  id: string
+  since?: string
+}
+
+/**
+ * The reviews on `who` (everyone's reviews when nobody is named): what approving one run answers. A review is what
+ * the board and the Inbox show as one (waitKind), so a wait from before kinds existed counts by its why.
+ */
+export function reviewsOn(waits: readonly Wait[], who: string | undefined): WaitRef[] {
+  return waits.filter((w) => waitKind(w) === 'review' && (!who || w.who === who)).map((w) => ({ id: w.id, ...(w.since ? { since: w.since } : {}) }))
+}
+
+/** The waits without those `refs` name. */
+export function withoutWaits(waits: readonly Wait[], refs: readonly WaitRef[]): Wait[] {
+  return waits.filter((w) => !refs.some((r) => r.id === w.id && (r.since ?? '') === (w.since ?? '')))
+}
+
+/** The waits without the reviews on `who` (reviewsOn). */
+export function withoutReviewsOn(waits: readonly Wait[], who: string | undefined): Wait[] {
+  return withoutWaits(waits, reviewsOn(waits, who))
 }
 
 /** Whether two lists hold the same waits in the same order. */

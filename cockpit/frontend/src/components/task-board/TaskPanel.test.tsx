@@ -18,7 +18,7 @@ import { TaskPanel } from './TaskPanel';
 const NOW = Date.now();
 const task = (patch: Partial<BoardTask>): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: new Date(NOW).toISOString(),
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, owner: 'lasse', ...patch,
 });
 const parent = task({ id: 'parent', title: 'claude-mcp-plugin-marketing-channel-research' });
 const board = (p: BoardTask): Board => ({
@@ -36,7 +36,7 @@ describe('the task panel', () => {
   it('shows the Related block once while the journal and the question box come and go', () => {
     const panel = (t: BoardTask) => (
       <MemoryRouter><QueryClientProvider client={client}>
-        <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
       </QueryClientProvider></MemoryRouter>
     );
     const { rerender } = render(panel(parent));
@@ -54,7 +54,7 @@ describe('the task panel', () => {
     const show = (t: BoardTask, onReopen = vi.fn(), viewer = 'lasse', onContinue = vi.fn(async () => true)) => {
       render(
         <MemoryRouter><QueryClientProvider client={client}>
-          <TaskPanel task={t} board={{ ...board(parent), viewer, closed: [] }} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={onReopen} onContinue={onContinue} />
+          <TaskPanel task={t} board={{ ...board(parent), viewer, closed: [] }} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={onReopen} onContinue={onContinue} />
         </QueryClientProvider></MemoryRouter>,
       );
       return onReopen;
@@ -129,7 +129,7 @@ describe('the task panel', () => {
         <MemoryRouter><QueryClientProvider client={client}>
           <TaskPanel task={closed({ status: 'resolved', sessionIds: ['s1'], ...patch })} board={{ ...board(parent), viewer, closed: [] }} now={NOW} spaces={[]}
             sessions={[{ id: 's1', spaceId: 'main', __projectId: 'acme', lastActivity: new Date(NOW).toISOString() } as never]}
-            onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+            onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
         </QueryClientProvider></MemoryRouter>,
       );
       withSession({});
@@ -153,12 +153,13 @@ describe('the task panel', () => {
     const show = (t: BoardTask) => {
       const onReview = vi.fn();
       const onDrop = vi.fn();
+      const onEndSchedule = vi.fn();
       render(
         <MemoryRouter><QueryClientProvider client={client}>
-          <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={onReview} onDrop={onDrop} onReopen={() => {}} onContinue={async () => true} />
+          <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={onReview} onDrop={onDrop} onEndSchedule={onEndSchedule} onReopen={() => {}} onContinue={async () => true} />
         </QueryClientProvider></MemoryRouter>,
       );
-      return { onReview, onDrop };
+      return { onReview, onDrop, onEndSchedule };
     };
 
     it('closes an open task as done, or as not needed', () => {
@@ -180,13 +181,69 @@ describe('the task panel', () => {
       show(task({ id: 'c', status: 'resolved', turn: null }));
       expect(screen.queryByRole('button', { name: 'More task actions' })).toBeNull();
     });
+
+    it('has only End schedule and close while its schedule is on, in review and with a paused job too', () => {
+      const next = new Date(NOW + DAY_MS).toISOString();
+      const { onReview, onDrop, onEndSchedule } = show(task({ id: 's', turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: next, hasSchedule: true }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['End schedule and close']);
+      expect(screen.getByText('No more runs. The task closes as done.')).toBeTruthy();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'End schedule and close' }));
+      expect(onEndSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: 's' }));
+      expect(onReview).not.toHaveBeenCalled();
+      expect(onDrop).not.toHaveBeenCalled();
+      cleanup();
+      show(task({ id: 'sr', turn: 'review', group: undefined, delegate: 'atlas', nextRunAt: next, hasSchedule: true }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['End schedule and close']);
+      cleanup();
+      // Its job is paused: no next run, and still only its schedule's end closes it.
+      show(task({ id: 'sp', delegate: 'atlas', nextRunAt: null, hasSchedule: true }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['End schedule and close']);
+      cleanup();
+      // A next run the host does not count (a schedule left by a job that ended): it closes like any task.
+      show(task({ id: 'sl', delegate: 'atlas', nextRunAt: next }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Done', 'Not needed']);
+    });
+  });
+
+  describe('Looks good', () => {
+    const show = (t: BoardTask) => {
+      const onReview = vi.fn();
+      render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={onReview} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      return onReview;
+    };
+    const inReview = (patch: Partial<BoardTask>) => task({ id: 'r', turn: 'review', group: undefined, delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: done' }, ...patch });
+
+    it('reads Looks good, done on a task without a schedule', () => {
+      const onReview = show(inReview({}));
+      const button = screen.getByRole('button', { name: 'Looks good, done' });
+      expect(button.getAttribute('title')).toBeNull();
+      fireEvent.click(button);
+      expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ id: 'r' }));
+    });
+
+    it('reads Looks good while its schedule is on, also without a next run, and says the task stays open', () => {
+      const onReview = show(inReview({ hasSchedule: true }));
+      expect(screen.queryByRole('button', { name: 'Looks good, done' })).toBeNull();
+      const button = screen.getByRole('button', { name: 'Looks good' });
+      expect(button.getAttribute('title')).toBe('Approves this run. The task stays open until its schedule ends.');
+      fireEvent.click(button);
+      expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ id: 'r' }));
+    });
   });
 });
 
 describe('the task panel on the task state model (v0.23)', () => {
   const show = (t: BoardTask, handlers: { onHandOver?: () => void; onPark?: (task: BoardTask, until: string) => void } = {}) => render(
     <MemoryRouter><QueryClientProvider client={client}>
-      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
+      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
     </QueryClientProvider></MemoryRouter>,
   );
 
@@ -206,7 +263,7 @@ describe('the task panel on the task state model (v0.23)', () => {
     render(
       <MemoryRouter><QueryClientProvider client={client}>
         <TaskPanel task={task({ group: 'asked', delegate: 'atlas', sessionIds: ['newer', 'asking'], waitingOn: { who: 'lasse', kind: 'question', why: 'Go?', session_id: 'asking' } })}
-          board={board(parent)} now={NOW} sessions={[session('newer', 1), session('asking', 30)]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+          board={board(parent)} now={NOW} sessions={[session('newer', 1), session('asking', 30)]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
       </QueryClientProvider></MemoryRouter>,
     );
     expect([...screen.getByLabelText('Sessions on it').querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Atlas · needs input', 'Atlas · idle']);
@@ -220,7 +277,7 @@ describe('the task panel on the task state model (v0.23)', () => {
         <TaskPanel task={task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', earlierRuns: [
           { id: 'old', member: 'lasse', agent: 'atlas', startedAt: at, endedAt: at, endReason: 'finished', result: '4 mails need you', here: true },
           { id: 'theirs', member: 'dominik', agent: 'motti', startedAt: at, endedAt: at, endReason: 'finished', result: null, here: false },
-        ] })} board={board(parent)} now={NOW} sessions={[put]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        ] })} board={board(parent)} now={NOW} sessions={[put]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
       </QueryClientProvider></MemoryRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: /2 earlier sessions/ }));

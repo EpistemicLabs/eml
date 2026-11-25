@@ -379,6 +379,44 @@ describe('task router', () => {
     expect(brain.posts).toEqual([{ path: '/task/t21/track', body: { waits: null } }])
   })
 
+  it('a run that comes due on a closed task reopens it first, so the run\'s question reaches the owner instead of being dropped', async () => {
+    const { createTaskCommands, TaskCommandStore } = await import('../src/application/task-commands.js')
+    const world = (status: string) => {
+      const s = setup({ id: 't-run', status, properties: { assignee_ids: ['lasse'] } })
+      // The reopen's write, as the brain does it: the status changes with the waits.
+      const post = s.brain.post
+      s.brain.post = async (path, body) => {
+        if (typeof body.status === 'string') s.brain.task.status = body.status
+        return post(path, body)
+      }
+      const commands = createTaskCommands({
+        store: new TaskCommandStore(join(home, `commands-${status}-${Math.random()}.json`)), viewer: 'lasse',
+        space: () => ({ id: 'main' }) as never, brain: () => s.brain, agentsOf: async () => [],
+        createJob: async () => ({ error: 'none' }), changed: () => {}, now: () => Date.now(), log: () => {},
+      })
+      s.ledger.recordSpawn('s-run', null, 'bp-eml', 'claude', true, 't-run')
+      return { ...s, commands }
+    }
+    // Without the reopen, a closed task waits on nobody: the question is lost.
+    const dropped = world('resolved')
+    await dropped.r.turnEnded('s-run', HANDOFF)
+    expect(dropped.brain.posts).toEqual([])
+
+    const closed = world('resolved')
+    expect(await closed.commands.reopenForRun('main', 't-run', { number: 3, jobId: 'job-1', job: 'Daily brief' })).toBe('reopened')
+    expect(closed.brain.posts[0].body).toEqual({ status: 'active', waits: null, text: 'Reopened: run 3 of "Daily brief" came due while the task was closed. End its schedule to stop it.' })
+    await closed.r.turnEnded('s-run', HANDOFF)
+    expect(closed.brain.task.status).toBe('active')
+    expect(waitsOfTask(closed.brain)).toEqual([expect.objectContaining({ id: 's-run', who: 'lasse', kind: 'question', why: 'Ship the shorter headline?' })])
+
+    // A task another one replaced is left alone: nothing is written, and the router still drops the question.
+    const replaced = world('superseded')
+    expect(await replaced.commands.reopenForRun('main', 't-run', { number: 3, jobId: 'job-1', job: 'Daily brief' })).toBe('refused')
+    await replaced.r.turnEnded('s-run', HANDOFF)
+    expect(replaced.brain.posts).toEqual([])
+    expect(replaced.brain.task.status).toBe('superseded')
+  })
+
   it('logs instead of throwing when the brain fails', async () => {
     const { ledger, brain, r, logs } = setup({ id: 't8', status: 'active', properties: {} })
     brain.get = async () => { throw new Error('brain down') }

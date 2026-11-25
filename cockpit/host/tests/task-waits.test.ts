@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRequire } from 'node:module'
-import { mostUrgent, sameWaits, urgentWaitOf, waitsBody, waitsOf, withoutSession, withSessionWait, type Wait } from '../src/domain/task-waits.js'
+import { mostUrgent, reviewsOn, sameWaits, urgentWaitOf, waitsBody, waitsOf, withoutReviewsOn, withoutSession, withoutWaits, withSessionWait, type Wait } from '../src/domain/task-waits.js'
 
 const require = createRequire(import.meta.url)
 const { mostUrgentWait } = require('@engramprotocol/core') as { mostUrgentWait: (w: Wait[]) => Wait | undefined }
@@ -14,6 +14,30 @@ describe('a task\'s waits', () => {
     expect(waitsOf({ waiting_on: { who: 'kim' } })).toEqual([{ id: 'waiting_on', who: 'kim' }])
     expect(waitsOf({ waiting_on: { why: 'no who' } })).toEqual([])
     expect(waitsOf(undefined)).toEqual([])
+  })
+
+  it('takes the reviews on one person off, and leaves their questions and everyone else\'s waits', () => {
+    const waits = [w('a', 'review'), w('b', 'question'), w('c', 'review', undefined, 'kim'), w('d', undefined)]
+    expect(withoutReviewsOn(waits, 'lasse').map((x) => x.id)).toEqual(['b', 'c', 'd'])
+    // nobody named (a cockpit without a viewer): every review
+    expect(withoutReviewsOn(waits, undefined).map((x) => x.id)).toEqual(['b', 'd'])
+  })
+
+  it('counts a wait from before kinds existed as a review when its why says so, as the Inbox does', () => {
+    const waits: Wait[] = [{ id: 'old', who: 'lasse', why: 'Review: brief written' }, { id: 'ask', who: 'lasse', why: 'Which list?' }]
+    expect(reviewsOn(waits, 'lasse')).toEqual([{ id: 'old' }])
+    expect(withoutReviewsOn(waits, 'lasse').map((x) => x.id)).toEqual(['ask'])
+    // The one wait an older waiting_on stands for.
+    expect(withoutReviewsOn(waitsOf({ waiting_on: { who: 'lasse', why: 'Review the draft' } }), 'lasse')).toEqual([])
+  })
+
+  it('names a wait by its id and the moment it began: the same session\'s later wait is another one', () => {
+    const first = w('s1', 'review', '2026-11-19T08:00:00.000Z')
+    const later = w('s1', 'review', '2026-11-20T08:00:00.000Z')
+    const refs = reviewsOn([first, w('s2', 'question')], 'lasse')
+    expect(refs).toEqual([{ id: 's1', since: '2026-11-19T08:00:00.000Z' }])
+    expect(withoutWaits([first, w('s2', 'question')], refs).map((x) => x.id)).toEqual(['s2'])
+    expect(withoutWaits([later], refs)).toEqual([later])
   })
 
   it('picks the most urgent wait the way core does', () => {

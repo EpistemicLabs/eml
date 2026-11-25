@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nextRunOfSchedule, sameSchedule, scheduleOfJob, scheduleOfJobs } from '../src/domain/task-schedule.js'
+import { hasSchedule, nextRunOfJobs, nextRunOfSchedule, sameSchedule, scheduleOfJob, scheduleOfJobs } from '../src/domain/task-schedule.js'
 import { createScheduleMirror } from '../src/application/schedule-mirror.js'
 import type { Job } from '../src/domain/job.js'
 
@@ -39,6 +39,38 @@ describe('a task\'s schedule', () => {
     expect(nextRunOfSchedule({ at: '2026-11-20T02:00:00.000Z' }, NOW)).toBeNull()
     expect(nextRunOfSchedule({ cron: '0 8 * * *', paused: true }, NOW)).toBeNull()
     expect(sameSchedule({ at: '2026-11-28T02:00:00Z', session: 'new' }, { session: 'new', at: '2026-11-28T02:00:00.000Z' })).toBe(true)
+  })
+
+  it('has a run coming up through a job here that is not ended or held', () => {
+    const later = job({ id: 'j2', nextRunAt: '2026-11-30T09:00:00.000Z' })
+    expect(nextRunOfJobs([later, job()])).toBe('2026-11-25T00:00:00.000Z')
+    for (const off of [{ paused: true }, { pendingApproval: true }, { endedAt: '2026-11-24T09:00:00.000Z' }, { nextRunAt: null }]) expect(nextRunOfJobs([job(off)])).toBeNull()
+  })
+
+  it('is still on while a job here has not ended, whatever its state: due, paused, waiting for the OK, woken by mail only, one time not run yet', () => {
+    const on = (jobs: Job[], schedule?: object, owner: string | undefined = 'lasse') => hasSchedule({ jobs, schedule, owner }, 'lasse', NOW)
+    const mail = job({ triggers: [{ type: 'mail', match: [{ kind: 'domain', domain: 'shop.example' }] } as never], nextRunAt: null })
+    const once = job({ triggers: [{ type: 'schedule', at: '2026-11-28T10:00', timeZone: 'UTC' }], nextRunAt: '2026-11-28T10:00:00.000Z' })
+    for (const open of [job(), job({ paused: true }), job({ pendingApproval: true }), mail, once, job({ nextRunAt: null })]) expect(on([open])).toBe(true)
+    // A one-time job that ran, a job that was finished: ended, so the task closes like any other.
+    const ended = job({ endedAt: '2026-11-24T09:00:00.000Z', nextRunAt: null })
+    expect(on([ended])).toBe(false)
+    expect(on([ended, job({ id: 'j2', paused: true })])).toBe(true)
+    expect(on([])).toBe(false)
+  })
+
+  it('counts the schedule mirrored into the task only on another member\'s task: on one\'s own it is a leftover of a job that ended or is gone', () => {
+    const mirrored = { cron: '0 8 * * *', time_zone: 'UTC' }
+    const ended = job({ endedAt: '2026-11-24T09:00:00.000Z', nextRunAt: null })
+    // Another member owns it: their cockpit fires the schedule.
+    expect(hasSchedule({ jobs: [], schedule: mirrored, owner: 'dominik' }, 'lasse', NOW)).toBe(true)
+    expect(hasSchedule({ jobs: [ended], schedule: mirrored, owner: 'dominik' }, 'lasse', NOW)).toBe(true)
+    expect(hasSchedule({ jobs: [], schedule: { ...mirrored, paused: true }, owner: 'dominik' }, 'lasse', NOW)).toBe(false)
+    expect(hasSchedule({ jobs: [], schedule: { at: '2026-11-20T02:00:00.000Z' }, owner: 'dominik' }, 'lasse', NOW)).toBe(false)
+    // One's own, or nobody's: this cockpit writes that mirror from its jobs, so without a job nothing runs it.
+    expect(hasSchedule({ jobs: [], schedule: mirrored, owner: 'lasse' }, 'lasse', NOW)).toBe(false)
+    expect(hasSchedule({ jobs: [ended], schedule: mirrored, owner: 'lasse' }, 'lasse', NOW)).toBe(false)
+    expect(hasSchedule({ jobs: [], schedule: mirrored }, 'lasse', NOW)).toBe(false)
   })
 })
 

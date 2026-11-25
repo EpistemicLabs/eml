@@ -202,6 +202,9 @@ export function mailKeys(job: Pick<Job, 'triggers'>): Set<string> {
 /** A run that has not come to an end: the next one waits for it. */
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'
 
+/** The note of a run that was due when its job was ended and so never started. */
+export const ENDED_BEFORE_START = 'its job was ended before it started'
+
 /** The first time after `after` (exclusive) a schedule trigger is due; null if none. */
 export function nextTriggerTime(trigger: ScheduleTrigger, after: number): number | null {
   if (trigger.at !== undefined) {
@@ -258,7 +261,17 @@ export function runHeader(job: Job, run: JobRun, now: number, zone: string): str
   return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
     + 'Not from your user, and nobody may be watching: report how you stand with session_status if you have it. '
     + 'The schedule tool changes or stops this job.'
-    + continuation(job) + ']'
+    + continuation(job) + taskRule(job) + ']'
+}
+
+/**
+ * What every run of a job on a task reads (runHeader): while the job has not ended, the task's schedule is on and the
+ * task is not closed. The run ends its job first and hands the result over, so no later run lands on a closed task.
+ */
+export const JOB_TASK_RULE = 'While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.'
+
+function taskRule(job: Job): string {
+  return job.taskId ? ` ${JOB_TASK_RULE}` : ''
 }
 
 /**

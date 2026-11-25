@@ -28,7 +28,7 @@ const NOW = new Date();
 const iso = (minutesAgo: number) => new Date(NOW.getTime() - minutesAgo * 60_000).toISOString();
 const task = (patch: Partial<BoardTask>): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: iso(30),
-  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, owner: 'lasse', ...patch,
+  turn: 'needs_you', group: 'own', coverage: { ok: false, group: 'mine' }, urgency: 0, important: false, sessionIds: [], working: false, nextRunAt: null, hasSchedule: false, owner: 'lasse', ...patch,
 });
 const board = (): Board => ({
   at: NOW.toISOString(), viewer: 'lasse',
@@ -506,6 +506,96 @@ describe('the Unread fold', () => {
       await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/close'));
       const status = await screen.findByRole('status');
       await waitFor(() => expect(status.textContent).toContain('Closed: not needed.'));
+    });
+  });
+
+  describe('a task whose schedule is still on', () => {
+    const next = () => new Date(Date.now() + 86_400_000).toISOString();
+    const routine = (patch: Partial<BoardTask> = {}) => task({ id: 'daily', title: 'daily-brief', turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: next(), hasSchedule: true, schedule: { cron: '0 8 * * 1-5' }, ...patch });
+    const serve = (current: Board, refuse?: { code: string; message: string }) => vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(current), { status: 200 });
+      if (init?.method === 'POST') {
+        posts.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.includes('/undo')) return new Response(JSON.stringify({ state: 'undone' }), { status: 200 });
+        if (refuse) return new Response(JSON.stringify({ error: { ...refuse, retry: false } }), { status: 409 });
+        return new Response(JSON.stringify({ opId: 'op-1', state: 'pending', undoUntil: new Date(Date.now() + 8000).toISOString() }), { status: 202 });
+      }
+      return new Response('{}', { status: 404 });
+    }));
+    const withRoutine = (patch: Partial<BoardTask> = {}): Board => ({ ...board(), tasks: [...board().tasks, routine(patch)] });
+
+    it('the ⋯ menu ends its schedule and closes it, with Undo', async () => {
+      serve(withRoutine());
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(await screen.findByRole('button', { name: 'More task actions' }));
+      expect(screen.queryByRole('menuitem', { name: 'Done' })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: 'Not needed' })).toBeNull();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'End schedule and close' }));
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/daily/end-schedule', body: { opId: expect.any(String), spaceId: 'main' } }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Schedule ended, task closed.'));
+      await act(async () => { fireEvent.click(within(status).getByRole('button', { name: 'Undo' })); });
+      await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
+    });
+
+    it('says why when the host refuses to end the schedule', async () => {
+      serve(withRoutine(), { code: 'open_steps', message: 'Two steps are still open.' });
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(await screen.findByRole('button', { name: 'More task actions' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'End schedule and close' }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Two steps are still open.'));
+      expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
+    });
+
+    const inReview = (): Board => withRoutine({ turn: 'review', group: undefined, waitingOn: { who: 'lasse', kind: 'review', why: 'Review: brief written' } });
+
+    it('Looks good in the panel approves the run and says the task stays open', async () => {
+      serve(inReview());
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      expect(screen.queryByRole('button', { name: 'Looks good, done' })).toBeNull();
+      fireEvent.click(await screen.findByRole('button', { name: 'Looks good' }));
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/daily/review', body: { opId: expect.any(String), spaceId: 'main' } }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Run approved. The task stays open.'));
+      expect(status.textContent).not.toContain('Closed');
+    });
+
+    it('Looks good in the Inbox approves the run and says the task stays open', async () => {
+      serve({ ...inReview(), inbox: [{ key: 'task:daily@x', kind: 'review', space: 'main', title: 'daily-brief', text: 'Brief written', since: iso(5), taskId: 'daily' }] });
+      setTaskView('inbox');
+      mount();
+      const inboxButton = await screen.findByRole('button', { name: 'Looks good' });
+      expect(inboxButton.getAttribute('title')).toBe('Approves this run. The task stays open until its schedule ends.');
+      fireEvent.click(inboxButton);
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/review'));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Run approved. The task stays open.'));
+    });
+
+    it('Plan offers End schedule and close on its row, and Close on the others', async () => {
+      serve(withRoutine());
+      setTaskView('plan');
+      mount();
+      fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+      expect(screen.getAllByTitle('Close: the task is not needed')).toHaveLength(3);
+      fireEvent.click(screen.getByRole('button', { name: 'End schedule and close' }));
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/end-schedule'));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Schedule ended, task closed.'));
+    });
+
+    it('shows the host\'s refusal when Close reaches a scheduled task after all', async () => {
+      serve(board(), { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.' });
+      setTaskView('plan');
+      mount();
+      fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+      fireEvent.click(screen.getAllByTitle('Close: the task is not needed')[0]);
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Its schedule is still on: use End schedule and close.'));
     });
   });
 });

@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, followUpTask, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
 import { cn } from '@/lib/utils';
@@ -121,6 +121,10 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     }, answer.undoUntil);
   }, [refetch, say]);
 
+  /** Looks good: closes the task, or on a task whose schedule is on approves that run only. */
+  const review = useCallback(async (t: BoardTask, closed: string) => answered(await reviewDone(t), isScheduled(t) ? 'Run approved. The task stays open.' : closed), [answered]);
+  const endTaskSchedule = useCallback(async (t: BoardTask) => answered(await endSchedule(t), 'Schedule ended, task closed.'), [answered]);
+
   // A follow-up started from a closed task's chat: its panel opens once the board has the new task.
   const [followUpOf, setFollowUpOf] = useState<{ taskId: string; spaceId: string; since: number; until: number } | null>(null);
   useEffect(() => {
@@ -177,11 +181,11 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   const onInboxAction = useCallback(async (a: InboxAction) => {
     if (a.kind === 'review') {
       const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
-      if (t) answered(await reviewDone(t), 'Closed as reviewed.');
+      if (t) await review(t, 'Closed as reviewed.');
     } else {
       await park(a.item, a.until);
     }
-  }, [answered, byId]);
+  }, [review, park, byId]);
 
   const unreadSessions = useMemo(
     () => (board && sessions ? unreadAnswers(sessions, board, turns, now).filter((s) => !readHere.has(readKey(s))) : []),
@@ -262,7 +266,8 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       sessionId={open?.sessionId}
       onOpenTask={(t) => openTask(t)}
       onHandOver={(t, mode) => setDialog({ taskId: t.id, mode })}
-      onReview={async (t) => answered(await reviewDone(t), 'Closed as done.')}
+      onReview={(t) => void review(t, 'Closed as done.')}
+      onEndSchedule={(t) => void endTaskSchedule(t)}
       onDrop={async (t) => answered(await closeTask(t), 'Closed: not needed.')}
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onContinue={continueFrom}
@@ -309,7 +314,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
         ) : view === 'now' ? (
           <NowBoard board={board} now={now} onOpen={(t) => openTask(t)} movedId={board.events[0]?.taskId ?? null} />
         ) : (
-          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} onCloseTask={async (t) => answered(await closeTask(t), 'Closed: not needed.')} projects={projects} projectActions={projectActions} />
+          <PlanView board={board} now={now} onOpen={(t) => openTask(t)} onCloseTask={async (t) => answered(await closeTask(t), 'Closed: not needed.')} onEndSchedule={(t) => void endTaskSchedule(t)} projects={projects} projectActions={projectActions} />
         )}
       </div>
 
