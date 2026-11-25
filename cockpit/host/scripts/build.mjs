@@ -5,6 +5,7 @@
 // Layout produced (everything the published package needs):
 //   dist/index.js     host entry (bin)          — tsc, ESM
 //   dist/server.cjs   brain server + core       — esbuild, CJS, better-sqlite3 external
+//   dist/read-worker.cjs  the brain server's read worker (server read-pool.ts looks for it next to server.cjs) — esbuild, CJS
 //   dist/core.cjs     core (provisioning)       — esbuild, CJS, better-sqlite3 external
 //   dist/core-log.cjs core's op-log tools (move, verify) for the agent upgrade — esbuild, CJS
 //   dist/channel-bridge.cjs      channel bridge process  — esbuild, CJS, better-sqlite3 external
@@ -44,6 +45,7 @@ const common = {
 }
 const bundles = [
   await build({ ...common, entryPoints: [path.join(server, 'dist', 'server.js')], outfile: path.join(HOST, 'dist', 'server.cjs') }),
+  await build({ ...common, entryPoints: [path.join(server, 'dist', 'read-worker.js')], outfile: path.join(HOST, 'dist', 'read-worker.cjs') }),
   await build({ ...common, entryPoints: [path.join(core, 'dist', 'index.js')], outfile: path.join(HOST, 'dist', 'core.cjs') }),
   // core keeps the move and the log verify out of its index (they need the EML class at runtime); the agent upgrade (agent-upgrade.ts) loads them from here.
   await build({
