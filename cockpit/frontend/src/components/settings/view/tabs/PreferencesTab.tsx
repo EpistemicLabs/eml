@@ -1,5 +1,5 @@
 // Settings › Preferences: the user's personal setup, one section per area
-// (Appearance, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
+// (Appearance, Time, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
 import { useSyncExternalStore } from 'react';
 
 import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';
@@ -11,6 +11,7 @@ import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
 import NotificationsSection from './NotificationsSection';
 import SessionLimitsRows from './SessionLimitsRows';
+import TimeZoneSection from './TimeZoneSection';
 
 type PreferencesTabProps = {
   projectSortOrder: ProjectSortOrder;
@@ -41,6 +42,8 @@ export default function PreferencesTab({
           </SettingsRow>
         </SettingsCard>
       </SettingsSection>
+
+      <TimeZoneSection />
 
       <SettingsSection title="Sidebar">
         <SettingsCard divided>
