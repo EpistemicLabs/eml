@@ -67,6 +67,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   delegate_not_in_space: 'That agent does not work in this space.',
   checkpoint_required: 'Pick a checkpoint: before, after or none.',
   goal_required: 'The task has no goal yet: set one before the agent keeps at it until the goal is reached.',
+  not_ready: 'Give the task a name and a goal first: an agent working on it alone needs to know what done means.',
   schedule_required: 'Pick when the agent starts.',
   no_session: 'The task has no open session to take over: pick a desk to start one.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',

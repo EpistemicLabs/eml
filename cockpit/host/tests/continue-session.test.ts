@@ -74,6 +74,13 @@ describe('continuing the task\'s own session', () => {
     expect(runs()).toBe(1)
   })
 
+  it('tells a continued session that a carried question was its own, not that the owner had asked it', async () => {
+    const { continueSession, delivered } = setup([entry('own')])
+    await continueSession.resume('own', { ...step, brief: 'The owner had an open question when this task was handed to you. Answer or settle it first: "Count it?"', question: 'Count it?' })
+    expect(delivered[0].text).toContain('Your question was still open when the owner delegated this task: "Count it?".')
+    expect(delivered[0].text).not.toContain('The owner had an open question')
+  })
+
   it('knows from the ledger that a session was continued for a request, which outlives a restart', async () => {
     const { continueSession } = setup([entry('own', { runStartedAt: '2026-11-25T10:00:05.000Z' }), entry('other', { taskId: 't2' })])
     expect(continueSession.continuedFor('t1', '2026-11-25T10:00:00.000Z')).toBe(true)

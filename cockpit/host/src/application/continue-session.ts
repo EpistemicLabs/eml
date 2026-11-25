@@ -1,6 +1,7 @@
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import { newSessionReason, ownSessionOf, type SessionOnTaskFacts } from '../domain/own-session.js'
 import type { SessionLedger } from '../session-ledger.js'
+import { continuedBrief } from '../domain/hand-over.js'
 import { stepPrompt, type RunnerStep } from './task-runner.js'
 
 /**
@@ -72,7 +73,9 @@ export function createContinueSession(deps: ContinueSessionDeps): ContinueSessio
     },
     async resume(sessionId, step) {
       const at = new Date(deps.now()).toISOString()
-      const outcome = await deps.deliver(sessionId, stepPrompt({ ...step, continued: true }, step.checkpoint))
+      // It asked the carried question itself: its brief says to settle it, not that the owner had asked it.
+      const { brief: _brief, ...rest } = step
+      const outcome = await deps.deliver(sessionId, stepPrompt({ ...rest, continued: true, ...(step.question ? { brief: continuedBrief(step.question) } : {}) }, step.checkpoint))
       if (outcome === 'refused' || outcome === 'unknown') return { kind: 'fallback', why: `the session cannot be reached (${outcome})` }
       if (outcome !== 'delivered' && outcome !== 'resumed') return { kind: 'retry', why: `the session is busy (${outcome})` }
       deps.ledger.startRun(sessionId, at)

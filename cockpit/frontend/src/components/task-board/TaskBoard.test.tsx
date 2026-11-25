@@ -35,7 +35,7 @@ const board = (): Board => ({
   spaces: [{ id: 'main', name: 'Main', agents: ['atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }],
   projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
   tasks: [
-    task({ id: 'asked', title: 'acme-cancellation-rescue', group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),
+    task({ id: 'asked', title: 'acme-cancellation-rescue', group: 'asked', delegate: 'atlas', goal: 'Acme stays', waitingOn: { who: 'lasse', kind: 'question', why: 'One last check on Thursday?', since: iso(5) } }),
     task({ id: 'mine', title: 'demo-meeting-prep' }),
     task({ id: 'running', title: 'kit-v4-rollout', turn: 'agent_working', group: undefined, delegate: 'atlas', working: true }),
     task({ id: 'theirs', title: 'dominik-release-notes', owner: 'dominik' }),
@@ -168,13 +168,12 @@ describe('the task board', () => {
     await waitFor(() => expect(posts.at(-1)?.url).toBe('/api/v1/commands/op-1/undo'));
   });
 
-  it('asks for a goal before scheduling an agent until the goal is reached', async () => {
+  it('offers nothing that hands a task without a goal to an agent alone: only working on it yourself', async () => {
     mount();
     fireEvent.click(await screen.findByText('Demo meeting prep'));
-    fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('button', { name: 'Schedule…' })[0]);
-    fireEvent.click(await screen.findByRole('button', { name: 'Until the goal is reached' }));
-    expect(screen.getByText(/The task has no goal yet: set one first/)).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Schedule' }) as HTMLButtonElement).disabled).toBe(true);
+    const sheet = await screen.findByRole('dialog');
+    for (const name of ['Delegate', 'Schedule…', 'Run Atlas now']) expect(within(sheet).queryByRole('button', { name })).toBeNull();
+    expect(within(sheet).getByRole('button', { name: 'Work on it now' })).toBeTruthy();
   });
 
   it('schedules an agent until the goal is reached, continuing the same session, or as a routine with new sessions (v0.23)', async () => {
@@ -283,7 +282,7 @@ describe('the task board', () => {
     const released = (): Board => ({
       ...board(),
       spaces: [{ id: 'main', name: 'Main', agents: ['motti', 'atlas'] }, { id: 'ebisu', name: 'Ebisu', agents: [] }],
-      tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, handTo: 'atlas' } : t)),
+      tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, handTo: 'atlas', goal: 'Deck ready' } : t)),
     });
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(released()), { status: 200 });

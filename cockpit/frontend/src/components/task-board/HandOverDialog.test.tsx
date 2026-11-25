@@ -40,6 +40,14 @@ describe('the hand-over dialog', () => {
     expect(screen.getByText(/its session is too long or runs in a terminal/)).toBeTruthy();
   });
 
+  it('calls working on it yourself Take over whenever the task has its own session, as the host decides it', () => {
+    open(task({ ownSession: { sessionId: 's1', continues: true } }), 'together');
+    expect(screen.getByText('Open its session in which desk?')).toBeTruthy();
+    cleanup();
+    open(task(), 'together');
+    expect(screen.getByText('Open the panel in which desk?')).toBeTruthy();
+  });
+
   it('on a task the agent works on alone with its own session, working on it yourself is Take over', () => {
     const onSubmit = open(task({ delegate: 'atlas', ownSession: { sessionId: 's1', continues: true } }), 'together');
     expect(screen.getByText(/The task's session opens in a new pane/)).toBeTruthy();

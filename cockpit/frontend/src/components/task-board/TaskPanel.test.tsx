@@ -316,7 +316,7 @@ describe('the task panel on the task state model (v0.23)', () => {
   });
 
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
-    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
+    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Brief sent', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Run Atlas now' })).toBeTruthy();
     expect(screen.getByText('repeats on weekdays at 08:00')).toBeTruthy();

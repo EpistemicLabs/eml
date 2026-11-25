@@ -456,6 +456,7 @@ async function main() {
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: runnerHeld,
     brief: (taskId) => taskCommands?.briefOf(taskId),
+    question: (taskId) => taskCommands?.questionOf(taskId),
     start: (space, step) => {
       const problem = ensureTaskProject(space, step.projectId)
       if (problem) return problem

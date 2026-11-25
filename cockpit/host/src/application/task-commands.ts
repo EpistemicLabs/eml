@@ -260,6 +260,8 @@ export interface TaskCommandsDeps {
 const asHandOverTask = (t: BrainTask): HandOverTask => ({
   id: t.id,
   status: t.status,
+  title: t.title,
+  ...(t.properties?.display_title ? { displayTitle: t.properties.display_title } : {}),
   owner: t.properties?.assignee_ids?.[0],
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
@@ -818,6 +820,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     /** The decisions and notes the task's latest board reopen listed for the chat (they closed with it). */
     reopenedWith(taskId: string): ReopenItem[] {
       return deps.store.commands().filter((c) => c.kind === 'reopen' && c.state === 'applied' && c.taskId === taskId).at(-1)?.reopened?.items ?? []
+    },
+
+    /** The open question the task's latest hand-over carried into the delegate's brief, if any. */
+    questionOf(taskId: string): string | undefined {
+      return deps.store.commands().filter((c) => c.kind === 'hand_over' && c.state === 'applied' && c.taskId === taskId && c.carriedQuestion).at(-1)?.carriedQuestion
     },
 
     /** What the delegate of a task handed over with an open question reads first. */

@@ -1,6 +1,7 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
+import { PLACEHOLDER_TITLE } from './task-title.js'
 
 /**
  * Hand over: give a task to an agent while its owner stays (decision task-assignee-owner-and-agent-delegate).
@@ -41,6 +42,9 @@ export interface HandOverRequest {
 export interface HandOverTask {
   id: string
   status: string
+  /** The kebab title and the name people read: a placeholder name (domain/task-title.ts) is no name yet. */
+  title?: string | null
+  displayTitle?: string
   owner?: string
   delegate?: string
   checkpoint?: string
@@ -60,6 +64,8 @@ export type HandOverRefusal =
   | 'no_session'
   /** Until the goal is reached, on a task without a goal: set the goal first. */
   | 'goal_required'
+  /** Delegate now or Schedule on a task without a name or a goal: an agent alone needs to know what done means. */
+  | 'not_ready'
 
 export interface TaskPatch {
   status?: string
@@ -98,6 +104,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   // Asked for without a desk when there is no own session (it was put away since the page looked): the page offers one.
   if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'no_session' }
   if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
+  // The agent works on it alone: only a task with a name and a goal is handed over (decision session-kind-follows-task-delegate).
+  if (req.mode !== 'together' && !readyToDelegate(task)) return { ok: false, refusal: 'not_ready' }
 
   const patch: TaskPatch = {}
   const lines: string[] = []
@@ -138,6 +146,19 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   if (req.mode === 'together') plan.session = { ...(req.desk ? { desk: req.desk } : {}), ...(ctx.ownSession ? { sessionId: ctx.ownSession } : {}) }
   return { ok: true, plan }
 }
+
+/** A task can be handed to an agent alone: it has a goal and a name (not the placeholder a session's task starts with). */
+export function readyToDelegate(task: Pick<HandOverTask, 'title' | 'displayTitle' | 'goal'>): boolean {
+  const named = Boolean(task.displayTitle?.trim()) || !PLACEHOLDER_TITLE.test(task.title ?? '')
+  return Boolean(task.goal?.trim()) && named
+}
+
+/**
+ * What a continued session reads first about a question carried over in the hand-over: it asked that question itself,
+ * so it settles it, or asks again what only the owner can answer.
+ */
+export const continuedBrief = (question: string): string =>
+  `Your question was still open when the owner delegated this task: "${question}". Settle it yourself where you can; ask it again only if only the owner can answer it.`
 
 const waitsOfTask = (task: HandOverTask): Wait[] => task.waits ?? waitsOf({ waiting_on: task.waitingOn })
 

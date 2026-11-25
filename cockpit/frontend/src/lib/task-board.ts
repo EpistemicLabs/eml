@@ -863,8 +863,16 @@ function workAction(task: BoardTask): Array<'together' | 'take_over'> {
   return task.ownSession ? [] : ['together'];
 }
 
+/** The actions that hand the task to an agent alone, which the host refuses on a task without a name or a goal. */
+const DELEGATING = new Set<PanelAction>(['hand_to', 'run_now', 'delegate_now', 'schedule']);
+
 /** The actions a task's state calls for: none while an agent asks (the chat answers), Hand to after Work on it now, … */
 export function panelActions(task: BoardTask, hasSession: boolean): PanelAction[] {
+  const ready = canDelegate(task);
+  return actionsFor(task, hasSession).filter((a) => ready || !DELEGATING.has(a));
+}
+
+function actionsFor(task: BoardTask, hasSession: boolean): PanelAction[] {
   // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
   if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
   if (task.turn === 'review') return ['looks_good'];
@@ -876,6 +884,6 @@ export function panelActions(task: BoardTask, hasSession: boolean): PanelAction[
     if (task.nextRunAt || task.schedule) return ['run_now', ...workAction(task)];
     return ['run_now', 'schedule', ...workAction(task)];
   }
-  return [...(canDelegate(task) ? ['delegate_now' as const] : []), 'schedule', ...workAction(task)];
+  return ['delegate_now', 'schedule', ...workAction(task)];
 }
 

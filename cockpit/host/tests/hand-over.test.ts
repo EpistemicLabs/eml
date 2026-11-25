@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { planHandOver, planUndo, scheduledJobOptions, type HandOverTask } from '../src/domain/hand-over.js'
+import { continuedBrief, planHandOver, planUndo, scheduledJobOptions, type HandOverTask } from '../src/domain/hand-over.js'
 
 const NOW = '2026-11-24T10:00:00.000Z'
 const ctx = { agents: ['atlas', 'motti'], now: NOW }
-const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', status: 'active', owner: 'lasse', ...patch })
+// A task ready to hand over has a name and a goal.
+const task = (patch: Partial<HandOverTask> = {}): HandOverTask => ({ id: 't1', status: 'active', owner: 'lasse', title: 'fix-sync', goal: 'Orders sync', ...patch })
 
 describe('planning a hand-over', () => {
   it('delegate now: writes the delegation with its request, keeps the owner, journals it', () => {
@@ -27,6 +28,15 @@ describe('planning a hand-over', () => {
     if (!inDesk.ok) throw new Error(inDesk.refusal)
     expect(inDesk.plan.session).toEqual({ desk: 'Main', sessionId: 's1' })
     expect(planHandOver(task(), { mode: 'together', delegate: 'atlas' }, ctx)).toEqual({ ok: false, refusal: 'no_session' })
+  })
+
+  it('a placeholder task the agent named is ready once it has a goal; working on it yourself needs neither', () => {
+    expect(planHandOver(task({ title: 'session-2026-11-25-2ee4035f', displayTitle: 'Fix the sync' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx).ok).toBe(true)
+    expect(planHandOver(task({ goal: undefined, title: 'session-2026-11-25-2ee4035f' }), { mode: 'together', delegate: 'atlas', desk: 'Main' }, ctx).ok).toBe(true)
+  })
+
+  it('a continued session reads that it asked the carried question itself', () => {
+    expect(continuedBrief('Count it?')).toBe('Your question was still open when the owner delegated this task: "Count it?". Settle it yourself where you can; ask it again only if only the owner can answer it.')
   })
 
   it('delegate now on an active task leaves its status alone: the request starts it (status moves forward only)', () => {
@@ -124,8 +134,11 @@ describe('planning a hand-over', () => {
     ['an agent of another space', task(), { mode: 'now', delegate: 'scout', checkpoint: 'after' }, ctx, 'delegate_not_in_space'],
     ['no checkpoint', task(), { mode: 'now', delegate: 'atlas' }, ctx, 'checkpoint_required'],
     ['schedule without a time', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after' }, ctx, 'schedule_required'],
+    ['delegate now on a task without a goal', task({ goal: undefined }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx, 'not_ready'],
+    ['delegate now on a placeholder task', task({ title: 'session-2026-11-25-2ee4035f' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx, 'not_ready'],
+    ['schedule on a task without a goal', task({ goal: '  ' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC' } }, ctx, 'not_ready'],
     ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'no_session'],
-    ['until the goal on a task without a goal', task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true } }, ctx, 'goal_required'],
+    ['until the goal on a task without a goal', task({ goal: undefined }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true } }, ctx, 'goal_required'],
     ['schedule without a checkpoint', task(), { mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx, 'checkpoint_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {
     expect(planHandOver(t, req as never, c)).toEqual({ ok: false, refusal })

@@ -60,7 +60,8 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   // The task's own session goes on unless the owner starts fresh (only when there is one the agent can carry on in).
   const continuable = task.ownSession?.continues === true;
   const [fresh, setFresh] = useState(false);
-  const takeOver = Boolean(task.delegate && task.ownSession);
+  // The host takes over the task's own session whenever it has one (host domain/hand-over.ts), delegated or not.
+  const takeOver = Boolean(task.ownSession);
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 

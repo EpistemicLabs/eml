@@ -63,6 +63,8 @@ export interface TaskRunnerDeps {
   scheduled?(taskId: string): boolean
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
   brief?(taskId: string): string | undefined
+  /** The open question the hand-over carried, for a continued session's own brief. */
+  question?(taskId: string): string | undefined
   /** Start a session on the step; an error text when it cannot. */
   start(space: BrainSpace, step: RunnerStep): string | null
   /**
@@ -80,7 +82,8 @@ export interface TaskRunnerDeps {
   log(line: string): void
 }
 
-export interface RunnerStep { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string }
+/** `question`: an open question the hand-over carried; a continued session reads its own brief about it (application/continue-session.ts). */
+export interface RunnerStep { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string; question?: string }
 
 interface Task {
   id: string
@@ -201,7 +204,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const brainProject = step.scope.slice('project.'.length)
       const title = step.title ?? step.id
       const brief = deps.brief?.(step.id)
-      const runnerStep: RunnerStep = { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) }
+      const question = deps.question?.(step.id)
+      const runnerStep: RunnerStep = { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}), ...(question ? { question } : {}) }
       // The task's own session carries on with the start prompt; one that does not take it falls back to a new session.
       const own = deps.resume ? deps.ownSession?.(step.id) ?? null : null
       let resumed: ResumeOutcome | null = null

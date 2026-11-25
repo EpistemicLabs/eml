@@ -60,7 +60,8 @@ function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id:
   return { commands, posts, byId, clock, later, jobs, changed, store, deps }
 }
 
-const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
+// A task ready to hand over has a name and a goal.
+const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['lasse'], goal: 'Done', ...props } })
 
 describe('hand over', () => {
   it('waits out the undo window, then writes the delegation with its request and the journal once', async () => {
@@ -128,6 +129,7 @@ describe('hand over', () => {
     expect(w.posts[0].body).not.toHaveProperty('status')
     expect(w.posts[0].body.text).toContain('Handed over with the open question: "Count it?"')
     expect(w.commands.briefOf('t1')).toContain('Count it?')
+    expect(w.commands.questionOf('t1')).toBe('Count it?')
   })
 
   it('schedule makes a job on the task when the window is over', async () => {
