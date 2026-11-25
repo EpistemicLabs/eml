@@ -1,4 +1,4 @@
-import { JOB_LIMITS, type Job } from '../domain/job.js'
+import { isOpenRun, JOB_LIMITS, type Job } from '../domain/job.js'
 import { checkJobName } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
 import type { JobAnswer, JobCaller } from './jobs.js'
@@ -9,15 +9,18 @@ import type { JobAnswer, JobCaller } from './jobs.js'
  * the schedule tool makes with at, target self and the session's task.
  *
  * The job carries origin 'end_turn', so the session's later calls find it: a
- * call with another time moves it (a check that already ran is used again), a
- * call without a time removes it. A job the agent made itself with the schedule
- * tool has no such mark and is never touched here.
+ * call with another time moves it (a check that already ran is used again, on
+ * the task the session works on now), a call without a time removes it. A
+ * check whose own run is still open (it woke the session, and that turn ends
+ * without a time) is ended, not removed: its run has yet to be settled and
+ * told to the user. A job the agent made itself with the schedule tool has no
+ * such mark and is never touched here.
  */
 
 export interface TurnCheckDeps {
   /** The schedule tool's actions (application/jobs.ts): the check is made with the session's own reach and limits. */
   jobs: { handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> }
-  store: Pick<JobStore, 'list' | 'put'>
+  store: Pick<JobStore, 'list' | 'put' | 'runs'>
   callerOf(sessionId: string): JobCaller | null
   log(line: string): void
 }
@@ -59,24 +62,26 @@ export function createTurnCheck(deps: TurnCheckDeps): TurnCheck {
     // One check per session: any other is left over from an earlier one.
     const stale = wanted.at ? more : [check, ...more].filter((job): job is Job => Boolean(job))
     for (const job of stale.filter((j) => !j.endedAt)) {
-      const answer = await deps.jobs.handle(caller, { action: 'delete', job: job.id })
-      deps.log(`[check] ${sessionId.slice(0, 8)} check ${job.id.slice(0, 8)} ${answer.status < 400 ? 'removed' : `not removed: ${answer.text}`}`)
+      // Removing a job removes its runs: one that is still open would never be settled.
+      const action = deps.store.runs(job.id).some(isOpenRun) ? 'finish' : 'delete'
+      const answer = await deps.jobs.handle(caller, { action, job: job.id })
+      const done = action === 'finish' ? 'ended, its run is still open' : 'removed'
+      deps.log(`[check] ${sessionId.slice(0, 8)} check ${job.id.slice(0, 8)} ${answer.status < 400 ? done : `not ${action === 'finish' ? 'ended' : 'removed'}: ${answer.text}`}`)
     }
     if (!wanted.at) return null
 
+    // Another job of the space goes by the name (another session's check on the same task, or a job the agent named so): this one says whose it is.
     const name = checkName(wanted.taskName)
+    const taken = deps.store.list().some((job) => job.id !== check?.id && !job.endedAt && (job.spaceId ?? null) === (caller.spaceId ?? null) && job.name.toLowerCase() === name.toLowerCase())
+    const as = taken ? checkName(wanted.taskName, sessionId.slice(0, 8)) : name
     if (check) {
-      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, prompt: wanted.prompt })
+      // The session may work on another task by now: the check goes with it.
+      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
       if (answer.status >= 400) return answer.text
       deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${wanted.at}`)
       return null
     }
-    const create = (as: string) => deps.jobs.handle(caller, { action: 'create', name: as, prompt: wanted.prompt, at: wanted.at, target: 'self' })
-    let answer = await create(name)
-    // The name is taken (another session's check on the same task, or a job the agent named so): this one says whose it is.
-    if (answer.status >= 400 && deps.store.list().some((job) => !job.endedAt && job.name.toLowerCase() === name.toLowerCase())) {
-      answer = await create(checkName(wanted.taskName, sessionId.slice(0, 8)))
-    }
+    const answer = await deps.jobs.handle(caller, { action: 'create', name: as, prompt: wanted.prompt, at: wanted.at, target: 'self' })
     if (answer.status >= 400 || !answer.job) return answer.text
     deps.store.put({ ...answer.job, origin: 'end_turn' })
     deps.log(`[check] ${sessionId.slice(0, 8)} check ${answer.job.id.slice(0, 8)} set for ${wanted.at}`)
