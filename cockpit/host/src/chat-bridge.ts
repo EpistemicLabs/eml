@@ -910,8 +910,8 @@ export class ChatBridge {
         // Its subagents still run: they wake it again, and that turn says how it stands.
         if (stillRunning({ agents: entry.runningAgents.size, status: entry.status })) return null
         const ask = shouldAskForStatus({ worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, asked: entry.reminded })
-        const missing: Missing[] = ask ? ['call'] : missingReply({ called: entry.status !== null, questions: entry.asks, reply: entry.replyText })
-        // One reminder per turn, naming everything it lacks.
+        const missing: Missing[] = ask ? ['call'] : missingReply({ called: entry.status !== null, questions: entry.asks, reply: entry.replyText, clients: entry.clients.size })
+        // One reminder per turn, naming everything it lacks: no call and unasked questions only while nobody has the session open, no reply always.
         if (entry.reminded || missing.length === 0) return null
         entry.reminded = true
         return reminder(missing)

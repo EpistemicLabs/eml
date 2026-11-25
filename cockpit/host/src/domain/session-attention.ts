@@ -39,13 +39,15 @@ export function shouldAskForStatus(facts: TurnFacts & { asked: boolean }): boole
 
 /**
  * What the reply lacks once the turn said how it stands: the person reads the
- * reply, not the call, so it has to be there, and a question has to be asked in
- * it. `reply` is the visible text written around the call.
+ * reply, not the call, so it has to be there, watched or not: an empty answer
+ * helps nobody. A question has to be asked in it too, but that is named only
+ * while nobody has the session open (`clients` is 0): someone who reads along
+ * asks back themselves. `reply` is the visible text written around the call.
  */
-export function missingReply(facts: { called: boolean; questions: boolean; reply: string }): Array<'reply' | 'questions'> {
+export function missingReply(facts: { called: boolean; questions: boolean; reply: string; clients: number }): Array<'reply' | 'questions'> {
   if (!facts.called) return []
   const text = facts.reply.trim()
-  const unasked = facts.questions && !/\?|^\s*\d+[.)]\s/m.test(text)
+  const unasked = facts.questions && facts.clients === 0 && !/\?|^\s*\d+[.)]\s/m.test(text)
   return [...(text === '' ? ['reply' as const] : []), ...(unasked ? ['questions' as const] : [])]
 }
 

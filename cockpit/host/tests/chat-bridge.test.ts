@@ -486,6 +486,24 @@ describe('ChatBridge', () => {
       expect(worker.onTurnEnding()).toBeNull()
     })
 
+    it('while someone has the session open, reminds only for a missing reply, not for unasked questions or a missing call', async () => {
+      const made = setup({ turnContext: async () => ({ ctx, task: { id: 't1', name: 'Refund', open: true } }) })
+      connect(made.bridge, { prompt: 'Draft the mail' })
+      await flush()
+      const runtime = made.runtimes[0]
+      const worker = runtime.start.worker!
+      expect(worker.onTurnEnding()).toBeNull()
+      await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'The draft is ready and waits for your word.' })
+      expect(worker.onTurnEnding()).toBeNull()
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      void made.bridge.deliver('s1', 'next')
+      await worker.endTurn({ result: 'Draft ready', questions: ['Send it today?'] })
+      // An empty answer helps nobody, watched or not; the questions are theirs to ask back.
+      expect(worker.onTurnEnding()).toBe(reminder(['reply']))
+      expect(worker.onTurnEnding()).toBeNull()
+    })
+
     it('never reminds twice in one turn: the call it was asked for is not sent back for its reply', async () => {
       const { worker } = started()
       expect(worker.onTurnEnding()).toBe(reminder(['call']))
