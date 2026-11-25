@@ -31,6 +31,7 @@ import { PLUGIN_DEFS, useViewEnabled } from '@/lib/pane-views';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
+import { ModeChip } from '@/components/task-board/ModeChip';
 import MainContentStateView from './subcomponents/MainContentStateView';
 import ErrorBoundary from './ErrorBoundary';
 
@@ -168,7 +169,10 @@ function MainContent({
                 selectedProject={selectedProject}
                 selectedSession={selectedSession}
                 paneLabel={paneLabel}
-                badge={paneView === 'chat' && sessionId ? <LimitsBadge sessionId={sessionId} /> : null}
+                badge={paneView === 'chat' && sessionId ? (
+                  // The task's mode beside its name (with you / the agent works alone), with the one action that switches it.
+                  <span className="flex items-center gap-1"><ModeChip taskId={selectedSession?.taskId as string | null | undefined} /><LimitsBadge sessionId={sessionId} /></span>
+                ) : null}
               />
             </div>
 

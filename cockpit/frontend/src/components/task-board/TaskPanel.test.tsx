@@ -49,6 +49,33 @@ describe('the task panel', () => {
     }
   });
 
+  describe('the mode buttons', () => {
+    const show = (t: BoardTask, onTakeOver = vi.fn(async () => true), onHandOver = vi.fn()) => {
+      render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={onHandOver} onTakeOver={onTakeOver} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      return { onTakeOver, onHandOver };
+    };
+
+    it('a task with you shows Delegate (it has a name and a goal), never Take over', () => {
+      const { onHandOver } = show(task({ goal: 'Orders sync', ownSession: { sessionId: 's1', continues: true } }));
+      fireEvent.click(screen.getByRole('button', { name: 'Delegate' }));
+      expect(onHandOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' }), 'now');
+      expect(screen.queryByRole('button', { name: 'Take over' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Work on it now' })).toBeNull();
+    });
+
+    it('a task the agent works on alone shows Take over, which takes over its own session', async () => {
+      const t = task({ turn: 'agent_working', group: undefined, delegate: 'atlas', checkpoint: 'after', ownSession: { sessionId: 's1', continues: true } });
+      const { onTakeOver } = show(t);
+      expect(screen.queryByRole('button', { name: 'Delegate' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Take over' }));
+      await vi.waitFor(() => expect(onTakeOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' })));
+    });
+  });
+
   describe('a closed task', () => {
     const closed = (patch: Partial<BoardTask>) => task({ id: 'c', status: 'invalidated', turn: null, group: undefined, closedAt: new Date(NOW).toISOString(), outcome: 'Not needed', delegate: 'atlas', checkpoint: 'after', ...patch });
     const show = (t: BoardTask, onReopen = vi.fn(), viewer = 'lasse', onContinue = vi.fn(async () => true)) => {
