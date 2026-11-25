@@ -3,7 +3,8 @@ import { isParked, type Wait } from './task-waits.js'
 
 /**
  * The Inbox holds what waits for the viewer to answer or look at: a question or a go an agent
- * asked for, and a result to review.
+ * asked for, a result to review, and a worker that stopped (it failed, went silent or ended
+ * without a next step). A wait of kind outside is someone else's move and never an item.
  * Items are derived, never stored; an item clears itself when its wait clears. A parked wait
  * (snoozed_until on the wait, brain schema 23) is listed as snoozed until its date, on every device.
  * A snooze from before parking lived in this cockpit's store, keyed by the task and the moment its
@@ -13,7 +14,7 @@ import { isParked, type Wait } from './task-waits.js'
  * asked on one task are two items, each opening its session.
  */
 
-export type InboxKind = 'question' | 'review'
+export type InboxKind = 'question' | 'review' | 'stopped'
 
 export interface InboxTask {
   id: string
@@ -51,12 +52,12 @@ export function inboxItems(tasks: InboxTask[], viewer: string, snoozes: Snooze[]
   for (const t of tasks) for (const w of t.waits) {
     if (w.who !== viewer) continue
     const kind = waitKind(w)
-    if (kind === 'stopped' || kind === 'outside') continue
+    if (kind === 'outside') continue
     const since = w.since ?? ''
     if (isParked(w, now)) parkedUntil.set(itemKey({ taskId: t.id, since }), w.snoozed_until!)
     items.push({
       key: itemKey({ taskId: t.id, since }),
-      kind: kind === 'review' ? 'review' : 'question',
+      kind: kind === 'review' || kind === 'stopped' ? kind : 'question',
       space: t.space,
       title: t.title,
       text: w.why ?? '',

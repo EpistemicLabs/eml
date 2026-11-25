@@ -11,16 +11,18 @@ describe('the Inbox', () => {
     t('finished', { who: 'lasse', kind: 'review', why: 'result ready', since: '2026-11-19T08:00:00Z' }),
     t('go', { who: 'lasse', kind: 'go', why: 'ready to send', since: '2026-11-19T07:00:00Z' }),
     t('customer', { who: 'kim', kind: 'outside', since: '2026-11-18T07:00:00Z' }),
-    t('stopped', { who: 'lasse', kind: 'stopped', since: '2026-11-18T06:00:00Z' }),
+    t('stopped', { who: 'lasse', kind: 'stopped', why: 'No activity for 1 h', since: '2026-11-18T06:00:00Z', session_id: 's9' }),
     t('quiet'),
   ]
-  it('holds questions, gos and results to review, newest first', () => {
+  it('holds questions, gos, results to review and stopped workers, newest first', () => {
     const { live } = inboxItems(tasks, 'lasse', [], NOW)
     expect(live.map((i) => [i.kind, i.taskId])).toEqual([
       ['question', 'asked'],
       ['review', 'finished'],
       ['question', 'go'],
+      ['stopped', 'stopped'],
     ])
+    expect(live[3]).toMatchObject({ text: 'No activity for 1 h', sessionId: 's9', key: 'task:stopped@2026-11-18T06:00:00Z' })
     expect(live[0]).toMatchObject({ text: 'Which list?', sessionId: 's1', since: '2026-11-19T09:00:00Z' })
   })
 
@@ -48,6 +50,14 @@ describe('the Inbox', () => {
     const r = inboxItems([parked, back], 'lasse', [], Date.parse('2026-11-19T10:00:00Z'))
     expect(r.live.map((i) => i.taskId)).toEqual(['back'])
     expect(r.snoozed.map((i) => [i.taskId, i.until])).toEqual([['parked', '2026-11-20T00:00:00.000Z']])
+  })
+
+  it('a stopped worker is an item only for the person it waits on, and can be parked like a question', () => {
+    const stopped = (patch: Partial<W> = {}) => [t('hung', { who: 'lasse', kind: 'stopped', why: 'No activity for 1 h', since: '2026-11-19T09:00:00Z', session_id: 's1', ...patch })]
+    expect(inboxItems(stopped(), 'kim', [], NOW)).toEqual({ live: [], snoozed: [] })
+    const parked = inboxItems(stopped({ snoozed_until: '2026-11-20T00:00:00.000Z' }), 'lasse', [], NOW)
+    expect(parked.live).toEqual([])
+    expect(parked.snoozed.map((i) => [i.kind, i.until])).toEqual([['stopped', '2026-11-20T00:00:00.000Z']])
   })
 
   it('lists every wait of a task on the viewer as an item of its own, each opening its session', () => {

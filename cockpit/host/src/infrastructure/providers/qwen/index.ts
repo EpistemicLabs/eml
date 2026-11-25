@@ -106,6 +106,7 @@ class QwenProvider implements AgentProvider {
   /** Qwen Code starts under the cockpit's id (--session-id). */
   readonly adoptsSessionId = true
   readonly messaging = false
+  readonly endTurnTool = false
   readonly settings = qwenSettings
 
   /** The cockpit's own folders a session writes to (IsolationContext), as of the last prepare. */

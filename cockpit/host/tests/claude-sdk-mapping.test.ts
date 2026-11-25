@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
-import { ClaudeEventMapper, STATUS_TOOL_DESCRIPTION, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { deriveTurn, endTurnAnswer, type EndTurn } from '../src/domain/turn-end.js'
+import { ClaudeEventMapper, endTurnReply, historyEvents, startingMode, toolTitle } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 const sdk = (message: unknown) => message as SDKMessage
 const stream = (event: unknown) => sdk({ type: 'stream_event', parent_tool_use_id: null, event })
@@ -220,13 +221,45 @@ describe('toolTitle', () => {
   })
 })
 
-describe('status tool description', () => {
-  it('tells the agent that a reply ending with a question for the user is a question', () => {
-    expect(STATUS_TOOL_DESCRIPTION).toContain('question: only the user can decide, or your reply ends with a question for the user.')
+describe('the end_turn tool\'s answer', () => {
+  const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
+  const worker = (extra: { missing?: Array<'next' | 'when'>; checkProblem?: string } = {}) => {
+    const calls: EndTurn[] = []
+    return { calls, endTurn: async (call: EndTurn) => { calls.push(call); return { derived: deriveTurn(call, ctx), missing: extra.missing ?? [], ...(extra.checkProblem ? { checkProblem: extra.checkProblem } : {}) } } }
+  }
+
+  it('hands a readable call on, trimmed, and says what was recorded', async () => {
+    const w = worker()
+    expect(await endTurnReply(w, { result: ' Draft ready ', questions: ['Send it today?'] })).toEqual({ text: 'Recorded: question for lasse. Now write your reply as visible text.', refused: false })
+    expect(w.calls).toEqual([{ result: 'Draft ready', questions: ['Send it today?'] }])
   })
 
-  it('asks for the full reply as visible text after the call, not in thinking', () => {
-    expect(STATUS_TOOL_DESCRIPTION).toContain('Call it first, then write your full reply as visible text')
-    expect(STATUS_TOOL_DESCRIPTION).toContain('It labels the reply; it does not replace it.')
+  it('refuses a call it cannot read without handing it on', async () => {
+    const w = worker()
+    // Refused: the tool answers as an error, so the chat does not show the call as the turn's end.
+    const answer = await endTurnReply(w, { result: 'x', next: { who: 'me', what: 'look', when: 'tomorrow' } })
+    expect(answer.refused).toBe(true)
+    expect(answer.text).toMatch(/^Not recorded: next\.when "tomorrow" is not a time\./)
+    expect(w.calls).toEqual([])
+  })
+
+  it('says what the call lacks and that the check could not be set, and always ends with the reply to come', async () => {
+    const call = { result: 'Half way' }
+    expect(await endTurnReply(worker({ missing: ['next'] }), call)).toEqual({ text: endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'] }), refused: false })
+    const timed = { result: 'Half way', next: { who: 'me', what: 'look', when: '2028-01-01T10:00' } }
+    const answer = await endTurnReply(worker({ checkProblem: 'at: at most a year ahead' }), timed)
+    expect(answer).toEqual({ text: endTurnAnswer(timed, deriveTurn(timed, ctx), { checkProblem: 'at: at most a year ahead' }), refused: false })
+    expect(answer.text).toMatch(/^Recorded: where the task stands, but no next step\. The check at 2028-01-01T10:00 was NOT set: at most a year ahead\./)
+    expect(answer.text.endsWith('Now write your reply as visible text.')).toBe(true)
+  })
+
+  it('refuses a call the host does not record, as one whose time has passed', async () => {
+    const passed = { endTurn: async () => { throw new Error('next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come') } }
+    expect(await endTurnReply(passed, { result: 'x', next: { who: 'me', what: 'look', when: '2020-01-01T10:00' } }))
+      .toEqual({ text: 'Not recorded: next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come. Call end_turn again.', refused: true })
+  })
+
+  it('says so when the call could not be recorded', async () => {
+    expect(await endTurnReply({ endTurn: async () => { throw new Error('the brain does not answer') } }, { result: 'x' })).toEqual({ text: 'Not recorded: the brain does not answer. Call end_turn again.', refused: true })
   })
 })

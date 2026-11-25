@@ -10,6 +10,7 @@ import type {
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
+import { END_TURN_DESCRIPTION, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
 import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
 import { SPLIT_RELATIONS } from '../../../domain/split.js'
 import { SORT_PICKS } from '../../../domain/sort.js'
@@ -424,13 +425,6 @@ export function startingMode(chosen: string | null, setting: string): string {
   return chosen ?? setting
 }
 
-const STATUS_TOOL = 'session_status'
-export const STATUS_TOOL_DESCRIPTION = 'Say how you stand at the end of your turn, whenever someone has to act; this is how people learn you need them. '
-  + 'Call it first, then write your full reply as visible text: the explanation, the answer and any questions. The person reads that reply, never this call or your thinking: what you only thought is lost. '
-  + 'done: finished, nobody needs to act. question: only the user can decide, or your reply ends with a question for the user. '
-  + 'review: finished, and someone should look at the result. failed: you could not do it. '
-  + 'Reason: one line that stands alone, because it is what the person reads in the list: the result, the question, or what went wrong. It labels the reply; it does not replace it.'
-
 export const OFFER_SPLIT_TOOL = 'offer_split'
 const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
   + 'Call it as soon as the user brings up new work that is not part of what this session works on (its task\'s goal, or its first request), before you start on it, instead of creating a task for it yourself; a question that only clarifies the current work is not a new topic. '
@@ -513,33 +507,48 @@ const SCHEDULE_TOOL_INPUT = {
     .describe('Mail that wakes the job: sender domains (e.g. example.com) and addresses.'),
 }
 
-// The result is what the model reads next: it asks for the closing summary right there.
-const NEXT_STEP: Record<string, string> = {
-  done: 'Now write your closing summary as visible text: what was asked, what you did, what changed (files, links).',
-  question: 'Now write your closing summary as visible text: what was asked, what you did, then the questions as a numbered list.',
-  review: 'Now write your closing summary as visible text: what was asked, what you did, what changed, then what to check.',
-  failed: 'Now write your closing summary as visible text: what was asked, what you tried, what went wrong.',
+/**
+ * What an end_turn call is answered with: why it was refused, or what was recorded and what it still lacks.
+ * `refused`: nothing was recorded. The tool then answers as an error, so the chat shows a failed tool row
+ * and not the end of the turn (frontend turn-end-line.ts turnEndOfTool).
+ */
+export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart['worker']>, 'endTurn'>, input: unknown): Promise<{ text: string; refused: boolean }> {
+  const read = readEndTurn(input)
+  if (!read.ok) return { text: read.error, refused: true }
+  try {
+    const { derived, missing, checkProblem } = await worker.endTurn(read.call)
+    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem }), refused: false }
+  } catch (error: unknown) {
+    return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
+  }
 }
 
-/** The status tool, the schedule tool and the check before a worker's turn ends, in this process: no extra server per session. */
+/** end_turn, the schedule tool and the check before a turn ends, in this process: no extra server per session. */
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs']) {
-  const status = tool(STATUS_TOOL, STATUS_TOOL_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
-    worker.report(status, reason ?? null)
-    return { content: [{ type: 'text', text: `Recorded: ${status}. ${NEXT_STEP[status] ?? ''}`.trim() }] }
-    // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
+  const said = (text: string) => ({ content: [{ type: 'text' as const, text }] })
+  // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
+  const endTurn = tool(END_TURN_TOOL, END_TURN_DESCRIPTION, END_TURN_INPUT, async (input) => {
+    const { text, refused } = await endTurnReply(worker, input)
+    return refused ? { ...said(text), isError: true } : said(text)
   }, { alwaysLoad: true })
+  // A session started before end_turn still calls this one.
+  const status = tool(LEGACY_STATUS_TOOL, LEGACY_STATUS_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
+    worker.report(status, reason ?? null)
+    return said(statusAnswer(status))
+  })
   const schedule = jobs && tool(SCHEDULE_TOOL, SCHEDULE_TOOL_DESCRIPTION, SCHEDULE_TOOL_INPUT, async (input) => {
     const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
-    return { content: [{ type: 'text', text }] }
+    return said(text)
   })
   // Changes nothing: the chat renders the call as a card, and the user's choice comes back as a message.
-  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => ({ content: [{ type: 'text', text: OFFER_SPLIT_ANSWER }] }))
-  const proposeSort = tool(PROPOSE_SORT_TOOL, PROPOSE_SORT_TOOL_DESCRIPTION, PROPOSE_SORT_TOOL_INPUT, async () => ({ content: [{ type: 'text', text: PROPOSE_SORT_ANSWER }] }))
-  const server = createSdkMcpServer({ name: 'cockpit', tools: schedule ? [status, offerSplit, proposeSort, schedule] : [status, offerSplit, proposeSort] })
+  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => said(OFFER_SPLIT_ANSWER))
+  const proposeSort = tool(PROPOSE_SORT_TOOL, PROPOSE_SORT_TOOL_DESCRIPTION, PROPOSE_SORT_TOOL_INPUT, async () => said(PROPOSE_SORT_ANSWER))
+  const tools = [endTurn, status, offerSplit, proposeSort, ...(schedule ? [schedule] : [])]
+  const server = createSdkMcpServer({ name: 'cockpit', tools })
   return {
     mcpServers: { cockpit: server },
     // Nobody may be there to answer a card about these tools.
-    allowedTools: [`mcp__cockpit__${STATUS_TOOL}`, `mcp__cockpit__${OFFER_SPLIT_TOOL}`, `mcp__cockpit__${PROPOSE_SORT_TOOL}`, ...(schedule ? [`mcp__cockpit__${SCHEDULE_TOOL}`] : [])],
+    allowedTools: tools.map((t) => `mcp__cockpit__${t.name}`),
     hooks: {
       UserPromptSubmit: [{
         hooks: [async () => {

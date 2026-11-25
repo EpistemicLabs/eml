@@ -22,7 +22,7 @@ import { bridgeAccountsFor } from './domain/space-plugins.js'
 import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
 import { writeCodexPluginServers } from './infrastructure/providers/codex/index.js'
 import { readRemoteAccess } from './remote-access.js'
-import { ChatBridge, IDLE_STOP } from './chat-bridge.js'
+import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
 import { ownersFor, type OwnedTask } from './domain/task-owner.js'
@@ -46,6 +46,9 @@ import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient 
 import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
+import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
+import { createTurnCheck } from './application/turn-check.js'
+import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createCycles } from './application/cycles.js'
@@ -366,7 +369,7 @@ async function main() {
       const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent
       return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
     },
-    deliver: (sessionId, text) => chat.deliver(sessionId, text),
+    deliver: (sessionId, text, opts) => chat.deliver(sessionId, text, opts),
   }, request)
   // Task system: every session works on a brain task (application/session-task.ts).
   const taskBrain = (space: BrainSpace) => {
@@ -374,10 +377,15 @@ async function main() {
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
   const owner = config?.handle ?? 'user'
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner })
+  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
+  const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
+  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
+  // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
+  const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })
   const taskRouter = createTaskRouter({
     ledger, spaces, brain: taskBrain, owner, log,
+    handles: (space) => turnContexts.handles(space),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -436,7 +444,7 @@ async function main() {
   taskRunner.every(RUNNER_TICK_MS)
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
-    ledger, spaces, brain: taskBrain, owner, log,
+    ledger, spaces, brain: taskBrain, owner, log, endTurnTool,
     jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
       ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
       channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),
@@ -450,7 +458,7 @@ async function main() {
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
     seen: (sessionId, since) => (ledger.get(sessionId)?.readAt ?? '') >= since,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session', reminder: true }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
     waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
     quiet: (sessionId) => {
@@ -464,13 +472,16 @@ async function main() {
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
-  const turnEnded = (sessionId: string, text: string) => {
+  // `turn`: the end_turn call a chat session made and whether it was sent back already; a terminal's turn has neither.
+  const turnEnded = (sessionId: string, text: string, turn?: TurnEndFacts) => {
     const endedAt = new Date().toISOString()
-    // The run keeps the result line of the session's last handoff (application/run-records.ts).
+    // The run keeps the result of the session's last call or handoff (application/run-records.ts).
     const handoff = parseHandoff(text)
-    if (handoff?.result) lastResults.set(sessionId, handoff.result)
+    const result = resultOfTurn(turn?.call, handoff)
+    if (result) lastResults.set(sessionId, result)
     runRecords.poke()
-    void taskRouter.turnEnded(sessionId, text).then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt })).then(() => taskRunner.tick())
+    void taskRouter.turnEnded(sessionId, text, turn?.call, { unsaid: turn ? !turn.said : false, ctx: turn?.ctx })
+      .then(() => nextStep.turnEnded(sessionId, { handoff: handoff !== null, endedAt, call: turn?.call ?? null, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -529,6 +540,10 @@ async function main() {
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
     onHelpers: (sessionId, helpers) => turns.waitOn(sessionId, helpers),
     turnDone: turnEnded,
+    turnContext: (sessionId) => turnContexts.of(sessionId),
+    callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
+    // The check a call's next.when asks for (application/turn-check.ts).
+    turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
     userWrote: (sessionId) => userWrote(sessionId),
     handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
@@ -698,6 +713,7 @@ async function main() {
     },
     onGrant, onGrantEnd,
   })
+  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), log })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())

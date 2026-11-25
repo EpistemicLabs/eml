@@ -5,8 +5,8 @@
  *   node task-hook.js
  *
  * Task system (application/session-task.ts): the host gives a session its
- * task, creating one when there is none, and this prints the task and the
- * handoff the session ends with. When the host answers with nothing, the hook
+ * task, creating one when there is none, and this prints the task and how
+ * the session ends a turn. When the host answers with nothing, the hook
  * prints nothing. Never fails: the
  * session starts as before whatever goes wrong here.
  */

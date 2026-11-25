@@ -6,6 +6,7 @@ import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/dele
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
+import { CHECKPOINT_STOP } from '../domain/turn-end.js'
 
 /**
  * The runner (note task-system-phase-1-build-plan, M3): in every space it
@@ -79,14 +80,15 @@ interface Task {
 export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
 
 /**
- * The prompt a step's session starts with; its task and the rules come with its start hook. A job's
- * prompt (ofJob) never tells the run to close the task: its run header carries the rule (domain/job.ts JOB_TASK_RULE).
+ * The prompt a step's session starts with; its task, the rules, how a turn ends and what happens until it is done come
+ * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
+ * (domain/job.ts JOB_TASK_RULE).
  */
 export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
-    ? 'Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). End with a handoff that asks the user for the go as a [lasse] question. Once he gave it, do the work and hand the result over for review.'
+    ? `Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). ${CHECKPOINT_STOP.before}`
     : checkpoint === 'after'
-      ? 'Checkpoint after: do the step, then end with a handoff that hands the result over for review, with a [lasse] question asking him to review it.'
+      ? `Checkpoint after: ${CHECKPOINT_STOP.after[0].toLowerCase()}${CHECKPOINT_STOP.after.slice(1)}`
       : step.ofJob
         ? 'No checkpoint: do this run to the end on your own; ask only when you cannot go on.'
         : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
@@ -98,10 +100,9 @@ export function stepPrompt(step: { id: string; title: string; content: string; b
     '',
     how,
     ...(reviewed ? [CLOSING_RULE] : []),
-    'Until the task is done, every wake-up checks its goal: reached, hand the result over; not reached, schedule your next check (schedule tool, task_id of this task) and stop quietly.',
-    reviewed
-      ? 'Closing, once the owner told you to: eml_track_task with status resolved and the outcome. End every stop with the handoff.'
-      : step.ofJob ? 'End every stop with the handoff.' : 'Closing means eml_track_task with status resolved and the outcome; end every stop with the handoff.',
+    ...(reviewed
+      ? ['Closing, once the owner told you to: eml_track_task with status resolved and the outcome.']
+      : step.ofJob ? [] : ['Closing means eml_track_task with status resolved and the outcome.']),
   ].join('\n')
 }
 

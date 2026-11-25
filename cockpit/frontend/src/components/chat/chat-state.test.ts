@@ -289,11 +289,11 @@ describe('groupItems', () => {
     expect(groupItems(state.items).map((g) => g.kind)).toEqual(['tools', 'item', 'tools', 'item', 'tools']);
   });
 
-  it('a text before a status call stays open next to the text after it', () => {
+  it('a text before a status call stays open next to the text after it, the call\'s line under both', () => {
     const status: ChatEvent = { kind: 'tool_call', toolId: 's', name: 'mcp__cockpit__session_status', toolKind: 'other', title: 'session_status', input: { status: 'question', reason: 'Go?' } };
     const state = fold([{ kind: 'text', blockId: 'm1:0', text: 'Long answer' }, status, { kind: 'tool_result', toolId: 's', status: 'completed', output: 'ok' }, { kind: 'text', blockId: 'm2:0', text: 'Go?' }]);
     const groups = groupItems(state.items);
-    expect(groups.map((g) => g.kind)).toEqual(['item', 'status', 'item']);
+    expect(groups.map((g) => g.kind)).toEqual(['item', 'item', 'status']);
     expect(groups.flatMap((g) => (g.kind === 'item' && g.item.type === 'assistant' ? [g.item.text] : []))).toEqual(['Long answer', 'Go?']);
   });
 
@@ -350,15 +350,35 @@ describe('a message shown when sent', () => {
   });
 });
 
-describe('the status call', () => {
-  it('shows as a label of its own, not folded with the tools', () => {
-    const tool = (id: string, name: string, input: Record<string, unknown>) =>
-      ({ type: 'tool', id, name, toolKind: 'other', title: name, input, status: 'completed', output: '' }) as const;
+describe('the call that ends a turn', () => {
+  const tool = (id: string, name: string, input: Record<string, unknown>, status = 'completed') =>
+    ({ type: 'tool', id, name, toolKind: 'other', title: name, input, status, output: '' }) as const;
+  const reply = (id: string) => ({ type: 'assistant', id, text: id, streaming: false }) as const;
+  const user = (id: string) => ({ type: 'user', id, text: id, queued: false, images: [] }) as const;
+  const kinds = (items: unknown[]) => groupItems(items as never).map((g) => (g.kind === 'item' ? g.item.id : g.kind));
+
+  it('shows as a line of its own, not folded with the tools', () => {
     const groups = groupItems([
       tool('t1', 'Read', { path: 'a' }),
       tool('t2', 'mcp__cockpit__session_status', { status: 'question', reason: 'confirm start date' }),
     ] as never);
     expect(groups.map((group) => group.kind)).toEqual(['tools', 'status']);
-    expect(groups[1]).toMatchObject({ kind: 'status', status: 'question', reason: 'confirm start date' });
+    expect(groups[1]).toMatchObject({ kind: 'status', id: 't2', call: { kind: 'session_status', status: 'question', reason: 'confirm start date' } });
+  });
+
+  it('an end_turn call sits under the reply written after it, at the end of its turn', () => {
+    const end = tool('e', 'mcp__cockpit__end_turn', { result: 'Draft is ready', next: { who: 'lasse', what: 'Read it' } });
+    expect(kinds([user('u1'), tool('t1', 'Read', {}), end, reply('a1'), user('u2'), reply('a2')])).toEqual(['u1', 'tools', 'a1', 'status', 'u2', 'a2']);
+    expect(groupItems([end, reply('a1')] as never)[1]).toMatchObject({ kind: 'status', call: { kind: 'end_turn', result: 'Draft is ready', next: { who: 'lasse' } } });
+  });
+
+  it('a second call in the same turn replaces the first; each turn keeps its own', () => {
+    const end = (id: string, result: string) => tool(id, 'mcp__cockpit__end_turn', { result });
+    const groups = groupItems([end('e1', 'First'), end('e2', 'Second'), reply('a1'), user('u2'), end('e3', 'Third')] as never);
+    expect(groups.flatMap((g) => (g.kind === 'status' && g.call.kind === 'end_turn' ? [g.call.result] : []))).toEqual(['Second', 'Third']);
+  });
+
+  it('a call the host refused stays a failed tool row', () => {
+    expect(kinds([tool('e', 'mcp__cockpit__end_turn', { result: 'x', next: { who: 'me', what: 'check', when: 'soon' } }, 'failed'), reply('a1')])).toEqual(['tools', 'a1']);
   });
 });

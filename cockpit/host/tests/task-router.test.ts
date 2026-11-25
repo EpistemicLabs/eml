@@ -99,19 +99,21 @@ describe('handoff', () => {
 
 describe('task router', () => {
   let router: Router
+  let parseHandoff: HandoffMod['parseHandoff']
   let SessionLedger: Ledger
   beforeAll(async () => {
     router = await import('../src/application/task-router.js')
+    ;({ parseHandoff } = await import('../src/domain/handoff.js'))
     SessionLedger = (await import('../src/session-ledger.js')).SessionLedger
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const setup = (task: Record<string, unknown>, space: { shared: boolean } = { shared: false }) => {
+  const setup = (task: Record<string, unknown>, space: { shared: boolean; agent?: string } = { shared: false }, handles: string[] = []) => {
     const ledger = new SessionLedger()
     const brain = fakeBrain(task)
     const logs: string[] = []
     const r = router.createTaskRouter({
-      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse',
+      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse', handles: async () => handles,
       log: (l) => logs.push(l), now: () => new Date('2026-11-17T09:00:00Z'),
     })
     return { ledger, brain, r, logs }
@@ -128,6 +130,185 @@ describe('task router', () => {
     expect(brain.posts[0].body.waits).toEqual([{ id: 's1', who: 'lasse', kind: 'question', why: 'Ship the shorter headline?', since: '2026-11-17T09:00:00.000Z', session_id: 's1' }])
     expect(brain.task.properties).toMatchObject({ waiting_on: { who: 'lasse', kind: 'question', session_id: 's1' } })
     expect(ledger.get('s1')!.attention).toBeFalsy()
+  })
+
+  it('does not read the chat\'s flag on a worker that said nothing as a review hand-over, but a status it gave still is one', async () => {
+    const silent = setup({ id: 't1', status: 'active', properties: { checkpoint: 'after', delegate: 'atlas' } })
+    silent.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    // attentionAfterTurn: the worker stopped without a call, a handoff or a status.
+    silent.ledger.setAttention('s1', { kind: 'review', reason: null })
+    await silent.r.turnEnded('s1', 'OK', null, { unsaid: true })
+    expect(silent.brain.posts).toHaveLength(0)
+
+    const failed = setup({ id: 't1', status: 'active', properties: {} })
+    failed.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    failed.ledger.setAttention('s1', { kind: 'failed', reason: null })
+    await failed.r.turnEnded('s1', '', null, { unsaid: true })
+    expect(waitsOfTask(failed.brain)).toMatchObject([{ who: 'lasse', kind: 'stopped' }])
+
+    const told = setup({ id: 't1', status: 'active', properties: {} })
+    told.ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 't1')
+    told.ledger.setAttention('s1', { kind: 'review', reason: 'Report' })
+    await told.r.turnEnded('s1', 'Done.', null, { unsaid: false })
+    expect(waitsOfTask(told.brain)).toMatchObject([{ who: 'lasse', kind: 'review', why: 'Review: Report' }])
+  })
+
+  describe('from an end_turn call', () => {
+    const SPACE = { shared: true, agent: 'atlas' }
+    const HANDLES = ['lasse', 'dominik', 'atlas', 'motti']
+    const called = (properties: Props = {}) => {
+      const made = setup({ id: 't-c', status: 'active', properties }, SPACE, HANDLES)
+      made.ledger.recordSpawn('s-c', null, 'bp-eml', 'claude', true, 't-c')
+      return made
+    }
+    const wait = (w: Props) => ({ id: 's-c', since: '2026-11-17T09:00:00.000Z', session_id: 's-c', ...w })
+
+    it.each<[string, Record<string, unknown>, Props, Props | null]>([
+      ['a question waits on the owner', { result: 'Draft ready', questions: ['Send it today? It is long.', 'To whom?'] }, {}, { who: 'lasse', kind: 'question', why: 'Send it today? · To whom?' }],
+      ['a question of a step with checkpoint before is a go', { result: 'Plan ready', questions: ['Start?'] }, { checkpoint: 'before' }, { who: 'lasse', kind: 'go', why: 'Start?' }],
+      ['the owner next is a review', { result: 'Draft ready', next: { who: 'lasse', what: 'read the draft' } }, {}, { who: 'lasse', kind: 'review', why: 'read the draft' }],
+      ['another member next is waited on like someone outside: no review of theirs', { result: 'Draft ready', next: { who: '@Dominik', what: 'sign it', when: '2026-11-27T10:00' } }, {}, { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['another agent next is waited on like someone outside', { result: 'Draft ready', next: { who: 'motti', what: 'translate it', when: '2026-11-27T10:00' } }, {}, { who: 'motti', kind: 'outside', why: 'translate it' }],
+      ['someone outside next is an outside wait', { result: 'Mail sent', next: { who: 'outside:Acme support', what: 'answer the mail', when: '2026-11-27T10:00' } }, {}, { who: 'Acme support', kind: 'outside', why: 'answer the mail' }],
+      ['an unknown handle is someone outside', { result: 'Mail sent', next: { who: 'kim', what: 'answer', when: '2026-11-27T10:00' } }, {}, { who: 'kim', kind: 'outside', why: 'answer' }],
+      ['a step for someone else without a time is no next step: nobody waits', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } }, {}, null],
+      ['a step for someone outside without a time is none either', { result: 'Mail sent', next: { who: 'outside:Acme', what: 'answer' } }, {}, null],
+      ['a failure stops on the owner', { result: 'Stuck', failed: 'No access to the shop', next: { who: 'dominik', what: 'x' } }, {}, { who: 'lasse', kind: 'stopped', why: 'No access to the shop' }],
+      ['its own next step at a time waits on nobody', { result: 'Mail sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } }, {}, null],
+      ['nothing next waits on nobody', { result: 'All done' }, { checkpoint: 'after' }, null],
+    ])('%s', async (_row, call, properties, expected) => {
+      const { brain, r } = called(properties)
+      await r.turnEnded('s-c', 'The reply, without a block.', call as never)
+      expect(waitsOfTask(brain)).toEqual(expected ? [wait(expected)] : [])
+    })
+
+    it('writes the call into the journal as its block, once, and takes the call over a block in the reply', async () => {
+      const { brain, r } = called()
+      const call = { result: 'Mail sent to Acme', checked: 'the address', decided: 'no reminder', next: { who: 'me', what: 'look for the answer', when: '2026-11-27T10:00' } }
+      await r.turnEnded('s-c', HANDOFF, call)
+      await r.turnEnded('s-c', HANDOFF, call)
+      expect(brain.posts).toEqual([{ path: '/task/t-c/track', body: {
+        text: '### Handoff\nResult: Mail sent to Acme\nChecked: the address\nDecided: no reminder\nNext: [atlas] look for the answer @ 2026-11-27T10:00',
+      } }])
+    })
+
+    it('a call replaces the wait of the session\'s last call and keeps another session\'s', async () => {
+      const { ledger, brain, r } = called({ waits: [{ id: 's-o', who: 'lasse', kind: 'review', why: 'Review: x', since: '2026-11-17T08:00:00.000Z', session_id: 's-o' }] })
+      ledger.recordSpawn('s-o', null, 'bp-eml', 'claude', false, 't-c')
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
+      await r.turnEnded('s-c', '', { result: 'Signed', next: { who: 'outside:Acme', what: 'countersign', when: '2026-11-27T10:00' } })
+      expect(waitsOfTask(brain).map((w) => [w.id, w.who, w.kind])).toEqual([['s-o', 'lasse', 'review'], ['s-c', 'Acme', 'outside']])
+      // A wait on another member is nothing the Inbox of anyone lists (domain/inbox.ts skips outside waits).
+      await r.turnEnded('s-c', '', { result: 'Countersigned, nothing left' })
+      expect(waitsOfTask(brain).map((w) => w.id)).toEqual(['s-o'])
+    })
+
+    it('a later turn without a call leaves the call\'s wait: the status the call left is not routed on its own', async () => {
+      const { ledger, brain, r } = called()
+      // What the chat does with a call: the session's attention is the call's status.
+      ledger.setAttention('s-c', { kind: 'done', reason: 'Draft ready' })
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
+      await r.turnEnded('s-c', 'Still waiting.')
+      expect(brain.posts).toHaveLength(1)
+      expect(waitsOfTask(brain)).toEqual([wait({ who: 'dominik', kind: 'outside', why: 'sign it' })])
+      // An answer ends it, and the same call again is routed anew.
+      await r.answered('s-c')
+      await r.turnEnded('s-c', '', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it', when: '2026-11-27T10:00' } })
+      expect(waitsOfTask(brain)).toHaveLength(1)
+    })
+
+    it('finishes a session whose call closes a closed task, and keeps one that asks', async () => {
+      const done: string[] = []
+      const finished = (call: Record<string, unknown>) => {
+        const ledger = new SessionLedger()
+        ledger.recordSpawn('s-f', null, 'bp-eml', 'claude', true, 't-f')
+        const r = router.createTaskRouter({ ledger, spaces: { resolve: () => SPACE as never }, brain: () => fakeBrain({ id: 't-f', status: 'resolved', properties: {} }), owner: 'lasse', finished: (id) => done.push(id), log: () => {} })
+        return r.turnEnded('s-f', '', call as never)
+      }
+      await finished({ result: 'Closed it', questions: ['Also the other one?'] })
+      expect(done).toEqual([])
+      await finished({ result: 'Closed it' })
+      expect(done).toEqual(['s-f'])
+    })
+  })
+
+  describe('from a block that names who is next', () => {
+    it.each<[string, string, Props | null]>([
+      ['a member, with the time the agent looks again', 'Next: [dominik] sign it @ 2026-11-27T10:00', { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['a member without a time: no next step, as from a call', 'Next: [dominik] sign it', null],
+      ['someone outside without a time', 'Next: [outside:Acme] countersign', null],
+      ['someone outside', 'Next: [outside:Acme] countersign @ 2026-11-27T10:00', { who: 'Acme', kind: 'outside', why: 'countersign' }],
+      ['the owner', 'Next: [lasse] read it', { who: 'lasse', kind: 'review', why: 'read it' }],
+      ['the agent itself', 'Next: [atlas] look again @ 2026-11-27T10:00', null],
+      ['nobody', 'Next: review by Lasse', null],
+    ])('%s', async (_who, next, expected) => {
+      const { ledger, brain, r } = setup({ id: 't-b', status: 'active', properties: {} }, { shared: true, agent: 'atlas' }, ['lasse', 'dominik', 'atlas'])
+      ledger.recordSpawn('s-b', null, 'bp-eml', 'claude', false, 't-b')
+      const block = `### Handoff\nResult: Draft ready\n${next}`
+      await r.turnEnded('s-b', `Done.\n\n${block}`)
+      // The journal keeps the block as the session wrote it.
+      expect(brain.posts[0].body.text).toBe(block)
+      expect(waitsOfTask(brain)).toEqual(expected ? [{ id: 's-b', since: '2026-11-17T09:00:00.000Z', session_id: 's-b', ...expected }] : [])
+    })
+
+    it('a Failed line stops on the owner', async () => {
+      const { ledger, brain, r } = setup({ id: 't-b', status: 'active', properties: {} })
+      ledger.recordSpawn('s-b', null, 'bp-eml', 'claude', false, 't-b')
+      await r.turnEnded('s-b', '### Handoff\nResult: Stuck\nFailed: No access to the shop')
+      expect(waitsOfTask(brain)).toEqual([expect.objectContaining({ who: 'lasse', kind: 'stopped', why: 'No access to the shop' })])
+    })
+  })
+
+  describe('decideWaiting', () => {
+    const ctx: { owner: string; agent: string; members: string[]; checkpoint?: string } = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'dominik', 'atlas'] }
+    const base = { handoff: null, attention: null, ctx, sessionId: 's1', now: new Date('2026-11-17T09:00:00Z') }
+    const block = (text: string) => parseHandoff(`### Handoff\n${text}`)
+
+    it('reads a call against the context it is given, and an unknown handle as outside', () => {
+      const call = { result: 'x', next: { who: 'dominik', what: 'sign', when: '2026-11-27T10:00' } }
+      expect(router.decideWaiting({ ...base, call })).toMatchObject({ who: 'dominik', kind: 'outside' })
+      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'robin', what: 'sign', when: '2026-11-27T10:00' } } })).toMatchObject({ who: 'robin', kind: 'outside' })
+      expect(router.decideWaiting({ ...base, call: { result: 'x', questions: ['Go?'] }, ctx: { ...ctx, checkpoint: 'before' } })).toMatchObject({ who: 'lasse', kind: 'go' })
+      // Without the time the agent looks again, a step for someone else is none.
+      expect(router.decideWaiting({ ...base, call: { result: 'x', next: { who: 'dominik', what: 'sign' } } })).toBeNull()
+    })
+
+    it('a call without a wait wins over the status and the checkpoint', () => {
+      expect(router.decideWaiting({ ...base, call: { result: 'x' }, attention: { kind: 'review', reason: 'old' }, ctx: { ...ctx, checkpoint: 'after' } })).toBeNull()
+    })
+
+    it('without a call or a block, the status decides', () => {
+      expect(router.decideWaiting({ ...base, attention: { kind: 'question', reason: 'A or B?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'A or B?' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'failed', reason: null } })).toMatchObject({ kind: 'stopped', why: 'The session failed' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'review', reason: 'Report' } })).toMatchObject({ kind: 'review', why: 'Review: Report' })
+      expect(router.decideWaiting({ ...base, attention: { kind: 'done', reason: 'ok' } })).toBeNull()
+    })
+
+    describe('a status that needs an answer comes before a block\'s Next', () => {
+      const tagged = () => block('Result: Draft ready\nNext: [dominik] sign it @ 2026-11-27T10:00')
+
+      it('a question status waits on the owner, not on whom Next names', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'question', reason: 'Send it today?' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'Send it today?' })
+      })
+
+      it('a failed status stops on the owner, not on whom Next names', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'failed', reason: 'No access' } })).toMatchObject({ who: 'lasse', kind: 'stopped', why: 'No access' })
+      })
+
+      it('a done status leaves the tagged Next to decide', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'done', reason: 'ok' } })).toMatchObject({ who: 'dominik', kind: 'outside', why: 'sign it' })
+        expect(router.decideWaiting({ ...base, handoff: block('Result: Draft ready\nNext: [lasse] read it'), attention: { kind: 'done', reason: 'ok' } })).toMatchObject({ who: 'lasse', kind: 'review', why: 'read it' })
+      })
+
+      it('the block\'s own questions come before the status and the Next', () => {
+        const asks = block('Result: Draft ready\nNext: [dominik] sign it\nQuestions:\n- [lasse] Which price?')
+        expect(router.decideWaiting({ ...base, handoff: asks, attention: { kind: 'failed', reason: 'No access' } })).toMatchObject({ who: 'lasse', kind: 'question', why: 'Which price?' })
+      })
+
+      it('a review status after a tagged Next for someone else leaves the Next', () => {
+        expect(router.decideWaiting({ ...base, handoff: tagged(), attention: { kind: 'review', reason: 'Report' } })).toMatchObject({ who: 'dominik', kind: 'outside' })
+      })
+    })
   })
 
   it('writes with the rev it read, and redoes the change once when another write came in between', async () => {
@@ -252,7 +433,6 @@ describe('task router', () => {
   })
 
   it('keeps only the question, and removes a wait when the user answers the session that set it', async () => {
-    expect(router.shortQuestion('Close the task despite the open mails?You wanted it done. The brightline task was')).toBe('Close the task despite the open mails?')
     const { ledger, brain, r } = setup({ id: 't20', status: 'active', properties: {} })
     ledger.recordSpawn('s20', null, 'bp-eml', 'claude', false, 't20')
     ledger.recordSpawn('s21', null, 'bp-eml', 'claude', false, 't20')

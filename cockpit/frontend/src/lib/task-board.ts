@@ -17,8 +17,12 @@ export type Coverage =
 export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
 
 /**
- * Someone outside has the next move (kind outside), but the wait names the person keeping an eye on it: the owner (the
+ * Someone else has the next move (kind outside), but the wait names the person keeping an eye on it: the owner (the
  * task-state migration's blockers) or the viewer. Then the texts say its why, which names the outsider, instead of who.
+ *
+ * The who of an outside wait has two meanings (host domain/task-turn.ts isViewersMove): that keeper, on older waits,
+ * or the name or handle of the one being waited on, on waits an end_turn call wrote (someone outside the space,
+ * another member or agent). Those are not kept: the texts name their who, "waiting on <who>".
  */
 const keptOutside = (w: WaitingOn | undefined, keeper: Array<string | undefined>): boolean => w?.kind === 'outside' && keeper.includes(w.who);
 
@@ -159,7 +163,8 @@ export function closedAsTask(c: ClosedTask): BoardTask {
 
 export interface InboxItem {
   key: string;
-  kind: 'question' | 'review';
+  /** `stopped`: an agent failed or went silent, and only the viewer can get it going again. */
+  kind: 'question' | 'review' | 'stopped';
   space: string;
   title: string;
   text: string;

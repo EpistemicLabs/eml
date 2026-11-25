@@ -95,9 +95,10 @@ describe('offering a split', () => {
   it('is part of what an attended task session reads, not an unattended one', async () => {
     const { taskContext } = await import('../src/application/session-task.js')
     const task = { id: 't', title: 'session-review-ui', status: 'active', properties: {} } as never
-    expect(taskContext(task, false)).toContain('call offer_split')
-    expect(taskContext(task, false)).toContain('do not create a task for it yourself')
-    expect(taskContext(task, false)).toContain('a task the user explicitly asks you to note, you create yourself')
-    expect(taskContext(task, false, true)).not.toContain('offer_split')
+    const WHO = { owner: 'kim', tool: true }
+    expect(taskContext(task, false, WHO)).toContain('call offer_split')
+    expect(taskContext(task, false, WHO)).toContain('do not create a task for it yourself')
+    expect(taskContext(task, false, WHO)).toContain('a task the user explicitly asks you to note, you create yourself')
+    expect(taskContext(task, false, WHO, true)).not.toContain('offer_split')
   })
 })

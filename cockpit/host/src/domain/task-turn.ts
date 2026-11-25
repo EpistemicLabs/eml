@@ -91,8 +91,13 @@ export function waitKind(w: WaitingOn): WaitKind {
 }
 
 /**
- * The wait is the viewer's move: it names them and is not of kind outside. An outside wait names the person keeping an
- * eye on it (the task-state migration puts the owner there), while someone outside has the next move: never the viewer's.
+ * The wait is the viewer's move: it names them and is not of kind outside. An outside wait is never the viewer's
+ * move, and its `who` has one of two meanings:
+ *   - the person keeping an eye on it, while someone its why names has the next move (waits the task-state migration
+ *     wrote: it put the task's owner there);
+ *   - the one being waited on, by name or handle: someone outside the space, or another member or agent (waits an
+ *     end_turn call wrote, domain/turn-end.ts deriveTurn).
+ * Readers tell them apart by the task's owner: a who that is the owner is the keeper.
  */
 export function isViewersMove(w: WaitingOn | undefined, viewer: string): boolean {
   return !!w && w.who === viewer && waitKind(w) !== 'outside'

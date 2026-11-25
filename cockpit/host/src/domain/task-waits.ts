@@ -12,6 +12,12 @@ import { waitKind, type WaitingOn } from './task-turn.js'
  * question blocks the agent, a review does not), an entry without a kind last,
  * then the oldest since, then list order.
  *
+ * On a wait of kind outside, `who` is either the person keeping an eye on it
+ * (waits the task-state migration wrote name the task's owner; the why names
+ * who is waited on) or the name or handle of the one being waited on (waits an
+ * end_turn call wrote: someone outside the space, another member or agent).
+ * Neither is the named person's move (domain/task-turn.ts isViewersMove).
+ *
  * Parking (decision task-parking-is-a-snoozed-wait) sets snoozed_until on a wait:
  * an ISO date it comes back at, or "open". Core ranks a parked wait by the data
  * alone; whether its date has passed is the cockpit's call (isParked).

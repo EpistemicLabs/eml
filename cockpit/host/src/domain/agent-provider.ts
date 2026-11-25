@@ -247,6 +247,11 @@ export interface AgentProvider {
   readonly adoptsSessionId: boolean
   /** Whether sessions can message each other by their address (LaunchRequest.address) — Claude Code's SendMessage. */
   readonly messaging: boolean
+  /**
+   * Whether a chat session of this provider has the end_turn tool (domain/turn-end.ts). One without it
+   * says how its turn ends in the text of its reply, like a terminal.
+   */
+  readonly endTurnTool: boolean
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */

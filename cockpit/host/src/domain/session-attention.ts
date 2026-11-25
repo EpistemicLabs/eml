@@ -29,22 +29,26 @@ export function stillRunning(facts: { agents: number; status: WorkerStatus | nul
   return facts.agents > 0 && (facts.status === null || facts.status === 'done')
 }
 
-/** A worker about to end its turn without saying how it stands is sent back, once. */
+/**
+ * A worker about to end its turn without saying how it stands is sent back.
+ * `asked`: the turn already had its one reminder.
+ */
 export function shouldAskForStatus(facts: TurnFacts & { asked: boolean }): boolean {
   return facts.worker && facts.clients === 0 && !facts.declared && !facts.asked
 }
 
 /**
- * After the status, the reply has to show it: what the person reads in the
- * chat is the closing summary, not the status call. A question has to be
- * asked there too. Sent back once, for whichever is missing.
+ * What the reply lacks once the turn said how it stands: the person reads the
+ * reply, not the call, so it has to be there, watched or not: an empty answer
+ * helps nobody. A question has to be asked in it too, but that is named only
+ * while nobody has the session open (`clients` is 0): someone who reads along
+ * asks back themselves. `reply` is the visible text written after the call.
  */
-export function missingSummary(facts: { status: WorkerStatus | null; textAfter: string; asked: boolean }): 'summary' | 'questions' | null {
-  if (!facts.status || facts.asked) return null
-  const text = facts.textAfter.trim()
-  if (text === '') return 'summary'
-  if (facts.status === 'question' && !/\?|^\s*\d+[.)]\s/m.test(text)) return 'questions'
-  return null
+export function missingReply(facts: { called: boolean; questions: boolean; reply: string; clients: number }): Array<'reply' | 'questions'> {
+  if (!facts.called) return []
+  const text = facts.reply.trim()
+  const unasked = facts.questions && facts.clients === 0 && !/\?|^\s*\d+[.)]\s/m.test(text)
+  return [...(text === '' ? ['reply' as const] : []), ...(unasked ? ['questions' as const] : [])]
 }
 
 /** A turn ended: what it leaves when the worker still said nothing. Unclear means someone should look. */

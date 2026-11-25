@@ -62,7 +62,7 @@ export function splitPrompt(input: { title: string; brief: string; fromTitle: st
     input.existing ? 'The topic already had its task: continue it, starting from its journal and last handoff.' : null,
     `Topic: ${input.title}`,
     input.brief.trim(),
-    input.taskId ? `Your task is ${input.taskId}: write your handoffs into it.` : null,
+    input.taskId ? `Your task is ${input.taskId}: this work is recorded there.` : null,
     'Start by saying in two lines what you understood and what you will do first.',
   ].filter(Boolean).join('\n\n')
 }

@@ -272,7 +272,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onContinue={continueFrom}
       onPark={async (t, until) => {
-        // The task's Inbox item as the host keyed it; a wait the Inbox does not list (a stop, someone outside) by the task alone.
+        // The task's Inbox item as the host keyed it; a wait the Inbox does not list (someone outside) by the task alone.
         const item = board.inbox.find((i) => i.taskId === t.id && i.space === t.spaceId) ?? board.snoozed.find((i) => i.taskId === t.id)
           ?? { key: `task:${t.id}@`, kind: 'question' as const, space: t.spaceId, title: t.title, text: '', since: '', taskId: t.id };
         await park(item, until);
@@ -347,7 +347,7 @@ function ControlBar({ board, unread, view, onView }: { board: Board; unread: num
           <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => onView(v)}
             className={cn('flex min-h-(--target-comfortable) items-center gap-2 rounded-lg px-3 text-heading font-medium text-muted-foreground aria-selected:bg-card aria-selected:text-foreground aria-selected:shadow-raised', FOCUS)}>
             {label}
-            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} questions and results to review`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
+            {v === 'inbox' && board.counts.inbox > 0 && <span title={`${board.counts.inbox} waiting for you: questions, results to review, agents that stopped`} className="rounded-full bg-muted-foreground/12 px-1.5 text-caption tabular-nums text-foreground">{board.counts.inbox}</span>}
             {v === 'inbox' && unread > 0 && <UnreadDot count={unread} />}
           </button>
         ))}

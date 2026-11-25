@@ -13,9 +13,25 @@ describe('the status line of a task', () => {
     })
   })
 
+  it('shows the next step as who and what, not as the line was written', () => {
+    const next = (line: string) => statusLine({ text: `### Handoff\nResult: PR is open.\nNext: ${line}`, at: AT })?.next
+    expect(next('[kim] review the PR')).toBe('Kim: review the PR')
+    expect(next('[atlas] see whether the deploy went through @ 2026-11-27T10:00')).toBe('Atlas: see whether the deploy went through')
+    expect(next('[outside:Acme GmbH] answer the offer.')).toBe('Acme GmbH: answer the offer')
+    expect(next('[atlas] @ 2026-11-27T10:00')).toBe('Atlas')
+    // A line from before the tag is its text, as it was.
+    expect(next('Kim reviews the PR. Then merge.')).toBe('Kim reviews the PR')
+  })
+
   it('falls back to the note\'s first sentence when the note is no handoff', () => {
     expect(statusLine({ text: 'Mockup v1 published. Questions sent.', at: AT })).toEqual({ now: 'Mockup v1 published', next: null, at: AT })
     expect(statusLine({ text: '## Progress\n- Started the build. More later.', at: AT })?.now).toBe('Started the build')
+  })
+
+  it('is not taken from a note the schedule mirror once wrote: that says nothing about where the task stands', async () => {
+    const { MIRROR_NOTES } = await import('../src/domain/task-schedule.js')
+    expect(MIRROR_NOTES).toHaveLength(2)
+    for (const text of MIRROR_NOTES) expect(statusLine({ text, at: AT })).toBeNull()
   })
 
   it('is null without a note', () => {

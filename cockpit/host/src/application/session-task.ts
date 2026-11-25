@@ -7,6 +7,7 @@ import { MAX_RUNNING } from '../domain/runner-gate.js'
 import { parentOf } from '../domain/task-relations.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
+import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -21,7 +22,7 @@ import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from
  *     heading, the sidebar and the chat show the task's name. When the session
  *     names itself (session-title-cli.ts), only a placeholder takes that name;
  *     a task with a name keeps it. The user renaming the session renames the task.
- *   - Every start, the session reads its task and the handoff it ends with.
+ *   - Every start, the session reads its task and how it ends a turn (domain/turn-end.ts).
  *
  * In a shared space each member's cockpit acts for its own sessions only: the
  * tasks it creates and reads are those of its ledger's sessions.
@@ -36,6 +37,8 @@ export interface SessionTaskDeps {
   jobTask?: (jobId: string) => string | null
   /** This cockpit's member: the owner of a session's task when the task it comes from names none. */
   me: string
+  /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot reads the block. */
+  endTurnTool(sessionId: string): boolean
   now?: () => Date
 }
 
@@ -61,8 +64,8 @@ export const SPLIT_RULES = [
   `- At most ${MAX_RUNNING} steps of one task run at the same time, and ${MAX_RUNNING} tasks without a parent per space; further ones wait. Plan a few steps that are each worth a session, not many small ones.`,
 ]
 
-/** A worker has nobody to offer a split to: new work goes into its handoff. */
-export const WORKER_NEW_WORK_RULE = '- New work that is not part of this task: do not start it and do not create a task for it. Name it in the handoff as a [task] question.'
+/** A worker has nobody to offer a split to: it names new work when its turn ends. */
+export const WORKER_NEW_WORK_RULE = `- New work that is not part of this task: do not start it and do not create a task for it. ${NEW_WORK_AT_STOP}`
 
 type Parent = Pick<Task, 'id' | 'title' | 'properties'>
 
@@ -74,8 +77,19 @@ export const placeholderTitle = (sessionId: string, now: Date) =>
 
 export { displayTitleOf, kebabTitle }
 
-/** What the session reads at every start: its task, the rules of the task system and the handoff it ends with. */
-export function taskContext(task: Task, placeholder: boolean, unattended = false, parent: Parent | null = null): string {
+/** Who ends the turns of this session: the user's handle, the agent's, and whether it has the end_turn tool. */
+export interface TurnParty {
+  owner: string
+  agent?: string | null
+  tool: boolean
+}
+
+/**
+ * What the session reads at every start: its task, the rules of the task system and how it ends a turn.
+ * `unattended`: a worker, with nobody to offer a split to. What a task handed to an agent does until it
+ * is done goes by the task's delegate, whoever started the session.
+ */
+export function taskContext(task: Task, placeholder: boolean, turn: TurnParty, unattended = false, parent: Parent | null = null): string {
   const state = [task.status, task.properties?.stage, task.properties?.checkpoint ? `checkpoint ${task.properties.checkpoint}` : null, task.properties?.delegate ? `delegate ${task.properties.delegate}` : null].filter(Boolean).join(' · ')
   return [
     '# Your task (cockpit task system)',
@@ -101,13 +115,13 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     '- Progress, plans and decisions of this session go to this task: eml_track_task, eml_note / eml_decide with task_id.',
     '- A worker you start gets a task of its own by default. Name its task when it has one: spawn with --task <id> (an existing task, e.g. the customer\'s open task) or --step (a new step of this task, only when it is part of this task\'s own work).',
     '- Handing out work (an inbox): find the open task it belongs to (eml_list, eml_recall) and start the worker with --task on it; when there is none, start it with --new-task "<title>" --in <the customer\'s or topic\'s project> --task-text "<what needs doing>".',
-    '- A task has an owner and may have a delegate: assignee_ids names the person who owns it (Lasse for his work), delegate the one agent that works on it. Handing work to an agent sets delegate; the owner stays. Never put an agent into assignee_ids.',
+    '- A task has an owner and may have a delegate: assignee_ids names the person who owns it, delegate the one agent that works on it. Handing work to an agent sets delegate; the owner stays. Never put an agent into assignee_ids.',
     '- Planned steps of this task: eml_create_task with parent_id, depends_on, checkpoint (before · after · none) and delegate (your agent handle); the runner starts them.',
     '- A task you create that an agent can do gets a checkpoint (default after; before when it needs the user\'s OK first) and a delegate: the runner starts it, also as a standalone task. Leave both out only when the person does it themselves or the user says so. Name the checkpoint and delegate you set in your reply.',
     '- A step is done when it is closed: eml_track_task with status resolved and the outcome. The runner then starts the steps that depend on it; a step with checkpoint none starts on its own, so plan with care.',
-    '- Closing: a task with checkpoint before or after you never close on your own. Hand the finished work over for review (session_status review and the handoff\'s Result); its owner closes it, or tells you explicitly in the chat to close it, and only then you do. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged. A task with checkpoint none, or one an agent owns, you close yourself when it is done. A task whose schedule is still on (a job of it has not ended: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; its owner closes it.',
+    `- Closing: a task with checkpoint before or after you never close on your own. ${FOR_REVIEW[0].toUpperCase()}${FOR_REVIEW.slice(1)}; its owner closes it, or tells you explicitly in the chat to close it, and only then you do. Code work is ready for review only once it runs in the user's cockpit (merged, released and installed), not when its PR is open or merged. A task with checkpoint none, or one an agent owns, you close yourself when it is done. A task whose schedule is still on (a job of it has not ended: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, ${END_SCHEDULE_FIRST}; its owner closes it.`,
     '- Outputs (texts, drafts, results) go into the brain only when the task asks for it.',
-    '- You do not set who has to act next; the cockpit reads your handoff and does that.',
+    `- ${COCKPIT_ROUTES}`,
     '- When the work drifts from the task\'s name (the scope changed), rename it: eml_track_task display_title, with text saying why. The journal keeps the old name; the kebab title stays.',
     ...(unattended ? [] : [
       '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. In the chat call offer_split (name the open task it belongs to, if one exists); in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.',
@@ -116,29 +130,9 @@ export function taskContext(task: Task, placeholder: boolean, unattended = false
     ...(unattended ? [WORKER_NEW_WORK_RULE] : []),
     '',
     ...SPLIT_RULES,
-    ...(unattended ? [
-      '',
-      '## Until it is done',
-      '- At every wake-up, check the task against its goal first. Checks are read-only; nothing goes out without the user\'s OK.',
-      '- Reached: hand the result over for review (session_status review and the handoff\'s Result). Do not close it yourself.',
-      '- Not reached: schedule your next check yourself with the schedule tool (create with at and task_id of this task, or update the job you run in), then stop quietly: session_status done, Next names the time of the check, no [lasse] question. You decide whether and when to check again; do not ask the user about it.',
-      '- Ask the user ([lasse]) only what only they can decide. A stop without a next step (a check, a question, a review hand-over, or the task closed) is caught by the cockpit.',
-    ] : []),
+    ...(task.properties?.delegate ? ['', untilDoneRules()] : []),
     '',
-    '## Handoff',
-    unattended
-      ? 'When you stop (done, or waiting for someone), end your last message with this block (leave out lines that are empty):'
-      : 'A reply that ends with a question for the user: call session_status question first, with the question as the reason, so it reaches their Inbox; then write your full answer as visible text, ending with the question, because the user reads only that, never the status call or your thinking (in a terminal without that tool, end with the handoff\'s Questions line instead). Do not end every reply with the handoff: the user reads along. Write it only when you hand the task over for review or close it, or when the cockpit asks for it before it stops the session (leave out lines that are empty):',
-    '```',
-    '### Handoff',
-    'Result: <first sentence, at most 100 characters: where the task stands now — the cockpit shows it under the task\'s name in every list; then more if needed>',
-    'Checked: <what you verified yourself> · Claimed: <what you took over unverified>',
-    'Decided: <decisions made in this session>',
-    'Next: <the next step, and who takes it>',
-    'Questions:',
-    '- [lasse] <a question only the user can answer>',
-    '- [task] <an open question for the task>',
-    '```',
+    turnEndRules(turn),
   ].join('\n')
 }
 
@@ -149,7 +143,7 @@ export interface SessionTask {
   named(sessionId: string, title: string): Promise<void>
   /** The user renamed the session: its task takes the name, with one journal entry per change. False when the session has no task here; throws when the brain refuses (renameRefusal maps it). */
   renamed(sessionId: string, title: string): Promise<boolean>
-  /** Before an idle stop: the prompt asking for the handoff, or null (no brain, no task, or unattended: it hands off every turn). */
+  /** Before an idle stop: the prompt asking where the task stands, or null (no brain, no task, or a worker: the next-step check looks after its stops). */
   handoffBeforeStop(sessionId: string): string | null
 }
 
@@ -163,8 +157,6 @@ export function renameRefusal(err: unknown): { status: number; code: string; mes
   if (status >= 400 && status < 500) return { status: 422, code: 'TASK_NAME_REFUSED', message: 'The brain does not take this name for the task. Nothing was changed.' }
   return { status: 502, code: 'BRAIN_UNAVAILABLE', message: 'The brain did not answer. Nothing was changed; try again.' }
 }
-
-export const HANDOFF_BEFORE_STOP = 'The cockpit is about to stop this session because nobody has used it for a while. Before it does, write your handoff block now (### Handoff with Result, Checked · Claimed, Decided, Next, Questions). Put anything only the user can answer under Questions as [lasse]. Nothing else; the session stops after this reply.'
 
 export function createSessionTask(deps: SessionTaskDeps): SessionTask {
   const now = () => deps.now?.() ?? new Date()
@@ -226,7 +218,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       if (lead) return lead.projectId.startsWith('cycle:') ? null : LEAD_HANDOFF
       const t = target(sessionId)
       if (!t?.entry.taskId || t.entry.worker) return null
-      return HANDOFF_BEFORE_STOP
+      return BEFORE_IDLE_STOP
     },
 
     async context(sessionId) {
@@ -256,7 +248,9 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       // A step reads its parent's name and goal; a parent it cannot read is left out.
       const parentId = parentOf(task)
       const parent = parentId ? await (t.brain.get(`/engram/${parentId}`) as Promise<Task>).catch(() => null) : null
-      return taskContext(task, isPlaceholder(task), deps.ledger.get(sessionId)?.worker === true, parent)
+      const entry = deps.ledger.get(sessionId)
+      const agent = deps.spaces.resolve(entry?.spaceId ?? null).agent
+      return taskContext(task, isPlaceholder(task), { owner: deps.me, agent, tool: deps.endTurnTool(sessionId) }, entry?.worker === true, parent)
     },
 
     async renamed(sessionId, title) {

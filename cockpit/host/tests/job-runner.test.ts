@@ -219,6 +219,45 @@ describe('job runner', () => {
     expect(header('Daily brief')).not.toContain('never close its task')
   })
 
+  it('tells the run of a check set by ending a turn how that check moves and ends, not the schedule tool\'s rules', async () => {
+    const { CHECK_RUN_RULE } = await import('../src/domain/turn-end.js')
+    const check = (await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'Check: a task', prompt: 'p', at: '2026-11-10T08:00', target: 'self' })).job!
+    world.store.put({ ...check, origin: 'end_turn' })
+    world.states.set('maker', 'idle')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    const header = world.delivered[0].text.split('\n')[0]
+    expect(header.endsWith(`${CHECK_RUN_RULE}]`)).toBe(true)
+    expect(header).not.toMatch(/schedule tool|action finish/)
+  })
+
+  it('settles the run of a check whose session ends that turn without a time, and ends the check', async () => {
+    const { createTurnCheck } = await import('../src/application/turn-check.js')
+    const logs: string[] = []
+    const check = createTurnCheck({ jobs, store: world.store, callerOf: () => ({ ...caller, taskId: 'task-1' }), log: (l) => logs.push(l) })
+    const wanted = (at: string | null) => ({ at, taskName: 'Refund from Acme', prompt: 'The check is due.' })
+    expect(await check.settle('maker', wanted('2026-11-10T08:00'))).toBeNull()
+    const job = world.store.list()[0]
+    // The check fires and wakes its session.
+    world.states.set('maker', 'idle')
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.delivered).toHaveLength(1)
+    expect(world.store.runs(job.id)).toMatchObject([{ status: 'started', sessionId: 'maker' }])
+    // The session hands the result over: its call names no time.
+    world.states.set('maker', 'working')
+    expect(await check.settle('maker', wanted(null))).toBeNull()
+    expect(world.store.get(job.id)?.endedAt).toBeTruthy()
+    world.statuses.set('maker', 'review')
+    world.states.set('maker', 'idle')
+    world.now += MIN
+    await runner.tick()
+    // The run is settled with what the session said, and the user is told.
+    expect(world.store.runs(job.id)).toMatchObject([{ status: 'finished', outcome: 'review' }])
+    expect(world.alerts).toEqual(['review: Check: Refund from Acme: Run 1: Brief written'])
+    expect(logs.at(-1)).toMatch(/ended, its run is still open$/)
+  })
+
   it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
     await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
     world.now = Date.parse('2026-11-10T00:00:30Z')
@@ -241,6 +280,8 @@ describe('job runner', () => {
     await runner.tick()
     expect(world.started).toHaveLength(1)
     expect(world.started[0].text).toMatch(/^\[Scheduled by the cockpit: job "Daily brief" .*run 1, due Tue 10 Nov 08:00 Asia\/Makassar\. Not from your user/)
+    expect(world.started[0].text).toContain('nobody may be watching: end your turn with end_turn if you have it.')
+    expect(world.started[0].text).not.toContain('session_status')
     expect(world.started[0].text).toMatch(/Write the daily brief\.$/)
     const stored = world.store.get(job.id)!
     expect(stored.nextRunAt).toBe('2026-11-11T00:00:00.000Z')

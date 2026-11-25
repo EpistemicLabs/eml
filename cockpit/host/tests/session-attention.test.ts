@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attentionAfterTurn, missingSummary, shouldAskForStatus, stillRunning } from '../src/domain/session-attention.js'
+import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning } from '../src/domain/session-attention.js'
 
 describe('shouldAskForStatus', () => {
   const quiet = { worker: true, clients: 0, declared: false, asked: false }
@@ -39,25 +39,34 @@ describe('attentionAfterTurn', () => {
   })
 })
 
-describe('missingSummary', () => {
-  it('sends a turn back that ends with only the status call', () => {
-    expect(missingSummary({ status: 'done', textAfter: '', asked: false })).toBe('summary')
-    expect(missingSummary({ status: 'review', textAfter: '  \n', asked: false })).toBe('summary')
+describe('missingReply', () => {
+  it('names the reply when the turn ends with only the call', () => {
+    expect(missingReply({ clients: 0, called: true, questions: false, reply: '' })).toEqual(['reply'])
+    expect(missingReply({ clients: 0, called: true, questions: false, reply: '  \n' })).toEqual(['reply'])
   })
 
-  it('asks for the questions when a question was declared but not asked', () => {
-    expect(missingSummary({ status: 'question', textAfter: 'I need those three answers before I change anything.', asked: false })).toBe('questions')
+  it('names the questions when the call has some and the reply does not ask', () => {
+    expect(missingReply({ clients: 0, called: true, questions: true, reply: 'I need those three answers before I change anything.' })).toEqual(['questions'])
+  })
+
+  it('names both when a call with questions has no reply at all', () => {
+    expect(missingReply({ clients: 0, called: true, questions: true, reply: '' })).toEqual(['reply', 'questions'])
   })
 
   it('lets a reply through that asks or lists its questions', () => {
-    expect(missingSummary({ status: 'question', textAfter: 'Which start date?', asked: false })).toBeNull()
-    expect(missingSummary({ status: 'question', textAfter: 'Open:\n1. Start date\n2. Terms', asked: false })).toBeNull()
-    expect(missingSummary({ status: 'done', textAfter: 'Did X, changed Y.', asked: false })).toBeNull()
+    expect(missingReply({ clients: 0, called: true, questions: true, reply: 'Which start date?' })).toEqual([])
+    expect(missingReply({ clients: 0, called: true, questions: true, reply: 'Open:\n1. Start date\n2. Terms' })).toEqual([])
+    expect(missingReply({ clients: 0, called: true, questions: false, reply: 'Did X, changed Y.' })).toEqual([])
   })
 
-  it('asks once, and not without a status', () => {
-    expect(missingSummary({ status: 'done', textAfter: '', asked: true })).toBeNull()
-    expect(missingSummary({ status: null, textAfter: '', asked: false })).toBeNull()
+  it('names unasked questions only while nobody has the session open, a missing reply always', () => {
+    expect(missingReply({ clients: 1, called: true, questions: true, reply: 'I need those three answers before I change anything.' })).toEqual([])
+    expect(missingReply({ clients: 1, called: true, questions: true, reply: '' })).toEqual(['reply'])
+    expect(missingReply({ clients: 2, called: true, questions: false, reply: '' })).toEqual(['reply'])
+  })
+
+  it('names nothing without a call', () => {
+    expect(missingReply({ clients: 0, called: false, questions: false, reply: '' })).toEqual([])
   })
 })
 
