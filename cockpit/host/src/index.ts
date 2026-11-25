@@ -554,6 +554,7 @@ async function main() {
     callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
     // The check a call's next.when asks for (application/turn-check.ts).
     turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
+    checkSaved: (sessionId) => turnCheck.saved(sessionId),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
     userWrote: (sessionId) => userWrote(sessionId),
     handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
@@ -723,7 +724,7 @@ async function main() {
     },
     onGrant, onGrantEnd,
   })
-  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), log })
+  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())

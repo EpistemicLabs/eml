@@ -18,8 +18,8 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
-import { parseAt, zoneLabel } from './domain/schedule.js'
+import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
@@ -206,6 +206,8 @@ export interface ChatContext {
    * (application/turn-check.ts). Answers why it could not be set, or null.
    */
   turnCheck?: (sessionId: string, check: { at: string | null; call: EndTurn; turn: SessionTurn }) => Promise<string | null>
+  /** The session's check as the schedule saved it: the zone its time was read in and the instant (application/turn-check.ts saved). */
+  checkSaved?: (sessionId: string) => CheckTime | null
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
   /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
@@ -957,13 +959,12 @@ export class ChatBridge {
         // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
         this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx: turn.ctx })
         const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
-        // The instant the check was saved for, read in the same zone the schedule read it in (application/turn-check.ts).
-        const at = derived.checkAt && !problem && this.ctx.turnCheck ? parseAt(derived.checkAt, time.zone) : null
+        const saved = derived.checkAt && !problem ? this.ctx.checkSaved?.(entry.sessionId) ?? null : null
         return {
           derived,
           missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
           ...(problem && derived.checkAt ? { checkProblem: problem } : {}),
-          ...(at !== null ? { checkTime: { at, zone: time.zone } } : {}),
+          ...(saved ? { checkTime: saved } : {}),
         }
       },
       report: (status, reason) => {

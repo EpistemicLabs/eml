@@ -9,7 +9,8 @@ import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
 
-function setup(zone = 'UTC') {
+function setup(initial = 'UTC') {
+  let zone = initial
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-turn-check-')), 'jobs.json')
   const store = new JobStore(file)
   const jobs = new Jobs({
@@ -22,9 +23,9 @@ function setup(zone = 'UTC') {
     s2: { sessionId: 's2', spaceId: null, projectId: 'bp-eml', toolProfile: null, taskId: 't1' },
   }
   const logs: string[] = []
-  const check = createTurnCheck({ jobs, store, callerOf: (id) => callers[id] ?? null, log: (l) => logs.push(l) })
+  const check = createTurnCheck({ jobs, store, callerOf: (id) => callers[id] ?? null, zone: () => zone, log: (l) => logs.push(l) })
   const wanted = (at: string | null) => ({ at, taskName: 'Refund from Acme', prompt: 'The check is due.' })
-  return { file, store, jobs, callers, check, wanted, logs }
+  return { file, store, jobs, callers, check, wanted, logs, setZone: (next: string) => { zone = next } }
 }
 
 describe('the check an end_turn call sets', () => {
@@ -199,6 +200,19 @@ describe('the check an end_turn call sets', () => {
     // One the user names in another zone keeps that zone.
     const berlin = await jobs.handle(callers.s1, { action: 'create', name: 'Berlin call', prompt: 'x', at: '2026-11-28T08:00', timezone: 'Europe/Berlin', target: 'self' })
     expect(berlin.job?.triggers).toEqual([{ type: 'schedule', at: '2026-11-28T07:00:00.000Z', timeZone: 'Europe/Berlin' }])
+  })
+
+  it('reads a moved check\'s time in the zone the user has now, and tells the saved instant', async () => {
+    const { store, check, wanted, setZone } = setup('UTC')
+    expect(check.saved('s1')).toBeNull()
+    await check.settle('s1', wanted('2026-11-26T20:15'))
+    expect(check.saved('s1')).toEqual({ at: Date.parse('2026-11-26T20:15:00Z'), zone: 'UTC' })
+    setZone('Asia/Makassar')
+    await check.settle('s1', wanted('2026-11-27T09:00'))
+    expect(store.list()[0].triggers).toEqual([{ type: 'schedule', at: '2026-11-27T01:00:00.000Z', timeZone: 'Asia/Makassar' }])
+    expect(check.saved('s1')).toEqual({ at: Date.parse('2026-11-27T01:00:00Z'), zone: 'Asia/Makassar' })
+    await check.settle('s1', wanted(null))
+    expect(check.saved('s1')).toBeNull()
   })
 
   it('fits the name into a job name', () => {

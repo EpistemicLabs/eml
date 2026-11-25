@@ -22,6 +22,8 @@ export interface TurnCheckDeps {
   jobs: { handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> }
   store: Pick<JobStore, 'list' | 'put' | 'runs'>
   callerOf(sessionId: string): JobCaller | null
+  /** The user's time zone now: a moved check reads its new time in it, not in the zone it was first set in. */
+  zone?: () => string
   log(line: string): void
 }
 
@@ -37,6 +39,8 @@ export interface CheckWanted {
 export interface TurnCheck {
   /** Brings the session's check in line with its call. Answers why the check could not be set, or null. Never throws. */
   settle(sessionId: string, wanted: CheckWanted): Promise<string | null>
+  /** The session's check still to run: the zone its time was read in and the instant saved; null without one. */
+  saved(sessionId: string): { at: number; zone: string } | null
 }
 
 const NO_TASK = 'this session'
@@ -82,7 +86,7 @@ export function createTurnCheck(deps: TurnCheckDeps): TurnCheck {
     const as = taken ? checkName(wanted.taskName, sessionId.slice(0, 8)) : name
     if (check) {
       // The session may work on another task by now: the check goes with it.
-      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
+      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, ...(deps.zone ? { timezone: deps.zone() } : {}), prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
       if (answer.status >= 400) return answer.text
       deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${checkTimeLine(wanted.at, answer.job ?? deps.store.list().find((job) => job.id === check.id))}`)
       return null
@@ -95,6 +99,11 @@ export function createTurnCheck(deps: TurnCheckDeps): TurnCheck {
   }
 
   return {
+    saved(sessionId) {
+      const check = checksOf(sessionId).find((job) => !job.endedAt)
+      const trigger = check?.triggers.find(isScheduleTrigger)
+      return trigger?.at ? { at: Date.parse(trigger.at), zone: trigger.timeZone } : null
+    },
     async settle(sessionId, wanted) {
       try {
         return await settle(sessionId, wanted)
