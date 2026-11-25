@@ -63,7 +63,7 @@ export function formatTokens(n: number): string {
 
 // Date + time of the last message: "21 Sep 01:54 PM" (today keeps the date
 // too — it should always be visible).
-function formatClock(iso: string): string {
+export function formatClock(iso: string): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return '';
   return `${formatInZone(at, { day: '2-digit', month: 'short' })} ${clock(at)}`;

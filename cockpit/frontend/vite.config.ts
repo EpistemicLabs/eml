@@ -41,4 +41,6 @@ export default defineConfig({
     },
   },
   build: { outDir: 'dist', emptyOutDir: true },
+  // Tests run in UTC on every machine: the time-zone tests set the user's zone apart from it.
+  test: { env: { TZ: 'UTC' } },
 })

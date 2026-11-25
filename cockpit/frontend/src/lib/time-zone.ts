@@ -130,16 +130,16 @@ export function dayNumber(at: number, zone: string): number {
   return Math.round(Date.UTC(c.year, c.month - 1, c.day) / DAY_MS);
 }
 
-/** "UTC+7", "UTC+5:30", "UTC-3", "UTC": the zone's offset from UTC at `at`. */
-export function utcOffset(zone: string, at: number = Date.now()): string {
-  const minutes = Math.round(offsetAt(at, zone) / 60_000);
+/** "UTC+7", "UTC+5:30", "UTC-3", "UTC": the zone's offset from UTC now. */
+export function utcOffset(zone: string): string {
+  const minutes = Math.round(offsetAt(Date.now(), zone) / 60_000);
   if (minutes === 0) return 'UTC';
   const abs = Math.abs(minutes);
   return `UTC${minutes < 0 ? '-' : '+'}${Math.floor(abs / 60)}${abs % 60 ? `:${String(abs % 60).padStart(2, '0')}` : ''}`;
 }
 
 /** "Asia/Bangkok (UTC+7)". */
-export const zoneLabel = (zone: string, at: number = Date.now()): string => `${zone} (${utcOffset(zone, at)})`;
+export const zoneLabel = (zone: string): string => `${zone} (${utcOffset(zone)})`;
 
 /** Every IANA zone this browser knows, for the Settings picker; at least the given ones. */
 export function knownTimeZones(...include: string[]): string[] {
@@ -158,11 +158,11 @@ export function clock(at: number, zone: string = userTimeZone()): string {
   return `${pad(c.hour)}:${pad(c.minute)}`;
 }
 
-/** The moment formatted in the zone with Intl's options (en-GB unless a locale is given). */
-export function formatInZone(at: number | string | Date, options: Intl.DateTimeFormatOptions, zone: string = userTimeZone(), locale = 'en-GB'): string {
+/** The moment formatted in the zone with Intl's options, en-GB. */
+export function formatInZone(at: number | string | Date, options: Intl.DateTimeFormatOptions, zone: string = userTimeZone()): string {
   const ms = typeof at === 'number' ? at : typeof at === 'string' ? Date.parse(at) : at.getTime();
   if (!Number.isFinite(ms)) return '';
-  return new Intl.DateTimeFormat(locale, { ...options, timeZone: zone }).format(ms);
+  return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: zone }).format(ms);
 }
 
 /** "2026-11-26" and "09:05": a moment as the date and time inputs take it, in the zone. */

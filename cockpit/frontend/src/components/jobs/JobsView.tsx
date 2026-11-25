@@ -149,7 +149,7 @@ function JobCard({ job, onChanged }: { job: Job; onChanged: () => Promise<void> 
           </div>
           {job.goal && <div className="mt-1 text-body text-foreground">Goal: {job.goal}</div>}
           <div className="mt-1 text-body text-muted-foreground">
-            {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map((at) => formatWhen(at)).join(' · ')}</>}
+            {job.nextRuns.length > 0 && <>Next: {job.nextRuns.map(formatWhen).join(' · ')}</>}
             {job.pausedReason && <span className="text-you-ink">{job.pausedReason}</span>}
           </div>
           {last && <LastRun run={last} spaceId={job.spaceId} />}

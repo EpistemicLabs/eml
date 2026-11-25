@@ -57,9 +57,22 @@ describe('the user\'s time zone', () => {
     expect(utcOffset('Asia/Bangkok')).toBe('UTC+7');
     expect(utcOffset('Asia/Kolkata')).toBe('UTC+5:30');
     expect(utcOffset('UTC')).toBe('UTC');
+    expect(utcOffset('America/Sao_Paulo')).toBe('UTC-3');
     expect(zoneLabel('Asia/Makassar')).toBe('Asia/Makassar (UTC+8)');
     const late = Date.parse('2026-11-19T22:00:00Z');
     expect(dayNumber(late, 'Asia/Bangkok') - dayNumber(late, 'UTC')).toBe(1);
     expect(inputStamp(late, 'Asia/Bangkok')).toEqual({ date: '2026-11-20', time: '05:00' });
+  });
+
+  it('keeps the zone it has when the host refuses a choice or has no setting', async () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const refusing = vi.fn(async () => new Response(JSON.stringify({ error: { code: 'INVALID_TIME_ZONE', message: 'timeZone must be an IANA time zone' } }), { status: 400 }));
+    expect(await chooseTimeZone('Mars/Olympus', refusing as unknown as typeof fetch)).toBe('timeZone must be an IANA time zone');
+    expect(userTimeZone()).toBe('Asia/Bangkok');
+    setTimeZoneForTest(null);
+    const older = vi.fn(async () => new Response('not found', { status: 404 }));
+    await loadTimeZone(older as unknown as typeof fetch);
+    expect(older).toHaveBeenCalledTimes(1);
+    expect(userTimeZone()).toBe('UTC');
   });
 });

@@ -1,5 +1,5 @@
 // Settings › Preferences: the user's personal setup, one section per area
-// (Appearance, Time, Sidebar, Sessions, Notifications). Theme presets land with the theme redo.
+// (Appearance, Time, Sidebar, Sessions, Notifications).
 import { useSyncExternalStore } from 'react';
 
 import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';

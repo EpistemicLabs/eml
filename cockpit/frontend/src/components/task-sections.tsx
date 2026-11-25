@@ -272,14 +272,14 @@ export function TaskHubBlocks({
 const TRAILING_ID = /^(.*) \(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)$/s;
 
 /** A journal entry's time, in the user's time zone. */
-function formatAt(iso: string): string {
+export function formatAt(iso: string): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return iso;
   return `${formatInZone(at, { day: "numeric", month: "short" })} ${clock(at)}`;
 }
 
 /** A folded journal's time: the clock today, the day before that (the user's today, in their time zone). */
-function shortAt(iso: string, now = Date.now()): string {
+export function shortAt(iso: string, now = Date.now()): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return iso;
   const zone = userTimeZone();

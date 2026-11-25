@@ -27,7 +27,8 @@ export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' | 'open' | 'now' }
   | { kind: 'review'; item: InboxItem };
 
-const dayOf = (iso: string, now: number) => {
+/** The day heading an item goes under: Today, Yesterday, else the date, on the user's calendar. */
+export const dayOf = (iso: string, now: number) => {
   const zone = userTimeZone();
   const days = dayNumber(now, zone) - dayNumber(Date.parse(iso), zone);
   return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : formatInZone(iso, { weekday: 'long', day: 'numeric', month: 'short' }, zone);

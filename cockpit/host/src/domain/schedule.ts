@@ -165,16 +165,16 @@ export function formatInZone(at: number, zone: string): string {
   return `${parts.weekday} ${parts.day} ${parts.month}${year} ${parts.hour}:${parts.minute}`
 }
 
-/** "UTC+7", "UTC+5:30", "UTC-3", "UTC": the zone's offset from UTC at `at`. */
-export function utcOffset(zone: string, at: number = Date.now()): string {
-  const minutes = Math.round(offsetAt(at, zone) / 60_000)
+/** "UTC+7", "UTC+5:30", "UTC-3", "UTC": the zone's offset from UTC now. */
+export function utcOffset(zone: string): string {
+  const minutes = Math.round(offsetAt(Date.now(), zone) / 60_000)
   if (minutes === 0) return 'UTC'
   const abs = Math.abs(minutes)
   return `UTC${minutes < 0 ? '-' : '+'}${Math.floor(abs / 60)}${abs % 60 ? `:${String(abs % 60).padStart(2, '0')}` : ''}`
 }
 
 /** "Asia/Bangkok (UTC+7)": how a session is told the zone it reads and writes the user's times in. */
-export const zoneLabel = (zone: string, at: number = Date.now()): string => `${zone} (${utcOffset(zone, at)})`
+export const zoneLabel = (zone: string): string => `${zone} (${utcOffset(zone)})`
 
 /** "2 h 5 min", "40 min", "3 days": a lateness or a gap. */
 export function formatDuration(ms: number): string {

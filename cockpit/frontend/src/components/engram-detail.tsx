@@ -393,7 +393,7 @@ function LearningBadge({ state }: { state: LearningState }) {
   );
 }
 
-function entryDate(iso: string): string {
+export function entryDate(iso: string): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return iso;
   const { date } = inputStamp(at);
