@@ -2,8 +2,9 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runOriginOf, runStateOf, runsBlockRunner } from '../src/domain/runs.js'
+import { STALE_MS, isStale, liveFactsOf, openRunsByTask, runIdOf, runOriginOf, runStateOf, runsBlockRunner, sessionOfRun } from '../src/domain/runs.js'
 import { createRunRecords, type RunSession } from '../src/application/run-records.js'
+import { lastStartsOf, requestOpen } from '../src/domain/delegation.js'
 import type { TurnState } from '../src/domain/agent-provider.js'
 
 // paths.ts reads the home at import time — set it before loading the modules that use it.
@@ -38,6 +39,23 @@ describe('runs as the board and the runner read them', () => {
     expect(runsBlockRunner([run('theirs', 'running', T0 - STALE_MS - 1)], new Set(), T0)).toBe(false)
   })
 
+  it('names the session a run belongs to: its id, or the part before a later run\'s start', () => {
+    expect(sessionOfRun('5f0c-aa')).toBe('5f0c-aa')
+    expect(sessionOfRun('5f0c-aa_1764064800000')).toBe('5f0c-aa')
+    expect(runIdOf('5f0c-aa', null)).toBe('5f0c-aa')
+    expect(runIdOf('5f0c-aa', '2025-11-25T10:00:00.000Z')).toBe('5f0c-aa_1764064800000')
+    expect(sessionOfRun(runIdOf('5f0c-aa', '2025-11-25T10:00:00.000Z'))).toBe('5f0c-aa')
+    // a session id with the separator in it keeps one run: its later run's id could not be read back
+    expect(runIdOf('odd_id', '2025-11-25T10:00:00.000Z')).toBe('odd_id')
+  })
+
+  it('reads a later run of a session this host has as that session: it is not someone else\'s, and it does not hold the runner', () => {
+    const later = run('s1_1764064800000', 'running', T0)
+    expect(liveFactsOf([{ sessionId: 's1', working: false }], [later], null, T0)).toEqual({ working: false, sessions: 1, nextRunAt: null })
+    expect(runsBlockRunner([later], new Set(['s1']), T0)).toBe(false)
+    expect(runsBlockRunner([later], new Set(), T0)).toBe(true)
+  })
+
   it('groups open runs by task and maps turns and origins', () => {
     const byTask = openRunsByTask([{ ...run('a', 'idle', T0), task_id: 't1' }, { ...run('b', 'ended', T0), task_id: 't1' }, { ...run('c', 'running', T0), task_id: 't2' }])
     expect([...byTask.entries()].map(([t, rs]) => [t, rs.map((r) => r.id)])).toEqual([['t1', ['a']], ['t2', ['c']]])
@@ -46,6 +64,7 @@ describe('runs as the board and the runner read them', () => {
     expect(runOriginOf({ jobId: null, worker: true, parentSessionId: null })).toEqual({ origin: 'runner', driver: 'agent' })
     expect(runOriginOf({ jobId: null, worker: true, parentSessionId: 'p' })).toEqual({ origin: 'user', driver: 'agent' })
     expect(runOriginOf({ jobId: null, worker: false, parentSessionId: null })).toEqual({ origin: 'user', driver: 'human' })
+    expect(runOriginOf({ jobId: null, worker: false, parentSessionId: null, runStartedAt: '2026-11-24T11:00:00.000Z' })).toEqual({ origin: 'runner', driver: 'agent' })
   })
 })
 
@@ -98,7 +117,7 @@ function setup(brain: ReturnType<typeof brainOf>, sessions: RunSession[]) {
 }
 
 const session = (sessionId: string, taskId: string | null, more: Partial<RunSession> = {}): RunSession => ({
-  sessionId, taskId, spaceId: 'main', createdAt: '2026-11-24T09:00:00.000Z', archived: false, jobId: null, worker: false, parentSessionId: null, ...more,
+  sessionId, taskId, spaceId: 'main', createdAt: '2026-11-24T09:00:00.000Z', archived: false, jobId: null, worker: false, parentSessionId: null, runStartedAt: null, ...more,
 })
 
 describe('run records', () => {
@@ -157,6 +176,66 @@ describe('run records', () => {
     sessions.splice(1, 1)
     await records.sync()
     expect(brain.writes.at(-1)).toEqual({ method: 'PUT', path: '/object/run/s2', body: { state: 'ended', end_reason: 'finished' } })
+  })
+
+  it('a session a delegation continued gets a new run from then: the earlier one ends, and the new run closes the request', async () => {
+    const brain = brainOf()
+    const sessions = [session('s1', 't1')]
+    const { records, turns, processes } = setup(brain, sessions)
+    processes.add('s1')
+    await records.sync()
+    const requested = '2026-11-24T11:00:00.000Z'
+    const task = { status: 'active', properties: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: requested } } }
+    const latest = () => lastStartsOf([...brain.runs.values()].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at))))
+    expect(requestOpen(task, latest().get('t1') ?? null)).toBe(true)
+
+    sessions[0].runStartedAt = '2026-11-24T11:00:05.000Z'
+    turns.set('s1', 'working')
+    await records.sync()
+    const runId = `s1_${Date.parse('2026-11-24T11:00:05.000Z')}`
+    expect(brain.writes.slice(-2)).toEqual([
+      { method: 'PUT', path: '/object/run/s1', body: { state: 'ended', end_reason: 'finished' } },
+      { method: 'POST', path: '/object/run', body: {
+        id: runId, task_id: 't1', member: 'lasse', agent: 'atlas', origin: 'runner', driver: 'agent', state: 'running', started_at: '2026-11-24T11:00:05.000Z',
+      } },
+    ])
+    expect(requestOpen(task, latest().get('t1') ?? null)).toBe(false)
+
+    // its turns now go to the new run
+    turns.set('s1', 'done')
+    await records.sync()
+    expect(brain.writes.at(-1)).toEqual({ method: 'PUT', path: `/object/run/${runId}`, body: { state: 'idle' } })
+  })
+
+  it('after a restart, carries on with the later run of a continued session instead of crashing or recreating it', async () => {
+    const runId = `s1_${Date.parse('2026-11-24T11:00:05.000Z')}`
+    const brain = brainOf(['t1'], [
+      { id: 's1', task_id: 't1', member: 'lasse', state: 'ended' },
+      { id: runId, task_id: 't1', member: 'lasse', state: 'idle' },
+    ])
+    const { records, processes, turns } = setup(brain, [session('s1', 't1', { runStartedAt: '2026-11-24T11:00:05.000Z' })])
+    processes.add('s1')
+    turns.set('s1', 'working')
+    await records.sync()
+    expect(brain.writes).toEqual([{ method: 'PUT', path: `/object/run/${runId}`, body: { state: 'running' } }])
+  })
+
+  it('a run the brain refused stays with the ledger, but the session\'s later run is written', async () => {
+    const brain = brainOf(['t1'])
+    const failing = { ...brain, post: async (path: string, body: Record<string, unknown>) => {
+      if (body.id === 's1') throw new Error('brain unavailable')
+      return brain.post(path, body)
+    } }
+    const sessions = [session('s1', 't1')]
+    const { records, processes, logs } = setup(failing as never, sessions)
+    processes.add('s1')
+    await records.sync()
+    await records.sync()
+    expect(brain.runs.size).toBe(0)
+    expect(logs.filter((l) => l.includes('no run for session s1'))).toHaveLength(1)
+    sessions[0].runStartedAt = '2026-11-24T11:00:05.000Z'
+    await records.sync()
+    expect([...brain.runs.keys()]).toEqual([`s1_${Date.parse('2026-11-24T11:00:05.000Z')}`])
   })
 
   it('a process gone mid-turn leaves the run idle until it runs again', async () => {

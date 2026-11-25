@@ -7,6 +7,7 @@ import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
 import { CHECKPOINT_STOP } from '../domain/turn-end.js'
+import type { ResumeOutcome } from './continue-session.js'
 
 /**
  * The runner (note task-system-phase-1-build-plan, M3): in every space it
@@ -31,7 +32,10 @@ import { CHECKPOINT_STOP } from '../domain/turn-end.js'
  *     (domain/runner-gate.ts holdsSlot).
  * The checks live in domain/runner-gate.ts, which the task board asks too, so the board names the same reason.
  * Starting it marks a planned one active; the request counts as started here
- * at once and in the brain once the session's run is written. Its session gets the task
+ * at once and in the brain once the session's run is written. A task with an
+ * own open session (domain/own-session.ts) is not started in a new one: that
+ * session gets the start prompt and a run of its own from then
+ * (application/run-records.ts), which closes the request the same way. Its session gets the task
  * from its first hook: checkpoint before prepares and asks before it acts,
  * after acts and hands the result over for review, none runs to the end.
  * Ticks every interval and when a turn ended.
@@ -50,16 +54,36 @@ export interface TaskRunnerDeps {
   busy?(taskId: string, runs: readonly RunFacts[]): boolean
   /** A session works on this task right now: one of this cockpit's sessions is in a turn, or another cockpit's run on it is working. */
   working?(taskId: string, runs: readonly RunFacts[]): boolean
-  /** Its hand-over can still be undone: nothing starts until the undo window is over. */
-  held?(taskId: string): boolean
+  /**
+   * Its hand-over can still be undone (nothing starts until the undo window is over), or a worker is about to start on
+   * it (application/worker-task.ts, keyed on its request's time until its id is known).
+   */
+  held?(taskId: string, requestedAt?: string | null): boolean
   /** A job of the task will start it at a set time. */
   scheduled?(taskId: string): boolean
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
   brief?(taskId: string): string | undefined
+  /** The open question the hand-over carried, for a continued session's own brief. */
+  question?(taskId: string): string | undefined
   /** Start a session on the step; an error text when it cannot. */
-  start(space: BrainSpace, step: { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string }): string | null
+  start(space: BrainSpace, step: RunnerStep): string | null
+  /**
+   * The task's own session that the step's start prompt goes to instead of a new session (domain/own-session.ts
+   * sessionToContinue), or null to start one.
+   */
+  ownSession?(taskId: string): string | null
+  /** A session of the task was continued for this request already (application/continue-session.ts continuedFor). */
+  continuedFor?(taskId: string, requestedAt: string): boolean
+  /**
+   * Give that session the step's start prompt and start its run for this request: continued, retry next tick (it is
+   * busy: nothing starts beside it), or fall back to a new session (it cannot be reached).
+   */
+  resume?(sessionId: string, step: RunnerStep): Promise<ResumeOutcome>
   log(line: string): void
 }
+
+/** `question`: an open question the hand-over carried; a continued session reads its own brief about it (application/continue-session.ts). */
+export interface RunnerStep { id: string; title: string; content: string; projectId: string; checkpoint: string; brief?: string; question?: string }
 
 interface Task {
   id: string
@@ -80,11 +104,11 @@ interface Task {
 export const CLOSING_RULE = 'Never close the task yourself: its owner reviews the result and closes it. Close it only when the owner explicitly tells you in this chat to close it. Code work is ready for review only once it runs in the user\'s cockpit (merged, released and installed), not when its PR is open or merged.'
 
 /**
- * The prompt a step's session starts with; its task, the rules, how a turn ends and what happens until it is done come
+ * The prompt a step's session starts with (or, `continued`, the one its own session carries on with); its task, the rules, how a turn ends and what happens until it is done come
  * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
  * (domain/job.ts JOB_TASK_RULE).
  */
-export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean }, checkpoint: string): string {
+export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean; continued?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
     ? `Checkpoint before: prepare everything the step needs, but do not act yet (nothing sent, deployed, published or changed outside drafts). ${CHECKPOINT_STOP.before}`
     : checkpoint === 'after'
@@ -94,7 +118,10 @@ export function stepPrompt(step: { id: string; title: string; content: string; b
         : 'No checkpoint: do the step to the end on your own and close it; ask only when you cannot go on.'
   const reviewed = checkpoint === 'before' || checkpoint === 'after'
   return [
-    `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
+    // A session that already works on the task (domain/own-session.ts) carries on; any other one starts on it.
+    step.continued
+      ? `The owner delegated "${step.title}" (task ${step.id}) to you: carry on with it on your own from where this conversation stands.`
+      : `${step.startedBy ?? 'The task runner'} started you for "${step.title}" (task ${step.id}).`,
     ...(step.brief ? [step.brief] : []),
     step.content,
     '',
@@ -134,7 +161,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
     const lastStarts = lastStartsOf(((await brain.get('/object/run', { latest: 'true' }).catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? [])
     // The space's open runs, read once per tick: a working run of another member's session holds its task (domain/runs.ts).
     const runs = openRunsByTask(runsOf(((await brain.get('/object/run').catch(() => ({ objects: [] }))) as { objects?: Array<Record<string, unknown>> }).objects ?? []))
-    const candidates = (listed.engrams ?? []).filter((t) => requestOpen(t, lastStarts.get(t.id) ?? null) && startedFor.get(t.id) !== requestOf(t))
+    // A request counts as started once a session was continued for it, as the ledger keeps it, before its run is written.
+    const continued = (t: Task) => Boolean(t.properties?.delegation?.requested_at && deps.continuedFor?.(t.id, t.properties.delegation.requested_at))
+    const candidates = (listed.engrams ?? []).filter((t) => requestOpen(t, lastStarts.get(t.id) ?? null) && startedFor.get(t.id) !== requestOf(t) && !continued(t))
     const started = new Map<string, number>()
     const now = Date.now()
     // A task holds a slot while an agent works on it for this cockpit (domain/runner-gate.ts), as the board counts it.
@@ -166,7 +195,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         running: started.get(group) ?? 0,
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
-        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id),
+        busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id, step.properties?.delegation?.requested_at ?? null),
         // A job here, or a schedule in its delegation, starts it at its time (domain/task-schedule.ts).
         scheduled: deps.scheduled?.(step.id) || Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
       })
@@ -175,7 +204,22 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const brainProject = step.scope.slice('project.'.length)
       const title = step.title ?? step.id
       const brief = deps.brief?.(step.id)
-      const problem = deps.start(space, { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) })
+      const question = deps.question?.(step.id)
+      const runnerStep: RunnerStep = { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}), ...(question ? { question } : {}) }
+      // The task's own session carries on with the start prompt; one that does not take it falls back to a new session.
+      const own = deps.resume ? deps.ownSession?.(step.id) ?? null : null
+      let resumed: ResumeOutcome | null = null
+      try {
+        resumed = own ? await deps.resume!(own, runnerStep) : null
+      } catch (err) {
+        // A delivery that throws leaves this task for the next tick; the other candidates still run.
+        deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${(err as Error).message}`)
+        continue
+      }
+      if (resumed && resumed.kind !== 'continued') deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${resumed.why}`)
+      if (resumed?.kind === 'retry') continue
+      const continued = resumed?.kind === 'continued'
+      const problem = continued ? null : deps.start(space, runnerStep)
       if (problem) {
         deps.log(`[runner] step ${step.id.slice(0, 8)} not started: ${problem}`)
         continue
@@ -183,9 +227,9 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       // Its run is written once the session runs (application/run-records.ts); until then this request counts as started here.
       startedFor.set(step.id, requestOf(step))
       startedAt.set(step.id, Date.now())
-      await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: 'Started by the task runner.' })
+      await brain.post(`/task/${step.id}/track`, { ...(step.status === 'planned' ? { status: 'active' } : {}), text: continued ? 'Continued in its own session by the task runner.' : 'Started by the task runner.' })
       started.set(group, started.get(group)! + 1)
-      deps.log(`[runner] started step ${step.id.slice(0, 8)} ${title} (checkpoint ${step.properties?.checkpoint})`)
+      deps.log(`[runner] ${continued ? `continued step ${step.id.slice(0, 8)} in session ${own!.slice(0, 8)}` : `started step ${step.id.slice(0, 8)}`} (checkpoint ${step.properties?.checkpoint})`)
     }
   }
 

@@ -26,7 +26,6 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
-import { ownersFor, type OwnedTask } from './domain/task-owner.js'
 import { StartWorker } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -44,13 +43,15 @@ import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
-import { createSessionTask, displayTitleOf, kebabTitle } from './application/session-task.js'
+import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
 import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
+import { createContinueSession } from './application/continue-session.js'
+import { createWorkerTask, createWorkerTaskHolds, type WorkerTaskInput } from './application/worker-task.js'
 import { createNextStepCheck } from './application/next-step.js'
 import { createSessionKind } from './application/session-kind.js'
 import { createCycles } from './application/cycles.js'
@@ -385,7 +386,12 @@ async function main() {
   const owner = config?.handle ?? 'user'
   // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
   const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
-  const sessionTask = createSessionTask({ ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool, zone: () => zoneLabel(userTimeZone()) })
+  // A task the cockpit creates for a spawned worker is the agent's alone; the runner is held off it until the worker is on it.
+  const workerHolds = createWorkerTaskHolds(Date.now, () => spawns.list())
+  const sessionTask = createSessionTask({
+    ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool,
+    workerDelegate: (spaceId) => spaces.resolve(spaceId).agent ?? null, workerHolds, zone: () => zoneLabel(userTimeZone()),
+  })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
   const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })
@@ -427,10 +433,25 @@ async function main() {
   const lastResults = new Map<string, string>()
   // Set once the turns and the session runtimes exist; turnEnded pokes it.
   let runRecords: RunRecords = { sync: async () => {}, poke: () => {}, every: () => () => {} }
-  const runnerHeld = (taskId: string) => (taskCommands?.held(taskId) || taskCommands?.together(taskId)) ?? false
+  const runnerHeld = (taskId: string, requestedAt?: string | null) =>
+    Boolean(taskCommands?.held(taskId) || taskCommands?.together(taskId) || workerHolds.holds(taskId, requestedAt))
   // What holds one of the runner's slots: a session in a turn on the task, here or in another cockpit's run (domain/runs.ts).
   const taskSessions = (taskId: string) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
     .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' }))
+  // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
+  // from the provider's summary for that one session only.
+  const continueSession = createContinueSession({
+    ledger,
+    contextTokensOf: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
+      return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
+    },
+    startFresh: (taskId) => taskCommands?.startFresh(taskId) ?? false,
+    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    runStarted: () => runRecords.poke(),
+    now: () => Date.now(),
+  })
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
@@ -438,6 +459,7 @@ async function main() {
     scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: runnerHeld,
     brief: (taskId) => taskCommands?.briefOf(taskId),
+    question: (taskId) => taskCommands?.questionOf(taskId),
     start: (space, step) => {
       const problem = ensureTaskProject(space, step.projectId)
       if (problem) return problem
@@ -447,6 +469,9 @@ async function main() {
       })
       return null
     },
+    ownSession: (taskId) => continueSession.toContinue(taskId),
+    continuedFor: (taskId, requestedAt) => continueSession.continuedFor(taskId, requestedAt),
+    resume: (sessionId, step) => continueSession.resume(sessionId, step),
   })
   taskRunner.every(RUNNER_TICK_MS)
   // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).
@@ -503,21 +528,11 @@ async function main() {
       if (entry.taskAuto && name) sessionNamed(entry.sessionId, name)
     }
   }, 15_000).unref?.()
-  // The spawn API's newTask: written into the brain at once (decision no-task-triage).
-  // Its owners are those of the requester's task, else this cockpit's member (domain/task-owner.ts ownersFor).
-  const createTask = async (space: BrainSpace, input: { title: string; content: string; scope: string; fromTaskId?: string }) => {
+  // The spawn API's newTask: the agent's alone, held off the runner until its worker is on it (application/worker-task.ts).
+  const createTask = async (space: BrainSpace, input: WorkerTaskInput) => {
     const brain = taskBrain(space)
     if (!brain) return { error: `space ${space.name} has no agent` }
-    try {
-      const origin = input.fromTaskId ? await brain.get(`/engram/${input.fromTaskId}`).catch(() => null) as OwnedTask | null : null
-      const display = displayTitleOf(input.title)
-      return await brain.post('/engram/task', {
-        title: kebabTitle(input.title) ?? input.title, ...(display ? { display_title: display } : {}), content: input.content,
-        scope: input.scope, status: 'active', assignee_ids: ownersFor(origin, owner),
-      }) as { id: string }
-    } catch (err) {
-      return { error: (err as Error).message }
-    }
+    return createWorkerTask({ brain, owner, agent: space.agent ?? null, holds: workerHolds }, input)
   }
   watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
@@ -769,7 +784,7 @@ async function main() {
     me: owner,
     sessions: () => ledger.list().map((e) => ({
       sessionId: e.sessionId, taskId: e.taskId, spaceId: spaces.resolve(e.spaceId ?? null).id, createdAt: e.createdAt,
-      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId,
+      archived: Boolean(e.archivedAt), jobId: e.jobId, worker: e.worker, parentSessionId: e.parentSessionId, runStartedAt: e.runStartedAt,
     })),
     turnOf: (sessionId) => turns.get(sessionId)?.state,
     processRuns: (sessionId) => chat.isRunning(sessionId) || bridge.isRunning(sessionId),
@@ -807,6 +822,7 @@ async function main() {
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
+    ownSessionOf: (taskId) => continueSession.boardView(taskId),
     reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
     ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
     runnerBusy, runnerHeld,
@@ -859,6 +875,8 @@ async function main() {
       )
       return answer.job ? { jobId: answer.job.id } : { error: answer.text }
     },
+    ownSession: (taskId) => continueSession.ownSession(taskId)?.sessionId ?? null,
+    sessionOpen: (sessionId) => { const entry = ledger.get(sessionId); return Boolean(entry && !entry.archivedAt) },
     sessionsSince: (taskId, since) => {
       const on = ledger.list().filter((e) => e.taskId === taskId && Date.parse(e.createdAt) >= Date.parse(since))
       return { total: on.length, open: on.filter((e) => !e.archivedAt).length }

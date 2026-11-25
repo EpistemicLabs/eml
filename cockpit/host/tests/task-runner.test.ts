@@ -9,14 +9,14 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; goal?: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
 function brainOf(list: T[], runs: Array<Record<string, unknown>> = []) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.goal ? { goal: t.goal } : {}), ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -45,7 +45,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; question?: (id: string) => string | undefined; continuedFor?: (id: string, requestedAt: string) => boolean; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -56,6 +56,90 @@ describe('task runner', () => {
     await runner.tick()
     return { started, brain, logs, runner }
   }
+
+  it('continues the task\'s own session with the start prompt instead of starting a new one, once per request', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: Array<{ sessionId: string; id: string; question?: string }> = []
+    const { started, brain, runner } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'solo' ? 'desk-1' : null),
+      question: () => 'Count it?',
+      resume: async (sessionId, step) => { resumed.push({ sessionId, id: step.id, question: (step as { question?: string }).question }); return { kind: 'continued' } },
+    })
+    expect(resumed).toEqual([{ sessionId: 'desk-1', id: 'solo', question: 'Count it?' }])
+    expect(started).toEqual([])
+    expect(brain.posts.map((p) => p.body.text)).toEqual(['Continued in its own session by the task runner.'])
+    // its run is not in the brain yet: the request counts as started here, so the prompt is not sent again
+    await runner.tick()
+    expect(resumed).toHaveLength(1)
+  })
+
+  it('starts nothing beside an own session that is busy, and tries it again next tick; a delivery that throws stalls no other task', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' }
+    const list: T[] = [
+      { id: 'busy', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'throws', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'plain', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+    ]
+    const tries: string[] = []
+    const { started, brain, runner } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'plain' ? null : `own-${id}`),
+      resume: async (sessionId) => {
+        tries.push(sessionId)
+        if (sessionId === 'own-throws') throw new Error('socket closed')
+        return { kind: 'retry', why: 'the session is busy (busy)' }
+      },
+    })
+    expect(started.map((s) => s.id)).toEqual(['plain'])
+    expect(brain.posts.map((p) => p.path)).toEqual(['/task/plain/track'])
+    await runner.tick()
+    expect(tries.filter((t) => t === 'own-busy')).toHaveLength(2)
+    expect(started.map((s) => s.id)).toEqual(['plain'])
+  })
+
+  it('after a restart, sends no second start prompt to a session the ledger says was continued for this request', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: string[] = []
+    // a fresh runner (nothing in memory) and no run in the brain: only the ledger's runStartedAt says it was continued
+    const { started } = await run(list, undefined, undefined, undefined, {
+      ownSession: () => 'desk-1',
+      continuedFor: (id, requestedAt) => id === 'solo' && requestedAt === '2026-11-25T10:00:00.000Z',
+      resume: async (sessionId) => { resumed.push(sessionId); return { kind: 'continued' } },
+    })
+    expect(resumed).toEqual([])
+    expect(started).toEqual([])
+  })
+
+  it('continues nothing while the hand-over can still be undone', async () => {
+    const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
+    const resumed: string[] = []
+    const { started, brain } = await run(list, undefined, undefined, undefined, {
+      held: () => true, ownSession: () => 'desk-1', resume: async (sessionId) => { resumed.push(sessionId); return { kind: 'continued' } },
+    })
+    expect(resumed).toEqual([])
+    expect(started).toEqual([])
+    expect(brain.posts).toEqual([])
+  })
+
+  it('starts a new session when the own session does not take the prompt, or when there is none to continue', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' }
+    const list: T[] = [
+      { id: 'refused', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'fresh', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+    ]
+    const { started, logs, brain } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'refused' ? 'desk-1' : null),
+      resume: async () => ({ kind: 'fallback', why: 'the session cannot be reached (refused)' }),
+    })
+    expect(started.map((s) => s.id).sort()).toEqual(['fresh', 'refused'])
+    expect(brain.posts.map((p) => p.body.text)).toEqual(['Started by the task runner.', 'Started by the task runner.'])
+    expect(logs.some((l) => l.includes('not continued in session desk-1'))).toBe(true)
+  })
+
+  it('tells a continued session to carry on alone; a new one that the runner started it', () => {
+    const step = { id: 't1', title: 'Fix it', content: 'do it' }
+    expect(mod.stepPrompt({ ...step, continued: true }, 'after').split('\n')[0]).toBe('The owner delegated "Fix it" (task t1) to you: carry on with it on your own from where this conversation stands.')
+    expect(mod.stepPrompt(step, 'after').split('\n')[0]).toBe('The task runner started you for "Fix it" (task t1).')
+  })
 
   it('starts the ready steps of an active task, and marks them active so they start once', async () => {
     const list: T[] = [
@@ -325,7 +409,7 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
   it('reproduced: Delegate now on an active task while the owner\'s idle session on it is open starts the delegate', async () => {
     const { createTaskCommands, TaskCommandStore, UNDO_WINDOW_MS } = await import('../src/application/task-commands.js')
     const { SessionLedger } = await import('../src/session-ledger.js')
-    const list: T[] = [{ id: 'own-task', status: 'active', assignee_ids: ['lasse'] }]
+    const list: T[] = [{ id: 'own-task', status: 'active', assignee_ids: ['lasse'], goal: 'Done' }]
     const brain = brainOf(list)
     // The owner's own session on the task, open and idle, from before the hand-over.
     const ledger = new SessionLedger()

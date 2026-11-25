@@ -31,6 +31,28 @@ export interface RunFacts {
   result?: string | null
 }
 
+/**
+ * A run's id is its session's id. A later run of the same session (a delegation that continued it, see
+ * runIdOf) adds when it started after RUN_SEPARATOR; session ids never contain it.
+ */
+export const RUN_SEPARATOR = '_'
+
+/** The session a run belongs to. */
+export function sessionOfRun(runId: string): string {
+  const at = runId.indexOf(RUN_SEPARATOR)
+  return at === -1 ? runId : runId.slice(0, at)
+}
+
+/**
+ * The id of a session's run: the session's id, or for a later run (it started at `runStartedAt`) that and its start.
+ * A session id that holds RUN_SEPARATOR itself (none the cockpit makes) keeps one run: sessionOfRun could not read a
+ * later run's id back; its continued start still counts from the ledger (application/continue-session.ts continuedFor).
+ */
+export function runIdOf(sessionId: string, runStartedAt: string | null): string {
+  const at = runStartedAt ? Date.parse(runStartedAt) : NaN
+  return Number.isFinite(at) && !sessionId.includes(RUN_SEPARATOR) ? `${sessionId}${RUN_SEPARATOR}${at}` : sessionId
+}
+
 /** Rows of GET /object/run as runs; anything without an id, task, member or state is left out. */
 export function runsOf(objects: ReadonlyArray<Record<string, unknown>>): RunFacts[] {
   return objects.filter((o): o is Record<string, unknown> & RunFacts =>
@@ -70,7 +92,7 @@ export function liveFactsOf(
   now: number,
 ): LiveFacts {
   const known = new Set(local.map((s) => s.sessionId))
-  const remote = runs.filter((r) => !known.has(r.id) && r.state !== 'ended')
+  const remote = runs.filter((r) => !known.has(sessionOfRun(r.id)) && r.state !== 'ended')
   const working = local.some((s) => s.working) || remote.some((r) => isWorking(r, now))
   return {
     working,
@@ -82,7 +104,7 @@ export function liveFactsOf(
 
 /** A working run of a session this host does not have keeps the runner from starting the task: someone works on it elsewhere. */
 export function runsBlockRunner(runs: readonly RunFacts[], localSessionIds: ReadonlySet<string>, now: number): boolean {
-  return runs.some((r) => !localSessionIds.has(r.id) && isWorking(r, now))
+  return runs.some((r) => !localSessionIds.has(sessionOfRun(r.id)) && isWorking(r, now))
 }
 
 /** A session's turn as a run state: in a turn → running, else idle (a question is a wait on the task, not a run state). */
@@ -90,8 +112,12 @@ export function runStateOf(turn: TurnState | undefined): Exclude<RunState, 'ende
   return turn === 'working' ? 'running' : 'idle'
 }
 
-/** Who started a session and who drives it, from its ledger entry. */
-export function runOriginOf(entry: { jobId: string | null; worker: boolean; parentSessionId: string | null }): { origin: RunOrigin; driver: RunDriver } {
+/**
+ * Who started a session's run and who drives it, from its ledger entry. A later run (runStartedAt) is the runner's:
+ * it gave the session its task's start prompt when the task was delegated.
+ */
+export function runOriginOf(entry: { jobId: string | null; worker: boolean; parentSessionId: string | null; runStartedAt?: string | null }): { origin: RunOrigin; driver: RunDriver } {
+  if (entry.runStartedAt) return { origin: 'runner', driver: 'agent' }
   if (entry.jobId) return { origin: 'job', driver: 'agent' }
   // The runner starts its workers without a parent session; a session that opens a worker is its parent.
   if (entry.worker) return { origin: entry.parentSessionId ? 'user' : 'runner', driver: 'agent' }

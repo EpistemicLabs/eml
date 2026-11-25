@@ -68,6 +68,13 @@ describe('what a session reads about its task', () => {
     }
   })
 
+  it('a task handed over with checkpoint none is closed by its agent once its goal is reached, not handed over for review', async () => {
+    const { taskContext } = await import('../src/application/session-task.js')
+    const text = taskContext({ id: 't1', title: 'acme-sync', content: 'Sync.', status: 'active', properties: { checkpoint: 'none', delegate: 'atlas' } } as never, false, WHO, true)
+    expect(text).toContain('- Reached: close it yourself (eml_track_task with status resolved and the outcome), unless its schedule is still on (see Closing).')
+    expect(text).not.toContain('Do not close it yourself.')
+  })
+
   it('tells every session that no run closes a task whose schedule is still on, also one without a checkpoint', async () => {
     const { taskContext } = await import('../src/application/session-task.js')
     for (const checkpoint of ['after', 'none']) {

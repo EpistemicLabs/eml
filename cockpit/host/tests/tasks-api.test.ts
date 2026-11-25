@@ -25,7 +25,9 @@ const deps = {
       if (input.taskId === 'mirrored') return { ok: false, refusal: 'schedule_elsewhere' }
       if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
-      return { ok: true, command: { ...input, state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', createdAt: '', ...(input.taskId === 'asked' ? { carriedQuestion: 'Which list?' } : {}) } }
+      if (input.taskId === 'gone') return { ok: false, refusal: 'no_session' }
+      if (input.taskId === 'placeholder') return { ok: false, refusal: 'not_ready' }
+      return { ok: true, command: { ...input, state: input.handOver?.mode === 'together' ? 'applied' : 'pending', undoUntil: '2026-11-19T10:00:08.000Z', createdAt: '', ...(input.taskId === 'asked' ? { carriedQuestion: 'Which list?' } : {}), ...(input.taskId === 'solo' ? { tookOver: 's1' } : {}) } }
     },
     undo: async (opId: string) => (opId === 'late' ? { ok: false, refusal: 'undo_expired' } : { ok: true }),
   },
@@ -120,6 +122,20 @@ describe('task board routes', () => {
     expect(r).toEqual({ status: 202, body: { opId: 'op-1', state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', carriedQuestion: 'Which list?' } })
     expect(submitted.at(-1)).toEqual({ opId: 'op-1', spaceId: 'main', kind: 'hand_over', taskId: 'asked', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' }, desk: undefined } })
     expect(refreshed).toBeGreaterThan(0)
+  })
+
+  it('carries Start fresh, answers a Take over with the session it took over, and names why a hand-over cannot happen', async () => {
+    await post('/api/v1/tasks/t1/hand-over', { opId: 'op-fresh', spaceId: 'main', mode: 'now', delegate: 'atlas', checkpoint: 'after', fresh: true })
+    expect(submitted.at(-1)!.handOver).toMatchObject({ mode: 'now', fresh: true })
+    // only true counts
+    await post('/api/v1/tasks/t1/hand-over', { opId: 'op-keep', spaceId: 'main', mode: 'now', delegate: 'atlas', checkpoint: 'after', fresh: 'yes' })
+    expect(submitted.at(-1)!.handOver).not.toHaveProperty('fresh')
+    expect(await post('/api/v1/tasks/solo/hand-over', { opId: 'op-take', spaceId: 'main', mode: 'together', delegate: 'atlas' }))
+      .toEqual({ status: 202, body: { opId: 'op-take', state: 'applied', undoUntil: '2026-11-19T10:00:08.000Z', sessionId: 's1' } })
+    expect((await post('/api/v1/tasks/gone/hand-over', { opId: 'op-gone', spaceId: 'main', mode: 'together', delegate: 'atlas' })).body.error)
+      .toMatchObject({ code: 'no_session', message: 'The task has no open session to take over: pick a desk to start one.' })
+    expect((await post('/api/v1/tasks/placeholder/hand-over', { opId: 'op-ph', spaceId: 'main', mode: 'now', delegate: 'atlas', checkpoint: 'after' })).body.error)
+      .toMatchObject({ code: 'not_ready' })
   })
 
   it('carries how a scheduled agent goes on: until the goal in the same session, or a routine in new sessions; refuses other values', async () => {

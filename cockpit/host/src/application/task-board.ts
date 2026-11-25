@@ -1,8 +1,9 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
+import type { OwnSessionView } from './continue-session.js'
 import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
-import { isStale, liveFactsOf, openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
+import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
@@ -82,6 +83,11 @@ export interface BoardTask {
   hasSchedule: boolean
   /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
   handTo?: string
+  /**
+   * The task's own open session (domain/own-session.ts): Take over opens it, and Delegate continues it when `continues`
+   * (else, or with Start fresh, a new session starts).
+   */
+  ownSession?: OwnSessionView
   /** A command on it still in its undo window. */
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
   /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
@@ -187,12 +193,14 @@ export interface TaskBoardDeps {
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
   releasedAgent?(taskId: string): string | null
+  /** The task's own open session, and whether a delegation would continue it (domain/own-session.ts). */
+  ownSessionOf?(taskId: string): OwnSessionView | null
   /** The items the task's latest board reopen listed for the chat (application/task-commands.ts reopenedWith). */
   reopenedWith?(taskId: string): ReopenItem[]
   /** The runner's busy check: a session works on the task already, here or in another member's run (index.ts shares it with the runner). */
   runnerBusy?(taskId: string, runs?: readonly RunFacts[]): boolean
-  /** The runner's held check: an undoable hand-over, or the owner works on it with the agent. */
-  runnerHeld?(taskId: string): boolean
+  /** The runner's held check: an undoable hand-over, the owner works on it with the agent, or a worker is about to start on it. */
+  runnerHeld?(taskId: string, requestedAt?: string | null): boolean
   /** When the runner last started the task (application/task-runner.ts startedAt), before its run is in the brain. */
   runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
@@ -266,6 +274,7 @@ interface Row {
 
 /** A run as the board shows it: whose, its state, when it was last active, and whether it is this cockpit's. */
 export interface BoardRun {
+  /** The session's id (a later run of the same session has an id of its own, domain/runs.ts). */
   id: string
   member: string
   agent: string | null
@@ -279,6 +288,7 @@ export const EARLIER_RUNS = 10
 
 /** An ended session on a task: whose, when, how it ended and its last result line; this member's can be reopened here. */
 export interface EarlierRun {
+  /** The session's id. */
   id: string
   member: string
   agent: string | null
@@ -289,15 +299,22 @@ export interface EarlierRun {
   here: boolean
 }
 
-/** The ended runs per task from the newest runs the brain listed (newest first per task). */
+/**
+ * The ended sessions per task from the newest runs the brain listed (newest first per task), by session: a session
+ * counts by its newest run (domain/runs.ts sessionOfRun), so one whose newest run is still open is not an earlier one.
+ */
 function earlierRunsByTask(objects: ReadonlyArray<Record<string, unknown>>, viewer: string): Map<string, EarlierRun[]> {
   const byTask = new Map<string, EarlierRun[]>()
+  const seen = new Set<string>()
   for (const r of runsOf(objects)) {
+    const sessionId = sessionOfRun(r.id)
+    if (seen.has(`${r.task_id}:${sessionId}`)) continue
+    seen.add(`${r.task_id}:${sessionId}`)
     if (r.state !== 'ended') continue
     const o = r as RunFacts & { ended_at?: string | null; end_reason?: string | null }
     const list = byTask.get(r.task_id) ?? []
     if (list.length >= EARLIER_RUNS) continue
-    list.push({ id: r.id, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
+    list.push({ id: sessionId, member: r.member, agent: r.agent ?? null, startedAt: r.started_at ?? null, endedAt: o.ended_at ?? null, endReason: o.end_reason ?? null, result: r.result ?? null, here: r.member === viewer })
     byTask.set(r.task_id, list)
   }
   return byTask
@@ -309,10 +326,10 @@ function boardRuns(runs: readonly RunFacts[], local: ReadonlyArray<{ sessionId: 
   return runs
     .filter((r) => r.state !== 'ended')
     .map((r) => ({
-      id: r.id, member: r.member, agent: r.agent ?? null,
+      id: sessionOfRun(r.id), member: r.member, agent: r.agent ?? null,
       state: isStale(r, now) ? 'stale' as const : r.state === 'running' ? 'running' as const : 'idle' as const,
       lastActivityAt: r.last_activity_at ?? null,
-      here: localIds.has(r.id) || r.member === viewer,
+      here: localIds.has(sessionOfRun(r.id)) || r.member === viewer,
     }))
     .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
 }
@@ -438,7 +455,11 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     }
     if (command.kind === 'hand_over' && command.handOver) {
       const props = row.properties ?? {}
-      const planned = planHandOver({ id: row.id, status: row.status, owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}) }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
+      // Planned as the command will be applied (application/task-commands.ts): with the task's name and goal.
+      const planned = planHandOver({
+        id: row.id, status: row.status, title: row.title, ...(props.display_title ? { displayTitle: props.display_title } : {}), ...(props.goal ? { goal: props.goal } : {}),
+        owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}),
+      }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
       const { status, waits, delegation } = planned.plan.patch
       const next = { ...props } as NonNullable<Row['properties']>
@@ -537,7 +558,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           deps: await Promise.all((row.properties?.depends_on ?? []).map(async (id) => ({ id, task: await gateTask(id) }))),
           running: runningIn(parentId),
           shared: space.shared, me: deps.viewer,
-          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
+          busy: deps.runnerBusy?.(row.id, runs.get(row.id) ?? []) ?? false, lastRunStartedAt: lastStarts.get(row.id) ?? null, held: deps.runnerHeld?.(row.id, row.properties?.delegation?.requested_at ?? null) ?? false, scheduled: Boolean(nextRunOfRow(row, now)),
         })
       }
 
@@ -619,6 +640,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             const agent = !facts.delegate && row.status !== 'resolved' ? deps.releasedAgent?.(row.id)
               : turn.reason === 'not_handed_over' ? facts.delegate : null
             return agent ? { handTo: agent } : {}
+          })(),
+          ...(() => {
+            const own = CLOSED_STATUSES.has(row.status) ? null : deps.ownSessionOf?.(row.id) ?? null
+            return own ? { ownSession: own } : {}
           })(),
           ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
           ...(() => {

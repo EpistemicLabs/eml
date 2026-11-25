@@ -72,6 +72,8 @@ export interface TaskCommand extends CommandInput {
   carriedQuestion?: string
   brief?: string
   effects?: { jobId?: string }
+  /** Take over: the task's own session the owner took over, which the page opens instead of starting one. */
+  tookOver?: string
   /** Work on it now ended (its sessions were put away): the delegate was released, and the board offers to hand it over. */
   released?: { at: string; agent: string }
   /** A split off a session: what it made, for Undo. */
@@ -230,6 +232,10 @@ export interface TaskCommandsDeps {
    * Without it Work on it now never ends on its own.
    */
   sessionsSince?(taskId: string, since: string): { total: number; open: number }
+  /** The task's own open session (domain/own-session.ts ownSessionOf): Take over opens it instead of starting one. */
+  ownSession?(taskId: string): string | null
+  /** The session is still open (not put away): a Take over lasts while its session does. */
+  sessionOpen?(sessionId: string): boolean
   /** The task's newest session, archived or not: where a reopen's message goes. */
   newestSessionOn?(taskId: string): string | null
   /** Give a session the user's message, resuming it when stopped; true once it has it. */
@@ -254,6 +260,8 @@ export interface TaskCommandsDeps {
 const asHandOverTask = (t: BrainTask): HandOverTask => ({
   id: t.id,
   status: t.status,
+  title: t.title,
+  ...(t.properties?.display_title ? { displayTitle: t.properties.display_title } : {}),
   owner: t.properties?.assignee_ids?.[0],
   delegate: t.properties?.delegate,
   checkpoint: t.properties?.checkpoint,
@@ -294,20 +302,22 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
 
   /**
    * Work on it now ended once every session opened on the task since is put away (or none opened
-   * within TOGETHER_GRACE_MS). The agent was there to work with the owner, not alone, and Work on it now
+   * within TOGETHER_GRACE_MS); a Take over once the session it took over is put away. The agent was there to work with the owner, not alone, and Work on it now
    * wrote no delegation (v0.23), so this only records the release: the board offers "Hand to <agent>".
    * A delegate still on the task (set by an older cockpit) is released with a journal line. A later
    * hand-over replaced it: nothing to release.
    */
   const releaseTogether = async (now: number) => {
-    if (!deps.sessionsSince) return
     for (const command of deps.store.commands().filter(isOpenTogether)) {
       if (latestHandOver(command.taskId!) !== command) {
         save({ ...command, released: { at: new Date(now).toISOString(), agent: command.handOver!.delegate } })
         continue
       }
-      const sessions = deps.sessionsSince(command.taskId!, command.createdAt)
-      const ended = sessions.total > 0 ? sessions.open === 0 : now - Date.parse(command.createdAt) > TOGETHER_GRACE_MS
+      // A Take over lasts while the session it took over is open; Work on it now while a session opened since is.
+      // Without a way to tell, it never ends on its own.
+      const sessions = command.tookOver ? null : deps.sessionsSince?.(command.taskId!, command.createdAt)
+      const ended = command.tookOver ? deps.sessionOpen?.(command.tookOver) === false
+        : !sessions ? false : sessions.total > 0 ? sessions.open === 0 : now - Date.parse(command.createdAt) > TOGETHER_GRACE_MS
       if (!ended) continue
       const space = deps.space(command.spaceId)
       const brain = space ? deps.brain(space) : null
@@ -364,7 +374,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   const plan = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, taskId: string, req: HandOverRequest) => {
     const task = await taskOf(brain, taskId)
     if (!task) return { ok: false as const, refusal: 'unknown_task' as const }
-    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space), now: iso(deps.now()) })
+    const ownSession = req.mode === 'together' ? deps.ownSession?.(taskId) ?? null : null
+    const planned = planHandOver(asHandOverTask(task), req, { agents: await deps.agentsOf(space), now: iso(deps.now()), ownSession })
     return planned.ok ? { ok: true as const, task, plan: planned.plan } : planned
   }
 
@@ -441,10 +452,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (!planned.ok) return planned
       const command: TaskCommand = { ...base, before: asHandOverTask(planned.task), ...(planned.plan.carriedQuestion ? { carriedQuestion: planned.plan.carriedQuestion, brief: planned.plan.brief } : {}) }
       if (input.handOver.mode !== 'together') return { ok: true, command: save(command) }
-      // Work on it now: the owner is there, so it happens at once; the page opens the session.
+      // Work on it now and Take over: the owner is there, so it happens at once; the page opens the session (Take over:
+      // the task's own one, which goes on from its current turn's end).
       await track(brain, planned.task.id, { ...planned.plan.patch }, planned.plan.journal)
-      deps.log(`[commands] ${input.opId.slice(0, 8)} together: task ${planned.task.id.slice(0, 8)} in desk ${input.handOver.desk}`)
-      return { ok: true, command: save({ ...command, state: 'applied', ...(planned.plan.brief ? { brief: planned.plan.brief } : {}) }) }
+      const tookOver = planned.plan.session?.sessionId
+      deps.log(`[commands] ${input.opId.slice(0, 8)} together: task ${planned.task.id.slice(0, 8)} ${tookOver ? `taken over in session ${tookOver.slice(0, 8)}` : `in desk ${input.handOver.desk}`}`)
+      return { ok: true, command: save({ ...command, state: 'applied', ...(planned.plan.brief ? { brief: planned.plan.brief } : {}), ...(tookOver ? { tookOver } : {}) }) }
     }
 
     if (input.kind === 'review') {
@@ -792,6 +805,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       return latest?.handOver?.mode === 'now' ? latest.createdAt : null
     },
 
+    /** The owner chose Start fresh in the task's latest hand-over, a Delegate now: its delegate starts in a new session. */
+    startFresh(taskId: string): boolean {
+      const latest = latestHandOver(taskId)
+      return latest?.handOver?.mode === 'now' && latest.handOver.fresh === true
+    },
+
     /** The agent released when Work on it now ended, while that is still the task's latest hand-over: the board offers "Hand to <agent>". */
     releasedAgent(taskId: string): string | null {
       const latest = latestHandOver(taskId)
@@ -801,6 +820,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     /** The decisions and notes the task's latest board reopen listed for the chat (they closed with it). */
     reopenedWith(taskId: string): ReopenItem[] {
       return deps.store.commands().filter((c) => c.kind === 'reopen' && c.state === 'applied' && c.taskId === taskId).at(-1)?.reopened?.items ?? []
+    },
+
+    /** The open question the task's latest hand-over carried into the delegate's brief, if any. */
+    questionOf(taskId: string): string | undefined {
+      return deps.store.commands().filter((c) => c.kind === 'hand_over' && c.state === 'applied' && c.taskId === taskId && c.carriedQuestion).at(-1)?.carriedQuestion
     },
 
     /** What the delegate of a task handed over with an open question reads first. */
