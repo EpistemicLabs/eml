@@ -1236,6 +1236,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       applySessionHook(
         {
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
+          waitsOnHelpers: (sessionId: string) => deps.chat.holdTurnOpen(sessionId),
           ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
           ...(deps.answered ? { answered: deps.answered } : {}),
           ...(deps.userWrote ? { userWrote: deps.userWrote } : {}),

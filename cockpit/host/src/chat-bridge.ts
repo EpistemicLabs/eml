@@ -54,6 +54,8 @@ import { toolLabel } from './domain/tool-label.js'
  * WS upgrade presents it (+ same-origin); the session identity travels in `init`.
  */
 
+// How long the done of a session whose last subagent came back waits for the turn that wakes it.
+export const HELPERS_BACK_SETTLE_MS = 5_000
 // How long a switch lets an interrupted turn finish on its own before closing it.
 const INTERRUPT_WAIT_MS = 3_000
 // The one reason a closed turn counts as cut off: the next host start carries it on.
@@ -126,6 +128,10 @@ interface ChatEntry {
   backgroundTasks: Set<string>
   /** Of those, the subagents: a turn that ends while they run is not the session's stop (stillRunning). */
   runningAgents: Set<string>
+  /** A done signal came while its subagents ran and its turn state was kept at working: the bridge owes the done. */
+  held: boolean
+  /** Its own turn is over and it waits for its subagents: the turn they wake shows as working again. */
+  parked: boolean
   lastActivity: number
   /** Being closed: a message now would go down with the process. */
   closing: boolean
@@ -167,7 +173,9 @@ export interface ChatContext {
   runtimes: SessionRuntimeFactory
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
-  onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>) => void
+  onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>, settleMs?: number) => void
+  /** Its own turn ended and it waits for this many of its subagents; 0: no longer. The turn state stays working. */
+  onHelpers?: (sessionId: string, helpers: number) => void
   /** A turn finished with this text: the task router reads its end_turn call, else its handoff (application/task-router.ts). */
   turnDone?: (sessionId: string, text: string, turn: TurnEndFacts) => void
   /** Whom an end_turn call is read against, and the session's task (application/turn-context.ts); absent: the space's agent and no task. */
@@ -309,6 +317,27 @@ export class ChatBridge {
     return this.entries.get(sessionId)?.backgroundTasks.size ?? 0
   }
 
+  /**
+   * Its turn asks nobody anything and subagents it started still run (stillRunning): they wake it
+   * again, so its run is not over. False for a session the bridge does not run.
+   */
+  waitsOnHelpers(sessionId: string): boolean {
+    const entry = this.entries.get(sessionId)
+    return entry !== undefined && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })
+  }
+
+  /**
+   * A done signal came for the session (its Stop hook). True while it waits on its helpers: the
+   * signal is then not to be applied, and the bridge ends the turn state itself once they are back
+   * and no turn follows, or the session stops.
+   */
+  holdTurnOpen(sessionId: string): boolean {
+    const entry = this.entries.get(sessionId)
+    if (!entry || !this.waitsOnHelpers(sessionId)) return false
+    entry.held = true
+    return true
+  }
+
   sessionState(sessionId: string): SessionState {
     const entry = this.entries.get(sessionId)
     if (!entry?.runtime) return 'ended'
@@ -331,6 +360,8 @@ export class ChatBridge {
       if (entry.active && entry.openRequests.size === 0) await this.interruptAndWait(entry, runtime)
       await runtime.close()
       entry.runtime = null
+      // Its subagents went with the process (runtime_exit says so too; this holds for a runtime that does not).
+      this.releaseHeld(entry)
     }
     this.ctx.memory?.release(sessionId)
     // Stopped, archived, timed out, deleted or taken over: its turn is over, not cut off.
@@ -587,7 +618,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -724,7 +755,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -778,7 +809,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -930,8 +961,25 @@ export class ChatBridge {
     }
   }
 
+  /** The turn its subagents woke has started: working again, which also takes back a done about to show. */
+  private wake(entry: ChatEntry): void {
+    if (!entry.parked) return
+    entry.parked = false
+    entry.held = false
+    this.ctx.onTurn(entry.sessionId, 'working')
+  }
+
+  /** The done that was held back is due now: the session's run is over, or cut off. */
+  private releaseHeld(entry: ChatEntry): void {
+    entry.parked = false
+    if (!entry.held) return
+    entry.held = false
+    this.ctx.onTurn(entry.sessionId, 'done')
+  }
+
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
     entry.lastActivity = Date.now()
+    if (startsTurn(event)) this.wake(entry)
     switch (event.kind) {
       case 'settings':
         if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
@@ -957,6 +1005,14 @@ export class ChatBridge {
         else if (event.status) entry.backgroundTasks.delete(event.taskId)
         if (event.kind === 'agent_task' && event.status === 'running') entry.runningAgents.add(event.taskId)
         else if (event.status) entry.runningAgents.delete(event.taskId)
+        if (event.kind === 'agent_task' && event.status && entry.parked) {
+          this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size)
+          // The last one is back: done, unless the turn it wakes starts within a moment (wake).
+          if (entry.runningAgents.size === 0 && entry.held) {
+            entry.held = false
+            this.ctx.onTurn(entry.sessionId, 'done', HELPERS_BACK_SETTLE_MS)
+          }
+        }
         break
       case 'tool_call':
         // The reply comes after the call: what was written before it is not it.
@@ -976,8 +1032,14 @@ export class ChatBridge {
         if (event.reason !== 'interrupted' && !entry.closing && stillRunning({ agents: entry.runningAgents.size, status: entry.status })) {
           entry.turnText = ''
           this.resetTurnStatus(entry)
+          // Its turn state stays working (holdTurnOpen kept the Stop hook's done back), and says what it waits for.
+          entry.held = true
+          entry.parked = true
+          this.ctx.onHelpers?.(entry.sessionId, entry.runningAgents.size)
           break
         }
+        // The last subagent came back between the Stop hook and here, or the user stopped the turn: nothing follows.
+        if (!entry.closing) this.releaseHeld(entry)
         const attention = attentionAfterTurn({
           worker: this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,
         })
@@ -1008,6 +1070,9 @@ export class ChatBridge {
         entry.backgroundTasks.clear()
         entry.runningAgents.clear()
         entry.turnEnded?.()
+        // Its subagents went with the process: nothing wakes it any more. After a crash onExit clears the state.
+        if (event.expected) this.releaseHeld(entry)
+        else { entry.held = false; entry.parked = false }
         // No Stop hook comes after a crash, so nothing else would end its turn state.
         if (!event.expected) {
           this.ctx.onExit?.(entry.sessionId)
@@ -1045,6 +1110,7 @@ export class ChatBridge {
     entry.lastActivity = Date.now()
     // A new turn: whoever it waited for has answered.
     this.resetTurnStatus(entry)
+    this.wake(entry)
     // The turn a reminder starts is the stop's second chance: it had its reminder.
     if (reminder) entry.reminded = true
     const asked = this.ctx.ledger.get(entry.sessionId)
@@ -1114,3 +1180,11 @@ export class ChatBridge {
   }
 }
 
+/** What only a turn of the session's own agent sends: its subagents' events are of other kinds. */
+function startsTurn(event: RuntimeEvent): boolean {
+  switch (event.kind) {
+    case 'activity': return event.state !== 'idle'
+    case 'text_delta': case 'text': case 'thinking_delta': case 'thinking': case 'tool_call': return true
+    default: return false
+  }
+}

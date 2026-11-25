@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { connectTurnEvents } from './useTurnStateStore';
+import { connectTurnEvents, getTurnSnapshot } from './useTurnStateStore';
 
 /** An EventSource the test drives: it records the listeners and lets the test send events. */
 class FakeEventSource {
@@ -32,6 +32,19 @@ describe('the turn event stream', () => {
     expect(reloads).toHaveLength(2);
     disconnect();
     window.removeEventListener('cockpit:tasks', onTasks);
+  });
+
+  it('keeps how many subagents a working session waits for, from the snapshot and from each change', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const disconnect = connectTurnEvents();
+    const since = '2026-02-01T11:00:00.000Z';
+    FakeEventSource.last!.send('snapshot', [{ sessionId: 'a', state: 'working', since, helpers: 2 }, { sessionId: 'b', state: 'working', since }]);
+    expect(getTurnSnapshot().turns).toEqual({ a: { state: 'working', since, helpers: 2 }, b: { state: 'working', since } });
+    FakeEventSource.last!.send('turn', { sessionId: 'a', state: 'working', since, helpers: 1 });
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'working', since, helpers: 1 });
+    FakeEventSource.last!.send('turn', { sessionId: 'a', state: 'working', since });
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'working', since });
+    disconnect();
   });
 
   it('passes a tasks event on to the board', () => {
