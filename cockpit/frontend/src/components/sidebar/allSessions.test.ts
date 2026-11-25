@@ -275,6 +275,23 @@ describe('workingWord', () => {
     expect(workingWord({ state: 'working', since, helpers: 1 })).toBe('Waiting for 1 subagent');
     expect(workingWord({ state: 'working', since, helpers: 3 })).toBe('Waiting for 3 subagents');
   });
+
+  it('names a workflow run it waits for alone, with how far its agents are', () => {
+    const run = (running: number, done: number) => ({ state: 'working' as const, since, workflows: [{ name: 'review-changes', running, done }] });
+    expect(workingWord(run(3, 4))).toBe('Waiting for review-changes · 3 agents running, 4 done');
+    expect(workingWord(run(1, 0))).toBe('Waiting for review-changes · 1 agent running');
+    expect(workingWord(run(0, 2))).toBe('Waiting for review-changes · 2 done');
+    expect(workingWord(run(0, 0))).toBe('Waiting for review-changes');
+  });
+
+  it('counts workflow runs, alone or beside subagents', () => {
+    const run = { name: 'review-changes', running: 1, done: 0 };
+    expect(workingWord({ state: 'working', since, workflows: [run, { ...run, name: 'spec' }] })).toBe('Waiting for 2 workflows');
+    expect(workingWord({ state: 'working', since, helpers: 2, workflows: [run] })).toBe('Waiting for 2 subagents and 1 workflow');
+    expect(workingWord({ state: 'working', since, helpers: 1, workflows: [run, run] })).toBe('Waiting for 1 subagent and 2 workflows');
+    expect(workingWord({ state: 'working', since, workflows: [] })).toBe('Working');
+    expect(workingWord({ state: 'done', since, workflows: [run] })).toBe('Working');
+  });
 });
 
 describe('filterByName', () => {

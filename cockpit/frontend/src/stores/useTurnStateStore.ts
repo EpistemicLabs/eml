@@ -8,11 +8,15 @@ import { useSyncExternalStore } from 'react';
 import type { LLMProvider } from '@/types/app';
 
 export type TurnState = 'idle' | 'working' | 'done' | 'waiting';
+/** A workflow run a session waits on, and how far its agents are (they start as it goes, so no total). */
+export type WorkflowWait = { name: string; running: number; done: number };
 export type TurnInfo = {
   state: TurnState;
   since: string;
   /** Working, but its own turn is over: it waits for this many subagents it started. */
   helpers?: number;
+  /** And for these workflow runs it started; absent when none. */
+  workflows?: WorkflowWait[];
 };
 export type TurnEvent = TurnInfo & { sessionId: string };
 
@@ -120,7 +124,9 @@ export type SpawnRequest = {
   origin?: 'job' | 'runner';
 };
 
-const turnInfo = ({ state, since, helpers }: TurnInfo): TurnInfo => ({ state, since, ...(helpers ? { helpers } : {}) });
+const turnInfo = ({ state, since, helpers, workflows }: TurnInfo): TurnInfo => ({
+  state, since, ...(helpers ? { helpers } : {}), ...(workflows?.length ? { workflows } : {}),
+});
 
 export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {
   const source = new EventSource('/api/events');
