@@ -457,7 +457,8 @@ async function main() {
       ledger.archive(sessionId)
     },
   })
-  setInterval(() => { void nextStep.tick() }, RUNNER_TICK_MS).unref?.()
+  // Often enough that an answer left unseen is checked soon after its grace (UNSEEN_GRACE_MS); a tick without due sessions does nothing.
+  setInterval(() => { void nextStep.tick() }, NEXT_STEP_TICK_MS).unref?.()
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
@@ -1053,6 +1054,8 @@ async function main() {
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
+// How often the next-step check looks at sessions it put off (an answer not seen yet, a pane still open).
+const NEXT_STEP_TICK_MS = 10_000
 // Run records: a sync writes only what changed; the first waits for the sessions a restart brings back.
 const RUN_SYNC_MS = 60_000
 const RUN_FIRST_SYNC_MS = 30_000

@@ -49,7 +49,7 @@ export const NEXT_STEP_PROMPT = 'Your task is still open but has no next step. S
 export const NO_NEXT_STEP = 'Agent stopped without a next step'
 export const OWN_STATUS_PROMPT = 'Your last reply did not say how you stand, and the user has not read it yet. If it asks the user something, call session_status question with the question as the reason, then ask it again in one line. Otherwise call session_status done and reply in one line.'
 /** How long an answer stays unseen before the user counts as not watching it. */
-export const UNSEEN_GRACE_MS = 2 * 60_000
+export const UNSEEN_GRACE_MS = 30_000
 // The read mark the page sends for an answer landing on screen can beat the turn's end to the host.
 const SEEN_SLACK_MS = 5_000
 
