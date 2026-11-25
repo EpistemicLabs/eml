@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // How the board loads again after a change: one load per change however many components read it, and a load under
-// way is never thrown away (it starved the page while sessions worked: no board landed for minutes on a slow link).
+// way is never thrown away.
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';

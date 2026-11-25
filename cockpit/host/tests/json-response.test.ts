@@ -5,8 +5,7 @@ import zlib from 'node:zlib'
 
 import { acceptsGzip, GZIP_MIN_BYTES, sendJson } from '../src/json-response.js'
 
-// The host's JSON answers go gzipped to a client that takes it: a page on the tailnet loaded the ~300 KB task board
-// uncompressed on every change.
+// The host's JSON answers go gzipped to a client that takes it.
 
 const big = { tasks: Array.from({ length: 200 }, (_, i) => ({ id: `task-${i}`, title: 'a task with a title that repeats' })) }
 const small = { ok: true }

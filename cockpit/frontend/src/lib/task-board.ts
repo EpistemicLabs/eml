@@ -225,12 +225,12 @@ export async function fetchBoard(signal?: AbortSignal): Promise<Board> {
 
 /**
  * Load a query again after a change, without throwing away a load already under way. That load may have read the
- * host before the change, so exactly one more runs when it ends, however many changes came meanwhile.
+ * host before the change, so exactly one more runs when it ends, however many changes came meanwhile. A change never
+ * cancels a load under way: while sessions work, changes come faster than a slow link loads the board.
  *
- * Starting over on each change instead (React Query's default) starves the page: while sessions work, changes come
- * every second or two, each one cancelled the load before it, and on a slow link no board ever landed for minutes.
+ * `inFlight`: per query, whether one more load is owed; shared by every change of one query client.
  */
-export function refreshAfterChange(client: QueryClient, queryKey: QueryKey, inFlight = new Map<string, boolean>()): void {
+function refreshAfterChange(client: QueryClient, queryKey: QueryKey, inFlight: Map<string, boolean>): void {
   const id = JSON.stringify(queryKey);
   if (inFlight.has(id)) { inFlight.set(id, true); return; }
   inFlight.set(id, client.isFetching({ queryKey }) > 0);
@@ -245,8 +245,8 @@ export function refreshAfterChange(client: QueryClient, queryKey: QueryKey, inFl
 const changeWatches = new WeakMap<QueryClient, { users: number; stop: () => void }>();
 
 /**
- * One `cockpit:tasks` listener per query client, however many components read the board: each listener started its
- * own load, so one change meant a load per component (8 on an empty page, one more per chat pane).
+ * One `cockpit:tasks` listener per query client, however many components read the board, so one change starts one
+ * load.
  */
 function watchTaskChanges(client: QueryClient): () => void {
   let watch = changeWatches.get(client);
