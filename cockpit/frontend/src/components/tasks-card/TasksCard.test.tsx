@@ -7,6 +7,7 @@ import type { Board, BoardTask } from '@/lib/task-board';
 
 const live = vi.hoisted(() => ({
   sessions: [] as unknown[],
+  turns: {} as Record<string, unknown>,
   opened: [] as unknown[],
   posts: [] as Array<{ url: string; body: Record<string, unknown> }>,
   startStatus: 202,
@@ -17,7 +18,7 @@ const live = vi.hoisted(() => ({
   desk: { id: 'desk-1', name: 'Desk 1', spaceId: null, panes: [] as unknown[], activePaneId: 'p1' },
 }));
 vi.mock('@/components/sidebar/useAllSessions', () => ({ useAllSessions: () => ({ sessions: live.sessions, queued: [], refresh: () => {} }) }));
-vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({ ...(await importOriginal<object>()), useTurnStore: () => ({ turns: {}, seen: {} }) }));
+vi.mock('@/stores/useTurnStateStore', async (importOriginal) => ({ ...(await importOriginal<object>()), useTurnStore: () => ({ turns: live.turns, seen: {} }) }));
 vi.mock('@/stores/useSpaceStore', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useSpaces: () => [{ id: 'main', name: 'Main', main: true, agent: 'atlas', upgrade: null }],
@@ -69,6 +70,7 @@ function renderCard() {
 
 beforeEach(() => {
   live.opened = [];
+  live.turns = {};
   live.started = [];
   live.posts = [];
   live.closedAsks = [];
@@ -106,6 +108,15 @@ async function renderAll() {
 const row = (name: RegExp) => screen.getAllByRole('treeitem').find((el) => name.test(el.getAttribute('aria-label') ?? ''))!;
 
 describe('the tasks card', () => {
+  it('says what a session waits for when its own turn is over and its subagents still run', async () => {
+    live.sessions = [...live.sessions, { id: 's-free', spaceId: 'main', projectId: 'p-ui', summary: 'Compare the exports' }, { id: 's-busy', spaceId: 'main', projectId: 'p-ui', summary: 'Write the report' }];
+    live.desk = { ...live.desk, panes: [...live.desk.panes, { id: 'p2', projectId: 'p-ui', sessionId: 's-free', paneView: 'chat' }, { id: 'p3', projectId: 'p-ui', sessionId: 's-busy', paneView: 'chat' }] };
+    live.turns = { 's-free': { state: 'working', since: '2026-02-01T11:00:00.000Z', helpers: 2 }, 's-busy': { state: 'working', since: '2026-02-01T11:00:00.000Z' } };
+    await renderAll();
+    expect(row(/^Compare the exports, Waiting for 2 subagents/)).toBeTruthy();
+    expect(row(/^Write the report, Working/)).toBeTruthy();
+  });
+
   it('shows the desk\'s project with its task tree, the active pane\'s row marked', async () => {
     await renderAll();
     expect(row(/^Session review ui, Needs you/).getAttribute('aria-selected')).toBe('true');
