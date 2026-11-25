@@ -18,7 +18,8 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
@@ -205,6 +206,8 @@ export interface ChatContext {
    * (application/turn-check.ts). Answers why it could not be set, or null.
    */
   turnCheck?: (sessionId: string, check: { at: string | null; call: EndTurn; turn: SessionTurn }) => Promise<string | null>
+  /** The session's check as the schedule saved it: the zone its time was read in and the instant (application/turn-check.ts saved). */
+  checkSaved?: (sessionId: string) => CheckTime | null
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
   /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
@@ -883,6 +886,7 @@ export class ChatBridge {
       ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
       worker: this.reporting(entry),
       ...(this.ctx.jobs ? { jobs: (input: Record<string, unknown>) => this.ctx.jobs!(entry.sessionId, input) } : {}),
+      ...(this.ctx.callTime ? { timeZone: zoneLabel(this.ctx.callTime().zone) } : {}),
       onEvent: (event) => this.onRuntimeEvent(entry, event),
       onSpawn: (pid) => { entry.pid = pid; this.placeInCeiling(entry, pid) },
     })
@@ -939,7 +943,8 @@ export class ChatBridge {
         const derived = deriveTurn(call, turn.ctx)
         // A check at a time that has passed wakes nobody: the call is refused whole, so the agent names another.
         // A time that sets no check (a step for the user) is not looked at.
-        const passed = derived.checkAt ? passedWhen(call, this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }) : null
+        const time = this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+        const passed = derived.checkAt ? passedWhen(call, time) : null
         if (passed) throw new Error(passed)
         entry.declared = true
         entry.replyText = ''
@@ -954,10 +959,12 @@ export class ChatBridge {
         // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
         this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx: turn.ctx })
         const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
+        const saved = derived.checkAt && !problem ? this.ctx.checkSaved?.(entry.sessionId) ?? null : null
         return {
           derived,
           missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
           ...(problem && derived.checkAt ? { checkProblem: problem } : {}),
+          ...(saved ? { checkTime: saved } : {}),
         }
       },
       report: (status, reason) => {

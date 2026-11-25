@@ -11,6 +11,7 @@ import type { Project } from "@/types/app";
 import { cn } from "@/lib/utils";
 import { FOCUS, LABEL } from "@/shared/view/ui";
 import { ReviewFlag, TypeBadge } from "@/shared/view/ui/EngramType";
+import { inputStamp } from "@/lib/time-zone";
 
 // Ported from packages/web/components/engram-detail.tsx (next/link → react-router
 // Link; web's Card → the cockpit's BrainCard). The engram body inside the
@@ -392,9 +393,11 @@ function LearningBadge({ state }: { state: LearningState }) {
   );
 }
 
-function entryDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
+export function entryDate(iso: string): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return iso;
+  const { date } = inputStamp(at);
+  return date;
 }
 
 // v0.19: a learning's evidence and the review confirmations (a task's journal

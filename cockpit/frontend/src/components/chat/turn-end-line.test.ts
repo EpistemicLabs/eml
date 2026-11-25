@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { setTimeZoneForTest } from '@/lib/time-zone';
 
 import { turnEndLine, turnEndOfTool, type TurnEndCall, type TurnEndContext } from './turn-end-line';
 
@@ -38,7 +40,7 @@ describe('turnEndOfTool', () => {
   });
 
   it('drops what is not as the tool takes it: a next without who, empty questions', () => {
-    expect(call({ result: 'x', next: { what: 'look' }, questions: ['', 3, ' One? '], failed: ' ' })).toEqual({ kind: 'end_turn', result: 'x', next: null, questions: ['One?'], failed: null });
+    expect(call({ result: 'x', next: { what: 'look' }, questions: ['', 3, ' One? '], failed: ' ' })).toEqual({ kind: 'end_turn', result: 'x', next: null, questions: ['One?'], failed: null, savedAt: null });
   });
 });
 
@@ -128,5 +130,33 @@ describe('the line of a session_status call', () => {
   it('stands alone without a reason, and keeps a status it does not know', () => {
     expect(legacy('done')).toBe('Done');
     expect(legacy('paused', 'Later')).toBe('paused · Later');
+  });
+});
+
+describe('the check\'s time in the user\'s time zone (the tests run in UTC)', () => {
+  afterEach(() => setTimeZoneForTest(null));
+  // Wed 25 Nov 2026 13:00 UTC = 20:00 in Bangkok.
+  const AT = Date.parse('2026-11-25T13:00:00Z');
+  const own = { result: 'Deploy runs', next: { who: 'nova', what: 'See if it is up', when: '2026-11-25T20:15' } };
+  const ANSWER = 'Recorded: you look again at 2026-11-25T20:15 (Asia/Bangkok, 2026-11-25T13:15Z). Now write your reply as visible text.';
+
+  it('reads next.when in the user\'s zone, as the host does, and shows it there', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    expect(line(own, { ...ctx, now: AT })).toBe('Check scheduled · 20:15');
+    // 18:00 UTC is 01:00 on the 26th in Bangkok: a check at 09:00 on the 26th is today there, though tomorrow in UTC.
+    const early = { ...own, next: { ...own.next, when: '2026-11-26T09:00' } };
+    expect(line(early, { ...ctx, now: Date.parse('2026-11-25T18:00:00Z') })).toBe('Check scheduled · 09:00');
+    expect(line(early, { ...ctx, now: Date.parse('2026-11-25T18:00:00Z'), zone: 'UTC' })).toBe('Check scheduled · tomorrow 09:00');
+  });
+
+  it('shows the instant the host saved, from the tool\'s answer, in the user\'s zone: the same time the task panel shows', () => {
+    const saved = turnEndOfTool({ name: 'mcp__cockpit__end_turn', input: own, status: 'completed', output: ANSWER });
+    expect(saved?.kind === 'end_turn' && saved.savedAt).toBe('2026-11-25T13:15Z');
+    // Even when the zone changed since: the saved instant counts, not the words.
+    expect(text(saved!, { ...ctx, now: AT, zone: 'Asia/Makassar' })).toBe('Check scheduled · 21:15');
+    expect(text(saved!, { ...ctx, now: AT, zone: 'UTC' })).toBe('Check scheduled · 13:15');
+    // An answer without the instant (an older host) leaves the call's own time.
+    const older = turnEndOfTool({ name: 'end_turn', input: own, output: 'Recorded: you look again at 2026-11-25T20:15.' });
+    expect(older?.kind === 'end_turn' ? older.savedAt : 'not a call').toBeNull();
   });
 });

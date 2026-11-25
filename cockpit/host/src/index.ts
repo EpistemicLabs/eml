@@ -102,6 +102,7 @@ import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { createScheduleMirror } from './application/schedule-mirror.js'
 import { hasSchedule, nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
 import { scheduledJobOptions } from './domain/hand-over.js'
+import { zoneLabel } from './domain/schedule.js'
 import type { DelegationFields } from './domain/delegation.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
@@ -389,7 +390,7 @@ async function main() {
   const workerHolds = createWorkerTaskHolds(Date.now, () => spawns.list())
   const sessionTask = createSessionTask({
     ledger, spaces, brain: taskBrain, jobTask: (jobId) => jobStore.get(jobId)?.taskId ?? null, me: owner, endTurnTool,
-    workerDelegate: (spaceId) => spaces.resolve(spaceId).agent ?? null, workerHolds,
+    workerDelegate: (spaceId) => spaces.resolve(spaceId).agent ?? null, workerHolds, zone: () => zoneLabel(userTimeZone()),
   })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
@@ -568,6 +569,7 @@ async function main() {
     callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
     // The check a call's next.when asks for (application/turn-check.ts).
     turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
+    checkSaved: (sessionId) => turnCheck.saved(sessionId),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
     userWrote: (sessionId) => userWrote(sessionId),
     handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
@@ -737,7 +739,7 @@ async function main() {
     },
     onGrant, onGrantEnd,
   })
-  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), log })
+  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())

@@ -13,7 +13,10 @@ import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
  *                             tool's input. Answer: { text, job? }.
  *   GET  /api/jobs            the page: every space's jobs (with their goal) and runs; each run's
  *                             session as it stands now, with its attention (Needs you, Check this).
- *   PUT  /api/jobs/time-zone  the page: the user's time zone, from their browser.
+ *   GET  /api/jobs/time-zone  the page: the user's time zone (Settings › Preferences); null until one is saved.
+ *   PUT  /api/jobs/time-zone  the page: { timeZone, explicit? }. Only an explicit one (the user chose it in
+ *                             Settings) replaces a saved zone; without it a browser fills in the zone only
+ *                             while none is saved, so the last page loaded never moves the user's times.
  *   POST /api/jobs/<id>/<pause|resume|delete|run_now|finish>   the page (Jobs view).
  *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
  *                             for new channel addresses, and send vs draft per channel.
@@ -126,6 +129,10 @@ export async function handleJobsApi(
     json(res, answer.status, { text: answer.text })
     return true
   }
+  if (pathname === '/api/jobs/time-zone' && method === 'GET') {
+    json(res, 200, { timeZone: deps.store.timeZone() })
+    return true
+  }
   if (pathname === '/api/jobs/time-zone' && method === 'PUT') {
     const body = await readJson(req)
     const zone = typeof body.timeZone === 'string' ? body.timeZone : ''
@@ -133,8 +140,10 @@ export async function handleJobsApi(
       json(res, 400, { error: { code: 'INVALID_TIME_ZONE', message: 'timeZone must be an IANA time zone' } })
       return true
     }
-    deps.store.setTimeZone(zone)
-    json(res, 200, { timeZone: zone })
+    const saved = deps.store.timeZone()
+    const take = body.explicit === true || saved === null
+    if (take) deps.store.setTimeZone(zone)
+    json(res, 200, { timeZone: take ? zone : saved, changed: take && saved !== zone })
     return true
   }
   return false

@@ -1,4 +1,4 @@
-import { isOpenRun, JOB_LIMITS, type Job } from '../domain/job.js'
+import { isOpenRun, isScheduleTrigger, JOB_LIMITS, type Job } from '../domain/job.js'
 import { checkJobName } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
 import type { JobAnswer, JobCaller } from './jobs.js'
@@ -22,6 +22,8 @@ export interface TurnCheckDeps {
   jobs: { handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> }
   store: Pick<JobStore, 'list' | 'put' | 'runs'>
   callerOf(sessionId: string): JobCaller | null
+  /** The user's time zone now: a moved check reads its new time in it, not in the zone it was first set in. */
+  zone?: () => string
   log(line: string): void
 }
 
@@ -37,9 +39,17 @@ export interface CheckWanted {
 export interface TurnCheck {
   /** Brings the session's check in line with its call. Answers why the check could not be set, or null. Never throws. */
   settle(sessionId: string, wanted: CheckWanted): Promise<string | null>
+  /** The session's check still to run: the zone its time was read in and the instant saved; null without one. */
+  saved(sessionId: string): { at: number; zone: string } | null
 }
 
 const NO_TASK = 'this session'
+
+/** "2026-11-26T20:15 (Asia/Bangkok) = 2026-11-26T13:15:00.000Z": the time as written, the zone it was read in and the instant saved. */
+export function checkTimeLine(written: string, job: Pick<Job, 'triggers'> | undefined): string {
+  const trigger = job?.triggers.find(isScheduleTrigger)
+  return trigger?.at ? `${written} (${trigger.timeZone}) = ${trigger.at}` : written
+}
 
 /** The check's name within the limit for job names; `tag` tells two sessions' checks on one task apart. */
 export function checkName(taskName: string | null, tag = ''): string {
@@ -76,19 +86,24 @@ export function createTurnCheck(deps: TurnCheckDeps): TurnCheck {
     const as = taken ? checkName(wanted.taskName, sessionId.slice(0, 8)) : name
     if (check) {
       // The session may work on another task by now: the check goes with it.
-      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
+      const answer = await deps.jobs.handle(caller, { action: 'update', job: check.id, at: wanted.at, ...(deps.zone ? { timezone: deps.zone() } : {}), prompt: wanted.prompt, name: as, task_id: caller.taskId ?? '' })
       if (answer.status >= 400) return answer.text
-      deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${wanted.at}`)
+      deps.log(`[check] ${sessionId.slice(0, 8)} check ${check.id.slice(0, 8)} moved to ${checkTimeLine(wanted.at, answer.job ?? deps.store.list().find((job) => job.id === check.id))}`)
       return null
     }
     const answer = await deps.jobs.handle(caller, { action: 'create', name: as, prompt: wanted.prompt, at: wanted.at, target: 'self' })
     if (answer.status >= 400 || !answer.job) return answer.text
     deps.store.put({ ...answer.job, origin: 'end_turn' })
-    deps.log(`[check] ${sessionId.slice(0, 8)} check ${answer.job.id.slice(0, 8)} set for ${wanted.at}`)
+    deps.log(`[check] ${sessionId.slice(0, 8)} check ${answer.job.id.slice(0, 8)} set for ${checkTimeLine(wanted.at, answer.job)}`)
     return null
   }
 
   return {
+    saved(sessionId) {
+      const check = checksOf(sessionId).find((job) => !job.endedAt)
+      const trigger = check?.triggers.find(isScheduleTrigger)
+      return trigger?.at ? { at: Date.parse(trigger.at), zone: trigger.timeZone } : null
+    },
     async settle(sessionId, wanted) {
       try {
         return await settle(sessionId, wanted)

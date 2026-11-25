@@ -2,6 +2,7 @@
 // is now and what Enter does with it. Pure, so the rules are tested without a browser; the opening itself is in
 // components/command-palette/openTask.ts. A task already open on another desk is gone to, never moved there.
 import { type Board, type BoardTask, closedAsTask, OPEN_STATUSES, readable, taskName } from '@/lib/task-board';
+import { formatInZone } from '@/lib/time-zone';
 
 export interface LocateContext {
   activeDeskId: string;
@@ -46,7 +47,7 @@ export function locateTask(task: Pick<BoardTask, 'spaceId' | 'sessionIds'>, ctx:
   return { kind: 'none', ...otherSpace };
 }
 
-const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'earlier');
+const day = (iso: string | null) => (iso ? formatInZone(iso, { day: 'numeric', month: 'short' }) : 'earlier');
 
 /** Where it is, and what Enter does, in the words a row shows. */
 export function locationWords(where: TaskLocation): { text: string; act: string } {

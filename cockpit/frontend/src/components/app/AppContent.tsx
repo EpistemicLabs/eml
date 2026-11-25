@@ -17,6 +17,7 @@ import BrainDashboard from '../brain/BrainDashboard';
 import JobsView from '../jobs/JobsView';
 import { TaskBoard } from '../task-board/TaskBoard';
 import { taskNamesKey, useTaskBoard } from '@/lib/task-board';
+import { loadTimeZone } from '@/lib/time-zone';
 import CommandPalette from '../command-palette/CommandPalette';
 import Settings from '../settings/view/Settings';
 import { ProjectModals } from '../projects/ProjectModals';
@@ -103,11 +104,9 @@ function AppContentInner() {
   const openSettingsDefault = useCallback(() => openSettings(), [openSettings]);
   useCockpitShortcuts(openSettingsDefault);
 
-  // Scheduled jobs read their times on the user's clock, not the server's: tell the host this browser's zone.
-  useEffect(() => {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (zone) void api.setTimeZone(zone).catch(() => { /* an older host has no jobs */ });
-  }, []);
+  // Every time reads and shows in the user's time zone (Settings): read it from the host. A browser fills it in
+  // only while none is saved; it never replaces a saved one (lib/time-zone.ts).
+  useEffect(() => { void loadTimeZone(); }, []);
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();

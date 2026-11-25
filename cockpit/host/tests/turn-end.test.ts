@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { parseHandoff } from '../src/domain/handoff.js'
 import {
-  BEFORE_IDLE_STOP, END_TURN_DESCRIPTION, END_TURN_TOOL, JOB_HEADER_STATUS, checkJobName, checkPrompt, deriveTurn, endTurnAnswer,
+  BEFORE_IDLE_STOP, END_TURN_DESCRIPTION, END_TURN_TOOL, endTurnDescription, JOB_HEADER_STATUS, checkJobName, checkPrompt, deriveTurn, endTurnAnswer,
   fromHandoff, handoffBlock, missingOf, passedWhen, readEndTurn, reminder, resultOfTurn, shortQuestion, turnEndRules, whoOf, withoutOutside, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing,
 } from '../src/domain/turn-end.js'
+import { zoneLabel } from '../src/domain/schedule.js'
 
 const ctx = { owner: 'kim', agent: 'nova', members: ['kim', 'sam', 'echo', 'nova'] }
 const WHEN = '2026-11-27T10:00'
@@ -39,6 +40,26 @@ describe('reading an end_turn call', () => {
     expect(passedWhen(call('2026-11-27T10:01'), at)).toBeNull()
     expect(passedWhen(call(), at)).toBeNull()
     expect(passedWhen({}, at)).toBeNull()
+  })
+
+  it('names the user\'s time zone where a session reads how to write a time', () => {
+    const zone = 'Asia/Bangkok (UTC+7)'
+    expect(endTurnDescription(zone)).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7); required unless who is the user")
+    expect(turnEndRules({ owner: 'kim', tool: true, zone })).toContain("Times: the user's time zone is Asia/Bangkok (UTC+7).")
+    // A session without the tool reads it in the block's rules as well.
+    expect(turnEndRules({ owner: 'kim', tool: false, zone })).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7);")
+    expect(turnEndRules({ owner: 'kim', tool: true })).not.toContain('Times:')
+    expect(zoneLabel('Asia/Bangkok')).toBe(zone)
+    expect(zoneLabel('Asia/Makassar')).toBe('Asia/Makassar (UTC+8)')
+    expect(zoneLabel('Asia/Kolkata')).toBe('Asia/Kolkata (UTC+5:30)')
+    expect(zoneLabel('UTC')).toBe('UTC (UTC)')
+  })
+
+  it('refuses a time that has passed in the user\'s zone while the process runs in UTC', () => {
+    // 08:00 UTC is 15:00 in Bangkok: 14:59 there has passed, though 14:59 UTC has not.
+    const at = { now: Date.parse('2026-11-25T08:00:00Z'), zone: 'Asia/Bangkok' }
+    expect(passedWhen({ next: { who: 'me', what: 'check', when: '2026-11-25T14:59' } }, at)).toContain('(read in Asia/Bangkok)')
+    expect(passedWhen({ next: { who: 'me', what: 'check', when: '2026-11-25T15:01' } }, at)).toBeNull()
   })
 
   it('knows whom a who names', () => {

@@ -239,6 +239,9 @@ const FIELD = {
   decided: 'what was decided',
 }
 
+/** The when field, naming the user's zone when it is known: "… in the user's time zone: Asia/Bangkok (UTC+7)". */
+const whenField = (zone?: string | null) => (zone ? `${FIELD.when}: ${zone}` : FIELD.when)
+
 const STOP = 'when you stop and the stop changes who has to act or where the task stands'
 const PLAIN = 'for a turn that is plain conversation'
 const WHEN_REQUIRED = 'required unless who is the user, where it is not used'
@@ -246,15 +249,23 @@ const nextRequired = (next: string, questions: string, failed: string) => `${nex
 const VISIBLE = 'as visible text'
 const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HANDOFF_LABELS.heading} block instead.`
 
-export const END_TURN_DESCRIPTION = [
-  `Call ${END_TURN_TOOL} once ${STOP}. Make no call ${PLAIN}.`,
-  `Call it first, then write your reply once ${VISIBLE}, as the last thing in the turn: the user reads only that, never the call or your thinking.`,
-  `result: ${FIELD.result}. It is shown under the task's name in every list.`,
-  `next: whose move it is. who: ${FIELD.who}. what: ${FIELD.what}. when: ${FIELD.when}; ${WHEN_REQUIRED}. ${nextRequired('next', 'questions', 'failed')}.`,
-  `questions: ${FIELD.questions}, one entry per question. Ask them in your reply as a numbered list and copy that list here.`,
-  `failed: only when you could not do it: ${FIELD.failed}.`,
-  `checked, claimed, decided: for whoever picks the task up next: ${FIELD.checked}, ${FIELD.claimed}, ${FIELD.decided}. They go to the task's journal, not the chat.`,
-].join('\n')
+/**
+ * The tool's description. `zone`: the user's time zone as a session is told it (domain/schedule.ts zoneLabel,
+ * "Asia/Bangkok (UTC+7)"); without it the description says only "the user's time zone".
+ */
+export function endTurnDescription(zone?: string | null): string {
+  return [
+    `Call ${END_TURN_TOOL} once ${STOP}. Make no call ${PLAIN}.`,
+    `Call it first, then write your reply once ${VISIBLE}, as the last thing in the turn: the user reads only that, never the call or your thinking.`,
+    `result: ${FIELD.result}. It is shown under the task's name in every list.`,
+    `next: whose move it is. who: ${FIELD.who}. what: ${FIELD.what}. when: ${whenField(zone)}; ${WHEN_REQUIRED}. ${nextRequired('next', 'questions', 'failed')}.`,
+    `questions: ${FIELD.questions}, one entry per question. Ask them in your reply as a numbered list and copy that list here.`,
+    `failed: only when you could not do it: ${FIELD.failed}.`,
+    `checked, claimed, decided: for whoever picks the task up next: ${FIELD.checked}, ${FIELD.claimed}, ${FIELD.decided}. They go to the task's journal, not the chat.`,
+  ].join('\n')
+}
+
+export const END_TURN_DESCRIPTION = endTurnDescription()
 
 /** The older tool's description: it only points to end_turn. */
 export const LEGACY_STATUS_DESCRIPTION = `The older form of ${END_TURN_TOOL}, kept for sessions started before it. Use ${END_TURN_TOOL} instead.`
@@ -287,9 +298,18 @@ export function reminder(missing: readonly Missing[], opts: { tool?: boolean } =
   return opts.tool === false && missing.some((m) => m !== 'reply' && m !== 'questions') ? `${named} ${NO_TOOL}` : named
 }
 
+/** The time a check was saved for: the zone its when was read in and the instant. */
+export interface CheckTime {
+  at: number
+  zone: string
+}
+
+/** "(Asia/Bangkok, 2026-11-26T13:15Z)": the zone a when was read in and the instant saved (the chat reads it, frontend turn-end-line.ts). */
+export const savedAs = (time: CheckTime) => `(${time.zone}, ${new Date(time.at).toISOString().slice(0, 16)}Z)`
+
 /** What the answer opens with: what the cockpit now holds. A check that was not set is not named as one. */
-function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; check: boolean }): string {
-  const again = derived.checkAt && !lacks.check ? `you look again at ${derived.checkAt}` : ''
+function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; check: boolean }, time?: CheckTime | null): string {
+  const again = derived.checkAt && !lacks.check ? `you look again at ${derived.checkAt}${time ? ` ${savedAs(time)}` : ''}` : ''
   if (!derived.wait) {
     if (again) return `Recorded: ${again}.`
     return lacks.step || lacks.check ? 'Recorded: where the task stands, but no next step.' : 'Recorded: done, nobody has to act.'
@@ -312,21 +332,22 @@ const NOW_REPLY = `Now write your reply ${VISIBLE}.`
 /**
  * The tool's answer: what was recorded, then what the call still lacks (the
  * agent can call again in the same turn), then the reply, which comes after
- * the call. `checkProblem`: why the check at next.when could not be set.
+ * the call. `checkProblem`: why the check at next.when could not be set;
+ * `checkTime`: the zone next.when was read in and the instant the check was saved for.
  */
-export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null } = {}): string {
+export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null; checkTime?: CheckTime | null } = {}): string {
   const missing = opts.missing ?? []
   const problem = derived.checkAt && opts.checkProblem ? checkNotSet(derived.checkAt, opts.checkProblem) : ''
   // The opening says there is no next step: the task being open is all that is left to add.
   const lacking = !derived.wait && missing.includes('next') ? `The task is still open. ${CALL_WITH_NEXT}` : missingText(missing)
-  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }), problem, lacking, NOW_REPLY].filter(Boolean).join(' ')
+  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }, opts.checkTime), problem, lacking, NOW_REPLY].filter(Boolean).join(' ')
 }
 
 /** The older tool's answer: what was recorded, then the reply that is still to come. */
 export const statusAnswer = (status: WorkerStatus) => `Recorded: ${status}. ${NOW_REPLY}`
 
 /** The block's template, for a session without the tool. */
-function blockTemplate(owner: string): string[] {
+function blockTemplate(owner: string, zone?: string | null): string[] {
   const L = HANDOFF_LABELS
   return [
     '```',
@@ -339,21 +360,25 @@ function blockTemplate(owner: string): string[] {
     `${L.questions}:`,
     `- [${owner}] <${FIELD.questions}>`,
     '```',
-    `who: ${FIELD.who}. when: ${FIELD.when}; ${WHEN_REQUIRED}. ${nextRequired(L.next, L.questions, L.failed)}.`,
+    `who: ${FIELD.who}. when: ${whenField(zone)}; ${WHEN_REQUIRED}. ${nextRequired(L.next, L.questions, L.failed)}.`,
   ]
 }
+
+/** The line of a start context that names the user's time zone (domain/schedule.ts zoneLabel). */
+export const userZoneLine = (zone: string) => `Times: the user's time zone is ${zone}. Read every time the user names, and write every time you give them or the cockpit, in it, unless the time names another zone.`
 
 /**
  * The section of a session's start context about ending a turn. `tool` says
  * whether the session has end_turn: one that has it reads the tool's
  * description, one without it (a terminal, another provider's chat) the block.
+ * `zone`: the user's time zone as the session is told it ("Asia/Bangkok (UTC+7)").
  */
-export function turnEndRules(opts: { owner: string; agent?: string | null; tool: boolean }): string {
+export function turnEndRules(opts: { owner: string; agent?: string | null; tool: boolean; zone?: string | null }): string {
   const block = `End your reply with this block ${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
-  const lines = opts.tool ? [`The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`] : [block, ...blockTemplate(opts.owner)]
+  const lines = opts.tool ? [`The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`] : [block, ...blockTemplate(opts.owner, opts.zone)]
   // The handles a who can name here: the tool's description says what a who is, this line who is who.
   const handles = `Handles for who: the user is ${opts.owner}${opts.agent ? `, you are ${opts.agent}` : ''}.`
-  return ['## Ending a turn', ...lines, handles].join('\n')
+  return ['## Ending a turn', ...lines, handles, ...(opts.zone ? [userZoneLine(opts.zone)] : [])].join('\n')
 }
 
 /** How finished work goes to its owner. The rules about closing a task say it in these words too. */

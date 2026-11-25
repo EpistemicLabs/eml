@@ -72,6 +72,7 @@ import {
   matchesWords,
   queryWords,
 } from './paletteSearch';
+import { formatInZone } from '@/lib/time-zone';
 
 type PalettePage = 'projects' | 'sessions' | 'tasks';
 
@@ -171,7 +172,7 @@ function TaskRow({ task, where, projectName, onSelect }: { task: BoardTask; wher
 }
 
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
-const closedDay = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '');
+const closedDay = (iso: string | null | undefined) => (iso ? formatInZone(iso, { day: 'numeric', month: 'short' }) : '');
 
 /** A closed task: how and when it ended; Enter opens its panel on the task board, where Reopen is. */
 function ClosedTaskRow({ task, projectName, onSelect }: { task: BoardTask; projectName: string; onSelect: () => void }) {

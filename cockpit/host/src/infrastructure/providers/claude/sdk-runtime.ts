@@ -10,7 +10,7 @@ import type {
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
 import { WORKER_STATUSES } from '../../../domain/session-attention.js'
-import { END_TURN_DESCRIPTION, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
+import { endTurnDescription, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
 import { newestRunDir, watchWorkflowJournal, workflowsDir, type JournalWatch, type JournalWatcher } from './workflow-journal.js'
 import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
 import { SPLIT_RELATIONS } from '../../../domain/split.js'
@@ -510,12 +510,13 @@ const PROPOSE_SORT_TOOL_INPUT = {
 export const PROPOSE_SORT_ANSWER = 'Proposed: the chat shows the user Sort topics… and Later. Nothing changes until they apply; carry on meanwhile.'
 
 const SCHEDULE_TOOL = 'schedule'
-const SCHEDULE_TOOL_DESCRIPTION = 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
+/** The schedule tool's description; `zone` names the user's own time zone, "Asia/Bangkok (UTC+7)". */
+export const scheduleToolDescription = (zone?: string) => 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
   + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
   + 'not for work you can do now. '
   + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
   + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
-  + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own; pass it when the user names another. '
+  + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own' + (zone ? ` (${zone})` : '') + '; pass it when the user names another. '
   + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
   + 'self (this session, to continue here later), or session (another session of this space, by address). '
   + 'A job made earlier with its own session moves to a worker with update and target worker. '
@@ -557,18 +558,18 @@ export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart[
   const read = readEndTurn(input)
   if (!read.ok) return { text: read.error, refused: true }
   try {
-    const { derived, missing, checkProblem } = await worker.endTurn(read.call)
-    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem }), refused: false }
+    const { derived, missing, checkProblem, checkTime } = await worker.endTurn(read.call)
+    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkTime }), refused: false }
   } catch (error: unknown) {
     return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
   }
 }
 
 /** end_turn, the schedule tool and the check before a turn ends, in this process: no extra server per session. */
-function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs']) {
+function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs'], zone?: string) {
   const said = (text: string) => ({ content: [{ type: 'text' as const, text }] })
   // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
-  const endTurn = tool(END_TURN_TOOL, END_TURN_DESCRIPTION, END_TURN_INPUT, async (input) => {
+  const endTurn = tool(END_TURN_TOOL, endTurnDescription(zone), END_TURN_INPUT, async (input) => {
     const { text, refused } = await endTurnReply(worker, input)
     return refused ? { ...said(text), isError: true } : said(text)
   }, { alwaysLoad: true })
@@ -577,7 +578,7 @@ function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs:
     worker.report(status, reason ?? null)
     return said(statusAnswer(status))
   })
-  const schedule = jobs && tool(SCHEDULE_TOOL, SCHEDULE_TOOL_DESCRIPTION, SCHEDULE_TOOL_INPUT, async (input) => {
+  const schedule = jobs && tool(SCHEDULE_TOOL, scheduleToolDescription(zone), SCHEDULE_TOOL_INPUT, async (input) => {
     const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     return said(text)
   })
@@ -652,7 +653,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
-        ...(request.worker ? workerOptions(request.worker, request.jobs) : {}),
+        ...(request.worker ? workerOptions(request.worker, request.jobs, request.timeZone) : {}),
         ...(request.deniedTools?.length ? { disallowedTools: request.deniedTools } : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {

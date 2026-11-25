@@ -8,6 +8,7 @@ import { Clock, Cpu, Gauge } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
+import { clock, formatInZone } from '@/lib/time-zone';
 
 type TerminalStatusBarProps = {
   session: ProjectSession | null;
@@ -62,12 +63,10 @@ export function formatTokens(n: number): string {
 
 // Date + time of the last message: "21 Sep 01:54 PM" (today keeps the date
 // too — it should always be visible).
-function formatClock(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const date = d.toLocaleDateString([], { day: '2-digit', month: 'short' });
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
+export function formatClock(iso: string): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return '';
+  return `${formatInZone(at, { day: '2-digit', month: 'short' })} ${clock(at)}`;
 }
 
 export function formatAge(iso: string, now: Date): string {

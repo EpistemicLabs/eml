@@ -40,6 +40,8 @@ export interface SessionTaskDeps {
   me: string
   /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot reads the block. */
   endTurnTool(sessionId: string): boolean
+  /** The user's time zone as a session is told it, "Asia/Bangkok (UTC+7)" (domain/schedule.ts zoneLabel). */
+  zone?: () => string
   /**
    * The agent a spawned worker's new task is handed to (the space's agent), or null: then it gets no delegate. With it,
    * the hold that keeps the runner off the task until the worker is on it (application/worker-task.ts).
@@ -84,11 +86,12 @@ export const placeholderTitle = (sessionId: string, now: Date) =>
 
 export { displayTitleOf, kebabTitle }
 
-/** Who ends the turns of this session: the user's handle, the agent's, and whether it has the end_turn tool. */
+/** Who ends the turns of this session: the user's handle, the agent's, whether it has the end_turn tool, and the user's time zone. */
 export interface TurnParty {
   owner: string
   agent?: string | null
   tool: boolean
+  zone?: string | null
 }
 
 /**
@@ -263,7 +266,7 @@ export function createSessionTask(deps: SessionTaskDeps): SessionTask {
       const parent = parentId ? await (t.brain.get(`/engram/${parentId}`) as Promise<Task>).catch(() => null) : null
       const entry = deps.ledger.get(sessionId)
       const agent = deps.spaces.resolve(entry?.spaceId ?? null).agent
-      return taskContext(task, isPlaceholder(task), { owner: deps.me, agent, tool: deps.endTurnTool(sessionId) }, entry?.worker === true, parent)
+      return taskContext(task, isPlaceholder(task), { owner: deps.me, agent, tool: deps.endTurnTool(sessionId), zone: deps.zone?.() ?? null }, entry?.worker === true, parent)
     },
 
     async renamed(sessionId, title) {
