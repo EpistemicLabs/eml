@@ -45,7 +45,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; resume?: (space: never, sessionId: string, step: { id: string }) => Promise<string | null> } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -62,7 +62,7 @@ describe('task runner', () => {
     const resumed: Array<{ sessionId: string; id: string }> = []
     const { started, brain, runner } = await run(list, undefined, undefined, undefined, {
       ownSession: (id) => (id === 'solo' ? 'desk-1' : null),
-      resume: async (_space, sessionId, step) => { resumed.push({ sessionId, id: step.id }); return null },
+      resume: async (sessionId, step) => { resumed.push({ sessionId, id: step.id }); return { kind: 'continued' } },
     })
     expect(resumed).toEqual([{ sessionId: 'desk-1', id: 'solo' }])
     expect(started).toEqual([])
@@ -72,11 +72,34 @@ describe('task runner', () => {
     expect(resumed).toHaveLength(1)
   })
 
+  it('starts nothing beside an own session that is busy, and tries it again next tick; a delivery that throws stalls no other task', async () => {
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' }
+    const list: T[] = [
+      { id: 'busy', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'throws', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+      { id: 'plain', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation },
+    ]
+    const tries: string[] = []
+    const { started, brain, runner } = await run(list, undefined, undefined, undefined, {
+      ownSession: (id) => (id === 'plain' ? null : `own-${id}`),
+      resume: async (sessionId) => {
+        tries.push(sessionId)
+        if (sessionId === 'own-throws') throw new Error('socket closed')
+        return { kind: 'retry', why: 'the session is busy (busy)' }
+      },
+    })
+    expect(started.map((s) => s.id)).toEqual(['plain'])
+    expect(brain.posts.map((p) => p.path)).toEqual(['/task/plain/track'])
+    await runner.tick()
+    expect(tries.filter((t) => t === 'own-busy')).toHaveLength(2)
+    expect(started.map((s) => s.id)).toEqual(['plain'])
+  })
+
   it('continues nothing while the hand-over can still be undone', async () => {
     const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
     const resumed: string[] = []
     const { started, brain } = await run(list, undefined, undefined, undefined, {
-      held: () => true, ownSession: () => 'desk-1', resume: async (_space, sessionId) => { resumed.push(sessionId); return null },
+      held: () => true, ownSession: () => 'desk-1', resume: async (sessionId) => { resumed.push(sessionId); return { kind: 'continued' } },
     })
     expect(resumed).toEqual([])
     expect(started).toEqual([])
@@ -91,7 +114,7 @@ describe('task runner', () => {
     ]
     const { started, logs, brain } = await run(list, undefined, undefined, undefined, {
       ownSession: (id) => (id === 'refused' ? 'desk-1' : null),
-      resume: async () => 'the session did not take the start prompt (refused)',
+      resume: async () => ({ kind: 'fallback', why: 'the session cannot be reached (refused)' }),
     })
     expect(started.map((s) => s.id).sort()).toEqual(['fresh', 'refused'])
     expect(brain.posts.map((p) => p.body.text)).toEqual(['Started by the task runner.', 'Started by the task runner.'])

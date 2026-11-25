@@ -31,9 +31,16 @@ export interface ContinueSession {
   toContinue(taskId: string): string | null
   /** For the board: the task's own session, and whether a delegation would continue it. */
   boardView(taskId: string): { sessionId: string; continues: boolean } | null
-  /** Give the session the step's start prompt and start its new run; an error text when it did not take it. */
-  resume(sessionId: string, step: RunnerStep): Promise<string | null>
+  /** Give the session the step's start prompt and start its new run (ResumeOutcome says what came of it). */
+  resume(sessionId: string, step: RunnerStep): Promise<ResumeOutcome>
 }
+
+/**
+ * What giving the own session its start prompt came to: it took it (continued); it is busy right now (a terminal in
+ * use, a turn running), so the runner tries again next tick and starts nothing beside it (retry); or it cannot be
+ * reached (refused, unknown), so a new session starts instead (fallback).
+ */
+export type ResumeOutcome = { kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }
 
 export function createContinueSession(deps: ContinueSessionDeps): ContinueSession {
   const ownSession = (taskId: string): SessionOnTaskFacts | null => {
@@ -57,10 +64,11 @@ export function createContinueSession(deps: ContinueSessionDeps): ContinueSessio
     async resume(sessionId, step) {
       const at = new Date(deps.now()).toISOString()
       const outcome = await deps.deliver(sessionId, stepPrompt({ ...step, continued: true }, step.checkpoint))
-      if (outcome !== 'delivered' && outcome !== 'resumed') return `the session did not take the start prompt (${outcome})`
+      if (outcome === 'refused' || outcome === 'unknown') return { kind: 'fallback', why: `the session cannot be reached (${outcome})` }
+      if (outcome !== 'delivered' && outcome !== 'resumed') return { kind: 'retry', why: `the session is busy (${outcome})` }
       deps.ledger.startRun(sessionId, at)
       deps.runStarted()
-      return null
+      return { kind: 'continued' }
     },
   }
 }

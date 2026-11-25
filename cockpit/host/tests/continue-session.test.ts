@@ -67,17 +67,20 @@ describe('continuing the task\'s own session', () => {
 
   it('gives the session the continued start prompt and starts its new run from just before the prompt went out', async () => {
     const { continueSession, delivered, runs, entries } = setup([entry('own')])
-    expect(await continueSession.resume('own', step)).toBeNull()
+    expect(await continueSession.resume('own', step)).toEqual({ kind: 'continued' })
     expect(delivered).toHaveLength(1)
     expect(delivered[0].text.split('\n')[0]).toBe('The owner delegated "Fix it" (task t1) to you: carry on with it on your own from where this conversation stands.')
     expect(entries[0].runStartedAt).toBe('2026-11-25T10:00:00.000Z')
     expect(runs()).toBe(1)
   })
 
-  it('starts no run when the session does not take the prompt', async () => {
-    const { continueSession, entries, runs } = setup([entry('own')], { outcome: 'refused' })
-    expect(await continueSession.resume('own', step)).toBe('the session did not take the start prompt (refused)')
-    expect(entries[0].runStartedAt).toBeNull()
-    expect(runs()).toBe(0)
+  it('starts no run when the session does not take the prompt: busy is tried again, one that cannot be reached falls back to a new session', async () => {
+    for (const [outcome, kind] of [['busy', 'retry'], ['running', 'retry'], ['refused', 'fallback'], ['unknown', 'fallback']] as const) {
+      const { continueSession, entries, runs } = setup([entry('own')], { outcome })
+      expect(await continueSession.resume('own', step)).toMatchObject({ kind })
+      expect(entries[0].runStartedAt).toBeNull()
+      expect(runs()).toBe(0)
+    }
+    expect(await setup([entry('own')], { outcome: 'resumed' }).continueSession.resume('own', step)).toEqual({ kind: 'continued' })
   })
 })

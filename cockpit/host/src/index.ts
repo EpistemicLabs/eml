@@ -466,7 +466,7 @@ async function main() {
       return null
     },
     ownSession: (taskId) => continueSession.toContinue(taskId),
-    resume: (_space, sessionId, step) => continueSession.resume(sessionId, step),
+    resume: (sessionId, step) => continueSession.resume(sessionId, step),
   })
   taskRunner.every(RUNNER_TICK_MS)
   // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).

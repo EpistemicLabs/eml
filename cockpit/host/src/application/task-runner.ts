@@ -7,6 +7,7 @@ import { nextRunOfSchedule } from '../domain/task-schedule.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
 import { CHECKPOINT_STOP } from '../domain/turn-end.js'
+import type { ResumeOutcome } from './continue-session.js'
 
 /**
  * The runner (note task-system-phase-1-build-plan, M3): in every space it
@@ -69,8 +70,11 @@ export interface TaskRunnerDeps {
    * sessionToContinue), or null to start one.
    */
   ownSession?(taskId: string): string | null
-  /** Give that session the step's start prompt and start its run for this request; an error text when it cannot. */
-  resume?(space: BrainSpace, sessionId: string, step: RunnerStep): Promise<string | null>
+  /**
+   * Give that session the step's start prompt and start its run for this request: continued, retry next tick (it is
+   * busy: nothing starts beside it), or fall back to a new session (it cannot be reached).
+   */
+  resume?(sessionId: string, step: RunnerStep): Promise<ResumeOutcome>
   log(line: string): void
 }
 
@@ -196,9 +200,17 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       const runnerStep: RunnerStep = { id: step.id, title, content: step.content, projectId: projectIdForBrain(brainProject), checkpoint: step.properties!.checkpoint!, ...(brief ? { brief } : {}) }
       // The task's own session carries on with the start prompt; one that does not take it falls back to a new session.
       const own = deps.resume ? deps.ownSession?.(step.id) ?? null : null
-      const resumeProblem = own ? await deps.resume!(space, own, runnerStep) : null
-      if (resumeProblem) deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${resumeProblem}`)
-      const continued = own !== null && resumeProblem === null
+      let resumed: ResumeOutcome | null = null
+      try {
+        resumed = own ? await deps.resume!(own, runnerStep) : null
+      } catch (err) {
+        // A delivery that throws leaves this task for the next tick; the other candidates still run.
+        deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${(err as Error).message}`)
+        continue
+      }
+      if (resumed && resumed.kind !== 'continued') deps.log(`[runner] step ${step.id.slice(0, 8)} not continued in session ${own!.slice(0, 8)}: ${resumed.why}`)
+      if (resumed?.kind === 'retry') continue
+      const continued = resumed?.kind === 'continued'
       const problem = continued ? null : deps.start(space, runnerStep)
       if (problem) {
         deps.log(`[runner] step ${step.id.slice(0, 8)} not started: ${problem}`)
