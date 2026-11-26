@@ -36,17 +36,20 @@ import { sessionAddress } from './session-address.js'
 import { InMemoryEventStore } from './application/session-events.js'
 import { SessionHandoff } from './application/session-handoff.js'
 import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
-import { ABOUT, createHostServer } from './http.js'
+import { ABOUT, createHostServer, directoryEntries, type HostDeps } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker, type TurnEvent } from './turn-state.js'
 import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
+import { COCKPIT_MCP_PATH, COCKPIT_MCP_SERVER, createCockpitMcpHandler, notServed } from './cockpit-mcp.js'
+import type { RecordEndTurnDeps } from './application/record-end-turn.js'
+import { TerminalTurns, terminalTurnEnded } from './application/terminal-turns.js'
 import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
-import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
+import { createTurnContexts, endTurnAccess } from './application/turn-context.js'
 import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
@@ -211,13 +214,15 @@ async function main() {
   // The brain MCP endpoint every session reaches its brains through, and the
   // hook routes the session hooks read from (brain-mcp.ts).
   const mcpUrl = `http://127.0.0.1:${hostPort}${MCP_PATH}`
+  // The cockpit's own session tools for a session that runs in a terminal (cockpit-mcp.ts).
+  const cockpitMcpUrl = `http://127.0.0.1:${hostPort}${COCKPIT_MCP_PATH}`
   const hooksUrl = `http://127.0.0.1:${hostPort}${HOOKS_PATH}`
 
   // Each agent CLI writes the files its sessions share across spaces (for
   // Claude Code: the turn-hook config, the skills, .claude.json; for Codex:
   // config.toml and hooks.json). A space's own files follow below.
   for (const provider of providers.all()) {
-    provider.prepare({ hookUrl, hookToken, mcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
+    provider.prepare({ hookUrl, hookToken, mcpUrl, cockpitMcpUrl, writableDirs: [SPAWN_INBOX_DIR, TASKS_DIR] })
   }
   log('isolation files written (CLAUDE_CONFIG_DIR, CODEX_HOME, QWEN_HOME)')
 
@@ -387,8 +392,9 @@ async function main() {
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
   const owner = config?.handle ?? 'user'
-  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
-  const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
+  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts): built in for a chat
+  // session, from the cockpit MCP endpoint for a terminal session of a provider with terminalTools.
+  const endTurnTool = (sessionId: string) => endTurnAccess(ledger.get(sessionId), providers.forSession(sessionId), COCKPIT_MCP_SERVER)
   // A task the cockpit creates for a spawned worker is the agent's alone; the runner is held off it until the worker is on it.
   const workerHolds = createWorkerTaskHolds(Date.now, () => spawns.list())
   const sessionTask = createSessionTask({
@@ -522,6 +528,15 @@ async function main() {
       .then(() => nextStep.turnEnded(sessionId, { endedAt, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
+  // What a terminal session said with end_turn, until its Stop hook ends the turn with it (application/terminal-turns.ts).
+  const terminalTurns = new TerminalTurns()
+  const terminalTurnDone = (sessionId: string, text: string) => terminalTurnEnded({ turns: terminalTurns, ledger, turnEnded }, sessionId, text)
+  // A session's terminal process ended, or the session was stopped, archived or deleted: what it said in a turn
+  // that never ended goes, and so do the MCP sessions its process held on the cockpit endpoint.
+  const sessionGone = (sessionId: string) => {
+    terminalTurns.forget(sessionId)
+    void cockpitMcp.close(sessionId)
+  }
   const sessionNamed = (sessionId: string, title: string) => {
     sessionTask.named(sessionId, title).catch((err) => log(`[task] naming the task of ${sessionId} failed: ${(err as Error).message}`))
   }
@@ -544,6 +559,7 @@ async function main() {
   const bridge = new PtyBridge({
     ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
     memory, sessionLimits: () => sessionLimits(readLimits()),
+    onProcessEnd: (sessionId) => sessionGone(sessionId),
     // The Shell plugin's terminal: while the plugin is on, on this machine, and remotely only after `eml-cockpit remote shell on`.
     shellRefusal: async (local) => {
       if (!(await pluginStates()).shell) return 'Shell is switched off (Settings › EML Plugins)'
@@ -560,6 +576,17 @@ async function main() {
   // A session flagged for the user (a question, a failure) shows as a new result: its desk dot
   // clears once seen; the flag keeps it in Your turn (decision desk-dot-until-seen).
   const flagged = (sessionId: string) => { if (turns.get(sessionId)?.state !== 'working') turns.apply({ sessionId, state: 'done' }) }
+  // The schedule tool (application/jobs.ts), for the session that calls it: its answer is the text the agent reads.
+  const scheduleFor = async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
+    const caller = jobCaller(sessionId)
+    if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
+    const answer: JobAnswer = await jobs.handle(caller, input)
+    return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
+  }
+  // When an end_turn call is read and the zone its next.when is read in; the check that time asks for (application/turn-check.ts).
+  const callTime = () => ({ now: Date.now(), zone: userTimeZone() })
+  const settleTurnCheck: NonNullable<RecordEndTurnDeps['turnCheck']> = (sessionId, { at, call, turn }) =>
+    turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) })
   const sdkRuntimes = createClaudeSdkRuntimes()
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
@@ -575,9 +602,8 @@ async function main() {
     turnDone: turnEnded,
     worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),
-    callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
-    // The check a call's next.when asks for (application/turn-check.ts).
-    turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
+    callTime,
+    turnCheck: settleTurnCheck,
     checkSaved: (sessionId) => turnCheck.saved(sessionId),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
     userWrote: (sessionId) => userWrote(sessionId),
@@ -595,13 +621,7 @@ async function main() {
       return job ? { id: job.id, name: job.name, limited: job.limited === true } : null
     },
     clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
-    // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
-    jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
-      const caller = jobCaller(sessionId)
-      if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
-      const answer: JobAnswer = await jobs.handle(caller, input)
-      return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
-    },
+    jobs: scheduleFor,
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -1042,6 +1062,7 @@ async function main() {
       await chat.end(sessionId, 'split undone')
       ledger.setTurnInFlight(sessionId, false)
       turns.forget(sessionId)
+      sessionGone(sessionId)
       ledger.archive(sessionId)
     },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
@@ -1051,9 +1072,28 @@ async function main() {
   })
 
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
+  // The cockpit's own session tools for terminal sessions (cockpit-mcp.ts). Which providers' terminal sessions it
+  // serves is theirs to say (capability terminalTools): the others are refused with the provider's reason.
+  const cockpitMcp = createCockpitMcpHandler({
+    spaces, ledger, terminalTurns,
+    served: (sessionId) => notServed(ledger.get(sessionId), providers.forSession(sessionId)),
+    turnOf: (sessionId) => turnContexts.of(sessionId),
+    callTime,
+    turnCheck: settleTurnCheck,
+    checkSaved: (sessionId) => turnCheck.saved(sessionId),
+    jobs: scheduleFor,
+    directory: (sessionId) => directoryEntries(hostDeps, sessionId),
+    addressOf: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      return entry ? sessionAddress(sessionId, entry.projectId) : null
+    },
+    deliver,
+    timeZone: () => zoneLabel(userTimeZone()),
+    serverVersion: ABOUT.version,
+  })
 
-  const host = createHostServer(
-    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
+  const hostDeps: HostDeps =
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask, migration: taskStateMigration },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
@@ -1074,9 +1114,8 @@ async function main() {
       },
       push: { store: pushStore, notifier: pushNotifier },
       jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
-    },
-    origins,
-  )
+    }
+  const host = createHostServer(hostDeps, origins)
 
   await new Promise<void>((resolve, reject) => {
     host.once('error', (err: NodeJS.ErrnoException) => reject(portError(err, hostPort)))

@@ -21,11 +21,11 @@ writeFileSync(join(home, 'sessions.json'), JSON.stringify({
 const fakeProvider = (adoptsSessionId: boolean): AgentProvider => ({
   id: 'claude' as ProviderId,
   adoptsSessionId,
-  capabilities: { chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: false, reason: 'no address' } },
+  capabilities: { chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: false, reason: 'no address' }, terminalTools: { supported: false, reason: 'built in' } },
   runtime: { problem: () => null },
   turnSignal: (payload): TurnSignal | null =>
     typeof payload.id === 'string'
-      ? { kind: 'turn', providerSessionId: payload.id, state: payload.state as 'working' | 'done' | 'waiting' }
+      ? { kind: 'turn', providerSessionId: payload.id, state: payload.state as 'working' | 'done' | 'waiting', ...(payload.prompt === true ? { prompt: true as const } : {}) }
       : typeof payload.label === 'string' ? { kind: 'unclassified', label: payload.label } : null,
 } as AgentProvider)
 
@@ -185,6 +185,21 @@ describe('session identity', () => {
     expect(answered).toEqual(['s-task'])
     // Every typed prompt is the user's writing: a closed task it works on reopens first (task-commands reopenByWriting).
     expect(wrote).toEqual(['s-task', 's-free'])
+  })
+
+  it('a new turn starts with the user\'s prompt into a terminal, not with a tool that ran or a chat session\'s hook', () => {
+    const { ledger, providers, turns } = setup(false)
+    const started: string[] = []
+    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns, turnStarted: (id) => started.push(id) }, named, payload)
+    ledger.recordSpawn('s-term', null, 'p1', 'claude')
+    ledger.recordSpawn('s-chat', null, 'p1', 'claude')
+    ledger.setRuntime('s-chat', 'sdk')
+    hook('s-term', { id: 'term-id', state: 'working' })
+    hook('s-term', { id: 'term-id', state: 'done' })
+    hook('s-chat', { id: 'chat-id', state: 'working', prompt: true })
+    expect(started).toEqual([])
+    hook('s-term', { id: 'term-id', state: 'working', prompt: true })
+    expect(started).toEqual(['s-term'])
   })
 
   it('holds a done back while the session waits on its helpers, and applies any other signal', () => {

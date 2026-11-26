@@ -30,6 +30,8 @@ export interface ProviderCapabilities {
   chat: Capability;
   endTurnTool: Capability;
   messaging: Capability;
+  /** Terminal sessions get the cockpit's tools from the host. Missing from a host older than this frontend. */
+  terminalTools?: Capability;
 }
 
 export interface AgentProviderInfo {

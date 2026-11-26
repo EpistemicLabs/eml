@@ -250,6 +250,17 @@ const VISIBLE = 'as visible text'
 const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HANDOFF_LABELS.heading} block instead.`
 
 /**
+ * How a session has end_turn: built in (true, a chat session), not at all (false), or from an MCP server of this
+ * name (a terminal session, cockpit-mcp.ts). Such a session is told the tool's name and its whole rule: an agent CLI
+ * may list an MCP server's tools without loading their descriptions, and then never reads the rule (tried with Codex:
+ * told only that the description is the rule, it did not call).
+ */
+export type EndTurnAccess = boolean | { mcpServer: string }
+
+/** The tool as an agent CLI lists it when it comes from an MCP server. */
+const mcpTool = (server: string) => `mcp__${server}__${END_TURN_TOOL}`
+
+/**
  * The tool's description. `zone`: the user's time zone as a session is told it (domain/schedule.ts zoneLabel,
  * "Asia/Bangkok (UTC+7)"); without it the description says only "the user's time zone".
  */
@@ -291,11 +302,13 @@ function missingText(missing: readonly Missing[]): string {
 
 /**
  * The one reminder a stop can get: it names exactly what is missing. With
- * `tool: false` (a session that cannot call) it adds the way without the tool.
+ * `tool: false` (a session that cannot call) it adds the way without the tool,
+ * with a tool from an MCP server the name it goes by there.
  */
-export function reminder(missing: readonly Missing[], opts: { tool?: boolean } = {}): string {
+export function reminder(missing: readonly Missing[], opts: { tool?: EndTurnAccess } = {}): string {
   const named = missingText(missing)
-  return opts.tool === false && missing.some((m) => m !== 'reply' && m !== 'questions') ? `${named} ${NO_TOOL}` : named
+  if (opts.tool === undefined || opts.tool === true || !missing.some((m) => m !== 'reply' && m !== 'questions')) return named
+  return opts.tool === false ? `${named} ${NO_TOOL}` : `${named} The tool is ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}.`
 }
 
 /** The time a check was saved for: the zone its when was read in and the instant. */
@@ -370,12 +383,21 @@ export const userZoneLine = (zone: string) => `Times: the user's time zone is ${
 /**
  * The section of a session's start context about ending a turn. `tool` says
  * whether the session has end_turn: one that has it reads the tool's
- * description, one without it (a terminal, another provider's chat) the block.
+ * description, one without it (a terminal, another provider's chat) the block,
+ * one that gets it from an MCP server the tool's name and its rule in full (see EndTurnAccess).
  * `zone`: the user's time zone as the session is told it ("Asia/Bangkok (UTC+7)").
  */
-export function turnEndRules(opts: { owner: string; agent?: string | null; tool: boolean; zone?: string | null }): string {
-  const block = `End your reply with this block ${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
-  const lines = opts.tool ? [`The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`] : [block, ...blockTemplate(opts.owner, opts.zone)]
+export function turnEndRules(opts: { owner: string; agent?: string | null; tool: EndTurnAccess; zone?: string | null }): string {
+  const rule = `The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`
+  const onStop = `${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
+  const template = blockTemplate(opts.owner, opts.zone)
+  const lines = opts.tool === true ? [rule]
+    : opts.tool === false ? [`End your reply with this block ${onStop}`, ...template]
+      : [
+        `End a turn with the ${END_TURN_TOOL} tool: ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}. This is its whole rule:`,
+        endTurnDescription(opts.zone),
+        'A note on the task does not replace the call: only the call says whose move it is.',
+      ]
   // The handles a who can name here: the tool's description says what a who is, this line who is who.
   const handles = `Handles for who: the user is ${opts.owner}${opts.agent ? `, you are ${opts.agent}` : ''}.`
   return ['## Ending a turn', ...lines, handles, ...(opts.zone ? [userZoneLine(opts.zone)] : [])].join('\n')

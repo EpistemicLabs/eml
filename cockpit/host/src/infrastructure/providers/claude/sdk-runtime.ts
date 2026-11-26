@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { z } from 'zod'
 import { createSdkMcpServer, query, getSessionMessages, tool, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
@@ -9,12 +8,12 @@ import type {
 } from '../../../domain/session-runtime.js'
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
-import { WORKER_STATUSES } from '../../../domain/session-attention.js'
-import { endTurnDescription, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
+import { SESSION_TOOLS } from '../../../domain/session-tools.js'
+import { endTurn, schedule, type ToolAnswer } from '../../../application/session-tools.js'
 import { newestRunDir, watchWorkflowJournal, workflowsDir, type JournalWatch, type JournalWatcher } from './workflow-journal.js'
-import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
-import { SPLIT_RELATIONS } from '../../../domain/split.js'
-import { SORT_PICKS } from '../../../domain/sort.js'
+
+// Where these were first; their definitions are domain/session-tools.ts.
+export { OFFER_SPLIT_ANSWER, OFFER_SPLIT_TOOL, PROPOSE_SORT_ANSWER, PROPOSE_SORT_TOOL, scheduleToolDescription } from '../../../domain/session-tools.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -466,126 +465,33 @@ export function startingMode(chosen: string | null, setting: string): string {
   return chosen ?? setting
 }
 
-export const OFFER_SPLIT_TOOL = 'offer_split'
-const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
-  + 'Call it as soon as the user brings up new work that is not part of what this session works on (its task\'s goal, or its first request), before you start on it, instead of creating a task for it yourself; a question that only clarifies the current work is not a new topic. '
-  + 'Steps of the current work, and a task the user explicitly asks you to note, are not splits: create those yourself. '
-  + 'Once per topic: never again for a topic the user kept here. Until they choose, answer briefly or wait; do not start real work on the new topic. '
-  + 'relation: sub only if this session\'s task cannot be done without it; spun if it grew out of this work; unrelated if it has nothing to do with it. '
-  + 'project: the project it belongs to (its id or name), if not this one. task: the id of an open task this topic already has (check eml_list first); the split then goes onto that task instead of making a new one. '
-  + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
-const OFFER_SPLIT_TOOL_INPUT = {
-  title: z.string().describe('The new topic in two to five words, sentence case.'),
-  relation: z.enum(SPLIT_RELATIONS),
-  project: z.string().optional(),
-  task: z.string().optional().describe('An open task this topic already has: its id.'),
-  brief: z.string(),
-  reason: z.string().describe('One line: why this is a new topic.'),
-}
-
-/** What the agent reads after offering a split: nothing happened yet, the user decides. */
-export const OFFER_SPLIT_ANSWER = 'Offered: the chat shows the user Split off… and Keep it here. Nothing is split until they choose; do not start on the new topic meanwhile. If they keep it here, carry on with it in this chat and do not offer it again.'
-
-export const PROPOSE_SORT_TOOL = 'propose_sort'
-const PROPOSE_SORT_TOOL_DESCRIPTION = 'Propose where each topic of this session belongs, when the session has drifted: after a compaction, or once it has covered four or more topics outside its task\'s goal. '
-  + 'The chat shows the user a card; Sort topics… opens a table of your rows where they change what is wrong and apply. Nothing starts on its own; nothing happens until they apply. '
-  + 'Read your own transcript and the brain (open tasks of the project) first. One row per topic, oldest first: when (a short date), topic (two to five words), summary (where it stands, a few words), '
-  + 'today (what the brain has for it now: this task, a task, a linked task, nothing), pick, taskId (its task if it has one), brief (for a topic without a task: what a session needs to pick it up). '
-  + 'pick: keep (it is this task\'s work) · sub (this task cannot be done without it) · spun (it grew out of this work) · unrelated (its own task, no link) · drop (close it: not needed). '
-  + 'Offer it once; if the user says later, do not offer it again before the next compaction.'
-const PROPOSE_SORT_TOOL_INPUT = {
-  rows: z.array(z.object({
-    when: z.string().optional(),
-    topic: z.string(),
-    summary: z.string().optional(),
-    today: z.string().optional(),
-    pick: z.enum(SORT_PICKS),
-    taskId: z.string().optional(),
-    brief: z.string().optional(),
-  })),
-  reason: z.string().describe('One line: why this session should be sorted now.'),
-}
-
-/** What the agent reads after proposing a sort: nothing happened yet, the user decides. */
-export const PROPOSE_SORT_ANSWER = 'Proposed: the chat shows the user Sort topics… and Later. Nothing changes until they apply; carry on meanwhile.'
-
-const SCHEDULE_TOOL = 'schedule'
-/** The schedule tool's description; `zone` names the user's own time zone, "Asia/Bangkok (UTC+7)". */
-export const scheduleToolDescription = (zone?: string) => 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
-  + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
-  + 'not for work you can do now. '
-  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
-  + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
-  + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own' + (zone ? ` (${zone})` : '') + '; pass it when the user names another. '
-  + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
-  + 'self (this session, to continue here later), or session (another session of this space, by address). '
-  + 'A job made earlier with its own session moves to a worker with update and target worker. '
-  + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
-  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
-  + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
-  + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
-  + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
-  + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
-  + 'A job runs in this space with at most this session\'s tools; a limited job\'s session reaches only its own job (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
-const SCHEDULE_TOOL_INPUT = {
-  action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish']),
-  job: z.string().optional().describe('The job to act on: its id (or the first 8 characters) or its exact name.'),
-  name: z.string().optional().describe('A short name the user recognizes, e.g. "Daily brief".'),
-  prompt: z.string().optional().describe('What the woken session should do; it reads nothing else.'),
-  cron: z.string().optional(),
-  at: z.string().optional(),
-  timezone: z.string().optional(),
-  target: z.enum(['worker', 'self', 'session']).optional(),
-  session: z.string().optional().describe('With target session: the session\'s address.'),
-  project: z.string().optional().describe('For a worker: the project it runs in.'),
-  provider: z.string().optional(),
-  max_runs: z.number().int().optional(),
-  ends_at: z.string().optional(),
-  task_id: z.string().optional(),
-  goal: z.string().optional().describe('What has to be true for the job to be over; every run is told it.'),
-  deny_tools: z.array(z.string()).optional(),
-  notify: z.enum(['needs-me', 'always', 'never']).optional(),
-  mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()
-    .describe('Mail that wakes the job: sender domains (e.g. example.com) and addresses.'),
-}
-
 /**
  * What an end_turn call is answered with: why it was refused, or what was recorded and what it still lacks.
  * `refused`: nothing was recorded. The tool then answers as an error, so the chat shows a failed tool row
  * and not the end of the turn (frontend turn-end-line.ts turnEndOfTool).
  */
 export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart['worker']>, 'endTurn'>, input: unknown): Promise<{ text: string; refused: boolean }> {
-  const read = readEndTurn(input)
-  if (!read.ok) return { text: read.error, refused: true }
-  try {
-    const { derived, missing, checkProblem, checkTime } = await worker.endTurn(read.call)
-    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkTime }), refused: false }
-  } catch (error: unknown) {
-    return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
-  }
+  const { text, isError } = await endTurn(worker, input)
+  return { text, refused: isError }
 }
 
 /** end_turn, the schedule tool and the check before a turn ends, in this process: no extra server per session. */
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs'], zone?: string) {
   const said = (text: string) => ({ content: [{ type: 'text' as const, text }] })
+  const answered = ({ text, isError }: ToolAnswer) => (isError ? { ...said(text), isError: true } : said(text))
+  const T = SESSION_TOOLS
   // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
-  const endTurn = tool(END_TURN_TOOL, endTurnDescription(zone), END_TURN_INPUT, async (input) => {
-    const { text, refused } = await endTurnReply(worker, input)
-    return refused ? { ...said(text), isError: true } : said(text)
-  }, { alwaysLoad: true })
+  const endTurnTool = tool(T.endTurn.name, T.endTurn.description(zone), T.endTurn.input, async (input) => answered(await endTurn(worker, input)), { alwaysLoad: true })
   // A session started before end_turn still calls this one.
-  const status = tool(LEGACY_STATUS_TOOL, LEGACY_STATUS_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
+  const status = tool(T.legacyStatus.name, T.legacyStatus.description(), T.legacyStatus.input, async ({ status, reason }) => {
     worker.report(status, reason ?? null)
-    return said(statusAnswer(status))
+    return said(T.legacyStatus.answer(status))
   })
-  const schedule = jobs && tool(SCHEDULE_TOOL, scheduleToolDescription(zone), SCHEDULE_TOOL_INPUT, async (input) => {
-    const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
-    return said(text)
-  })
+  const scheduleTool = jobs && tool(T.schedule.name, T.schedule.description(zone), T.schedule.input, async (input) => answered(await schedule({ jobs }, input)))
   // Changes nothing: the chat renders the call as a card, and the user's choice comes back as a message.
-  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => said(OFFER_SPLIT_ANSWER))
-  const proposeSort = tool(PROPOSE_SORT_TOOL, PROPOSE_SORT_TOOL_DESCRIPTION, PROPOSE_SORT_TOOL_INPUT, async () => said(PROPOSE_SORT_ANSWER))
-  const tools = [endTurn, status, offerSplit, proposeSort, ...(schedule ? [schedule] : [])]
+  const offerSplit = tool(T.offerSplit.name, T.offerSplit.description(), T.offerSplit.input, async () => said(T.offerSplit.answer))
+  const proposeSort = tool(T.proposeSort.name, T.proposeSort.description(), T.proposeSort.input, async () => said(T.proposeSort.answer))
+  const tools = [endTurnTool, status, offerSplit, proposeSort, ...(scheduleTool ? [scheduleTool] : [])]
   const server = createSdkMcpServer({ name: 'cockpit', tools })
   return {
     mcpServers: { cockpit: server },

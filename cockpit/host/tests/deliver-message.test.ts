@@ -42,6 +42,17 @@ describe('deliverMessage', () => {
     expect(wakeable.sent[0]).toBe('[Message from bridge]\n\nhello')
   })
 
+  it('says that a reply does not reach a sender that cannot be messaged back, instead of how to reply', async () => {
+    const { deps, sent } = setup()
+    await deliverMessage(deps, { ...request, from: 'eml-1234', noReply: true })
+    expect(sent[0]).toBe('[Message from eml-1234, another session, not your user. A reply does not reach eml-1234: put your answer into the task, or tell your user.]\n\nhello')
+    // Only a session's message says how to answer at all, and one without a sender says nothing.
+    const wakeable = setup({ find: () => ({ sessionId: 's1', wakeable: true }) })
+    await deliverMessage(wakeable.deps, { ...request, from: 'bridge', caller: 'outside', noReply: true })
+    await deliverMessage(wakeable.deps, { ...request, noReply: true })
+    expect(wakeable.sent).toEqual(['[Message from bridge]\n\nhello', 'hello'])
+  })
+
   it('an unknown session is unknown', async () => {
     expect(await deliverMessage(setup({ find: () => null }).deps, request)).toBe('unknown')
   })

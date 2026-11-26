@@ -7,7 +7,7 @@ export { createEmlMcpServer, type EmlMcpServerOptions } from './factory'
 export { HttpClient, EmlApiError, type EmlApi } from './http-client'
 export { RoutedClient, type RoutedClientOptions } from './routed-client'
 export { Provenance } from './provenance'
-export { McpHttpEndpoint, type McpHttpCaller, type McpHttpEndpointOptions } from './http-endpoint'
+export { McpHttpEndpoint, type McpHttpCaller, type McpHttpEndpointOptions, type McpHttpServer } from './http-endpoint'
 
 /**
  * MCP server setup (v0.9-PROPOSAL §6).

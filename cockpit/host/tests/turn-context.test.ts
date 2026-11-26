@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability, ProviderCapabilities } from '../src/domain/agent-provider.js'
-import { createTurnContexts, hasEndTurnTool, turnContextOf } from '../src/application/turn-context.js'
+import { createTurnContexts, endTurnAccess, hasEndTurnTool, turnContextOf } from '../src/application/turn-context.js'
 
 function setup(opts: { agent?: string | null; task?: Record<string, unknown> | null; fail?: () => boolean } = {}) {
   const gets: string[] = []
@@ -72,18 +72,38 @@ describe('turn context', () => {
 })
 
 describe('whether a session has the end_turn tool', () => {
-  it('is its provider\'s to say, and only for a session in the chat', () => {
-    const capabilities = (endTurnTool: Capability) => ({ capabilities: { chat: { supported: true }, endTurnTool, messaging: { supported: true } } as ProviderCapabilities })
+  const NO: Capability = { supported: false, reason: 'not here' }
+  const capabilities = (endTurnTool: Capability, terminalTools: Capability = NO) =>
+    ({ capabilities: { chat: { supported: true }, endTurnTool, messaging: { supported: true }, terminalTools } as ProviderCapabilities })
+
+  it('is its provider\'s to say: for a session in the chat, and in a terminal only when its terminal sessions get the cockpit\'s tools', () => {
     const [withTool, without] = [capabilities({ supported: true }), capabilities({ supported: false, reason: 'says it in its reply' })]
     expect(hasEndTurnTool({ runtime: 'sdk' }, withTool)).toBe(true)
     expect(hasEndTurnTool({ runtime: 'terminal' }, withTool)).toBe(false)
     expect(hasEndTurnTool({ runtime: 'sdk' }, without)).toBe(false)
     expect(hasEndTurnTool(undefined, withTool)).toBe(false)
+    const served = capabilities({ supported: true }, { supported: true })
+    expect(hasEndTurnTool({ runtime: 'terminal' }, served)).toBe(true)
+    expect(hasEndTurnTool({ runtime: 'sdk' }, served)).toBe(true)
+    expect(hasEndTurnTool(undefined, served)).toBe(false)
+    // The tools alone are not the end_turn tool.
+    expect(hasEndTurnTool({ runtime: 'terminal' }, capabilities(NO, { supported: true }))).toBe(false)
   })
 
-  it('only Claude\'s chat has it', async () => {
+  it('a chat session has it built in, a terminal session from the MCP server, which the texts then name', () => {
+    const served = capabilities({ supported: true }, { supported: true })
+    expect(endTurnAccess({ runtime: 'sdk' }, served, 'cockpit')).toBe(true)
+    expect(endTurnAccess({ runtime: 'terminal' }, served, 'cockpit')).toEqual({ mcpServer: 'cockpit' })
+    expect(endTurnAccess({ runtime: 'terminal' }, capabilities({ supported: true }), 'cockpit')).toBe(false)
+    expect(endTurnAccess(undefined, served, 'cockpit')).toBe(false)
+  })
+
+  it('Claude has it in the chat only, the terminal-only providers in the terminal', async () => {
     const { ProviderRegistry } = await import('../src/infrastructure/providers/registry.js')
     const providers = new ProviderRegistry()
-    expect(providers.all().filter((p) => p.capabilities.endTurnTool.supported).map((p) => p.id)).toEqual(['claude'])
+    const inTerminal = providers.all().filter((p) => hasEndTurnTool({ runtime: 'terminal' }, p)).map((p) => p.id)
+    expect(inTerminal).toEqual(providers.all().map((p) => p.id).filter((id) => id !== 'claude'))
+    expect(inTerminal).toContain('codex')
+    expect(hasEndTurnTool({ runtime: 'sdk' }, providers.get('claude')!)).toBe(true)
   })
 })

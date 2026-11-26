@@ -51,7 +51,12 @@ class ClaudeProvider implements AgentProvider {
   readonly label = 'Claude Code'
   readonly adoptsSessionId = true
   /** Its chat runtime registers the end_turn tool (sdk-runtime.ts workerOptions). */
-  readonly capabilities: ProviderCapabilities = { chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true } }
+  readonly capabilities: ProviderCapabilities = {
+    chat: { supported: true },
+    endTurnTool: { supported: true },
+    messaging: { supported: true },
+    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+  }
   private isolation: IsolationFiles | null = null
 
   readonly runtime = asAgentRuntime(claudeRuntime, 'Settings › Models › Claude Code › "Check now" sets it up; then reopen this pane.')
@@ -203,7 +208,7 @@ class ClaudeProvider implements AgentProvider {
     const providerSessionId = payload.session_id
     if (typeof providerSessionId !== 'string' || !providerSessionId) return null
     switch (payload.hook_event_name) {
-      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working' }
+      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working', prompt: true }
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       case 'Notification': {
         const type = payload.notification_type

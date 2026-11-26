@@ -48,6 +48,11 @@ describe('what a session reads about its task', () => {
     expect(terminal).toContain('### Handoff')
     expect(terminal).toContain('- [kim]')
     expect(terminal).not.toContain('tool\'s description')
+    // A terminal session that gets the tool from the cockpit's MCP server: the tool by its name there, with its rule.
+    const served = taskContext(task, false, { owner: 'kim', agent: 'atlas', tool: { mcpServer: 'cockpit' } })
+    expect(served.endsWith(turnEndRules({ owner: 'kim', agent: 'atlas', tool: { mcpServer: 'cockpit' } }))).toBe(true)
+    expect(served).toContain('End a turn with the end_turn tool: mcp__cockpit__end_turn, from the MCP server cockpit.')
+    expect(served).not.toContain('### Handoff')
     for (const text of [chat, terminal]) {
       expect(text.match(/## Ending a turn/g)).toHaveLength(1)
       expect(text).not.toContain('session_status')

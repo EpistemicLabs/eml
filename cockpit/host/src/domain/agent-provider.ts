@@ -32,6 +32,12 @@ export interface IsolationContext {
   /** The host's brain MCP endpoint (brain-mcp.ts), for a provider whose MCP config is shared by every space. */
   mcpUrl: string
   /**
+   * The host's endpoint for the cockpit's own session tools (cockpit-mcp.ts): end_turn, schedule, send_message,
+   * list_sessions for a session that runs in a terminal. For a provider whose terminal sessions get them over MCP;
+   * the same token and session headers as the brain endpoint guard it.
+   */
+  cockpitMcpUrl: string
+  /**
    * Folders outside a session's project that it must be able to write to
    * (worker requests, task files) — for providers that confine writes.
    */
@@ -172,8 +178,9 @@ export type TurnSignal =
    * The session changed turn state; the id is the provider's own. `settleMs`:
    * the state often resolves by itself within moments — apply it only if the
    * session sends nothing else for that long.
+   * `prompt`, with `working`: the user sent a prompt, a new turn starts — not a tool that ran in the turn.
    */
-  | { kind: 'turn'; providerSessionId: string; state: Exclude<TurnState, 'idle'>; settleMs?: number }
+  | { kind: 'turn'; providerSessionId: string; state: Exclude<TurnState, 'idle'>; settleMs?: number; prompt?: true }
   /** A hook the host has no state for — logged so new ones can be classified. */
   | { kind: 'unclassified'; label: string }
 
@@ -241,13 +248,14 @@ export type Capability = { supported: true } | { supported: false; reason: strin
 
 /**
  * The features that differ per provider:
- *   chat         its sessions can run in the chat view (a SessionRuntime, domain/session-runtime.ts),
- *                which also reads their earlier conversation
- *   endTurnTool  a chat session has the end_turn tool (domain/turn-end.ts); one without it says how
- *                its turn ends in the text of its reply, like a terminal
- *   messaging    sessions can message each other by their address (LaunchRequest.address)
+ *   chat           its sessions can run in the chat view (a SessionRuntime, domain/session-runtime.ts),
+ *                  which also reads their earlier conversation
+ *   endTurnTool    its sessions have the end_turn tool (domain/turn-end.ts): in the chat, or in a terminal
+ *                  with terminalTools; a session without it says how its turn ends in the text of its reply
+ *   messaging      another session can send to its sessions by their address (LaunchRequest.address)
+ *   terminalTools  its terminal sessions get the cockpit's tools from the host's MCP endpoint (cockpit-mcp.ts)
  */
-export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging'] as const
+export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging', 'terminalTools'] as const
 export type CapabilityId = (typeof CAPABILITY_IDS)[number]
 export type ProviderCapabilities = Record<CapabilityId, Capability>
 

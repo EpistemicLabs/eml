@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { createEmlMcpServer } from './factory'
@@ -17,6 +16,10 @@ import type { Provenance } from './provenance'
  * is created on `initialize` for that caller and bound to it: a later request
  * on the same mcp-session-id from another caller is refused, so neither the
  * brain nor the provenance can change mid-session.
+ *
+ * An embedder with tools of its own serves them the same way: `createServer`
+ * in place of `open` builds the MCP server of a new session, and the binding
+ * to the caller, the body limit and close are the same.
  */
 
 export interface McpHttpCaller {
@@ -26,16 +29,32 @@ export interface McpHttpCaller {
   sessionId: string
 }
 
-export interface McpHttpEndpointOptions {
+/**
+ * What the endpoint needs of an MCP server: the SDK's McpServer, not yet
+ * connected. By shape, so an ESM embedder can pass one from its own load of the SDK.
+ */
+export interface McpHttpServer {
+  connect(transport: StreamableHTTPServerTransport): Promise<void>
+}
+
+/** The EML tools: the endpoint builds the server from the session's client. */
+export interface EmlEndpointOptions {
   /** The EML API client and provenance for a new MCP session of `caller`. */
   open(caller: McpHttpCaller): { client: EmlApi; provenance: Provenance }
   clientName?: string
   serverVersion?: string
 }
 
+/** The embedder's own tools: it builds the server of a new MCP session of `caller`. */
+export interface OwnServerEndpointOptions {
+  createServer(caller: McpHttpCaller): McpHttpServer
+}
+
+export type McpHttpEndpointOptions = EmlEndpointOptions | OwnServerEndpointOptions
+
 interface Session {
   caller: McpHttpCaller
-  server: McpServer
+  server: McpHttpServer
   transport: StreamableHTTPServerTransport
 }
 
@@ -76,10 +95,7 @@ export class McpHttpEndpoint {
     if (req.method !== 'POST' || !isInitializeRequest(body)) {
       return rpcError(res, 400, -32000, 'No MCP session: send initialize first')
     }
-    const { client, provenance } = this.opts.open(caller)
-    const server = createEmlMcpServer({
-      client, provenance, clientName: this.opts.clientName, serverVersion: this.opts.serverVersion,
-    })
+    const server = this.serverFor(caller)
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => { this.sessions.set(id, { caller, server, transport }) },
@@ -89,6 +105,12 @@ export class McpHttpEndpoint {
     }
     await server.connect(transport)
     await transport.handleRequest(req, res, body)
+  }
+
+  private serverFor(caller: McpHttpCaller): McpHttpServer {
+    if ('createServer' in this.opts) return this.opts.createServer(caller)
+    const { client, provenance } = this.opts.open(caller)
+    return createEmlMcpServer({ client, provenance, clientName: this.opts.clientName, serverVersion: this.opts.serverVersion })
   }
 
   /** Close the MCP sessions of one agent session (it ended), or of every session. */

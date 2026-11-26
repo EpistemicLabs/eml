@@ -307,9 +307,9 @@ describe('session task', () => {
 
 describe('the task hook', () => {
   const HOOK = join(__dirname, '..', 'src', 'task-hook.ts')
-  const runHook = (env: Record<string, string>) => new Promise<{ code: number | null; out: string }>((resolve) => {
+  const runHook = (env: Record<string, string>, args: string[] = []) => new Promise<{ code: number | null; out: string }>((resolve) => {
     const { COCKPIT_URL: _url, COCKPIT_SPAWN_TOKEN: _token, COCKPIT_SESSION_ID: _session, ...rest } = process.env
-    const child = spawn(process.execPath, ['--import', 'tsx', HOOK], { env: { ...rest, ...env }, stdio: ['pipe', 'pipe', 'inherit'] })
+    const child = spawn(process.execPath, ['--import', 'tsx', HOOK, ...args], { env: { ...rest, ...env }, stdio: ['pipe', 'pipe', 'inherit'] })
     let out = ''
     child.stdout.on('data', (c) => { out += c })
     child.on('close', (code) => resolve({ code, out }))
@@ -330,6 +330,15 @@ describe('the task hook', () => {
       expect(seen[0]).toMatchObject({ method: 'POST', url: '/api/session-task' })
       expect(seen[0].headers['x-cockpit-token']).toBe('token-1')
       expect(seen[0].headers['x-cockpit-session']).toBe('session-1')
+    })
+  })
+
+  it('prints the context as it is with --plain, for an agent CLI that takes a hook\'s stdout as context', async () => {
+    await withHost(200, JSON.stringify({ text: '# Your task\n[state]' }), async (url) => {
+      expect(await runHook({ COCKPIT_URL: url, COCKPIT_SPAWN_TOKEN: 't', COCKPIT_SESSION_ID: 's' }, ['--plain'])).toEqual({ code: 0, out: '# Your task\n[state]' })
+    })
+    await withHost(200, JSON.stringify({ text: '' }), async (url) => {
+      expect(await runHook({ COCKPIT_URL: url, COCKPIT_SPAWN_TOKEN: 't', COCKPIT_SESSION_ID: 's' }, ['--plain'])).toEqual({ code: 0, out: '' })
     })
   })
 

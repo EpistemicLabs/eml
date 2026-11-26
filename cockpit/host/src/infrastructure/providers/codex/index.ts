@@ -6,7 +6,7 @@ import type {
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
-  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
+  COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
   emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
@@ -29,8 +29,8 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  * One Codex home serves every brain space, so nothing written here names a
  * brain. A session gets its space through its environment instead: the
  * space's per-boot MCP token (COCKPIT_MCP_TOKEN) and its session id, which
- * Codex sends as headers to the host's brain MCP endpoint (`env_http_headers`
- * in config.toml; brain-mcp.ts), and EML_HOOK_CONFIG, the path of the space's
+ * Codex sends as headers to the host's MCP endpoints (`env_http_headers`
+ * in config.toml; brain-mcp.ts, cockpit-mcp.ts), and EML_HOOK_CONFIG, the path of the space's
  * EML hook config, which the EML hooks read themselves (see shared.ts,
  * EML_HOOK_CONFIG_ENV). No brain token reaches a session.
  *
@@ -38,7 +38,9 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *   - config.toml: Codex's own update check off; the brain MCP server (eml_brain,
  *     the host's endpoint over streamable HTTP) with its tool calls pre-approved
  *     (Codex asks per call otherwise, and fails the call where nobody can
- *     answer); one `projects."<path>"` table per trusted folder. Codex keeps
+ *     answer), and the same way the cockpit's own session tools (cockpit, the
+ *     host's endpoint for terminal sessions: end_turn, schedule, send_message,
+ *     list_sessions); one `projects."<path>"` table per trusted folder. Codex keeps
  *     its own state in the same file, so only these tables are replaced. No
  *     token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
@@ -170,17 +172,21 @@ class CodexProvider implements AgentProvider {
     // The cockpit updates its own Codex (runtime.ts); Codex's own check would
     // point the user at an install the cockpit does not use.
     const config = setTopLevelKey(readConfig(), 'check_for_update_on_startup', 'false')
+    // One of the host's MCP endpoints: the session's space and session id as headers from the
+    // session's env (launch), every tool call approved.
+    const hostServer = (name: string, url: string) => ({
+      header: `mcp_servers.${name}`,
+      lines: [
+        `url = ${tomlString(url)}`,
+        `env_http_headers = { ${Object.entries(MCP_ENV_HEADERS).map(([header, env]) => `${tomlString(header)} = ${tomlString(env)}`).join(', ')} }`,
+        'default_tools_approval_mode = "approve"',
+      ],
+    })
     // Cockpits before brain spaces kept the brain token in an env table here.
     writeConfig(upsertTables(removeTables(config, ['mcp_servers.eml_brain.env']), [
-      {
-        header: 'mcp_servers.eml_brain',
-        lines: [
-          `url = ${tomlString(ctx.mcpUrl)}`,
-          // The session's space and session id, as headers from the session's env (launch).
-          `env_http_headers = { ${tomlString(MCP_TOKEN_HEADER)} = ${tomlString(MCP_TOKEN_ENV)}, ${tomlString(MCP_SESSION_HEADER)} = "COCKPIT_SESSION_ID" }`,
-          'default_tools_approval_mode = "approve"',
-        ],
-      },
+      hostServer('eml_brain', ctx.mcpUrl),
+      // The cockpit's own session tools (cockpit-mcp.ts).
+      hostServer(COCKPIT_MCP_SERVER, ctx.cockpitMcpUrl),
       {
         // The sandbox confines writes to the project folder; these are the
         // cockpit's own folders a session writes to as well.
@@ -272,7 +278,7 @@ class CodexProvider implements AgentProvider {
       env: {
         CODEX_HOME: CODEX_CONFIG_DIR,
         // The session's space: Codex sends its MCP token as a header to the
-        // host's brain MCP endpoint (env_http_headers in config.toml); the
+        // host's MCP endpoints (env_http_headers in config.toml); the
         // hooks read the space's config.
         [MCP_TOKEN_ENV]: req.space.mcpToken,
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
@@ -298,7 +304,7 @@ class CodexProvider implements AgentProvider {
   /**
    * Codex's hooks (hooks.json above):
    *
-   *   UserPromptSubmit, PostToolUse → working
+   *   UserPromptSubmit, PostToolUse → working   (UserPromptSubmit: the user's prompt, a new turn)
    *   PermissionRequest             → waiting   (Codex is about to ask for approval;
    *                                             in auto mode only once the reviewer had its time)
    *   Stop                          → done
@@ -307,7 +313,7 @@ class CodexProvider implements AgentProvider {
     const providerSessionId = payload.session_id
     if (typeof providerSessionId !== 'string' || !providerSessionId) return null
     switch (payload.hook_event_name) {
-      case 'UserPromptSubmit':
+      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working', prompt: true }
       case 'PostToolUse': return { kind: 'turn', providerSessionId, state: 'working' }
       case 'PermissionRequest':
         // With Auto-review the request first goes to the reviewer model, which

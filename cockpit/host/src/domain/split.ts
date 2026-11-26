@@ -16,6 +16,16 @@ export type SplitWhen = 'now' | 'park'
 export const SPLIT_RELATIONS = ['spun', 'sub', 'unrelated'] as const satisfies readonly SplitRelation[]
 export const SPLIT_WHENS: readonly SplitWhen[] = ['now', 'park']
 
+/** The shape of a split's brief, whoever writes it: the session's agent when it offers a split, or application/split-brief.ts. */
+export const BRIEF_TEMPLATE = [
+  'Goal: one checkable sentence.',
+  'Came up in: the task or session, and the date.',
+  'Decided so far: what is settled, one line each.',
+  'Open questions: what the new session has to find out or ask.',
+  'Files, links, ids: what matters, exactly as they appeared.',
+  'Not to redo: what was tried or ruled out.',
+].join('\n')
+
 export interface SplitSource {
   sessionId: string
   sessionTitle: string
