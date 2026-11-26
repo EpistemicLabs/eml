@@ -81,7 +81,7 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
     // Whose cockpit fires a task depends on whether its space is shared, and only the brain server says that. The
     // main space is this home's own brain, local by construction; any other space is not planned here, not guessed.
     if (!space.main) {
-      out(`# ${space.name}\n\nWhether this space is shared only its brain server says, and the dry run does not ask it: its ${mine.length} job(s) are not planned here. The host plans them at its start, once the brain server has answered: in a local space every task's jobs move; in a shared one the jobs on another member's task go onto that task for the owner's cockpit to fire.\n\n`)
+      out(`# ${space.name}\n\nWhether this space is shared only its brain server says, and the dry run does not ask it: its ${mine.length} job(s) are not planned here. The host plans them at its start, once the brain server has answered: in a local space every task's jobs move; in a shared one a job on another member's task is not moved, and the report says how its owner brings it back.\n\n`)
       continue
     }
     const db = new Database(info.brainFile, { readonly: true, fileMustExist: true })

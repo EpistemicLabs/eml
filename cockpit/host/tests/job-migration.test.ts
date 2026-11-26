@@ -235,47 +235,43 @@ describe('planning jobs onto their tasks', () => {
       expect(outcome(task('t1', { ingested_by: 'member' }, { assignee_ids: [] }))).toMatchObject({ outcome: 'moved', record: { id: 't1' } })
     })
 
-    it('never drops a live job on another member\'s task: its times go onto the task for the owner\'s cockpit, and no record stays here', () => {
+    it('a live job on another member\'s task is not moved and nothing is written to the task: it ends here, and the report says loudly that it no longer fires and how its owner brings it back', () => {
       const j = cron('0 8 * * 1-5', { limited: true, toolProfile: { deniedTools: ['Bash'], mcpServers: null }, end: { afterRuns: 5 }, notify: 'always' })
-      const [t] = plan([j], [task('t1', { ingested_by: 'member' }, { assignee_ids: ['other', 'member'] })], { ...shared, runs: { [j.id]: [run(j.id, 'r1', 'started')] } }).tasks
-      expect(t).toMatchObject({ outcome: 'moved', why: 'the task is other\'s: its schedule fires on their cockpit from now on', record: null, runs: [], renamed: [], settles: [j.id] })
-      expect(t.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
-      expect(t.brain).toMatchObject({ setSchedule: true, appended: ['Every 0 8 * * 1-5: Write the brief.'], content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' })
-      expect(t.brain!.journal.at(-1)).toBe(
-        'Schedules moved onto tasks: a job on member\'s cockpit ran this task at its times. They are on the task now, and the cockpit of the task\'s owner (other) fires them from here on. '
-        + 'What member\'s cockpit kept for the job did not move: the limit on its sessions, its tool profile, an end after 5 runs, who hears of a run (always). Set them on other\'s cockpit if they are wanted.',
-      )
-      expect(t.settings).toEqual(['nothing is kept on this machine: other\'s cockpit fires the task', 'did not move: the limit on its sessions, its tool profile, an end after 5 runs, who hears of a run (always)'])
+      const theirs = task('t1', { ingested_by: 'member' }, { assignee_ids: ['other', 'member'], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], time_zone: 'Europe/Berlin' } } })
+      const [t] = plan([j], [theirs], { ...shared, runs: { [j.id]: [run(j.id, 'r1', 'started')] } }).tasks
+      expect(t).toMatchObject({ outcome: 'dropped', why: 'the task is other\'s: this cockpit does not fire it and writes nothing to it', brain: null, record: null, runs: [], renamed: [], settles: [j.id] })
+      // the schedule the task has is its owner's: it stays as it is
+      expect(t.schedule).toEqual({ crons: ['0 7 * * *'], time_zone: 'Europe/Berlin' })
+      expect(t.jobs).toEqual([{
+        id: j.id, name: 'Daily brief', kind: 'lost',
+        what: 'NOT MOVED, IT NO LONGER FIRES: the task "Task t1" (t1) is other\'s, and this cockpit writes nothing to a task it does not fire. The job (cron "0 8 * * 1-5" (Europe/Berlin)) had the prompt "Write the brief." '
+          + 'To bring it back, other sets the time on the task with the schedule tool: action "create", task_id "t1", cron "0 8 * * 1-5", timezone "Europe/Berlin", prompt "Write the brief."',
+      }])
       // its open run ends here as history under the job's id
       expect(t.history[j.id]).toMatchObject([{ status: 'finished', note: MIGRATED_AWAY }])
       const report = jobMigrationReport({ tasks: [t], elsewhere: 0 }, { space: 'Team', at: 'now', dryRun: true })
-      expect(report).toContain('## Task t1 (t1) — moved: the task is other\'s: its schedule fires on their cockpit from now on')
-      expect(report).toContain('- On this machine: nothing is kept on this machine: other\'s cockpit fires the task; did not move: the limit on its sessions')
+      expect(report).toContain('## Task t1 (t1) — dropped: the task is other\'s: this cockpit does not fire it and writes nothing to it')
+      expect(report).toContain(`- Job "Daily brief" (${j.id.slice(0, 8)}): NOT MOVED, IT NO LONGER FIRES: the task "Task t1" (t1) is other's`)
+      expect(report).toContain('- The task\'s schedule stays as it is: 0 7 * * * (Europe/Berlin).')
     })
 
-    it('adds to the schedule another member\'s task already has, and never replaces, pauses or ends it', () => {
-      const theirs = task('t1', {}, { assignee_ids: ['other'], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], at: LATER, why: 'Their own check.', time_zone: 'Europe/Berlin', paused: true } } })
-      const a = cron('0 8 * * 1-5', { end: { at: '2027-01-01T00:00:00.000Z' } })
-      const b = once(AHEAD)
-      const c = cron('0 9 * * *', { name: 'Paused one', paused: true })
-      const d = cron('0 6 * * *', { name: 'Elsewhere', triggers: [{ type: 'schedule', cron: '0 6 * * *', timeZone: 'Asia/Makassar' }] })
+    it('on another member\'s task a one-time job names its time, a job a channel woke says so, and one that was over is history', () => {
+      const theirs = task('t1', {}, { assignee_ids: ['other'] })
+      const a = once(AHEAD)
+      const b = job({ name: 'Mail', triggers: [{ type: 'mail', match: ['a@example.com'] } as never] })
+      const c = cron('0 9 * * *', { endedAt: '2026-11-20T00:00:00.000Z' })
+      const d = once(PAST, { runCount: 1 })
       const [t] = plan([a, b, c, d], [theirs], shared).tasks
-      // their times, wake-up and pause stay; mine join
-      expect(t.schedule).toEqual({ crons: ['0 7 * * *', '0 8 * * 1-5'], at: LATER, why: 'Their own check.', time_zone: 'Europe/Berlin', paused: true })
-      expect(t.record).toBeNull()
-      const what = Object.fromEntries(t.jobs.map((j) => [j.id, j.what]))
-      expect(what[b.id]).toContain('not the task\'s wake-up: the task has one already')
-      expect(what[c.id]).toContain('left out: it was paused')
-      expect(what[d.id]).toContain('NOT MOVED, IT NO LONGER FIRES')
-      expect(t.brain!.journal.join(' ')).toContain('The task\'s schedule is paused: the times that joined it fire once its owner resumes it.')
-      // all of my jobs ended: the owner's schedule is not touched
-      const ended = plan([cron('0 8 * * 1-5', { endedAt: '2026-11-20T00:00:00.000Z' })], [theirs], shared).tasks[0]
-      expect(ended).toMatchObject({ brain: null, record: null })
-      expect(ended.schedule).toEqual(theirs.properties!.delegation!.schedule)
+      const what = Object.fromEntries(t.jobs.map((j) => [j.id, [j.kind, j.what]]))
+      expect(what[a.id]).toEqual(['lost', `NOT MOVED, IT NO LONGER FIRES: the task "Task t1" (t1) is other's, and this cockpit writes nothing to a task it does not fire. The job (once at ${AHEAD}) had the prompt "Look whether the reply came." To bring it back, other sets the time on the task with the schedule tool: action "create", task_id "t1", at "${AHEAD}", timezone "Europe/Berlin", prompt "Look whether the reply came."`])
+      expect(what[b.id]).toEqual(['lost', 'NOT MOVED, IT NO LONGER FIRES: the task "Task t1" (t1) is other\'s, and this cockpit writes nothing to a task it does not fire. The job (no time, woken by mail) had the prompt "Write the brief." To bring it back, other sets it up on the task on their own cockpit: a channel is kept per machine.'])
+      expect(what[c.id]).toEqual(['history', 'had ended: its runs stay as history'])
+      expect(what[d.id]).toEqual(['history', `once at ${PAST} → it has run: no time to carry over`])
+      expect(t).toMatchObject({ outcome: 'dropped', brain: null, record: null, settles: [a.id, b.id, c.id, d.id] })
     })
 
     it('a task nobody is assigned to that another member authored is that member\'s', () => {
-      expect(outcome(task('t1', { ingested_by: 'other' }, { assignee_ids: [] }))).toMatchObject({ outcome: 'moved', record: null, why: 'the task is other\'s: its schedule fires on their cockpit from now on' })
+      expect(outcome(task('t1', { ingested_by: 'other' }, { assignee_ids: [] }))).toMatchObject({ outcome: 'dropped', brain: null, record: null, why: 'the task is other\'s: this cockpit does not fire it and writes nothing to it' })
     })
 
     it('a task no member owns (nobody assigned, written by an agent or by nobody) moves as this member\'s own, with a record here', () => {
@@ -493,7 +489,7 @@ describe('the report of the plan', () => {
     const report = jobMigrationReport(p, { space: 'Main', at: '2026-11-26T10:00:00.000Z', dryRun: true })
     expect(report).toContain('# Schedules onto tasks — dry run')
     expect(report).toContain('Space: Main · 2026-11-26T10:00:00.000Z · nothing written.')
-    expect(report).toContain('4 jobs on 2 tasks: 2 moved, 0 dropped, 0 left as they are. Of the jobs, 3 moved and 1 did not. 1 job of other spaces wait for their space.')
+    expect(report).toContain('4 jobs on 2 tasks: 1 moved, 1 dropped, 0 left as they are. Of the jobs, 2 moved and 2 did not. 1 job of other spaces wait for their space.')
     expect(report).toContain('## Task t1 (t1) — moved')
     expect(report).toContain('- Repeating times: 0 8 * * 1-5 (Europe/Berlin)')
     expect(report).toContain(`- Wake-up: ${AHEAD}, set by session sess-123 — "Look whether the reply came."`)
@@ -502,8 +498,8 @@ describe('the report of the plan', () => {
     expect(report).toContain(`- Journal: A later one-time run was set too, for ${LATER}`)
     expect(report).toContain(`- Job "Check: invoice" (${later.id.slice(0, 8)}): once at ${LATER} → not the task's wake-up`)
     expect(report).toContain('- On this machine: tells always; new sessions start in bp-ops;')
-    expect(report).toContain('## Task t2 (t2) — moved: the task is other\'s: its schedule fires on their cockpit from now on')
-    expect(report).toContain('- Journal: Schedules moved onto tasks: a job on member\'s cockpit ran this task at its times.')
+    expect(report).toContain('## Task t2 (t2) — dropped: the task is other\'s: this cockpit does not fire it and writes nothing to it')
+    expect(report).toContain(`- Job "Their job" (${theirs.id.slice(0, 8)}): NOT MOVED, IT NO LONGER FIRES: the task "Task t2" (t2) is other's`)
     expect(jobMigrationReport(p, { space: 'Main', at: 'now', dryRun: false })).toContain('# Schedules onto tasks — run')
     expect(jobMigrationReport({ tasks: [], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: true })).toContain('Nothing to move.')
   })

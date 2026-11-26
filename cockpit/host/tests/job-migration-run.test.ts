@@ -220,7 +220,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.store.pendingV1()).toBeNull()
   })
 
-  it('in a shared space a job on another member\'s task is written onto that task for the owner\'s cockpit, and no record stays here', async () => {
+  it('in a shared space a job on another member\'s task is not moved: nothing is written to that task, the job leaves the version 1 data, and the user is told it no longer fires', async () => {
     const theirs = task('theirs', { assignee_ids: ['other'], delegation: { agent: 'motti', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } })
     const w = world(
       [v1('j1', { spaceId: 'space-2', taskId: 'theirs', limited: true }), v1('j2', { spaceId: 'space-2', taskId: 'agents' }), v1('j3', { spaceId: 'space-2', taskId: 'mine' })],
@@ -229,18 +229,17 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     // The fake brain is one for every space: only the team space is this cockpit's here, so its tasks are not looked through as the main space's.
     w.spaces.shift()
     const result = await w.migration.run()
-    expect(result).toMatchObject({ moved: 3, dropped: 0, left: 0, failed: [] })
-    // the owner's own time stays, mine joins it; the delegation is carried whole
-    expect(w.posts[0]).toEqual({ space: 'space-2', path: '/task/theirs/track', body: {
-      content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.',
-      delegation: { agent: 'motti', checkpoint: 'after', schedule: { crons: ['0 7 * * *', '0 8 * * 1-5'], time_zone: 'UTC' } },
-      text: expect.stringContaining('the cockpit of the task\'s owner (other) fires them from here on. What member\'s cockpit kept for the job did not move: the limit on its sessions.'),
-    } })
+    expect(result).toMatchObject({ moved: 2, dropped: 1, left: 0, failed: [], jobs: { moved: 2, notMoved: 1 } })
+    // no write of any kind reaches the other member's task: no schedule, no text, no journal line
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/agents/track', '/task/mine/track'])
+    expect(w.byId.get('theirs')).toEqual(theirs)
     // a record for my task and for the one no member owns, none for the other member's
     expect(w.store.list().map((r) => r.id).sort()).toEqual(['agents', 'mine'])
     expect(w.moved).toEqual([['j2', 'agents'], ['j3', 'mine']])
     expect(w.store.runs('j1')).toMatchObject([{ status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
-    expect(result.reports[0]).toContain('nothing is kept on this machine: other\'s cockpit fires the task')
+    expect(result.reports[0]).toContain('- Job "Daily brief" (j1): NOT MOVED, IT NO LONGER FIRES: the task "theirs" (theirs) is other\'s, and this cockpit writes nothing to a task it does not fire.')
+    expect(result.reports[0]).toContain('To bring it back, other sets the time on the task with the schedule tool: action "create", task_id "theirs", cron "0 8 * * 1-5", timezone "UTC", prompt "Write the brief."')
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 2 moved, 1 not moved — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
     expect(w.store.pendingV1()).toBeNull()
   })
 
