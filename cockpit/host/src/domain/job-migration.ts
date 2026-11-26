@@ -469,7 +469,8 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const allRuns = live.flatMap((j) => (input.runs[j.id] ?? []).flatMap((r): JobRun[] => {
     if (!unreached(r)) return [r]
     if (notRun.has(j.id) || notMoved.has(j.id)) {
-      settle(j, r, notRun.has(j.id) ? NOT_REACHED : NOT_MOVED)
+      // A job left out (also a one-time job whose prompt went into the journal) has no time on the task: nothing fires in its place.
+      settle(j, r, notMoved.has(j.id) ? NOT_MOVED : NOT_REACHED)
       return []
     }
     const cron = cronOf.get(j.id)

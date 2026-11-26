@@ -550,6 +550,16 @@ describe('planning jobs onto their tasks', () => {
       expect(plan([ran], [task()], { runs: { [ran.id]: [unreached(ran.id, 'r1', 'waiting')] } }).tasks[0].jobs[0]).toMatchObject({ kind: 'history' })
     })
 
+    it('of two overdue one-time jobs, the one left out (its prompt goes to the journal) gets the note that it was not moved, not that the wake-up fires in its place', () => {
+      const first = once('2026-11-24T02:00:00.000Z', { name: 'Check: older', prompt: 'The older check.', runCount: 1 })
+      const second = once(PAST, { runCount: 1 })
+      const [t] = plan([first, second], [task()], { runs: { [first.id]: [unreached(first.id, 'r1', 'waiting')], [second.id]: [unreached(second.id, 'r2', 'waiting')] } }).tasks
+      expect(t.schedule).toMatchObject({ at: '2026-11-24T02:00:00.000Z' })
+      expect(t.jobs.find((j) => j.id === second.id)).toMatchObject({ kind: 'lost' })
+      expect(t.history[first.id]).toMatchObject([{ id: 'r1', status: 'skipped', note: NOT_REACHED }])
+      expect(t.history[second.id]).toMatchObject([{ id: 'r2', status: 'skipped', note: NOT_MOVED }])
+    })
+
     it('a repeating job\'s run that waits is carried, and says which time fired: its due time as a firing of the job\'s cron', () => {
       const daily = cron('0 8 * * 1-5', { runCount: 1, target: { type: 'session', sessionId: 'sess-1234-abcd' } })
       // due within the engine's late limit (a time older than that is missed, not carried)
