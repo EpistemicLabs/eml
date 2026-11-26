@@ -1,8 +1,8 @@
 import { createRequire } from 'node:module'
 import * as fs from 'node:fs'
-import { readCockpitConfig } from './config.js'
+import { readCockpitConfig, type CockpitConfig } from './config.js'
 import { COCKPIT_HOME, JOBS_FILE } from './paths.js'
-import { readBrainInfo } from './brain-info.js'
+import { readBrainInfo, type BrainInfo } from './brain-info.js'
 import { jobMigrationReport, planJobMigration, type JobMigrationTask } from './domain/job-migration.js'
 import { JobStore } from './job-store.js'
 import { routineTaskOfJob } from './application/job-migration.js'
@@ -41,14 +41,24 @@ function scheduledFrom(db: Db): JobMigrationTask[] {
   return rows.map(taskOfRow).filter((task) => task.properties?.delegation?.schedule)
 }
 
-export async function runMigrateJobsCommand(argv: string[], out: (text: string) => void = (text) => { process.stdout.write(text) }): Promise<boolean> {
+/** The home the dry run reads: its folder (named in what it prints), its jobs.json, its config, and the brain a space's token belongs to. */
+export interface MigrateJobsHome {
+  dir: string
+  jobsFile: string
+  config(): Promise<Pick<CockpitConfig, 'token' | 'handle' | 'mainName' | 'spaces'> | null>
+  brainOf(token: string): Pick<BrainInfo, 'brainId' | 'brainFile'>
+}
+
+const THIS_HOME: MigrateJobsHome = { dir: COCKPIT_HOME, jobsFile: JOBS_FILE, config: readCockpitConfig, brainOf: readBrainInfo }
+
+export async function runMigrateJobsCommand(argv: string[], out: (text: string) => void = (text) => { process.stdout.write(text) }, home: MigrateJobsHome = THIS_HOME): Promise<boolean> {
   if (argv[0] !== 'migrate-jobs') return false
   if (argv.includes('--run')) throw new Error('migrate-jobs is the dry run only: the host writes the migration at its start')
-  const config = await readCockpitConfig()
-  if (!config) throw new Error(`no cockpit config in ${COCKPIT_HOME}: this home is not set up`)
-  if (!fs.existsSync(JOBS_FILE)) { out(`no jobs.json in ${COCKPIT_HOME}: nothing to move\n`); return true }
+  const config = await home.config()
+  if (!config) throw new Error(`no cockpit config in ${home.dir}: this home is not set up`)
+  if (!fs.existsSync(home.jobsFile)) { out(`no jobs.json in ${home.dir}: nothing to move\n`); return true }
   // Read as the host reads it (job-store.ts); the store writes only on a change, and none is made here.
-  const store = new JobStore(JOBS_FILE)
+  const store = new JobStore(home.jobsFile)
   const pending = store.pendingV1()
   if (!pending || Object.keys(pending.jobs).length === 0) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
   const jobs = Object.values(pending.jobs)
@@ -56,9 +66,9 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
   const now = Date.now()
   const spaces = [{ token: config.token, name: config.mainName ?? 'Main', main: true }, ...(config.spaces ?? []).map((s) => ({ token: s.token, name: s.name ?? 'Space', main: false }))]
   const seen = new Set<string | null>()
-  out(`Dry run on ${COCKPIT_HOME} as ${me}: nothing is written.\n\n`)
+  out(`Dry run on ${home.dir} as ${me}: nothing is written.\n\n`)
   for (const space of spaces) {
-    const info = readBrainInfo(space.token)
+    const info = home.brainOf(space.token)
     const key = space.main ? null : info.brainId
     if (!space.main && !key) { out(`# ${space.name}\n\nIts brain is not in this home's control.db: skipped.\n\n`); continue }
     seen.add(key)
