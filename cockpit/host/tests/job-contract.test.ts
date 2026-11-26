@@ -7,7 +7,8 @@ import type { AddressInfo } from 'node:net'
 import { JobStore } from '../src/job-store.js'
 import { ensureJobTokens, handleJobContract, jobSpaceIdsOf } from '../src/job-contract-api.js'
 import { JobRunner } from '../src/application/job-runner.js'
-import type { Job } from '../src/domain/job.js'
+import { newRecord, type Job as TaskRecord } from '../src/domain/job.js'
+import type { JobV1 as Job } from '../src/domain/job-v1.js'
 
 // The channel bridge reaches the cockpit through /v1 with one space's token:
 // it learns which jobs listen on a channel and wakes one; the cockpit decides
@@ -27,21 +28,28 @@ const job = (patch: Partial<Job> = {}): Job => ({
   ...patch,
 })
 
+const MATCH = [{ kind: 'domain', domain: 'Customer.example' }, { kind: 'address', address: 'support@partner.example' }, { kind: 'regex', pattern: '.*' }]
+/** A task's record that listens on mail (domain/job.ts): its id, the contract's jobId, is the task's. */
+const record = (id: string, patch: Partial<TaskRecord> = {}): TaskRecord => ({ ...newRecord({ id, spaceId: null }, '2026-11-08T00:00:00.000Z'), triggers: [{ type: 'mail', match: MATCH }], ...patch })
+
 describe('job contract v1', () => {
-  let store: JobStore
+  // SEAM (part B2): the wake tests below still go through the version 1 runner with version 1 jobs; the routes are the records'.
+  let store: JobStore<Job>
   let dir: string
   let server: http.Server
   let base: string
   let started: string[]
   let room: boolean
+  let listed: JobStore | null
   const token = (space: string) => readFileSync(join(dir, space), 'utf8')
 
   beforeEach(async () => {
     const home = mkdtempSync(join(tmpdir(), 'job-contract-'))
     dir = join(home, 'job-tokens')
-    store = new JobStore(join(home, 'jobs.json'))
+    store = new JobStore<Job>(join(home, 'jobs.json'))
     started = []
     room = true
+    listed = null
     ensureJobTokens([SPACE, OTHER], dir)
     const runner = new JobRunner({
       store, hasRoom: () => room, sessionState: (id) => (started.includes(id) ? 'idle' : 'queued'), sessionRuns: () => false,
@@ -55,7 +63,7 @@ describe('job contract v1', () => {
       req.on('end', () => resolve(body ? JSON.parse(body) : {}))
     })
     server = http.createServer((req, res) => {
-      void handleJobContract(req, res, { store, spaceIds: () => [SPACE, OTHER], wake: (j, c, t, k) => runner.wake(j, c, t, k), tokensDir: dir }, json, readJson)
+      void handleJobContract(req, res, { store: listed ?? (store as unknown as JobStore), spaceIds: () => [SPACE, OTHER], wake: (j, c, t, k) => runner.wake(j as unknown as Job, c, t, k), tokensDir: dir }, json, readJson)
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -80,13 +88,20 @@ describe('job contract v1', () => {
     expect(token(SPACE)).not.toBe(token(OTHER))
   })
 
-  it('lists the space’s mail jobs as the fixture shows, paused ones marked, drafting by default', async () => {
-    store.put(job())
-    store.put(job({ id: 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee', paused: true }))
-    store.put(job({ id: 'cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee', spaceId: OTHER }))
-    store.put(job({ id: 'dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee', endedAt: '2026-11-08T01:00:00.000Z' }))
+  it('lists the space’s records that listen on mail as the fixture shows, held ones marked, drafting by default', async () => {
+    const records = new JobStore(join(mkdtempSync(join(tmpdir(), 'job-contract-records-')), 'jobs.json'))
+    records.put(record(JOB_ID))
+    // waiting for the user's OK: listed as paused, so its mail still routes to it and waits
+    records.put(record('bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee', { pendingApproval: true }))
+    records.put(record('cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee', { spaceId: OTHER }))
+    // a record without a channel is no route
+    records.put(record('dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee', { triggers: [] }))
+    listed = records
     const answer = await call(`/v1/jobs?space=${SPACE}&channel=mail`, SPACE)
     expect(answer).toEqual({ status: 200, body: fixture.routes.response })
+    // paused by the cockpit after failures: held too
+    records.put(record(JOB_ID, { pausedReason: '3 failed runs in a row' }))
+    expect((await call(`/v1/jobs?space=${SPACE}&channel=mail`, SPACE)).body[0]).toMatchObject({ jobId: JOB_ID, paused: true })
   })
 
   it('refuses without a token, and with another space’s', async () => {

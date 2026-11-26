@@ -7,7 +7,7 @@ import { JobRunner, type JobRunnerDeps, type RunSessionState } from '../src/appl
 import { Jobs, type JobCaller } from '../src/application/jobs.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
 import type { WorkerStatus } from '../src/domain/session-attention.js'
-import type { Job } from '../src/domain/job.js'
+import type { JobV1 as Job } from '../src/domain/job-v1.js'
 
 // The runner wakes sessions for due jobs: a fresh worker per run, or a message
 // to a session that exists. It starts only with room, retries a busy target,
@@ -30,7 +30,7 @@ class World {
   flagged: string[] = []
   /** What the host does before a run starts, and what was started by then. */
   before: ((job: Job, run: { number: number }) => Promise<void>) | null = null
-  store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
+  store = new JobStore<Job>(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   deps(): JobRunnerDeps {
     return {
@@ -207,7 +207,7 @@ describe('job runner', () => {
   })
 
   it('tells a run of a job on a task never to close the task while the job has not ended; a job without a task reads no such rule', async () => {
-    const { JOB_TASK_RULE: rule } = await import('../src/domain/job.js')
+    const { JOB_TASK_RULE: rule } = await import('../src/domain/job-v1.js')
     expect(rule).toBe('While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.')
     await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'On a task', prompt: 'p', cron: '0 8 * * 1-5', goal: 'Refund received' })
     await create({ cron: '0 8 * * 1-5' })

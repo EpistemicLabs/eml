@@ -22,7 +22,7 @@ import type { ResumeOutcome } from './continue-session.js'
  *     not run); a standalone task with a checkpoint needs no parent;
  *   - every task in its depends_on is resolved;
  *   - nobody is waited on (waiting_on), its hand-over can no longer be undone,
- *     and no job of its own will start it at a set time;
+ *     and its schedule has no run coming up that will start it;
  *   - no session works on it already (a worker someone started on it);
  *   - in a shared space, this cockpit's member owns it (domain/task-owner.ts):
  *     each member's cockpit starts its own member's steps;
@@ -59,8 +59,6 @@ export interface TaskRunnerDeps {
    * it (application/worker-task.ts, keyed on its request's time until its id is known).
    */
   held?(taskId: string, requestedAt?: string | null): boolean
-  /** A job of the task will start it at a set time. */
-  scheduled?(taskId: string): boolean
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
   brief?(taskId: string): string | undefined
   /** The open question the hand-over carried, for a continued session's own brief. */
@@ -106,7 +104,7 @@ export const CLOSING_RULE = 'Never close the task yourself: its owner reviews th
 /**
  * The prompt a step's session starts with (or, `continued`, the one its own session carries on with); its task, the rules, how a turn ends and what happens until it is done come
  * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
- * (domain/job.ts JOB_TASK_RULE).
+ * (domain/job-v1.ts JOB_TASK_RULE).
  */
 export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean; continued?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
@@ -196,8 +194,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
         busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id, step.properties?.delegation?.requested_at ?? null),
-        // A job here, or a schedule in its delegation, starts it at its time (domain/task-schedule.ts).
-        scheduled: deps.scheduled?.(step.id) || Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
+        // Its schedule starts it at its time (domain/task-schedule.ts).
+        scheduled: Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
       if (block) continue

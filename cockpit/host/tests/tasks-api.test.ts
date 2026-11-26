@@ -7,6 +7,7 @@ import type { CommandInput } from '../src/application/task-commands.js'
 const submitted: CommandInput[] = []
 let refreshed = 0
 const deps = {
+  now: () => Date.parse('2026-11-19T10:00:00Z'),
   board: {
     get: async () => ({ at: 'now', counts: { needsYou: 1, inbox: 0 } }),
     refresh: async () => { refreshed++; return {} },
@@ -22,7 +23,6 @@ const deps = {
       submitted.push(input)
       if (input.taskId === 'closed') return { ok: false, refusal: 'task_closed' }
       if (input.taskId === 'daily' && input.kind === 'close') return { ok: false, refusal: 'scheduled' }
-      if (input.taskId === 'mirrored') return { ok: false, refusal: 'schedule_elsewhere' }
       if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
       if (input.taskId === 'gone') return { ok: false, refusal: 'no_session' }
@@ -120,7 +120,8 @@ describe('task board routes', () => {
   it('hands a task over and answers with the undo deadline and a carried question', async () => {
     const r = await post('/api/v1/tasks/asked/hand-over', { opId: 'op-1', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } })
     expect(r).toEqual({ status: 202, body: { opId: 'op-1', state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z', carriedQuestion: 'Which list?' } })
-    expect(submitted.at(-1)).toEqual({ opId: 'op-1', spaceId: 'main', kind: 'hand_over', taskId: 'asked', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' }, desk: undefined } })
+    // one time is read in its zone and handed on as an instant
+    expect(submitted.at(-1)).toEqual({ opId: 'op-1', spaceId: 'main', kind: 'hand_over', taskId: 'asked', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', timeZone: 'Asia/Singapore' }, desk: undefined } })
     expect(refreshed).toBeGreaterThan(0)
   })
 
@@ -138,12 +139,15 @@ describe('task board routes', () => {
       .toMatchObject({ code: 'not_ready' })
   })
 
-  it('carries how a scheduled agent goes on: until the goal in the same session, or a routine in new sessions; refuses other values', async () => {
+  it('carries a hand-over\'s schedule: one time or a repeat rule, until the goal or not; the session choice of before is gone; says what is wrong with one', async () => {
     await post('/api/v1/tasks/asked/hand-over', { opId: 'op-goal', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true } })
-    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ at: '2026-11-20T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true })
+    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ at: '2026-11-20T09:00:00.000Z', timeZone: 'UTC', untilGoal: true })
     await post('/api/v1/tasks/asked/hand-over', { opId: 'op-routine', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' } })
-    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' })
-    expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'later' } })).status).toBe(400)
+    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'UTC' })
+    expect(await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-19T09:00', timeZone: 'UTC' } }))
+      .toMatchObject({ status: 400, body: { error: { code: 'invalid', message: expect.stringMatching(/^schedule: at: .* has passed$/) } } })
+    expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad1', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { cron: '* * * * *', timeZone: 'UTC' } })).body.error.message)
+      .toBe('schedule: that cron fires every 1 min; at most every 15 min')
     expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad2', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: 'yes' } })).status).toBe(400)
   })
 
@@ -153,8 +157,6 @@ describe('task board routes', () => {
     expect(submitted.at(-1)).toEqual({ opId: 'op-es', spaceId: 'main', kind: 'end_schedule', taskId: 'daily' })
     expect(await post('/api/v1/tasks/daily/close', { opId: 'op-c', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } } })
-    expect(await post('/api/v1/tasks/mirrored/end-schedule', { opId: 'op-m', spaceId: 'main' }))
-      .toEqual({ status: 409, body: { error: { code: 'schedule_elsewhere', message: 'Its schedule runs in another cockpit: end it there.', retry: false } } })
     expect(await post('/api/v1/tasks/plain/end-schedule', { opId: 'op-p', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule to end: close it instead.', retry: false } } })
   })

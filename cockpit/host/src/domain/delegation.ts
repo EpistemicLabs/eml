@@ -1,5 +1,5 @@
 /**
- * A task's delegation (brain schema 23): the hand-over to an agent that works on it on its own.
+ * A task's delegation (brain schema 23; its schedule since 24): the hand-over to an agent that works on it on its own.
  *
  *   delegation { agent, checkpoint, requested_at?, schedule? }
  *
@@ -11,12 +11,25 @@
  * without one waits for its owner to hand it over (decision task-state-migration-rules).
  */
 
+/**
+ * The task's schedule (brain schema 24, domain/task-schedule.ts): repeating times and at most one wake-up. The keys in
+ * the order the brain stores them; at least one of crons and at.
+ */
 export interface ScheduleFields {
+  /** Repeating times, five-field cron each: 1 to 10, no duplicates. */
+  crons?: string[]
+  /** The one wake-up (ISO). */
   at?: string
-  cron?: string
+  /** The wake-up's reason, what to do then; only with at. */
+  why?: string
+  /** The session that set the wake-up; only with at. */
+  by_session?: string
+  /** The IANA zone the crons are read in. */
   time_zone?: string
+  /** The whole schedule is paused. */
   paused?: boolean
-  session?: 'new' | 'resume'
+  /** No firing after this time (ISO). */
+  ends_at?: string
 }
 
 export interface DelegationFields {

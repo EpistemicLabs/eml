@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import {
-  describeTrigger, ENDED_BEFORE_START, isOpenRun, JOB_LIMITS, jobTimeZone, mailKeys, nextDue,
-  activeGrants, type ChannelTrigger, type GrantTool, type Job, type JobEnd, type JobNotify, type JobRun, type JobTarget, type ReplyChannel, type ReplyMode, type ScheduleTrigger,
+  ENDED_BEFORE_START, isOpenRun, JOB_LIMITS, mailKeys,
+  activeGrants, type ChannelTrigger, type GrantTool, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode,
 } from '../domain/job.js'
+// SEAM (part B3): the schedule tool still makes and changes version 1 jobs (domain/job-v1.ts); see the comment below.
+import { describeTrigger, jobTimeZone, nextDue, type JobV1 as Job, type JobEnd, type JobTarget, type ScheduleTrigger } from '../domain/job-v1.js'
 import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
@@ -14,7 +16,15 @@ import { limitedJobRefusal } from './limited-job-scope.js'
  * jobs: create, list, update, pause, resume, delete, run now. A session reaches
  * only the jobs of its own space, and a job it makes runs in that space with at
  * most the tools the session has. Answers are text the agent reads.
+ *
+ * SEAM (part B3 of "a task holds its schedule"): this still is the version 1 tool. It keeps jobs with their own
+ * schedule, prompt and target (domain/job-v1.ts) in a store the host keeps empty, and the host answers every call
+ * of the tool with SCHEDULE_TOOL_REBUILT before it gets here (index.ts). Part B3 rebuilds the actions on the task's
+ * schedule (domain/task-schedule.ts, application/task-schedule-write.ts) and the local record (domain/job.ts).
  */
+
+/** What the schedule tool and a turn's check answer until part B3 has rebuilt them on the task's schedule. */
+export const SCHEDULE_TOOL_REBUILT = 'Schedules now live on the task, and the schedule tool is being rebuilt for that: it cannot set or change a time in this build. The task board\'s hand-over sets a task\'s schedule.'
 
 export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'] as const
 export type JobAction = typeof JOB_ACTIONS[number]
@@ -35,7 +45,7 @@ export interface JobCaller {
 }
 
 export interface JobsDeps {
-  store: JobStore
+  store: JobStore<Job>
   runner: Pick<JobRunner, 'runNow' | 'tick'>
   now?: () => number
   /** A project of the space as a session names it (registry id, brain project id or name, known folder). */

@@ -61,18 +61,18 @@ export interface LiveFacts {
   working: boolean
   /** Sessions on the task that are not put away, working or not. */
   sessions: number
-  /** The next run of one of its jobs, if any. */
+  /** The next run of its schedule (domain/task-schedule.ts nextRunOfSchedule), if any. */
   nextRunAt: string | null
   /** A run on it says running but nothing happened in it for an hour (domain/runs.ts STALE_MS): its host may be gone. */
   stale?: boolean
-  /** The schedule nextRunAt comes from (a job's here, else the delegation's): a repeat rule is a routine, a one-time check that resumes is a mission. */
-  schedule?: { at?: string; cron?: string; session?: 'new' | 'resume' } | null
+  /** The task's schedule, which nextRunAt comes from: with a repeating time it is a routine, with a wake-up a session set for itself a mission. */
+  schedule?: { at?: string; crons?: string[]; by_session?: string } | null
 }
 
 /** Agent scheduled, by what its schedule is: a routine repeats, a mission checks back until its goal, anything else starts later. */
 function scheduledGroup(live: LiveFacts): TurnGroup {
-  if (live.schedule?.cron) return 'routine'
-  if (live.schedule?.session === 'resume') return 'mission'
+  if (live.schedule?.crons?.length) return 'routine'
+  if (live.schedule?.at && live.schedule.by_session) return 'mission'
   return 'at_time'
 }
 

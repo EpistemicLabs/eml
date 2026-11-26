@@ -2,8 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskStateMigration, MIGRATION_MARKER, routineTitle, type TaskStateMigrationDeps } from '../src/application/task-state-migration.js'
-import type { Job } from '../src/domain/job.js'
+import { createTaskStateMigration, makeRoutineTask, MIGRATION_MARKER, routineTask, routineTitle, type TaskStateMigrationDeps } from '../src/application/task-state-migration.js'
 
 // paths.ts reads the home at import time — set it before loading the modules that use it.
 const home = mkdtempSync(join(tmpdir(), 'cockpit-migration-run-'))
@@ -13,18 +12,11 @@ afterAll(() => rmSync(home, { recursive: true, force: true }))
 const NOW = Date.parse('2026-11-24T12:00:00.000Z')
 type Task = { id: string; status: string; title: string; properties: Record<string, unknown> }
 
-const job = (patch: Partial<Job>): Job => ({
-  id: 'job-1234567890', name: 'Daily brief', kind: 'scheduled', spaceId: null, createdBy: null, createdAt: '', updatedAt: '', taskId: null, prompt: 'write the brief',
-  target: { type: 'worker', projectId: 'bp-ops' }, triggers: [{ type: 'schedule', cron: '0 8 * * 1-5', timeZone: 'UTC' }],
-  toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 0, failures: 0, ...patch,
-} as Job)
-
-function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: string; until: string }>; failOn?: string[] } = {}) {
+function world(tasks: Task[], opts: { snoozes?: Array<{ key: string; until: string }>; failOn?: string[] } = {}) {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const notes: Array<{ title: string; created_at: string }> = []
   let snoozes = opts.snoozes ?? []
-  const jobs = opts.jobs ?? []
   const brain = {
     async get(path: string, query?: Record<string, unknown>) {
       if (path === '/list' && query?.type === 'note') return { engrams: notes.filter((n) => n.title === query.title) }
@@ -59,8 +51,6 @@ function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: strin
     space: (id) => (id === 'main' ? ({ id: 'main', name: 'Main', main: true } as never) : undefined),
     brain: () => brain,
     viewer: 'lasse',
-    jobs: () => jobs,
-    setJobTask: (jobId, taskId) => { const j = jobs.find((x) => x.id === jobId); if (j) j.taskId = taskId },
     snoozes: () => snoozes,
     setSnoozes: (next) => { snoozes = next },
     heldWaitsFile,
@@ -68,7 +58,7 @@ function world(tasks: Task[], opts: { jobs?: Job[]; snoozes?: Array<{ key: strin
     now: () => NOW,
     log: () => {},
   }
-  return { migration: createTaskStateMigration(deps), posts, notes, byId, jobs, snoozes: () => snoozes, heldWaitsFile }
+  return { migration: createTaskStateMigration(deps), brain, posts, notes, byId, snoozes: () => snoozes, heldWaitsFile }
 }
 
 const waits = [{ id: 's1', who: 'lasse', kind: 'question', why: 'Which?', since: '2026-11-23T09:00:00.000Z' }]
@@ -104,7 +94,7 @@ describe('the task state migration run', () => {
     expect(w.posts).toEqual([])
 
     const run = await w.migration.run('main')
-    expect(run).toMatchObject({ ok: true, written: 2, failed: [], tasksMade: 0 })
+    expect(run).toMatchObject({ ok: true, written: 2, failed: [] })
     expect(w.posts.map((p) => p.path)).toEqual(['/task/d/track', '/task/b/track'])
     expect(w.posts[0].body).toEqual({
       delegation: { agent: 'atlas', checkpoint: 'after' },
@@ -128,19 +118,20 @@ describe('the task state migration run', () => {
     expect(w.snoozes()).toEqual([{ key: 'task:down@2026-11-23T09:00:00.000Z', until: '2026-11-30T00:00:00.000Z' }])
   })
 
-  it('gives a job without a task one, named after the job, and finds it again on a retry instead of making a second', async () => {
-    const w = world([], { jobs: [job({})] })
-    const first = await w.migration.run('main')
-    expect(first).toMatchObject({ ok: true, tasksMade: 1 })
-    expect(w.posts[0]).toEqual({ path: '/engram/task', body: {
-      title: routineTitle(job({})), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['lasse'],
-    } })
-    expect(w.jobs[0].taskId).toBe('made-0')
-    // the job lost its task id (a response that never arrived): the retry finds the task by its title
-    w.jobs[0].taskId = null
-    const again = await w.migration.run('main')
-    expect(again).toMatchObject({ ok: true, tasksMade: 0 })
-    expect(w.jobs[0].taskId).toBe('made-0')
+  it('a routine without a task gets one, named after it, and a retry finds it again instead of making a second', async () => {
+    const w = world([])
+    const routine = { id: 'job-1234567890', name: 'Daily brief', prompt: 'write the brief' }
+    const task = routineTask(routine, 'bp-ops', 'lasse')!
+    expect(task).toEqual({ title: routineTitle(routine), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['lasse'] })
+    expect(task.title).toBe('routine-daily-brief-job-1234')
+    // a task belongs to a project of the brain
+    expect(routineTask(routine, null, 'lasse')).toBeNull()
+    expect(routineTask(routine, 'some-folder', 'lasse')).toBeNull()
+
+    expect(await makeRoutineTask(w.brain, task)).toEqual({ id: 'made-0', made: true })
+    expect(w.posts).toEqual([{ path: '/engram/task', body: task }])
+    // the answer never arrived: the retry finds the task by its title
+    expect(await makeRoutineTask(w.brain, task)).toEqual({ id: 'made-0', made: false })
     expect(w.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
   })
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { continuedBrief, planHandOver, planUndo, scheduledJobOptions, type HandOverTask } from '../src/domain/hand-over.js'
+import { continuedBrief, planHandOver, planUndo, readScheduleSpec, type HandOverTask } from '../src/domain/hand-over.js'
 
 const NOW = '2026-11-24T10:00:00.000Z'
 const ctx = { agents: ['atlas', 'motti'], now: NOW }
@@ -14,7 +14,6 @@ describe('planning a hand-over', () => {
     expect(r.plan.patch).toEqual({ delegation: { agent: 'atlas', checkpoint: 'after', requested_at: NOW } })
     expect(r.plan.patch).not.toHaveProperty('assignee_ids')
     expect(r.plan.journal).toBe('Handed to atlas with checkpoint after; the owner stays.')
-    expect(r.plan.job).toBeUndefined()
     expect(r.plan.session).toBeUndefined()
   })
 
@@ -99,22 +98,54 @@ describe('planning a hand-over', () => {
     expect(r.plan.brief).toContain('Which day?')
   })
 
-  it('schedule: a job on the task at that time, once or repeating', () => {
-    const once = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx)
+  it('schedule: one time is the task\'s wake-up, a repeat rule one of its repeating times; no request for the runner', () => {
+    const once = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' } }, ctx)
     if (!once.ok) throw new Error(once.refusal)
-    expect(once.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' })
-    // the job starts it: no request for the runner
-    expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
-    expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-20T09:00 (Asia/Singapore) with checkpoint after; the owner stays.')
+    // its schedule starts it: no request for the runner
+    expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', time_zone: 'Asia/Singapore' } })
+    expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-25T01:00:00.000Z with checkpoint after; the owner stays.')
     const weekly = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Singapore' } }, ctx)
     if (!weekly.ok) throw new Error(weekly.refusal)
-    expect(weekly.plan.job).toEqual({ cron: '0 9 * * 1', timeZone: 'Asia/Singapore' })
+    expect(weekly.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 9 * * 1'], time_zone: 'Asia/Singapore' } })
+    expect(weekly.plan.journal).toBe('Scheduled atlas for "0 9 * * 1" (Asia/Singapore) with checkpoint after; the owner stays.')
   })
 
-  it('until the goal on a task with a goal is planned as a job', () => {
-    const r = planHandOver(task({ goal: 'Shipped' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true, session: 'resume' } }, ctx)
+  it('schedule on a task that has a schedule: a wake-up replaces its wake-up and keeps the repeating times; a repeat rule joins them once', () => {
+    const has = task({ delegation: { agent: 'motti', checkpoint: 'none', schedule: { crons: ['0 8 * * *'], at: '2026-11-24T12:00:00.000Z', why: 'Check the reply', by_session: 's1', time_zone: 'Europe/Berlin' } } })
+    const once = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' } }, ctx)
+    if (!once.ok) throw new Error(once.refusal)
+    expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *'], at: '2026-11-25T01:00:00.000Z', time_zone: 'Europe/Berlin' } })
+    const more = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'Asia/Singapore' } }, ctx)
+    if (!more.ok) throw new Error(more.refusal)
+    expect(more.plan.patch.delegation?.schedule).toEqual({ crons: ['0 8 * * *', '0 18 * * *'], at: '2026-11-24T12:00:00.000Z', why: 'Check the reply', by_session: 's1', time_zone: 'Europe/Berlin' })
+    const same = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 8 * * *', timeZone: 'Europe/Berlin' } }, ctx)
+    if (!same.ok) throw new Error(same.refusal)
+    expect(same.plan.patch.delegation?.schedule?.crons).toEqual(['0 8 * * *'])
+    const full = task({ delegation: { agent: 'motti', schedule: { crons: Array.from({ length: 10 }, (_, i) => `0 ${i} * * *`) } } })
+    expect(planHandOver(full, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'UTC' } }, ctx)).toEqual({ ok: false, refusal: 'schedule_invalid' })
+  })
+
+  it('a delegation written without the task\'s schedule would end it: delegate now carries it, work on it now keeps the agent as its holder', () => {
+    const schedule = { crons: ['0 8 * * *'], time_zone: 'Europe/Berlin' }
+    const has = task({ delegate: 'motti', checkpoint: 'after', delegation: { agent: 'motti', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', schedule } })
+    const now = planHandOver(has, { mode: 'now', delegate: 'atlas', checkpoint: 'none' }, ctx)
+    if (!now.ok) throw new Error(now.refusal)
+    expect(now.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'none', requested_at: NOW, schedule })
+    const together = planHandOver(has, { mode: 'together', delegate: 'atlas', desk: 'Main' }, ctx)
+    if (!together.ok) throw new Error(together.refusal)
+    // no checkpoint, no request: nothing starts on its own but its schedule
+    expect(together.plan.patch.delegation).toEqual({ agent: 'motti', schedule })
+    expect(together.plan.journal).toBe('Working on it with atlas in desk Main; the owner stays. motti is no longer delegated, so it does not go on alone meanwhile. Its schedule stays.')
+    // without a schedule the delegation goes, as before
+    const plain = planHandOver(task({ delegate: 'motti', delegation: { agent: 'motti', checkpoint: 'after' } }), { mode: 'together', delegate: 'atlas', desk: 'Main' }, ctx)
+    if (!plain.ok) throw new Error(plain.refusal)
+    expect(plain.plan.patch.delegation).toBeNull()
+  })
+
+  it('until the goal on a task with a goal is planned like any schedule', () => {
+    const r = planHandOver(task({ goal: 'Shipped' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T09:00:00.000Z', timeZone: 'UTC', untilGoal: true } }, ctx)
     if (!r.ok) throw new Error(r.refusal)
-    expect(r.plan.job).toEqual({ at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true, session: 'resume' })
+    expect(r.plan.patch.delegation?.schedule).toEqual({ at: '2026-11-25T09:00:00.000Z', time_zone: 'UTC' })
   })
 
   it('work on it now: a session in the chosen desk, no delegation, a planned task moves to active', () => {
@@ -153,19 +184,32 @@ describe('planning the undo', () => {
       journal: 'Hand-over undone; the task is back as it was.',
     })
     expect(planUndo(task({ delegate: 'motti', status: 'planned' })).patch).toEqual({ delegation: { agent: 'motti' }, waits: null, status: 'planned' })
-    const delegation = { agent: 'motti', checkpoint: 'after', requested_at: NOW, schedule: { cron: '0 9 * * 1' } }
+    const delegation = { agent: 'motti', checkpoint: 'after', requested_at: NOW, schedule: { crons: ['0 9 * * 1'] } }
     expect(planUndo(task({ delegate: 'motti', checkpoint: 'after', delegation })).patch.delegation).toEqual(delegation)
   })
 })
 
-describe('a scheduled hand-over\'s job', () => {
-  it('starts a new worker each run by default; continues the newest session on resume; carries the goal until it is reached', () => {
-    expect(scheduledJobOptions({ at: '2026-11-25T09:00', timeZone: 'UTC' }, { goal: 'Shipped' }, 's1'))
-      .toEqual({ callerSessionId: null, input: { at: '2026-11-25T09:00', timezone: 'UTC' } })
-    expect(scheduledJobOptions({ at: '2026-11-25T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true }, { goal: 'Shipped' }, 's1'))
-      .toEqual({ callerSessionId: 's1', input: { at: '2026-11-25T09:00', timezone: 'UTC', target: 'self', goal: 'Shipped' } })
-    // resume without a session on the task yet: a new worker; until the goal without a goal: no goal
-    expect(scheduledJobOptions({ cron: '0 9 * * 1', timeZone: 'UTC', session: 'resume', untilGoal: true }, {}, null))
-      .toEqual({ callerSessionId: null, input: { cron: '0 9 * * 1', timezone: 'UTC' } })
+describe('a hand-over\'s schedule as the page sends it', () => {
+  const now = Date.parse(NOW)
+  const limits = { minGapMs: 15 * 60_000, maxAheadMs: 366 * 24 * 60 * 60_000 }
+  it('reads one time in its zone as an instant, and a repeat rule as it is; until the goal is carried', () => {
+    expect(readScheduleSpec({ at: '2026-11-25T09:00', timeZone: 'Asia/Singapore' }, now, limits)).toEqual({ at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' })
+    expect(readScheduleSpec({ at: '2026-11-25T09:00:00Z', timeZone: 'Asia/Singapore' }, now, limits)).toEqual({ at: '2026-11-25T09:00:00.000Z', timeZone: 'Asia/Singapore' })
+    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: true }, now, limits)).toEqual({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: true })
+  })
+  it('is none without a zone or a time, or with both a time and a rule', () => {
+    expect(readScheduleSpec(undefined, now, limits)).toBeUndefined()
+    expect(readScheduleSpec({ at: '2026-11-25T09:00' }, now, limits)).toBeUndefined()
+    expect(readScheduleSpec({ timeZone: 'UTC' }, now, limits)).toBeUndefined()
+    expect(readScheduleSpec({ timeZone: 'UTC', at: '2026-11-25T09:00', cron: '0 9 * * 1' }, now, limits)).toBeUndefined()
+  })
+  it('says what is wrong with a time, a rule, a zone or until the goal', () => {
+    expect(readScheduleSpec({ at: 'tomorrow', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'at: "tomorrow" is not a date and time; write it like 2026-11-13T10:00 (read in UTC)' })
+    expect(readScheduleSpec({ at: '2026-11-24T09:00', timeZone: 'UTC' }, now, limits)).toMatchObject({ error: expect.stringContaining('has passed') })
+    expect(readScheduleSpec({ at: '2028-11-24T09:00', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'at: at most a year ahead' })
+    expect(readScheduleSpec({ cron: '0 9 * *', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'cron: cron needs five fields: minute hour day-of-month month day-of-week' })
+    expect(readScheduleSpec({ cron: '*/5 * * * *', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'that cron fires every 5 min; at most every 15 min' })
+    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'Mars/Olympus' }, now, limits)).toMatchObject({ error: expect.stringContaining('unknown time zone') })
+    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: 'yes' }, now, limits)).toEqual({ error: 'schedule.untilGoal is true or false' })
   })
 })

@@ -1,11 +1,13 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
+import { parseAt, isTimeZone, formatInZone } from './schedule.js'
+import { addCron, cronRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 import { PLACEHOLDER_TITLE } from './task-title.js'
 
 /**
  * Hand over: give a task to an agent while its owner stays (decision task-assignee-owner-and-agent-delegate).
- * Three modes: now (the runner starts the delegate), schedule (a job starts it at a time), together
+ * Three modes: now (the runner starts the delegate), schedule (its schedule starts it at a time), together
  * (Work on it now: a session in a desk, with the owner in the chat; on a task with its own open session it is Take
  * over, which opens that session instead of starting one). This file plans the change; the use case
  * (application/task-commands.ts) carries it out and keeps it undoable.
@@ -15,6 +17,12 @@ import { PLACEHOLDER_TITLE } from './task-title.js'
  * back to planned. Work on it now writes no delegation; a task delegated before loses it (with a journal line), so
  * the runner does not start the agent on its own meanwhile, and the status moves to active.
  *
+ * Brain schema 24: the task holds its schedule in the delegation, and a delegation written without it ends it. So
+ * every delegation planned here carries the task's schedule along: Delegate now keeps it, Schedule adds to it (one
+ * time: the task's wake-up, which replaces the one it had; repeat: one more repeating time), and Work on it now on a
+ * task with a schedule keeps the agent as its holder, without checkpoint or request, so nothing starts on its own
+ * but its schedule.
+ *
  * An open question is never dropped: a plan that clears a question waiting on the owner puts it
  * into the journal and into the delegate's brief in the same step.
  */
@@ -23,11 +31,40 @@ export type HandOverMode = 'now' | 'schedule' | 'together'
 export const HAND_OVER_MODES: readonly HandOverMode[] = ['now', 'schedule', 'together']
 
 /**
- * When a scheduled agent works on the task: one time (at) or a repeat rule (cron). session: each run continues the task's
- * last session (resume) or starts a new one; untilGoal: the agent keeps at it, setting its own next check, until the
- * task's goal is reached.
+ * When a scheduled agent works on the task: one time (at, an instant) or a repeat rule (cron, read in timeZone).
+ * untilGoal: the agent keeps at it until the task's goal is reached, so the task needs a goal.
  */
-export type ScheduleSpec = { timeZone: string; session?: 'new' | 'resume'; untilGoal?: boolean } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
+export type ScheduleSpec = { timeZone: string; untilGoal?: boolean } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
+
+/** What a hand-over's schedule may be (domain/job.ts JOB_LIMITS). */
+export interface ScheduleSpecLimits { minGapMs: number; maxAheadMs: number }
+
+/**
+ * A hand-over's schedule as the page sends it ({ timeZone, at | cron, untilGoal? }), checked: `at` is read in the
+ * zone when it names no offset and comes back as an instant. Undefined when none is given; `error` says what is wrong.
+ */
+export function readScheduleSpec(input: unknown, now: number, limits: ScheduleSpecLimits): ScheduleSpec | undefined | { error: string } {
+  const s = input && typeof input === 'object' ? input as Record<string, unknown> : null
+  const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined)
+  const timeZone = text(s?.timeZone)
+  if (!s || !timeZone) return undefined
+  if (!isTimeZone(timeZone)) return { error: `unknown time zone "${timeZone}"; use an IANA name such as Europe/Berlin` }
+  if (s.untilGoal !== undefined && typeof s.untilGoal !== 'boolean') return { error: 'schedule.untilGoal is true or false' }
+  const how = s.untilGoal ? { untilGoal: true } : {}
+  const at = text(s.at), cron = text(s.cron)
+  if (at && !cron) {
+    const when = parseAt(at, timeZone)
+    if (when === null) return { error: `at: "${at}" is not a date and time; write it like 2026-11-13T10:00 (read in ${timeZone})` }
+    if (when <= now) return { error: `at: ${formatInZone(when, timeZone)} (${timeZone}) has passed` }
+    if (when - now > limits.maxAheadMs) return { error: 'at: at most a year ahead' }
+    return { at: new Date(when).toISOString(), timeZone, ...how }
+  }
+  if (cron && !at) {
+    const refusal = cronRefusal(cron, timeZone, now, limits.minGapMs)
+    return refusal ? { error: refusal } : { cron, timeZone, ...how }
+  }
+  return undefined
+}
 
 export interface HandOverRequest {
   mode: HandOverMode
@@ -60,6 +97,8 @@ export type HandOverRefusal =
   | 'delegate_not_in_space'
   | 'checkpoint_required'
   | 'schedule_required'
+  /** The schedule cannot be added to the task's: not a time, or the task has as many repeating times as it can hold. */
+  | 'schedule_invalid'
   /** Take over without a desk (from the chip or the panel), but the task has no open session of its own (any more). */
   | 'no_session'
   /** Until the goal is reached, on a task without a goal: set the goal first. */
@@ -79,7 +118,6 @@ export interface HandOverPlan {
   carriedQuestion?: string
   /** What the delegate reads first when it starts. */
   brief?: string
-  job?: ScheduleSpec
   /** Work on it now: a new session in `desk`. Take over: the task's own session (`sessionId`), opened in `desk` when named. */
   session?: { desk?: string; sessionId?: string }
 }
@@ -109,24 +147,37 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
 
   const patch: TaskPatch = {}
   const lines: string[] = []
-  if (req.mode === 'now') patch.delegation = { agent: req.delegate, checkpoint: req.checkpoint, requested_at: ctx.now }
-  // A job starts it at its time (application/jobs.ts); no request for the runner.
-  if (req.mode === 'schedule') patch.delegation = { agent: req.delegate, checkpoint: req.checkpoint }
+  // The task's schedule goes with every delegation written here: without it the brain ends the schedule.
+  const schedule = task.delegation?.schedule ?? null
+  if (req.mode === 'now') patch.delegation = withSchedule({ agent: req.delegate, checkpoint: req.checkpoint, requested_at: ctx.now }, schedule)
+  // Its schedule starts it at its time; no request for the runner.
+  if (req.mode === 'schedule') {
+    const spec = req.schedule!
+    try {
+      const next = spec.at !== undefined ? setWake(schedule, { at: spec.at, timeZone: spec.timeZone }) : addCron(schedule, spec.cron, spec.timeZone)
+      patch.delegation = withSchedule({ agent: req.delegate, checkpoint: req.checkpoint }, next)
+    } catch (err) {
+      if (err instanceof ScheduleError) return { ok: false, refusal: 'schedule_invalid' }
+      throw err
+    }
+  }
+  const was = task.delegation?.agent ?? task.delegate
   if (req.mode === 'together') {
-    if (task.delegation?.agent || task.delegate) patch.delegation = null
+    // A schedule needs a delegation to live in: its agent stays as the holder, without checkpoint or request.
+    if (was) patch.delegation = schedule ? withSchedule({ agent: was }, schedule) : null
     if (task.status === 'planned') patch.status = 'active'
   }
   if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.${req.fresh ? ' It starts in a new session (Start fresh).' : ''}`)
   if (req.mode === 'schedule') {
-    const when = req.schedule!.at ?? `"${req.schedule!.cron}"`
-    lines.push(`Scheduled ${req.delegate} for ${when} (${req.schedule!.timeZone}) with checkpoint ${req.checkpoint}; the owner stays.`)
+    const when = req.schedule!.at ?? `"${req.schedule!.cron}" (${req.schedule!.timeZone})`
+    lines.push(`Scheduled ${req.delegate} for ${when} with checkpoint ${req.checkpoint}; the owner stays.`)
   }
   if (req.mode === 'together') {
-    const was = task.delegation?.agent ?? task.delegate
     const where = req.desk ? ` in desk ${req.desk}` : ''
-    lines.push(ctx.ownSession
+    const kept = was && schedule ? ' Its schedule stays.' : ''
+    lines.push((ctx.ownSession
       ? `Taken over by the owner in its session${where}.${was ? ` ${was} is no longer delegated, so it does not go on alone; a turn it is in finishes first.` : ''}`
-      : `Working on it with ${req.delegate}${where}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`)
+      : `Working on it with ${req.delegate}${where}; the owner stays.${was ? ` ${was} is no longer delegated, so it does not go on alone meanwhile.` : ''}`) + kept)
   }
 
   const plan: HandOverPlan = { patch, journal: '' }
@@ -142,7 +193,6 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
     lines.push(`Handed over with the open question: "${question}" It goes into ${req.delegate}'s brief.`)
   }
   plan.journal = lines.join(' ')
-  if (req.mode === 'schedule') plan.job = req.schedule
   if (req.mode === 'together') plan.session = { ...(req.desk ? { desk: req.desk } : {}), ...(ctx.ownSession ? { sessionId: ctx.ownSession } : {}) }
   return { ok: true, plan }
 }
@@ -162,24 +212,11 @@ export const continuedBrief = (question: string): string =>
 
 const waitsOfTask = (task: HandOverTask): Wait[] => task.waits ?? waitsOf({ waiting_on: task.waitingOn })
 
-/** The change that puts a task back as it was before a hand-over. */
+/** The change that puts a task back as it was before a hand-over, its schedule too (`before.delegation` carries it). */
 export function planUndo(before: HandOverTask): { patch: Required<TaskPatch>; journal: string } {
   const delegation = before.delegation ?? (before.delegate ? { agent: before.delegate, ...(before.checkpoint ? { checkpoint: before.checkpoint } : {}) } : null)
   return {
     patch: { delegation, waits: waitsBody(waitsOfTask(before)).waits, status: before.status },
     journal: 'Hand-over undone; the task is back as it was.',
-  }
-}
-
-/**
- * How a scheduled hand-over's job runs: continuing the task's newest session (target self from it) when the owner chose
- * resume and there is one, else a new worker each run; with the task's goal when the agent keeps at it until the goal.
- */
-export function scheduledJobOptions(spec: ScheduleSpec, task: { goal?: string | null }, newestSessionId: string | null): { callerSessionId: string | null; input: Record<string, unknown> } {
-  const resume = spec.session === 'resume' ? newestSessionId : null
-  const goal = spec.untilGoal ? task.goal ?? null : null
-  return {
-    callerSessionId: resume,
-    input: { ...(spec.at ? { at: spec.at } : { cron: spec.cron }), timezone: spec.timeZone, ...(resume ? { target: 'self' } : {}), ...(goal ? { goal } : {}) },
   }
 }

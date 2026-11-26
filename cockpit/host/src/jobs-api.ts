@@ -5,6 +5,7 @@ import type { JobStore } from './job-store.js'
 import type { WorkerStatus } from './domain/session-attention.js'
 import { JOB_ACTIONS } from './application/jobs.js'
 import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
+import type { JobV1 } from './domain/job-v1.js'
 
 /**
  * Jobs over HTTP (application/jobs.ts):
@@ -27,7 +28,12 @@ import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 
 export interface JobsApiDeps {
   jobs: Jobs
-  store: JobStore
+  /** What answers a session's call of the schedule tool. SEAM (part B3): until the tool is rebuilt on the task's schedule it says so (index.ts scheduleTool). */
+  tool: Pick<Jobs, 'handle'>
+  /** The user's time zone, in the real store (jobs.json). */
+  zones: Pick<JobStore, 'timeZone' | 'setTimeZone'>
+  /** SEAM (parts B3 and C): still the store of version 1 jobs, which the host keeps empty (index.ts legacyJobStore); the Jobs view goes. */
+  store: JobStore<JobV1>
   spawnToken: string
   /** The session as a caller: its space, project and tool profile; null when unknown. */
   callerOf(sessionId: string): JobCaller | null
@@ -59,7 +65,7 @@ export async function handleJobsApi(
       json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can schedule jobs' } })
       return true
     }
-    const result = await requestJobs(deps, await readJson(req))
+    const result = await requestJobs({ jobs: deps.tool, callerOf: deps.callerOf }, await readJson(req))
     json(res, result.status, result.payload)
     return true
   }
@@ -68,7 +74,7 @@ export async function handleJobsApi(
       ...job, ...deps.jobs.summary(job), spaceName: deps.spaceName(job.spaceId),
       runs: [...deps.store.runs(job.id)].reverse().slice(0, 20).map((run) => ({ ...run, session: run.sessionId ? deps.sessionInfo(run.sessionId) : null })),
     }))
-    json(res, 200, { timeZone: deps.store.timeZone(), jobs })
+    json(res, 200, { timeZone: deps.zones.timeZone(), jobs })
     return true
   }
   // The user's own decisions: never reachable from a session's tool.
@@ -130,7 +136,7 @@ export async function handleJobsApi(
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'GET') {
-    json(res, 200, { timeZone: deps.store.timeZone() })
+    json(res, 200, { timeZone: deps.zones.timeZone() })
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'PUT') {
@@ -140,9 +146,9 @@ export async function handleJobsApi(
       json(res, 400, { error: { code: 'INVALID_TIME_ZONE', message: 'timeZone must be an IANA time zone' } })
       return true
     }
-    const saved = deps.store.timeZone()
+    const saved = deps.zones.timeZone()
     const take = body.explicit === true || saved === null
-    if (take) deps.store.setTimeZone(zone)
+    if (take) deps.zones.setTimeZone(zone)
     json(res, 200, { timeZone: take ? zone : saved, changed: take && saved !== zone })
     return true
   }

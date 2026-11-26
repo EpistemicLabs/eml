@@ -11,7 +11,7 @@ function setup(saved: string | null) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-time-zone-')), 'jobs.json')
   const store = new JobStore(file)
   if (saved) store.setTimeZone(saved)
-  const deps = { store } as unknown as JobsApiDeps
+  const deps = { store, zones: store } as unknown as JobsApiDeps
   const call = async (method: 'GET' | 'PUT', body: Record<string, unknown> = {}) => {
     let answer: { status: number; payload: unknown } | null = null
     const json = (_res: http.ServerResponse, status: number, payload: unknown) => { answer = { status, payload } }

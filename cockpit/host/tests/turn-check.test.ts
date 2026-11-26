@@ -4,15 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Jobs, type JobCaller } from '../src/application/jobs.js'
 import { checkName, createTurnCheck } from '../src/application/turn-check.js'
-import { hasSchedule, scheduleOfJob } from '../src/domain/task-schedule.js'
 import { JobStore } from '../src/job-store.js'
+import type { JobV1 } from '../src/domain/job-v1.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
 
 function setup(initial = 'UTC') {
   let zone = initial
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-turn-check-')), 'jobs.json')
-  const store = new JobStore(file)
+  const store = new JobStore<JobV1>(file)
   const jobs = new Jobs({
     store, runner: { runNow: () => null, tick: async () => {} }, now: () => NOW,
     resolveProject: async () => 'bp-eml', findSession: () => null, addressOf: (id) => `eml-${id}`,
@@ -39,10 +39,8 @@ describe('the check an end_turn call sets', () => {
       target: { type: 'session', sessionId: 's1' }, triggers: [{ type: 'schedule', at: '2026-11-27T10:00:00.000Z', timeZone: 'UTC' }],
       nextRunAt: '2026-11-27T10:00:00.000Z',
     })
-    // What the schedule mirror writes into the task: one time, resuming the session.
-    expect(scheduleOfJob(job)).toMatchObject({ at: '2026-11-27T10:00:00.000Z', session: 'resume' })
     // The mark is kept with the job.
-    expect(new JobStore(file).get(job.id)?.origin).toBe('end_turn')
+    expect(new JobStore<JobV1>(file).get(job.id)?.origin).toBe('end_turn')
   })
 
   it('moves it when a later call names another time', async () => {
@@ -168,8 +166,8 @@ describe('the check an end_turn call sets', () => {
 
   it('keeps the task\'s schedule on while the check is set, and off once a call without a time took it away', async () => {
     const { store, check, wanted } = setup()
-    // What the board and its commands ask (domain/task-schedule.ts): a task whose schedule is on is not closed by Looks good.
-    const scheduled = () => hasSchedule({ jobs: store.list().filter((job) => job.taskId === 't1'), owner: 'kim' }, 'kim', NOW)
+    // A check that has not ended is a time still set for the task.
+    const scheduled = () => store.list().some((job) => job.taskId === 't1' && !job.endedAt)
     expect(scheduled()).toBe(false)
     await check.settle('s1', wanted('2026-11-27T10:00'))
     expect(scheduled()).toBe(true)

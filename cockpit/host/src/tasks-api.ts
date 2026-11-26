@@ -6,7 +6,8 @@ import type { SplitBrief } from './application/split-brief.js'
 import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import type { SortSession } from './application/sort-session.js'
 import { SORT_PICKS, type SortPick, type SortRow } from './domain/sort.js'
-import { HAND_OVER_MODES, type HandOverMode, type ScheduleSpec } from './domain/hand-over.js'
+import { HAND_OVER_MODES, readScheduleSpec, type HandOverMode } from './domain/hand-over.js'
+import { JOB_LIMITS } from './domain/job.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
 import type { TaskStateMigration } from './application/task-state-migration.js'
 
@@ -25,9 +26,8 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
  *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed; refused (scheduled) while its
  *                                                     schedule is on
- *   POST /api/v1/tasks/<id>/end-schedule            { opId, spaceId }: End schedule and close: the owner ends the task's jobs on this
- *                                                     cockpit, then the task closes as done; refused (schedule_elsewhere) when
- *                                                     another member's cockpit fires its schedule, (not_scheduled) without a job
+ *   POST /api/v1/tasks/<id>/end-schedule            { opId, spaceId }: End schedule and close: the owner clears the task's schedule
+ *                                                     and the task closes as done; refused (not_scheduled) without a schedule
  *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason?, message? }: the owner reopens a closed task (active;
  *                                                     starts nothing, or with a message: its newest session gets it)
  *   POST /api/v1/tasks/<id>/follow-up               { opId, spaceId, message }: a new task spun off from this one, the message its brief
@@ -55,6 +55,8 @@ export interface TasksApiDeps {
   startOnTask(input: { spaceId: string; taskId: string; projectId?: string; prompt?: string; title?: string; deskId?: string }): Promise<
     { ok: true; sessionId: string } | { ok: false; refusal: 'unknown_space' | 'unknown_task' | 'task_closed' | 'no_project'; message?: string }
   >
+  /** The time a hand-over's schedule is checked against; the clock without it. */
+  now?(): number
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -74,6 +76,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   goal_required: 'The task has no goal yet: set one before the agent keeps at it until the goal is reached.',
   not_ready: 'Give the task a name and a goal first: an agent working on it alone needs to know what done means.',
   schedule_required: 'Pick when the agent starts.',
+  schedule_invalid: 'That time cannot be added to its schedule: a task holds at most 10 repeating times.',
   no_session: 'The task has no open session to take over: pick a desk to start one.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
   open_steps: 'This task still has open steps: close or move them first.',
@@ -82,7 +85,6 @@ const MESSAGES: Record<CommandRefusal, string> = {
   superseded: 'Another task replaced this one: go on there.',
   parent_closed: 'Its parent is closed: reopen the parent first.',
   scheduled: SCHEDULE_ON,
-  schedule_elsewhere: 'Its schedule runs in another cockpit: end it there.',
   not_scheduled: 'It has no schedule to end: close it instead.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
@@ -120,7 +122,7 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
-  scheduled: 409, schedule_elsewhere: 409, not_scheduled: 409,
+  scheduled: 409, not_scheduled: 409,
   no_brain: 503,
 }
 
@@ -140,23 +142,6 @@ function answer(json: Json, res: http.ServerResponse, result: Submitted): void {
     ...(c.effects ? { effects: c.effects } : {}),
     ...(c.tookOver ? { sessionId: c.tookOver } : {}),
   })
-}
-
-/**
- * A hand-over's schedule: one time or a repeat rule in a zone, and how each run goes on — session new or resume,
- * untilGoal true when the agent keeps at it until the task's goal. 'invalid' when one of those is not its shape.
- */
-function schedule(body: Record<string, unknown>): ScheduleSpec | undefined | 'invalid' {
-  const s = body.schedule as Record<string, unknown> | undefined
-  const timeZone = str(s?.timeZone)
-  if (!s || !timeZone) return undefined
-  if (s.session !== undefined && s.session !== 'new' && s.session !== 'resume') return 'invalid'
-  if (s.untilGoal !== undefined && typeof s.untilGoal !== 'boolean') return 'invalid'
-  const how = { ...(s.session ? { session: s.session as 'new' | 'resume' } : {}), ...(s.untilGoal ? { untilGoal: true } : {}) }
-  const at = str(s.at), cron = str(s.cron)
-  if (at && !cron) return { at, timeZone, ...how }
-  if (cron && !at) return { cron, timeZone, ...how }
-  return undefined
 }
 
 export async function handleTasksApi(
@@ -332,8 +317,9 @@ export async function handleTasksApi(
         const mode = str(body.mode) as HandOverMode | undefined
         const delegate = str(body.delegate)
         if (!mode || !HAND_OVER_MODES.includes(mode) || !delegate) { refuse(json, res, 'invalid', 'mode (now · schedule · together) and delegate are required'); return true }
-        const spec = schedule(body)
-        if (spec === 'invalid') { refuse(json, res, 'invalid', 'schedule.session is new or resume, schedule.untilGoal true or false'); return true }
+        // One time (at) becomes the task's wake-up, a repeat rule (cron) one of its repeating times (domain/hand-over.ts).
+        const spec = readScheduleSpec(body.schedule, deps.now?.() ?? Date.now(), JOB_LIMITS)
+        if (spec && 'error' in spec) { refuse(json, res, 'invalid', `schedule: ${spec.error}`); return true }
         input = { ...base, kind: 'hand_over', taskId, handOver: { mode, delegate, checkpoint: str(body.checkpoint), schedule: spec, desk: str(body.desk), ...(body.fresh === true ? { fresh: true } : {}) } }
       } else if (verb === 'review' || verb === 'close') {
         input = { ...base, kind: verb, taskId }

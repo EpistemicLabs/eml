@@ -72,7 +72,7 @@ import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
 import { JobStore } from './job-store.js'
 import { JobRunner } from './application/job-runner.js'
-import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
+import { Jobs, SCHEDULE_TOOL_REBUILT, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
@@ -81,6 +81,9 @@ import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
+import type { JobV1 } from './domain/job-v1.js'
+import { endTaskRecord } from './application/end-task-record.js'
+import { hasSchedule } from './domain/task-schedule.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
@@ -99,11 +102,7 @@ import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
 import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
-import { createScheduleMirror } from './application/schedule-mirror.js'
-import { hasSchedule, nextRunOfJobs, scheduleOfJobs } from './domain/task-schedule.js'
-import { scheduledJobOptions } from './domain/hand-over.js'
 import { zoneLabel } from './domain/schedule.js'
-import type { DelegationFields } from './domain/delegation.js'
 import { createTaskStateMigration } from './application/task-state-migration.js'
 import { liveFactsOf, runsBlockRunner, type RunFacts } from './domain/runs.js'
 import { parseHandoff } from './domain/handoff.js'
@@ -459,7 +458,6 @@ async function main() {
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
     working: (taskId, runs) => liveFactsOf(taskSessions(taskId), runs, null, Date.now()).working,
-    scheduled: (taskId) => jobStore.list().some((job) => job.taskId === taskId && !job.endedAt && !isHeld(job) && job.nextRunAt !== null),
     held: runnerHeld,
     brief: (taskId) => taskCommands?.briefOf(taskId),
     question: (taskId) => taskCommands?.questionOf(taskId),
@@ -482,9 +480,10 @@ async function main() {
   // The next-step check: a delegated task always has a next trigger (application/next-step.ts).
   const nextStep = createNextStepCheck({
     ledger, spaces, brain: taskBrain, owner, log, endTurnTool,
+    // The task's record here: its channels and a run waiting to start. Its next run is the task's schedule's (next-step.ts).
     jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
-      ended: Boolean(job.endedAt), held: isHeld(job), nextRunAt: job.nextRunAt,
-      channel: job.triggers.some((trigger) => trigger.type !== 'schedule'),
+      ended: false, held: isHeld(job), nextRunAt: null,
+      channel: job.triggers.length > 0,
       runWaiting: jobStore.runs(job.id).some((run) => run.status === 'waiting'),
     })),
     runStartedAt: (sessionId) => {
@@ -537,7 +536,7 @@ async function main() {
     if (!brain) return { error: `space ${space.name} has no agent` }
     return createWorkerTask({ brain, owner, agent: space.agent ?? null, holds: workerHolds }, input)
   }
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => jobs.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -586,14 +585,15 @@ async function main() {
     jobOf: (sessionId) => {
       const jobId = ledger.get(sessionId)?.jobId
       const job = jobId ? jobStore.get(jobId) : undefined
-      return job ? { id: job.id, name: job.name, limited: job.limited === true } : null
+      // SEAM (part B3/C): a record has no name of its own; the task's title belongs here.
+      return job ? { id: job.id, name: `task ${job.id.slice(0, 8)}`, limited: job.limited === true } : null
     },
     clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
     // The schedule tool (application/jobs.ts): its answer is the text the agent reads.
     jobs: async (sessionId: string, input: Record<string, unknown>): Promise<string> => {
       const caller = jobCaller(sessionId)
       if (!caller) return 'This session is not known to the cockpit, so it cannot schedule.'
-      const answer: JobAnswer = await jobs.handle(caller, input)
+      const answer: JobAnswer = await scheduleTool.handle(caller, input)
       return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
     },
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
@@ -622,8 +622,14 @@ async function main() {
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
   })
-  // Jobs: work the cockpit wakes sessions for on a schedule (domain/job.ts, application/job-runner.ts).
+  // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2).
   const jobStore = new JobStore()
+  // SEAM (parts B2 and B3 of "a task holds its schedule"): the job engine below (JobRunner, Jobs, turn-check,
+  // jobs-api) still is the version 1 one, on jobs with their own schedule (domain/job-v1.ts). It gets this store of
+  // its own, in memory and never filled, so it fires nothing and shows nothing, and it never sees a task's record.
+  // What a session asks of it is answered by scheduleTool before it gets there. Part B2 rebuilds the runner on
+  // jobStore and the tasks' schedules, part B3 the tool and end_turn; then this store and domain/job-v1.ts's engine go.
+  const legacyJobStore = new JobStore<JobV1>(null)
   // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({
@@ -693,12 +699,12 @@ async function main() {
     timeZone: userTimeZone,
     log,
   }
-  const onGrant = (job: Job, tool: GrantTool) => void lendJobTool(jobSessions, job, tool)
+  const onGrant = (job: Pick<Job, 'id' | 'grants'>, tool: GrantTool) => void lendJobTool(jobSessions, job, tool)
     .catch((err: unknown) => log(`[jobs] lending ${tool} to job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
-  const onGrantEnd = (job: Job, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
+  const onGrantEnd = (job: Pick<Job, 'id'>, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
     .catch((err: unknown) => log(`[jobs] taking ${tools.join(', ')} back from job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
   const jobRunner = new JobRunner({
-    store: jobStore, log, timeZone: userTimeZone,
+    store: legacyJobStore, log, timeZone: userTimeZone,
     hasRoom: (): boolean => startWorker.hasRoom(),
     sessionRuns,
     onGrantEnd,
@@ -742,7 +748,7 @@ async function main() {
     },
   })
   const jobs = new Jobs({
-    store: jobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
+    store: legacyJobStore, runner: jobRunner, defaultTimeZone: userTimeZone,
     resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
     findSession: (spaceId, target) => ledger.list(undefined, spaceId)
       .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
@@ -759,7 +765,10 @@ async function main() {
     },
     onGrant, onGrantEnd,
   })
-  const turnCheck = createTurnCheck({ jobs, store: jobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
+  // SEAM (part B3): every call of the schedule tool, from a session's tool, its CLI, the spawn inbox or end_turn's
+  // next.when, is answered here that the tool is being rebuilt; `jobs` itself only serves the Jobs page's empty list.
+  const scheduleTool = { handle: async (_caller: JobCaller, _input: Record<string, unknown>): Promise<JobAnswer> => ({ status: 503, text: SCHEDULE_TOOL_REBUILT }) }
+  const turnCheck = createTurnCheck({ jobs: scheduleTool, store: legacyJobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())
@@ -813,22 +822,9 @@ async function main() {
     log,
   })
   turns.on('turn', () => runRecords.poke())
-  // A task's schedule lives in the brain: this cockpit's jobs mirror their timing into it (application/schedule-mirror.ts).
-  const scheduleMirror = createScheduleMirror({
-    spaces: () => spaces.list(), brain: taskBrain, jobs: () => jobStore.list(), agentOf: (space) => space.agent, me: owner, now: () => Date.now(), log,
-  })
-  setTimeout(() => { void scheduleMirror.sync() }, RUN_FIRST_SYNC_MS).unref?.()
-  scheduleMirror.every(RUN_SYNC_MS)
   // The first sync waits for sessions a restart brings back, so their runs are not ended as crashed first.
   setTimeout(() => { void runRecords.sync() }, RUN_FIRST_SYNC_MS).unref?.()
   runRecords.every(RUN_SYNC_MS)
-
-  // A task's schedule is still on (domain/task-schedule.ts): one rule for the board, its commands and a session's sort.
-  const taskHasSchedule = (task: { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }) => hasSchedule({
-    jobs: jobStore.list().filter((job) => job.taskId === task.id),
-    schedule: task.properties?.delegation?.schedule,
-    owner: task.properties?.assignee_ids?.[0],
-  }, owner, Date.now())
 
   // The task board (application/task-board.ts) and its commands with Undo (application/task-commands.ts).
   const taskBoard = createTaskBoard({
@@ -836,9 +832,6 @@ async function main() {
     brain: taskBrain,
     viewer: owner,
     sessionsOn: taskSessions,
-    nextRunOf: (taskId) => nextRunOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
-    scheduleOf: (taskId) => scheduleOfJobs(jobStore.list().filter((job) => job.taskId === taskId)),
-    hasSchedule: taskHasSchedule,
     snoozes: () => taskCommands?.snoozes() ?? [],
     pendingCommands: () => taskCommands?.pending() ?? [],
     releasedAgent: (taskId) => taskCommands?.releasedAgent(taskId) ?? null,
@@ -860,8 +853,6 @@ async function main() {
   // The task state migration of a space: a dry run its owner sees first, then the run (application/task-state-migration.ts).
   const taskStateMigration = createTaskStateMigration({
     space: (spaceId) => spaces.get(spaceId), brain: taskBrain, viewer: owner,
-    jobs: () => jobStore.list(),
-    setJobTask: (jobId, taskId) => { const job = jobStore.get(jobId); if (job) jobStore.put({ ...job, taskId, updatedAt: new Date().toISOString() }) },
     snoozes: () => taskCommandStore.snoozes(Date.now()),
     setSnoozes: (snoozes) => taskCommandStore.setSnoozes(snoozes),
     heldWaitsFile: path.join(COCKPIT_HOME, 'held-waits.json'),
@@ -880,21 +871,6 @@ async function main() {
       const found = await taskBrain(space)?.get('/object/agent').catch(() => null) as { objects?: Array<{ id: string }> } | null
       return (found?.objects ?? []).map((a) => a.id)
     },
-    createJob: async (space, task, spec, prompt) => {
-      const brainProject = task.scope.startsWith('project.') ? task.scope.slice('project.'.length) : null
-      if (!brainProject) return { error: `the task has no project to run in (scope ${task.scope})` }
-      const projectId = projectIdForBrain(brainProject)
-      const problem = ensureTaskProject(space, projectId)
-      if (problem) return { error: problem }
-      const newest = ledger.list().filter((e) => e.taskId === task.id)
-        .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null
-      const how = scheduledJobOptions(spec, { goal: task.properties?.goal }, newest)
-      const answer = await jobs.handle(
-        { sessionId: how.callerSessionId, spaceId: space.ledgerKey, projectId, toolProfile: null, taskId: task.id },
-        { action: 'create', name: task.title ?? task.id, prompt, task_id: task.id, ...how.input },
-      )
-      return answer.job ? { jobId: answer.job.id } : { error: answer.text }
-    },
     ownSession: (taskId) => continueSession.ownSession(taskId)?.sessionId ?? null,
     sessionOpen: (sessionId) => { const entry = ledger.get(sessionId); return Boolean(entry && !entry.archivedAt) },
     sessionsSince: (taskId, since) => {
@@ -909,10 +885,8 @@ async function main() {
       const started = await startOnTask({ spaceId, taskId, prompt })
       return started.ok ? started.sessionId : null
     },
-    // A task whose schedule is on is not closed; End schedule ends its jobs here first.
-    scheduled: taskHasSchedule,
-    openJobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId && !job.endedAt).map((job) => ({ id: job.id, name: job.name })),
-    endJob: (jobId) => { const job = jobStore.get(jobId); if (job) jobs.finish(job) },
+    // End schedule: the task's record here ends with its schedule (application/end-task-record.ts).
+    endRecord: (_spaceId, taskId) => endTaskRecord(jobStore, taskId, Date.now(), onGrantEnd),
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
@@ -964,7 +938,7 @@ async function main() {
     now: () => Date.now(),
     log,
     me: owner,
-    scheduled: taskHasSchedule,
+    scheduled: hasSchedule,
   })
   // The brief of a split the user starts: one short model call under the session's space (application/split-brief.ts).
   const claudeConfigOf = (spaceId: string | null) => {
@@ -1048,7 +1022,7 @@ async function main() {
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask, migration: taskStateMigration },
-      jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
+      jobs: { jobs, tool: scheduleTool, store: legacyJobStore, zones: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {
           const entry = ledger.get(sessionId)
           return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk', attention: entry.attention?.kind ?? null } : null
@@ -1066,7 +1040,9 @@ async function main() {
         return events ? events.flatMap((event) => (event.kind === 'text' ? [event.text] : [])) : null
       },
       push: { store: pushStore, notifier: pushNotifier },
-      jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: (job, channel, text, key) => jobRunner.wake(job, channel, text, key) },
+      // SEAM (part B2): a channel message for a task is not delivered yet. It is never dropped: the bridge is told to
+      // try again, until the wake handler follows the four-line order.
+      jobContract: { store: jobStore, spaceIds: jobSpaceIds, wake: async () => 'retry' },
     },
     origins,
   )

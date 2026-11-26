@@ -6,7 +6,7 @@ import { urgentWaitOf } from '../src/domain/task-waits.js'
 
 const NOW = '2026-11-24T12:00:00.000Z'
 const input = (tasks: MigrationTask[], patch: Partial<MigrationInput> = {}): MigrationInput => ({
-  tasks, scheduledTaskIds: new Set(), snoozes: [], taskless: [], jobsOnTasks: [], heldWaitTasks: [], liveSessions: [], viewer: 'lasse', now: NOW, ...patch,
+  tasks, snoozes: [], heldWaitTasks: [], liveSessions: [], viewer: 'lasse', now: NOW, ...patch,
 })
 const task = (id: string, properties: MigrationTask['properties'], status = 'planned'): MigrationTask => ({ id, status, title: id, properties: { assignee_ids: ['lasse'], ...properties } })
 
@@ -28,9 +28,10 @@ describe('the task state migration', () => {
     const plan = planTaskStateMigration(input([
       task('ready', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }),
       task('running', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }, 'active'),
-      task('job', { delegate: 'atlas', checkpoint: 'after' }),
+      // its schedule starts it
+      task('scheduled', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *'] } } }),
       task('asked', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T11:00:00.000Z' } }),
-    ], { scheduledTaskIds: new Set(['job']) }))
+    ]))
     expect(plan.changes.map((c) => [c.taskId, c.rules])).toEqual([['ready', ['requested']]])
     expect(plan.changes[0].patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: NOW })
     expect(requestOpen({ status: 'planned', properties: { delegation: plan.changes[0].patch.delegation as never } }, null)).toBe(true)
@@ -77,7 +78,6 @@ describe('the task state migration', () => {
 
   it('writes one change per task with every rule it needs, and a report that lists them by rule', () => {
     const plan = planTaskStateMigration(input([task('many', { delegate: 'atlas', blockers: ['x'], intent: 'why' })], {
-      taskless: [{ id: 'j1', name: 'Daily brief' }], jobsOnTasks: [{ id: 'j2', name: 'Check refund', taskId: 'abcdef1234' }],
       heldWaitTasks: [{ taskId: 't', count: 2 }], liveSessions: [{ sessionId: 's', taskId: 't' }],
     }))
     expect(plan.changes).toHaveLength(1)
@@ -86,7 +86,8 @@ describe('the task state migration', () => {
     expect(report).toContain('# Task state migration — dry run')
     expect(report).toContain('## A delegate without a checkpoint → checkpoint after, no request (nothing starts) (1)')
     expect(report).toContain('- many (many): handed to atlas with checkpoint after')
-    expect(report).toContain('- Jobs without a task → a task each with the job\'s schedule (1): "Daily brief"')
-    expect(report).toContain('"Check refund" → abcdef12')
+    expect(report).toContain('- Held waits (held-waits.json) → the tasks\' waits (1 task)')
+    // the jobs of before schema 24 are another migration's (domain/job-migration.ts)
+    expect(report).not.toContain('Jobs')
   })
 })

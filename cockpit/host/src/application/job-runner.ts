@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
-import {
-  activeGrants, ENDED_BEFORE_START, isHeld, isOpenRun, JOB_LIMITS, jobTimeZone, nextDue, onlyScheduled, repeats, retryDelay, runHeader,
-  type GrantTool, type Job, type JobRun, type ReplyChannel,
-} from '../domain/job.js'
+import { activeGrants, ENDED_BEFORE_START, isOpenRun, JOB_LIMITS, retryDelay, type GrantTool, type JobRun, type ReplyChannel } from '../domain/job.js'
+// SEAM (part B2): the runner still fires version 1 jobs (domain/job-v1.ts); see the class comment.
+import { isHeld, jobTimeZone, nextDue, onlyScheduled, repeats, runHeader, type JobV1 as Job } from '../domain/job-v1.js'
 import { formatDuration } from '../domain/schedule.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
 import type { NotificationInput, NotificationKind } from '../notifications.js'
@@ -22,6 +21,12 @@ import type { JobStore } from '../job-store.js'
  * A target that is busy or a machine without room gets later attempts, up to
  * an hour after the run was due; then the run fails. Failures in a row pause
  * the job and tell whoever made it.
+ *
+ * SEAM (part B2 of "a task holds its schedule"): this still is the version 1 engine. It reads a job's own schedule,
+ * prompt and target (domain/job-v1.ts) from a store the host keeps empty (index.ts legacyJobStore), so it fires
+ * nothing. Part B2 replaces `schedule` with a deriver over the tasks' schedules (domain/task-schedule.ts dueOf) and
+ * the local records (domain/job.ts), and `attempt` with the four-line order; settle, retries, failure counting, tell
+ * and the grants stay, on the per-task record.
  */
 
 /** What came of trying to start a run. gone: its target no longer exists. */
@@ -31,7 +36,7 @@ type Attempt = 'started' | 'retry' | 'failed' | 'gone'
 export type RunSessionState = 'queued' | 'working' | 'idle' | 'stopped'
 
 export interface JobRunnerDeps {
-  store: JobStore
+  store: JobStore<Job>
   now?: () => number
   /** Room for one more running session (StartWorker.hasRoom; may stop a quiet one to make it). */
   hasRoom(): boolean

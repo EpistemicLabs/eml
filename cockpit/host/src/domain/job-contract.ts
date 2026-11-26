@@ -7,7 +7,7 @@ import { isHeld, type Job, type ReplyChannel, type ReplyMode } from './job.js'
  * importing them; both sides test against tests/fixtures/job-contract.v1.json.
  *
  *   GET  /v1/jobs?space=<brain id>&channel=mail   → JobRouteV1[]
- *        the space's jobs that have not ended with a trigger on that channel; a paused
+ *        the space's records (one per task, domain/job.ts) with a trigger on that channel; a paused
  *        one is listed (paused: true) so its mail still routes to it and waits
  *   POST /v1/jobs/<jobId>/wake  WakeRequestV1     → WakeResponseV1
  *        delivered: the job's session has it (a running one gets it with its next turn);
@@ -61,9 +61,12 @@ export function mailMatches(match: unknown[]): MailMatchV1[] {
   })
 }
 
-/** The job as the bridge routes it on a channel; null when it does not listen there or has ended. */
+/**
+ * The task's record as the bridge routes it on a channel (`jobId` is the record's id: the task's); null when it does
+ * not listen there. `paused` here is what this cockpit holds it for (the user's OK, a pause after failures); a pause
+ * of the task's schedule is the task's and does not hold its mail.
+ */
 export function routeOf(job: Job, space: string, channel: ReplyChannel): JobRouteV1 | null {
-  if (job.endedAt) return null
   const triggers = job.triggers.filter((t) => t.type === channel)
   if (triggers.length === 0) return null
   const raw = triggers.flatMap((t) => ('match' in t && Array.isArray(t.match) ? t.match : []))

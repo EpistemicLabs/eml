@@ -1,4 +1,6 @@
-import { isOpenRun, isScheduleTrigger, JOB_LIMITS, type Job } from '../domain/job.js'
+import { isOpenRun, JOB_LIMITS } from '../domain/job.js'
+// SEAM (part B3): a turn's check still is a version 1 job (domain/job-v1.ts); see the comment below.
+import { isScheduleTrigger, type JobV1 as Job } from '../domain/job-v1.js'
 import { checkJobName } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
 import type { JobAnswer, JobCaller } from './jobs.js'
@@ -15,12 +17,18 @@ import type { JobAnswer, JobCaller } from './jobs.js'
  * without a time) is ended, not removed: its run has yet to be settled and
  * told to the user. A job the agent made itself with the schedule tool has no
  * such mark and is never touched here.
+ *
+ * SEAM (part B3 of "a task holds its schedule"): this file goes. end_turn's next.when sets the wake-up of the
+ * session's task (domain/task-schedule.ts setWake with by_session, written through application/task-schedule-write.ts);
+ * a turn without a time clears it when this session set it (clearWake onlyBySession). Until then the schedule tool
+ * it calls answers that it is being rebuilt (application/jobs.ts SCHEDULE_TOOL_REBUILT), so a call with a time is
+ * told its check was not set.
  */
 
 export interface TurnCheckDeps {
   /** The schedule tool's actions (application/jobs.ts): the check is made with the session's own reach and limits. */
   jobs: { handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> }
-  store: Pick<JobStore, 'list' | 'put' | 'runs'>
+  store: Pick<JobStore<Job>, 'list' | 'put' | 'runs'>
   callerOf(sessionId: string): JobCaller | null
   /** The user's time zone now: a moved check reads its new time in it, not in the zone it was first set in. */
   zone?: () => string

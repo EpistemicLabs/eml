@@ -31,7 +31,7 @@ export interface SlotFacts {
  * Whether a task takes one of the runner's MAX_RUNNING slots. The runner and the task board both count with it, so
  * the board's "n of 5" is the runner's. A slot is an agent at work for this cockpit: an active task this cockpit runs
  * (domain/task-owner.ts runsHere) with a working session, or one whose run started within START_GRACE_MS. A task that
- * waits on an answer or a review, waits on its job's next run, or belongs to another member holds none.
+ * waits on an answer or a review, waits on its schedule's next run, or belongs to another member holds none.
  */
 export function holdsSlot(task: OwnedTask & { status: string }, facts: SlotFacts, here: { shared: boolean | null; me: string; now: number }): boolean {
   if (task.status !== 'active' || !runsHere(here.shared, task, here.me)) return false
@@ -79,7 +79,7 @@ export interface GateInput {
   busy?: boolean
   /** Its hand-over can still be undone, or the owner works on it with the agent (Work on it now). */
   held?: boolean
-  /** A job of its own will start it at a set time. */
+  /** Its schedule has a run coming up that will start it (domain/task-schedule.ts nextRunOfSchedule). */
   scheduled?: boolean
   /** When the newest run on the task started (any state), or null: a request is open while no run started after it. */
   lastRunStartedAt?: string | null
