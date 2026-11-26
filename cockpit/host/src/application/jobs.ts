@@ -8,7 +8,6 @@ import { describeTrigger, jobTimeZone, nextDue, type JobV1 as Job, type JobEnd, 
 import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
-import type { JobRunner } from './job-runner.js'
 import { limitedJobRefusal } from './limited-job-scope.js'
 
 /**
@@ -46,7 +45,8 @@ export interface JobCaller {
 
 export interface JobsDeps {
   store: JobStore<Job>
-  runner: Pick<JobRunner, 'runNow' | 'tick'>
+  /** What ran a version 1 job by hand. The engine fires tasks' schedules now (application/job-runner.ts), so the host passes one that starts nothing. */
+  runner: { runNow(job: Job): JobRun | null; tick(): Promise<void> }
   now?: () => number
   /** A project of the space as a session names it (registry id, brain project id or name, known folder). */
   resolveProject(spaceId: string | null, input: string): Promise<string | null>

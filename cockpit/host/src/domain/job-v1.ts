@@ -1,8 +1,7 @@
 import type { ProviderId } from './agent-provider.js'
 import type { ToolProfile } from './tool-profile.js'
 import { formatInZone, nextCronTime, parseCron } from './schedule.js'
-import { CHECK_RUN_RULE, JOB_HEADER_STATUS } from './turn-end.js'
-import type { ChannelTrigger, JobGrant, JobNotify, JobRun, ReplyChannel, ReplyMode } from './job.js'
+import type { ChannelTrigger, JobGrant, JobNotify, ReplyChannel, ReplyMode } from './job.js'
 
 /**
  * The job of jobs.json version 1, before a task held its schedule (brain schema 24): its own name, prompt, target and
@@ -11,10 +10,11 @@ import type { ChannelTrigger, JobGrant, JobNotify, JobRun, ReplyChannel, ReplyMo
  *
  * Two things still read this shape:
  *   - the migration of a version 1 file (domain/job-migration.ts), which is why the type stays;
- *   - SEAM (parts B2 and B3 of "a task holds its schedule"): the job engine that is not rebuilt yet
- *     (application/job-runner.ts, application/jobs.ts, application/turn-check.ts, jobs-api.ts). It works on a store of
- *     these jobs that the host keeps empty and never writes (index.ts legacyJobStore). Once those parts fire from the
- *     task and the local record, everything below the type goes.
+ *   - SEAM (part B3 of "a task holds its schedule"): the schedule tool and a turn's check, which are not rebuilt yet
+ *     (application/jobs.ts, application/turn-check.ts, jobs-api.ts). They work on a store of these jobs that the host
+ *     keeps empty and never writes (index.ts legacyJobStore). Once part B3 has them on the task's schedule and the
+ *     local record, everything below the type goes. The engine that fired these jobs is gone: the tasks' schedules
+ *     are fired by application/job-runner.ts.
  */
 
 
@@ -99,9 +99,6 @@ export interface JobV1 {
 
 export const isScheduleTrigger = (trigger: JobTriggerV1): trigger is ScheduleTrigger => trigger.type === 'schedule'
 
-/** It does not run now: paused, or waiting for the user's OK. */
-export const isHeld = (job: Pick<JobV1, 'paused' | 'pendingApproval'>): boolean => job.paused || job.pendingApproval === true
-
 /** The first time after `after` (exclusive) a schedule trigger is due; null if none. */
 export function nextTriggerTime(trigger: ScheduleTrigger, after: number): number | null {
   if (trigger.at !== undefined) {
@@ -124,12 +121,6 @@ export function nextDue(job: Pick<JobV1, 'triggers' | 'end' | 'runCount'>, after
   return next
 }
 
-/** Only schedules: nothing else can wake it once they have no time left. */
-export const onlyScheduled = (job: Pick<JobV1, 'triggers'>): boolean => job.triggers.every(isScheduleTrigger)
-
-/** A repeating schedule, not a single date. */
-export const repeats = (job: Pick<JobV1, 'triggers'>): boolean => job.triggers.some((t) => isScheduleTrigger(t) && t.cron !== undefined)
-
 /** "every 0 8 * * 1-5 (Asia/Makassar)" or "once, Fri 13 Nov 10:00 (Asia/Makassar)". */
 export function describeTrigger(trigger: JobTriggerV1): string {
   if (trigger.type === 'mail') {
@@ -145,42 +136,4 @@ export function describeTrigger(trigger: JobTriggerV1): string {
 /** The zone a job's times read in: its first schedule's. */
 export function jobTimeZone(job: Pick<JobV1, 'triggers'>, fallback: string): string {
   return job.triggers.find(isScheduleTrigger)?.timeZone ?? fallback
-}
-
-/** The first line a woken session reads: who sends this and what it is. */
-export function runHeader(job: JobV1, run: JobRun, now: number, zone: string): string {
-  const late = now - Date.parse(run.dueAt)
-  const when = run.trigger === 'manual'
-    ? 'started by hand'
-    : run.trigger !== 'schedule'
-      ? `woken by ${run.trigger}`
-      : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
-  return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
-    + `Not from your user, and nobody may be watching: ${JOB_HEADER_STATUS}. `
-    // A check set by ending a turn is moved and removed by ending a turn, not with the schedule tool.
-    + (job.origin === 'end_turn' ? CHECK_RUN_RULE : 'The schedule tool changes or stops this job.' + continuation(job) + taskRule(job)) + ']'
-}
-
-/**
- * What every run of a job on a task reads (runHeader): while the job has not ended, the task's schedule is on and the
- * task is not closed. The run ends its job first and hands the result over, so no later run lands on a closed task.
- */
-export const JOB_TASK_RULE = 'While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.'
-
-function taskRule(job: JobV1): string {
-  return job.taskId ? ` ${JOB_TASK_RULE}` : ''
-}
-
-/**
- * How a run goes on with unfinished work. A repeating job goes on at its next run; any other one
- * sets its own next wake-up, since a one-time wake-up would replace a repeating schedule.
- */
-function continuation(job: JobV1): string {
-  const repeating = job.triggers.some((trigger) => isScheduleTrigger(trigger) && trigger.cron !== undefined)
-  const next = 'set your next wake-up with the schedule tool (update with at)'
-  if (job.goal) {
-    return ` Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, `
-      + `${repeating ? 'the next scheduled run continues it' : `before you stop, ${next}`}. Once it is reached, end the job with finish.`
-  }
-  return repeating ? '' : ` If the work is not finished, ${next} before you stop.`
 }

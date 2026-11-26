@@ -18,6 +18,8 @@ export interface JobContractDeps {
   /** The brain ids of the spaces; the first is the main space, whose jobs carry no space id. */
   spaceIds(): string[]
   wake(job: Job, channel: ReplyChannel, text: string, key: string): Promise<WakeOutcome>
+  /** The record holds still: its route says paused (application/job-runner.ts held). Without it: what the record itself says. */
+  held?(job: Job): boolean
   tokensDir?: string
 }
 
@@ -89,7 +91,7 @@ export async function handleJobContract(
       json(res, 400, { error: { code: 'INVALID_CHANNEL', message: `channel must be one of ${CHANNELS.join(', ')}` } })
       return true
     }
-    const routes = deps.store.list().filter((job) => spaceOf(job) === space).flatMap((job) => routeOf(job, space, channel) ?? [])
+    const routes = deps.store.list().filter((job) => spaceOf(job) === space).flatMap((job) => routeOf(job, space, channel, deps.held?.(job)) ?? [])
     json(res, 200, routes)
     return true
   }

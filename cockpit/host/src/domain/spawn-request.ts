@@ -28,7 +28,7 @@ export interface SpawnRequest {
   /** What the worker may use; its limits hold only in the chat runtime or a host-started process. */
   toolProfile?: ToolProfile
   /**
-   * 'job': a job's run (application/job-runner.ts); 'runner': a plan step the
+   * 'job': a run for a task's schedule (application/job-runner.ts); 'runner': a plan step the
    * task runner started (application/task-runner.ts). Both unattended like a
    * session's worker, also without a requester. 'split': a topic the user split
    * off a session (application/split-session.ts): their own session, not a
@@ -40,7 +40,7 @@ export interface SpawnRequest {
   deskId?: string
   /** The brain task the session works on from its first hook (task system). */
   taskId?: string
-  /** The job whose run this is (origin 'job'): what its session's channel tools act for. */
+  /** The record whose run this is (origin 'job'): the task's id (domain/job.ts); what its session's channel tools act for. */
   jobId?: string
   createdAt: string
 }
