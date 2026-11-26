@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { DeliveryOutcome } from './session-delivery.js'
+import type { SearchWording } from './session-directory.js'
 import { WORKER_STATUSES } from './session-attention.js'
 import { SORT_PICKS } from './sort.js'
 import { BRIEF_TEMPLATE, SPLIT_RELATIONS } from './split.js'
@@ -127,6 +128,13 @@ const LIST_SESSIONS_TOOL_INPUT = {
   project: z.string().optional().describe('Words of the project name.'),
   archived: z.boolean().optional(),
   limit: z.number().int().optional(),
+}
+
+/** How a search result reads for a session that searches with the tool (domain/session-directory.ts searchResult). */
+export const LIST_SESSIONS_WORDING: SearchWording = {
+  retry: `${LIST_SESSIONS_TOOL} with other words`,
+  archived: `${LIST_SESSIONS_TOOL} with archived true`,
+  recent: `${LIST_SESSIONS_TOOL} without words`,
 }
 
 /** Why the schedule tool has no answer of its own: its actions threw. */

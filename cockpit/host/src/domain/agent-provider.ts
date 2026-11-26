@@ -32,6 +32,12 @@ export interface IsolationContext {
   /** The host's brain MCP endpoint (brain-mcp.ts), for a provider whose MCP config is shared by every space. */
   mcpUrl: string
   /**
+   * The host's endpoint for the cockpit's own session tools (cockpit-mcp.ts): end_turn, schedule, send_message,
+   * list_sessions for a session that runs in a terminal. For a provider whose terminal sessions get them over MCP;
+   * the same token and session headers as the brain endpoint guard it.
+   */
+  cockpitMcpUrl: string
+  /**
    * Folders outside a session's project that it must be able to write to
    * (worker requests, task files) — for providers that confine writes.
    */

@@ -343,6 +343,8 @@ export interface SpawnContext {
   /** Memory ceilings per session (session-memory.ts), and the one a session starts with; absent: none. */
   memory?: SessionMemory
   sessionLimits?: () => SessionLimits
+  /** A session's agent process exited on its own (/exit, a crash) and was not started again: what the host kept for it goes. */
+  onProcessEnd?: (sessionId: string) => void
   /** Why the Shell plugin's terminal can't open for this client (plugin off, remote without the opt-in); null: it may. Absent: local clients only. */
   shellRefusal?: (local: boolean) => Promise<string | null>
 }
@@ -706,6 +708,7 @@ export class PtyBridge {
       // The process ended on its own (/exit, a crash): nothing to bring back
       // on the next host start. A host shutdown removes the entry first.
       this.ledger.setKeepRunning(session.sessionId, false)
+      this.ctx.onProcessEnd?.(session.sessionId)
       this.forgetIfEmpty(session.sessionId)
     })
   }

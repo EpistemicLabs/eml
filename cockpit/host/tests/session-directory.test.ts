@@ -63,6 +63,15 @@ describe('searching sessions', () => {
     const none = searchResult([], { words: ['zebra'] })
     expect(none).toContain('No session matches "zebra"')
     expect(none).toContain('node "$COCKPIT_SESSIONS_JS" <words> --archived')
+    expect(none).toBe('No session matches "zebra". Retry with other words from what your user called it: node "$COCKPIT_SESSIONS_JS" <other words>. Archived sessions: node "$COCKPIT_SESSIONS_JS" <words> --archived. The most recent sessions: ListAgents.')
+  })
+
+  it('names another way to search for a reader that has one, and changes nothing else', () => {
+    const wording = { retry: 'list_sessions with other words', archived: 'list_sessions with archived true', recent: 'list_sessions without words' }
+    expect(searchResult([], { words: ['zebra'] }, wording))
+      .toBe('No session matches "zebra". Retry with other words from what your user called it: list_sessions with other words. Archived sessions: list_sessions with archived true. The most recent sessions: list_sessions without words.')
+    const found = searchSessions(sessions, { words: ['catalogue'] })
+    expect(searchResult(found, { words: ['catalogue'] }, wording)).toBe(searchResult(found, { words: ['catalogue'] }))
   })
 })
 

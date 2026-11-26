@@ -1,7 +1,7 @@
 import { searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from '../domain/session-directory.js'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { EndTurnRecorded } from '../domain/session-runtime.js'
-import { LIST_SESSIONS_MAX, notReachable, scheduleFailed, SEND_MESSAGE_INCOMPLETE, sendMessageAnswer, sendMessageFailed, wasDelivered } from '../domain/session-tools.js'
+import { LIST_SESSIONS_MAX, LIST_SESSIONS_WORDING, notReachable, scheduleFailed, SEND_MESSAGE_INCOMPLETE, sendMessageAnswer, sendMessageFailed, wasDelivered } from '../domain/session-tools.js'
 import { endTurnAnswer, notRecorded, readEndTurn, type EndTurn } from '../domain/turn-end.js'
 import type { MessageRequest } from './deliver-message.js'
 
@@ -58,6 +58,8 @@ export interface SendMessagePorts {
   directory(): DirectoryEntry[]
   /** The caller's own address, so the receiver reads who wrote; null: it is not said. */
   from: string | null
+  /** The caller cannot be messaged back (it runs in a terminal): the receiver is told so instead of how to reply. */
+  noReply?: boolean
   /** The one way to reach a session (application/deliver-message.ts). */
   deliver(request: MessageRequest): Promise<DeliveryOutcome>
 }
@@ -72,7 +74,7 @@ export async function sendMessage(ports: SendMessagePorts, input: { to?: unknown
   if (!to || !text.trim()) return { text: SEND_MESSAGE_INCOMPLETE, isError: true }
   if (!ports.directory().some((entry) => entry.address === to)) return { text: notReachable(to), isError: true }
   try {
-    const outcome = await ports.deliver({ target: to, text, from: ports.from, caller: 'session' })
+    const outcome = await ports.deliver({ target: to, text, from: ports.from, caller: 'session', ...(ports.noReply ? { noReply: true } : {}) })
     return { text: sendMessageAnswer(outcome, to), isError: !wasDelivered(outcome) }
   } catch (error: unknown) {
     return { text: sendMessageFailed(to, reasonOf(error)), isError: true }
@@ -84,7 +86,10 @@ export interface ListSessionsPorts {
   directory(): DirectoryEntry[]
 }
 
-/** The tool's input as the search reads it: the same bounds as GET /api/session-directory. */
+/**
+ * A search as it is asked for, read into the query: the one place its bounds are. The tool's input,
+ * and GET /api/session-directory's parameters (http.ts directoryAnswer).
+ */
 export function directoryQueryOf(input: { words?: unknown; state?: unknown; project?: unknown; archived?: unknown; limit?: unknown }): DirectoryQuery {
   const words = Array.isArray(input.words) ? input.words.join(' ') : typeof input.words === 'string' ? input.words : ''
   const limit = Number(input.limit)
@@ -97,8 +102,11 @@ export function directoryQueryOf(input: { words?: unknown; state?: unknown; proj
   }
 }
 
-/** The sessions that fit, in the words the search command prints (domain/session-directory.ts searchResult). */
+/**
+ * The sessions that fit, as the search command prints them (domain/session-directory.ts searchResult);
+ * where that names the command and ListAgents, the tool's answer names the tool.
+ */
 export function listSessions(ports: ListSessionsPorts, input: Parameters<typeof directoryQueryOf>[0]): ToolAnswer {
   const query = directoryQueryOf(input)
-  return { text: searchResult(searchSessions(ports.directory(), query), query), isError: false }
+  return { text: searchResult(searchSessions(ports.directory(), query), query, LIST_SESSIONS_WORDING), isError: false }
 }

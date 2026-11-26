@@ -16,7 +16,7 @@ import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
 import { planArchive } from './application/archive-session.js'
 import { attentionShown, needsAnswer, wasSpawned, worksAlone } from './domain/session-attention.js'
-import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
+import { listAgentsContext, searchResult, searchSessions, type DirectoryEntry } from './domain/session-directory.js'
 import { sessionName } from './domain/session-name.js'
 import { sessionAddress } from './session-address.js'
 import type { SpawnQueue } from './spawn-queue.js'
@@ -42,6 +42,7 @@ import { BrainRenameError, type BrainProject } from './brain-projects.js'
 import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { applySessionHook } from './application/apply-session-hook.js'
+import { directoryQueryOf } from './application/session-tools.js'
 import { isProviderId, writeDefaultProvider } from './provider-settings.js'
 import { readLimits, writeLimits } from './session-limits.js'
 // Settings › Models › Claude sign-in and About still speak Claude Code's own
@@ -66,6 +67,7 @@ import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
+import { COCKPIT_MCP_PATH } from './cockpit-mcp.js'
 import { RELAY_PATH } from './infrastructure/plugins/mcp-relay.js'
 import type { AgentBrains } from './agents.js'
 import { handleAgentsApi } from './agents-api.js'
@@ -135,6 +137,10 @@ export interface HostDeps {
   brainMcp: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void>; handleHooks(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
   mcpUrl: string
   hooksUrl: string
+  /** The cockpit's own session tools for terminal sessions (cockpit-mcp.ts), at COCKPIT_MCP_PATH; absent: not served. */
+  cockpitMcp?: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> }
+  /** A session's process was stopped here, or the session archived or deleted: what the host kept for its running process goes (index.ts). */
+  sessionGone?: (sessionId: string) => void
   /** The chat view's sessions (chat-bridge.ts), next to the terminal's `bridge`. */
   chat: ChatBridge
   /** Task system: a session's task at start, and its name (application/session-task.ts). */
@@ -237,6 +243,7 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     // A terminal process takes no hook with it: its turn would count as cut off on the next start.
     ledger.setTurnInFlight(sessionId, false)
     deps.turns.forget(sessionId)
+    deps.sessionGone?.(sessionId)
   }
 
   // Start a session by hand from the sidebar: on the host, so it needs no pane.
@@ -394,9 +401,10 @@ function sessionView(deps: HostDeps, project: ProjectEntry | undefined, entry: R
 
 /**
  * The sessions a session can message (domain/session-directory.ts): the ones
- * SendMessage reaches, so those of its own agent, without itself.
+ * SendMessage reaches, so those of its own agent, without itself. Also what
+ * the send_message and list_sessions tools go by (cockpit-mcp.ts).
  */
-function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
+export function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
   const ledger = deps.bridge.ledger
   const agentOf = (spaceId: string | null) => deps.spaces.resolve(spaceId).agent
   const caller = ledger.get(callerId)
@@ -431,15 +439,14 @@ function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
 function directoryAnswer(deps: HostDeps, callerId: string, url: URL): string {
   const entries = directoryEntries(deps, callerId)
   if (url.searchParams.get('list') === 'recent') return listAgentsContext(entries)
-  const state = url.searchParams.get('state')
-  const limit = Number(url.searchParams.get('limit'))
-  const query: DirectoryQuery = {
-    words: (url.searchParams.get('q') ?? '').split(/\s+/).filter(Boolean),
-    ...(state === 'running' || state === 'stopped' ? { state } : {}),
-    ...(url.searchParams.get('project') ? { project: url.searchParams.get('project')! } : {}),
+  // Read as the list_sessions tool's input is: one place for the bounds (application/session-tools.ts).
+  const query = directoryQueryOf({
+    words: url.searchParams.get('q') ?? '',
+    state: url.searchParams.get('state'),
+    project: url.searchParams.get('project'),
     archived: url.searchParams.get('archived') === '1',
-    limit: Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : SEARCH_LIMIT,
-  }
+    limit: url.searchParams.get('limit') ?? undefined,
+  })
   return searchResult(searchSessions(entries, query), query)
 }
 
@@ -1455,6 +1462,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       deps.bridge.killSession(id)
       await deps.chat.kill(id)
       deps.turns.forget(id)
+      deps.sessionGone?.(id)
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       deps.providers.forSession(id).deleteTranscript(deps.bridge.sessionRef(id, project?.path ?? null))
       deps.bridge.ledger.remove(id)
@@ -1595,6 +1603,8 @@ export function createHostServer(deps: HostDeps, allowedOrigins: string[]): http
     // The brain MCP endpoint (brain-mcp.ts): local agent sessions only, no
     // Origin; the space's MCP token and a known session are its guard.
     if (url === MCP_PATH || url.startsWith(`${MCP_PATH}?`)) { void deps.brainMcp.handle(req, res); return }
+    // The cockpit MCP endpoint (cockpit-mcp.ts): the cockpit's own tools for terminal sessions, behind the same guard.
+    if (deps.cockpitMcp && (url === COCKPIT_MCP_PATH || url.startsWith(`${COCKPIT_MCP_PATH}?`))) { void deps.cockpitMcp.handle(req, res); return }
     // The hook routes (brain-mcp.ts HOOKS_PATH): the session hooks' reads, the space's MCP token as the bearer.
     if (url.startsWith(`${HOOKS_PATH}/`)) { void deps.brainMcp.handleHooks(req, res); return }
     // The relay to remote MCP servers the user signed in to here (mcp-relay.ts): sessions on this

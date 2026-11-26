@@ -137,12 +137,25 @@ function header(shown: number, total: number): string {
   ].join('\n')
 }
 
-/** What the search command prints. */
-export function searchResult(found: DirectoryEntry[], query: DirectoryQuery): string {
+/** How the reader of a search result searches again: each as it is written after its colon. */
+export interface SearchWording {
+  /** The same search with other words. */
+  retry: string
+  /** The search that also looks at archived sessions. */
+  archived: string
+  /** What lists the most recent sessions. */
+  recent: string
+}
+
+/** A session that searches with the command and lists with Claude Code's ListAgents. */
+const COMMAND_WORDING: SearchWording = { retry: `${SEARCH} <other words>`, archived: `${SEARCH} <words> --archived`, recent: 'ListAgents' }
+
+/** What the search command prints; `wording`: for a reader that searches another way (the list_sessions tool). */
+export function searchResult(found: DirectoryEntry[], query: DirectoryQuery, wording: SearchWording = COMMAND_WORDING): string {
   if (found.length === 0) {
     return [
-      `No session matches "${query.words.join(' ')}". Retry with other words from what your user called it: ${SEARCH} <other words>.`,
-      `Archived sessions: ${SEARCH} <words> --archived. The most recent sessions: ListAgents.`,
+      `No session matches "${query.words.join(' ')}". Retry with other words from what your user called it: ${wording.retry}.`,
+      `Archived sessions: ${wording.archived}. The most recent sessions: ${wording.recent}.`,
     ].join(' ')
   }
   return [

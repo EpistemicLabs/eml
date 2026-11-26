@@ -59,7 +59,7 @@ export function sessionModel(deps: Pick<BrainMcpDeps, 'spaces' | 'ledger' | 'pro
   return deps.providers.forSession(sessionId).summary(deps.ledger.ref(sessionId, project?.path ?? null, space.runtime)).model ?? null
 }
 
-const header = (req: http.IncomingMessage, name: string): string | undefined => {
+export const header = (req: http.IncomingMessage, name: string): string | undefined => {
   const v = req.headers[name]
   return Array.isArray(v) ? v[0] : v
 }
@@ -102,12 +102,16 @@ type Caller = { space: BrainSpace; agent: AgentBrain; sessionId: string | null }
 
 /**
  * Who calls on behalf of a session: from this machine, with a space's MCP
- * token, and — on the MCP endpoint — as a session the ledger knows in that
- * space. The hook routes carry the token as the bearer and name no session:
- * they read only, and the per-boot token is the space's own.
+ * token, and — when a session is named (`sessionId` not null) — as a session
+ * the ledger knows in that space. Without the space's agent: the host's other
+ * MCP endpoint (cockpit-mcp.ts) asks the same of its callers and needs no
+ * brain. `endpoint`: what a caller from elsewhere is told is local only.
  */
-function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: http.IncomingMessage, mcpToken: string | undefined, sessionId: string | undefined | null): Caller {
-  if (!isLocalRequest(req)) return { refused: 'The brain MCP endpoint is local only', status: 403 }
+export function sessionCaller(
+  deps: { spaces: Pick<BrainSpaces, 'byMcpToken'>; ledger: Pick<SessionLedger, 'get'> }, req: http.IncomingMessage, mcpToken: string | undefined, sessionId: string | undefined | null,
+  endpoint = 'The brain MCP endpoint',
+): { space: BrainSpace; sessionId: string | null } | Refusal {
+  if (!isLocalRequest(req)) return { refused: `${endpoint} is local only`, status: 403 }
   const space = deps.spaces.byMcpToken(mcpToken)
   if (!space) return { refused: 'Bad MCP token', status: 403 }
   if (sessionId !== null) {
@@ -115,9 +119,20 @@ function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: h
     if (!sessionId || !entry) return { refused: 'Unknown session', status: 403 }
     if ((entry.spaceId ?? null) !== space.ledgerKey) return { refused: 'The session belongs to another space', status: 403 }
   }
-  const agent = boundAgent(deps, space)
+  return { space, sessionId: sessionId ?? null }
+}
+
+/**
+ * Who reaches a brain: a session's caller (sessionCaller) whose space has an
+ * agent bound. The hook routes carry the token as the bearer and name no
+ * session: they read only, and the per-boot token is the space's own.
+ */
+function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: http.IncomingMessage, mcpToken: string | undefined, sessionId: string | undefined | null): Caller {
+  const who = sessionCaller(deps, req, mcpToken, sessionId)
+  if ('refused' in who) return who
+  const agent = boundAgent(deps, who.space)
   if ('refused' in agent) return agent
-  return { space, agent, sessionId: sessionId ?? null }
+  return { ...who, agent }
 }
 
 /**
@@ -130,10 +145,10 @@ function caller(deps: Pick<BrainMcpDeps, 'spaces' | 'agents' | 'ledger'>, req: h
  * 409, which fails only that connection; a request from another machine keeps
  * its 403 (no session of this cockpit makes it).
  */
-const mcpStatus = (req: http.IncomingMessage, refusal: Refusal): number =>
+export const mcpStatus = (req: http.IncomingMessage, refusal: Refusal): number =>
   refusal.status === 403 && isLocalRequest(req) ? 409 : refusal.status
 
-const refuse = (res: http.ServerResponse, status: number, message: string) => {
+export const refuse = (res: http.ServerResponse, status: number, message: string) => {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32003, message }, id: null }))
 }

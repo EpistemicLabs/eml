@@ -3,7 +3,7 @@ import { directoryQueryOf, endTurn, listSessions, schedule, sendMessage, type Se
 import type { MessageRequest } from '../src/application/deliver-message.js'
 import { searchResult, searchSessions, type DirectoryEntry } from '../src/domain/session-directory.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
-import { SESSION_TOOLS } from '../src/domain/session-tools.js'
+import { LIST_SESSIONS_WORDING, SESSION_TOOLS } from '../src/domain/session-tools.js'
 import { deriveTurn, endTurnAnswer, endTurnDescription, type EndTurn } from '../src/domain/turn-end.js'
 
 const entry = (patch: Partial<DirectoryEntry>): DirectoryEntry => ({
@@ -108,6 +108,12 @@ describe('send_message', () => {
     expect(requests).toEqual([{ target: 'eml-1111', text: 'The import is done.', from: 'eml-9999', caller: 'session' }])
   })
 
+  it('passes on that the caller cannot be messaged back', async () => {
+    const { ports, requests } = setup('delivered', { noReply: true })
+    await sendMessage(ports, { to: 'eml-1111', text: 'The import is done.' })
+    expect(requests).toEqual([{ target: 'eml-1111', text: 'The import is done.', from: 'eml-9999', caller: 'session', noReply: true }])
+  })
+
   it('delivered: the running session has it, and its answer comes another way', async () => {
     expect(await send('delivered')).toEqual({
       text: 'Delivered: eml-1111 runs and has your message. Its answer does not come back to this call: it comes through the task or the user.',
@@ -190,6 +196,9 @@ describe('list_sessions', () => {
   it('without words lists the most recent, and says so when nothing fits', () => {
     expect(listSessions(ports, {}).text).toMatch(/^2 sessions fit[\s\S]*eml-2222[\s\S]*eml-1111/)
     expect(listSessions(ports, { words: 'nothing like it' }).text).toMatch(/^No session matches "nothing like it"\./)
+    // The tool's answer names the tool where the search command's names the command and ListAgents.
+    expect(listSessions(ports, { words: 'nothing like it' }).text).toBe(searchResult([], { words: ['nothing', 'like', 'it'] }, LIST_SESSIONS_WORDING))
+    expect(listSessions(ports, { words: 'nothing like it' }).text).toContain('Archived sessions: list_sessions with archived true. The most recent sessions: list_sessions without words.')
   })
 
   it('narrows by state, project and archive', () => {
