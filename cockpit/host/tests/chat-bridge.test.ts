@@ -1470,7 +1470,8 @@ describe('ChatBridge', () => {
     ws.client({ type: 'restart', unlimited: true, forJob: true })
     await flush()
     expect(cleared).toEqual(['job-1'])
-    expect(ws.events().some((e) => e.kind === 'notice' && /Weekly analysis/.test(e.text))).toBe(true)
+    // The name is the task's: a schedule sits on a task, there is no job to name.
+    expect(ws.events().some((e) => e.kind === 'notice' && /Future runs of the task "Weekly analysis" start without them too\./.test(e.text))).toBe(true)
   })
 
   it('a limited channel job\'s limits are not lifted here, and nothing restarts', async () => {

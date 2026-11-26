@@ -125,7 +125,7 @@ export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpS
     ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.map(label).join(', ')})`] : []),
     ...(limits.mcpServers !== null ? ['the limit to some MCP servers'] : []),
   ]
-  const forJob = jobName ? ` Future runs of the job "${jobName}" start without them too.` : ''
+  const forJob = jobName ? ` Future runs of the task "${jobName}" start without them too.` : ''
   return `The user lifted this session's limits: ${parts.join(' and ')}. From this restart it may use all tools its space has.${forJob}`
 }
 
