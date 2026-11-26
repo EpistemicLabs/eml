@@ -81,20 +81,6 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
-  it('the dry run plans and reports, and writes nothing: not to the brain, not to the file', async () => {
-    const w = world([v1('j1'), v1('j2', { triggers: [{ type: 'schedule', at: AHEAD, timeZone: 'UTC' }], prompt: 'Look again.', target: { type: 'session', sessionId: 'sess-1' } })], [task('t1')])
-    const dry = await w.migration.dryRun(w.spaces[0] as never)
-    expect(dry?.plan.tasks).toHaveLength(1)
-    expect(dry?.report).toContain('# Schedules onto tasks — dry run')
-    expect(dry?.report).toContain('- Repeating times: 0 8 * * 1-5 (UTC)')
-    expect(w.posts).toEqual([])
-    expect(readFileSync(w.file, 'utf8')).toBe(w.original)
-    expect(existsSync(`${w.file}.v1-backup`)).toBe(false)
-    expect(w.migration.pending()).toBe(true)
-    // a space without jobs has nothing to plan
-    expect(await w.migration.dryRun(w.spaces[1] as never)).toBeNull()
-  })
-
   it('writes each task in one brain call with everything else of its delegation unchanged, then the record, and moves the jobs\' sessions to it', async () => {
     const delegation = { agent: 'motti', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } }
     const w = world(
@@ -248,10 +234,6 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.posts.map((p) => p.space)).toEqual(['main-id'])
     expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j2'])
     expect(w.kind.asked).toBeGreaterThan(0)
-    // the dry run of such a space plans its jobs as waiting, and says why
-    const dry = await w.migration.dryRun(w.spaces[1] as never)
-    expect(dry?.plan.tasks).toMatchObject([{ outcome: 'left', settles: [] }])
-    expect(dry?.report).toContain('left: the brain server has not said yet whether this space is shared: nothing is planned until it has')
     // the brain server answers: local, so the task is this member's
     w.kind.answer = false
     expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
@@ -289,7 +271,6 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a home without version 1 jobs has nothing to do', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
     const migration = createJobMigration({ store: new JobStore(file), spaces: () => { throw new Error('not asked') }, brain: () => null, me: 'lasse', moveSessions: () => {}, now: () => NOW, log: () => {} })
-    expect(migration.pending()).toBe(false)
     expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
     expect(existsSync(file)).toBe(false)
   })
@@ -334,13 +315,6 @@ describe('a schedule the old mirror left on a task without a job', () => {
     expect(w.store.leftoversChecked(null)).toBe(false)
   })
 
-  it('the dry run lists it and removes nothing', async () => {
-    const w = world([v1('j1')], [task('t1'), task('left', stale)])
-    const dry = await w.migration.dryRun(w.spaces[0] as never)
-    expect(dry?.plan.leftovers).toMatchObject([{ taskId: 'left', remove: true }])
-    expect(w.posts).toEqual([])
-    expect(w.store.leftoversChecked(null)).toBe(false)
-  })
 })
 
 describe('the channel bridge follows a moved job\'s id', () => {
@@ -368,7 +342,7 @@ describe('the channel bridge follows a moved job\'s id', () => {
     // the next start: the bridge runs
     w.bridge.answer = 'renamed'
     const next = w.restart()
-    expect(next.pending()).toBe(false)
+    expect(new JobStore(w.file).pendingV1()).toBeNull()
     await next.run()
     expect(w.bridge.asked).toHaveLength(3)
     expect(new JobStore(w.file).pendingRenames()).toEqual({})
@@ -396,10 +370,6 @@ describe('the report of a real run is kept, and the user is told of what did not
     expect(w.saved[0]).toContain('- Job "Daily brief" (j1): cron "0 8 * * 1-5" (UTC) → a repeating time of the task')
     expect(w.logs).toContain('[jobs] migration: the report of this run is in /home/someone/.eml-cockpit/jobs-migration-report.md')
     expect(w.notices).toEqual([])
-    // the dry run writes no file
-    const dry = world([v1('j1')], [task('t1')])
-    await dry.migration.dryRun(dry.spaces[0] as never)
-    expect(dry.saved).toEqual([])
   })
 
   it('tells the user once, with the file, when a job did not move: one left out, one whose task is gone, one whose space did not answer', async () => {

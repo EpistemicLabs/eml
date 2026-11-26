@@ -57,7 +57,7 @@ export interface JobMigrationDeps {
   notify?(input: NotificationInput): void
 }
 
-export interface SpacePlan { space: BrainSpace; plan: JobMigrationPlan; report: string }
+interface SpacePlan { plan: JobMigrationPlan; report: string }
 export interface JobMigrationResult {
   /** Tasks, by what became of them. */
   moved: number
@@ -122,7 +122,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
     space.shared ?? (deps.spaceKind ? await deps.spaceKind(space).catch(() => null) : null)
 
   /** The plan of one space, from the version 1 data and the brain as they are now. Nothing is written. */
-  const planSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, dryRun: boolean): Promise<SpacePlan | null> => {
+  const planSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>): Promise<SpacePlan | null> => {
     const pending = deps.store.pendingV1()
     const jobs = Object.values(pending?.jobs ?? {})
     const mine = jobs.filter((j) => (j.spaceId ?? null) === keyOf(space))
@@ -140,7 +140,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
       members: shared === true ? await membersOf(brain) : null,
       tasks: await tasksOfJobs(brain, mine), me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
     })
-    return { space, plan, report: jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun }) }
+    return { plan, report: jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: false }) }
   }
 
   const applyTask = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>, task: TaskMigration): Promise<void> => {
@@ -202,7 +202,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
       }
       let planned: SpacePlan | null
       try {
-        planned = await planSpace(space, brain, false)
+        planned = await planSpace(space, brain)
       } catch (err) {
         result.failed.push(`${space.name}: its brain did not answer (${(err as Error).message}), its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
@@ -273,16 +273,6 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   return {
-    /** Version 1 jobs wait to be moved. */
-    pending: (): boolean => deps.store.pendingV1() !== null,
-    /**
-     * The dry run of one space: its plan and report, nothing written; null when it has no job to move or no brain.
-     * A space whose kind is not known plans every job as left, and says why.
-     */
-    async dryRun(space: BrainSpace): Promise<SpacePlan | null> {
-      const brain = deps.brain(space)
-      return brain ? planSpace(space, brain, true) : null
-    },
     /** The channel bridge runs (again): the renames it has not confirmed are told now. */
     confirmRenames,
     /** The pass: every space that has jobs to move. A pass under way is joined, not doubled. */
