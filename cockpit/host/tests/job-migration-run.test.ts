@@ -127,7 +127,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, arrivedHeld: 0, reportFile: null, unlooked: 0 })
     expect(w.posts).toHaveLength(posts)
     expect(readFileSync(w.file, 'utf8')).toBe(file)
-    expect(w.moved).toEqual([['j1', 't1']])
+    expect(w.moved).toEqual([['j1', 't1'], ['j9', 'closed']])
   })
 
   it('a pass under way is joined, not doubled: two calls write each task once and answer the same', async () => {
@@ -227,7 +227,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(result).toMatchObject({ moved: 0, dropped: 2, failed: [] })
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/closed/track', body: { delegation: { agent: 'atlas' }, text: expect.stringContaining('the task is closed') } }])
     expect(w.store.list()).toEqual([])
-    expect(w.moved).toEqual([])
+    // their sessions keep no version 1 job's id: they work for their task from now on, as a moved job's do
+    expect(w.moved).toEqual([['j1', 'closed'], ['j2', 'gone']])
     // its runs stay as history under the job's id, none of them open
     expect(w.store.runs('j2')).toMatchObject([{ id: 'run-j2', status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
     expect(w.store.pendingV1()).toBeNull()
@@ -248,7 +249,9 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.byId.get('theirs')).toEqual(theirs)
     // a record for my task only
     expect(w.store.list().map((r) => r.id)).toEqual(['mine'])
-    expect(w.moved).toEqual([['j3', 'mine']])
+    // the sessions of the jobs that did not move work for their task too, without its record: no session keeps a version 1 job's id
+    expect(w.moved).toEqual(expect.arrayContaining([['j1', 'theirs'], ['j2', 'agents'], ['j3', 'mine']]))
+    expect(w.moved).toHaveLength(3)
     expect(result.reports[0]).toContain('- Job "Daily brief" (j2): NOT MOVED, IT NO LONGER FIRES: nobody owns this task: "agents" (agents).')
     expect(w.store.runs('j1')).toMatchObject([{ status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
     expect(result.reports[0]).toContain('- Job "Daily brief" (j1): NOT MOVED, IT NO LONGER FIRES: the task "theirs" (theirs) is other\'s, and this cockpit writes nothing to a task it does not fire.')
@@ -330,6 +333,13 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.posts[0]).toMatchObject({ path: '/engram/task', body: { title: 'routine-daily-brief-job-1234', content: long } })
     // the prompt is the new task's text: no paragraph is added to it
     expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
+  })
+
+  it('leaves the sessions of a dropped job without a task as they are: they have no task to name', async () => {
+    const w = world([v1('j1', { taskId: null, endedAt: '2026-11-20T00:00:00.000Z' })], [])
+    expect(await w.migration.run()).toMatchObject({ dropped: 1, failed: [] })
+    expect(w.store.pendingV1()).toBeNull()
+    expect(w.moved).toEqual([])
   })
 
   it('leaves a job it cannot place where it is, and says so at every start', async () => {

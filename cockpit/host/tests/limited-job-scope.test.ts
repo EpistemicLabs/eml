@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { sessionJobFacts } from '../src/application/limited-job-scope.js'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { recordOfSession, sessionJobFacts, sessionScope } from '../src/application/limited-job-scope.js'
+import { JobStore } from '../src/job-store.js'
+import { newRecord } from '../src/domain/job.js'
 import { requestJobs } from '../src/jobs-api.js'
 import type { JobCaller } from '../src/application/jobs.js'
 
@@ -16,6 +21,48 @@ describe('sessionJobFacts', () => {
 
   it('counts a session whose record is gone as limited', () => {
     expect(sessionJobFacts('job-1', undefined)).toEqual({ jobId: 'job-1', limited: true })
+  })
+})
+
+describe('recordOfSession', () => {
+  const store = new JobStore(null)
+  store.put({ ...newRecord({ id: 'rec-r', spaceId: null }, ''), triggers: [{ type: 'mail', match: [] }], limited: true })
+  store.put(newRecord({ id: 'task-t', spaceId: null }, ''))
+
+  it('is the record the ledger\'s jobId names, also when the session works on another task', () => {
+    expect(recordOfSession({ jobId: 'rec-r', taskId: 'rec-r' }, store)?.id).toBe('rec-r')
+    // A version 1 channel job without a task: its session got a task of its own; the migration re-pointed it to the record.
+    expect(recordOfSession({ jobId: 'rec-r', taskId: 'task-t' }, store)).toMatchObject({ id: 'rec-r', limited: true })
+  })
+
+  it('is the record of its task when the jobId names no record, and none without either', () => {
+    // A session a version 1 job started that did not move onto its task kept that job's id.
+    expect(recordOfSession({ jobId: '3414dfd2-old-job', taskId: 'task-t' }, store)?.id).toBe('task-t')
+    expect(recordOfSession({ jobId: '3414dfd2-old-job', taskId: 'other' }, store)).toBeUndefined()
+    expect(recordOfSession({ jobId: 'job-1', taskId: null }, store)).toBeUndefined()
+    // No run started it: no record, whatever task it works on.
+    expect(recordOfSession({ jobId: null, taskId: 'task-t' }, store)).toBeUndefined()
+  })
+})
+
+describe('a session of a version 1 job that still waits to move', () => {
+  it('takes that job\'s limits, never the record of its task', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'cockpit-limited-scope-')), 'jobs.json')
+    const job = {
+      id: 'v1-job', name: 'Refund', kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'task-t',
+      prompt: 'p', target: { type: 'worker', projectId: 'bp-eml' }, triggers: [{ type: 'mail', match: [] }], toolProfile: null, reply: {}, end: null, notify: 'needs-me',
+      paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 1, failures: 0, limited: true,
+    }
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: { 'v1-job': job }, runs: {}, keys: {} }))
+    const store = new JobStore(file, [null])
+    // Its task got an unlimited record meanwhile (a wake-up set on it).
+    store.put(newRecord({ id: 'task-t', spaceId: null }, ''))
+    const entry = { jobId: 'v1-job', taskId: 'task-t' }
+    // Launch limits and channel tools: not the task's unlimited record.
+    expect(recordOfSession(entry, store)).toBeUndefined()
+    // The schedule tool's caller: limited (fails closed), and its scope takes the waiting job's limits.
+    expect(sessionJobFacts(entry.jobId, recordOfSession(entry, store))).toEqual({ jobId: 'v1-job', limited: true })
+    expect(sessionScope(entry, store)).toMatchObject({ ownTaskId: 'task-t', limits: { id: 'v1-job', limited: true } })
   })
 })
 

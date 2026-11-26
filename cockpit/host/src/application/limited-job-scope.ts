@@ -1,3 +1,6 @@
+import type { Job } from '../domain/job.js'
+import type { JobStore } from '../job-store.js'
+
 /**
  * What a limited task's session may do with the schedule tool: look after its own task's schedule and nothing
  * else. It may set its next wake-up and its goal, and end the schedule once the goal is reached. It may
@@ -30,4 +33,34 @@ export function limitedJobRefusal(input: Record<string, unknown>, matches: (key:
 export function sessionJobFacts(jobId: string | null, job: { limited?: boolean } | undefined): { jobId: string | null; limited: boolean } {
   if (!jobId) return { jobId: null, limited: false }
   return { jobId, limited: job ? job.limited === true : true }
+}
+
+/** A session as the ledger has it, for its record. */
+export interface SessionLink { jobId?: string | null; taskId?: string | null }
+
+/** The version 1 job the ledger's jobId names while it still waits to move, if it does. */
+const waitingJob = (entry: SessionLink, store: Pick<JobStore, 'pendingV1'>) => (entry.jobId ? store.pendingV1()?.jobs[entry.jobId] : undefined)
+
+/**
+ * The record a run's session is read by, for its limits, its channel tools and bridge, and the tools lent to it: the
+ * record its ledger jobId names; when the jobId names a version 1 job that still waits to move, none (that job's
+ * limits hold, sessionScope); otherwise the record of its task (a record's id is its task's id). Undefined: no run
+ * started it, or none applies.
+ */
+export function recordOfSession(entry: SessionLink, store: Pick<JobStore, 'get' | 'pendingV1'>): Job | undefined {
+  if (!entry.jobId) return undefined
+  const named = store.get(entry.jobId)
+  if (named || waitingJob(entry, store)) return named
+  return entry.taskId ? store.get(entry.taskId) : undefined
+}
+
+/**
+ * What holds a run's session in the schedule tool: its own task (its record's task, else the session's task, else the
+ * jobId) and what says whether it is limited (its record, else the version 1 job its jobId names while that job still
+ * waits to move). `limits` undefined: nothing says, and the tool decides by whether its own task is open.
+ */
+export function sessionScope(entry: SessionLink, store: Pick<JobStore, 'get' | 'pendingV1'>): { ownTaskId: string | null; limits: { limited?: boolean } | undefined } {
+  const record = recordOfSession(entry, store)
+  const limits = record ?? waitingJob(entry, store)
+  return { ownTaskId: record?.taskId ?? entry.taskId ?? entry.jobId ?? null, limits }
 }

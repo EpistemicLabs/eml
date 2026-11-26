@@ -14,7 +14,7 @@ import {
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
 import { endTaskRecord } from './end-task-record.js'
-import { limitedJobRefusal } from './limited-job-scope.js'
+import { limitedJobRefusal, sessionScope } from './limited-job-scope.js'
 import { openTasks, taskById } from './task-read.js'
 import { editTaskSchedule, ScheduleWriteError, writeTaskSchedule } from './task-schedule-write.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
@@ -52,9 +52,12 @@ export interface JobCaller {
   /** The caller's project: a new task is made there unless the call names another. */
   projectId: string | null
   toolProfile: ToolProfile | null
-  /** The task whose run started the caller's session (the ledger's jobId: the task's record), if any. */
+  /**
+   * The ledger's jobId: what started the caller's session, if a run did: a record, or a version 1 job that still waits.
+   * Its record is read by limited-job-scope.ts recordOfSession.
+   */
   jobId?: string | null
-  /** That task is limited: the caller reaches only it (limited-job-scope.ts). */
+  /** Its task is limited, or its record is gone (checked again here): the caller reaches only it (limited-job-scope.ts). */
   limited?: boolean
   /** The brain task the caller works on: target self means this task. */
   taskId?: string | null
@@ -147,11 +150,12 @@ export class Jobs {
     const brain = this.deps.brain(caller.spaceId)
     if (!brain) return NO_BRAIN
     const tasks = await openTasks<ToolTask>(brain)
-    // Its own task, looked up as a task: the record of a task with only a wake-up comes and goes, the task stays.
-    const own = caller.limited && caller.jobId ? tasks.find((task) => task.id === caller.jobId) : undefined
-    // A limited record stays while its task is open (domain/job.ts recordKeeping): an open task without a record was
-    // not limited. A task that is closed or gone fails closed: its session reaches nothing.
-    const kept = caller.limited && caller.jobId ? this.deps.store.get(caller.jobId) : undefined
+    // Its own task, looked up as a task: the record of a task with only a wake-up comes and goes, the task stays. A
+    // limited record stays while its task is open (domain/job.ts recordKeeping): an open task without a record (or a
+    // waiting version 1 job) was not limited. A task that is closed or gone fails closed: its session reaches nothing.
+    const scope = caller.limited ? sessionScope(caller, this.deps.store) : null
+    const own = scope?.ownTaskId ? tasks.find((task) => task.id === scope.ownTaskId) : undefined
+    const kept = scope?.limits
     if (caller.limited && (kept ? kept.limited === true : !own)) {
       // The same lookup the action uses, so a key reaches its own task or nothing.
       const refusal = own
