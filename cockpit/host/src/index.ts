@@ -58,6 +58,7 @@ import { createCycles } from './application/cycles.js'
 import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
+import { runMigrateJobsCommand } from './job-migration-cli.js'
 import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
@@ -82,6 +83,7 @@ import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { JobV1 } from './domain/job-v1.js'
+import { createJobMigration } from './application/job-migration.js'
 import { endTaskRecord } from './application/end-task-record.js'
 import { hasSchedule } from './domain/task-schedule.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
@@ -769,6 +771,11 @@ async function main() {
   // next.when, is answered here that the tool is being rebuilt; `jobs` itself only serves the Jobs page's empty list.
   const scheduleTool = { handle: async (_caller: JobCaller, _input: Record<string, unknown>): Promise<JobAnswer> => ({ status: 503, text: SCHEDULE_TOOL_REBUILT }) }
   const turnCheck = createTurnCheck({ jobs: scheduleTool, store: legacyJobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
+  // jobs.json version 1 → 2: the jobs of before brain schema 24 move onto their tasks (application/job-migration.ts).
+  const jobMigration = createJobMigration({
+    store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,
+    moveSessions: (from, to) => { for (const entry of ledger.list()) if (entry.jobId === from) ledger.setJobId(entry.sessionId, to) },
+  })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
   const jobSpaceIds = () => jobSpaceIdsOf(spaces.list())
   ensureJobTokens(jobSpaceIds())
@@ -1089,6 +1096,14 @@ async function main() {
   jobRunner.start()
   // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
   void taskRouter.adoptHeldWaits()
+  // Brain schema 24: the jobs of a version 1 jobs.json move onto their tasks, once (application/job-migration.ts).
+  // What a brain did not take (it was not up yet, or a write failed) is tried again a few times, then at the next start.
+  const migrateJobs = (attempt: number): void => {
+    void jobMigration.run()
+      .then((result) => { if (result.failed.length > 0 && attempt < JOB_MIGRATION_RETRY_MS.length) setTimeout(() => migrateJobs(attempt + 1), JOB_MIGRATION_RETRY_MS[attempt]).unref?.() })
+      .catch((err: unknown) => log(`[jobs] migration failed: ${(err as Error).message}`))
+  }
+  migrateJobs(0)
   // What a session said in a turn that ended while the host went down, or whose route failed, reaches its task now
   // (application/unrouted-turns.ts): first once the brain and the resumed sessions have settled, then every minute.
   const routeLeftovers = () => routeUnrouted({ ledger, router: taskRouter, working: (sessionId) => turns.get(sessionId)?.state === 'working', log })
@@ -1133,6 +1148,8 @@ const NEXT_STEP_TICK_MS = 10_000
 // Run records: a sync writes only what changed; the first waits for the sessions a restart brings back.
 const RUN_SYNC_MS = 60_000
 const RUN_FIRST_SYNC_MS = 30_000
+// When the migration of a version 1 jobs.json is tried again after a part of it failed.
+const JOB_MIGRATION_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000]
 /** Pending task board commands are applied once their undo window is over. */
 const TASK_COMMAND_TICK_MS = 1000
 /**
@@ -1164,6 +1181,7 @@ runServiceCommand(process.argv.slice(2))
   .then(async (handled) => handled || runRemoteCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runDiagnoseCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runUpgradeAgentsCommand(process.argv.slice(2)))
+  .then(async (handled) => handled || runMigrateJobsCommand(process.argv.slice(2)))
   .then(async (handled) => handled || runAgentCommand(process.argv.slice(2)))
   .then((handled) => { if (!handled) return main() })
   .catch((e) => { log(`cockpit host error: ${e.message}`); process.exit(1) })
