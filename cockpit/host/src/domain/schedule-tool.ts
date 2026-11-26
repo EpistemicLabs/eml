@@ -92,13 +92,16 @@ export const atReason = (at: string, zone: string): string => `See the task's te
 export const mailParagraph = (prompt: string): string => `On mail: ${prompt.trim()}`
 
 /**
- * The task's text with the paragraph added as its own; null when the text holds it already (nothing to write). The
- * one check for "the text says it already", for the schedule tool and the jobs migration: the whole paragraph (its
- * lead-in and the prompt), never the bare prompt, which a short one such as "Continue" would match anywhere.
+ * The task's text with the paragraph added as its own; null when the text says it already (nothing to write). The
+ * one check for "the text says it already", for the schedule tool and the jobs migration: the text holds the whole
+ * paragraph (its lead-in and the prompt), or the text is `prompt` and nothing else (white space around either aside),
+ * as a routine task's is that was made from its job. Never the bare prompt somewhere in a longer text, which a short
+ * one such as "Continue" would match anywhere.
  */
-export function withParagraph(content: string | null | undefined, paragraph: string): string | null {
+export function withParagraph(content: string | null | undefined, paragraph: string, prompt?: string): string | null {
   const text = (content ?? '').trimEnd()
   if (text.includes(paragraph)) return null
+  if (prompt?.trim() && text.trim() === prompt.trim()) return null
   return text ? `${text}\n\n${paragraph}` : paragraph
 }
 

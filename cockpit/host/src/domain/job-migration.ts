@@ -17,8 +17,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *
  *   - a repeating job → its cron into the task's crons, read in the zone of the task's first repeating job; its
  *     prompt appended to the task's text as "Every <cron>: <prompt>" unless the text holds that very paragraph
- *     already (the schedule tool's check, domain/schedule-tool.ts withParagraph), or the prompt was built from the
- *     task itself, as a scheduled hand-over's is;
+ *     already or is the prompt and nothing else (the schedule tool's check, domain/schedule-tool.ts withParagraph),
+ *     or the prompt was built from the task itself, as a scheduled hand-over's is;
  *   - a one-time job still ahead → the task's wake-up: at, why (its prompt) and by_session (the session it wakes).
  *     A task has one wake-up: of two, the earlier one is it, the later one's time and prompt go into the journal.
  *     A prompt longer than the reason holds is not cut: it is appended to the task's text as "At <time>: <prompt>",
@@ -335,9 +335,10 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     }
     kept.push(job)
     // The schedule tool's paragraph and its way of adding it: what either wrote, the other finds in the text.
-    // "Says it already" is the tool's check: the whole paragraph, never the bare prompt.
+    // "Says it already" is the tool's check: the whole paragraph, or a text that is the prompt and nothing else;
+    // never the bare prompt inside a longer text.
     const paragraph = everyParagraph(cron, job.prompt)
-    const added = withParagraph(content, paragraph)
+    const added = withParagraph(content, paragraph, job.prompt)
     const said = create !== null || added === null || builtFromTask(job.prompt, task.id)
     if (!said) {
       content = added

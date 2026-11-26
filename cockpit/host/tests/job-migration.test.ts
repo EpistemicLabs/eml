@@ -404,6 +404,16 @@ describe('planning jobs onto their tasks', () => {
     expect(report).toContain('2 jobs on 1 task: 1 moved, 0 dropped, 0 left as they are. Of the jobs, 1 moved and 1 did not.')
   })
 
+  it('a task whose whole text is the job\'s prompt (a routine task made from the job earlier) does not get it a second time', () => {
+    const [t] = plan([cron('0 8 * * 1-5', { prompt: ' Write the brief.\n' })], [task('t1', { content: 'Write the brief.\n' })]).tasks
+    expect(t.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
+    expect(t.brain).toEqual({ setSchedule: true, content: null, appended: [], journal: [] })
+    expect(t.jobs[0].what).toContain('its prompt is in the task\'s text already')
+    // a second job with another prompt still gets its paragraph
+    const [two] = plan([cron('0 8 * * 1-5'), cron('0 18 * * 1-5', { prompt: 'Sum the day up.' })], [task('t1', { content: 'Write the brief.' })]).tasks
+    expect(two.brain).toMatchObject({ content: 'Write the brief.\n\nEvery 0 18 * * 1-5: Sum the day up.', appended: ['Every 0 18 * * 1-5: Sum the day up.'] })
+  })
+
   it('a prompt the task\'s text says already is not appended: the whole paragraph the migration would add, or a prompt a scheduled hand-over built from the task', () => {
     const said = task('t1', { content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' })
     expect(plan([cron('0 8 * * 1-5')], [said]).tasks[0].brain).toEqual({ setSchedule: true, content: null, appended: [], journal: [] })

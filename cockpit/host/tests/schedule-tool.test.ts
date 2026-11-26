@@ -74,6 +74,13 @@ describe('what a time is for, in the task\'s text', () => {
   it('is not written twice', () => {
     expect(withParagraph('Keep Acme happy.\n\nEvery 0 8 * * 1-5: Write the brief.', 'Every 0 8 * * 1-5: Write the brief.')).toBeNull()
   })
+
+  it('is not added to a text that is the prompt and nothing else; a prompt inside a longer text still gets its paragraph', () => {
+    expect(withParagraph(' Write the brief.\n', 'Every 0 8 * * 1-5: Write the brief.', 'Write the brief. ')).toBeNull()
+    expect(withParagraph('Continue reading the docs.', 'Every 0 8 * * 1-5: Continue', 'Continue')).toBe('Continue reading the docs.\n\nEvery 0 8 * * 1-5: Continue')
+    // an empty text is no prompt
+    expect(withParagraph('', 'Every 0 8 * * 1-5: ', ' ')).toBe('Every 0 8 * * 1-5: ')
+  })
 })
 
 describe('how many tasks of a space hold a schedule', () => {

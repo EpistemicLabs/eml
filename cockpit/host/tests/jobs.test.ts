@@ -169,6 +169,17 @@ describe('create: a repeating time', () => {
     expect(world.main.tasks.get(task.id)!.content).toBe('Text of the task.\n\nEvery 0 8 * * 1-5: Look for new mail from Acme.\n\nEvery 0 18 * * 1-5: Sum the day up.')
   })
 
+  it('does not add the prompt to a task whose whole text it is', async () => {
+    const task = world.main.add('Daily brief', null, { content: 'Write the brief.\n' })
+    const answer = await create({ task_id: task.id, cron: WEEKDAYS_8, prompt: ' Write the brief.' })
+    expect(answer.status, answer.text).toBe(201)
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
+    expect(world.main.tasks.get(task.id)!.content).toBe('Write the brief.\n')
+    await act({ action: 'update', job: task.id, cron: '0 18 * * 1-5', prompt: 'Write the brief.' })
+    expect(world.main.schedule(task.id)).toEqual({ crons: ['0 18 * * 1-5'], time_zone: ZONE })
+    expect(world.main.tasks.get(task.id)!.content).toBe('Write the brief.\n')
+  })
+
   it('keeps the delegation of a task as it is, and its wake-up', async () => {
     const task = world.main.add('Mission', { at: '2026-11-13T02:00:00.000Z', why: 'Look again', by_session: 's9' })
     await create({ task_id: task.id, cron: WEEKDAYS_8 })

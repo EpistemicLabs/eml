@@ -250,7 +250,7 @@ export class Jobs {
     }
     // What the time is for goes into the task's text: a new task has the prompt as its text already.
     const paragraph = made ? null : cron ? everyParagraph(cron, prompt) : !at ? mailParagraph(prompt) : null
-    const content = paragraph ? withParagraph(task.content, paragraph) : null
+    const content = paragraph ? withParagraph(task.content, paragraph, prompt) : null
     const setGoal = goal && !task.properties?.goal ? goal : null
     // A repeating time the task already has is not added twice: then only its text may still be new.
     const same = sameSchedule(planned, current)
@@ -321,7 +321,7 @@ export class Jobs {
     if (!changesTask && !changesRecord) return bad('nothing to update: give cron, at, ends_at, goal, max_runs, notify, mail, deny_tools, project or provider')
 
     const paragraph = cron && prompt ? everyParagraph(cron, prompt) : null
-    const content = paragraph ? withParagraph(task.content, paragraph) : null
+    const content = paragraph ? withParagraph(task.content, paragraph, prompt) : null
     const setGoal = goal && !task.properties?.goal ? goal : null
     let schedule = current
     if (changesTask) {
