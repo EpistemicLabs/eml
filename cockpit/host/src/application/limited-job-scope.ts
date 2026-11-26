@@ -1,3 +1,6 @@
+import type { Job } from '../domain/job.js'
+import type { JobStore } from '../job-store.js'
+
 /**
  * What a limited task's session may do with the schedule tool: look after its own task's schedule and nothing
  * else. It may set its next wake-up and its goal, and end the schedule once the goal is reached. It may
@@ -32,12 +35,26 @@ export function sessionJobFacts(jobId: string | null, job: { limited?: boolean }
   return { jobId, limited: job ? job.limited === true : true }
 }
 
+/** A session as the ledger has it, for its record. */
+export interface SessionLink { jobId?: string | null; taskId?: string | null }
+
 /**
- * The record a run's session is read by, for its limits, its lent tools and its channel: the record of its task (a
- * record's id is its task's id). A session a version 1 job started keeps that job's id in the ledger when the job did
- * not move onto its task (the migration dropped it); the session still works on that task. Null: no run started it.
+ * The record a run's session is read by, for its limits, its channel tools and bridge, and the tools lent to it: the
+ * record its ledger jobId names; when that names none, the record of its task (a record's id is its task's id).
+ * Undefined: no run started it, or neither has a record.
  */
-export function sessionRecordId(entry: { jobId?: string | null; taskId?: string | null }): string | null {
-  if (!entry.jobId) return null
-  return entry.taskId ?? entry.jobId
+export function recordOfSession(entry: SessionLink, store: Pick<JobStore, 'get'>): Job | undefined {
+  if (!entry.jobId) return undefined
+  return store.get(entry.jobId) ?? (entry.taskId ? store.get(entry.taskId) : undefined)
+}
+
+/**
+ * What holds a run's session in the schedule tool: its own task (its record's task, else the session's task, else the
+ * jobId) and what says whether it is limited (its record, else the version 1 job its jobId names while that job still
+ * waits to move). `limits` undefined: nothing says, and the tool decides by whether its own task is open.
+ */
+export function sessionScope(entry: SessionLink, store: Pick<JobStore, 'get' | 'pendingV1'>): { ownTaskId: string | null; limits: { limited?: boolean } | undefined } {
+  const record = recordOfSession(entry, store)
+  const waiting = !record && entry.jobId ? store.pendingV1()?.jobs[entry.jobId] : undefined
+  return { ownTaskId: record?.taskId ?? entry.taskId ?? entry.jobId ?? null, limits: record ?? waiting }
 }

@@ -778,6 +778,17 @@ describe('a limited task\'s session looking after its own schedule', () => {
     expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session))).toMatchObject({ status: 403, text: expect.stringContaining('is not its task') })
   })
 
+  it('holds a session whose jobId names a limited record to that record\'s task, also when it works on another task', async () => {
+    // A version 1 channel job without a task: its session got a task of its own; the migration re-pointed it to the record.
+    const { own, other } = await limitedSetup()
+    const autoTask = world.main.add('Session task')
+    const session: JobCaller = { ...caller, sessionId: 'mail-run', jobId: own.id, taskId: autoTask.id, limited: true }
+    expect((await act({ action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(403)
+    expect((await act({ action: 'create', task_id: autoTask.id, at: '2026-11-13T10:00', prompt: 'p' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: own.id, at: '2026-11-11T09:00' }, session)).status).toBe(200)
+  })
+
   it('holds the session of a limited version 1 job that still waits to move to its own task', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-jobs-v1-')), 'jobs.json')
     const own = world.main.add('Refund')
