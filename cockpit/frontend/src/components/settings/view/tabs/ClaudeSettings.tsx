@@ -1,7 +1,8 @@
 // Settings › Models › Claude Code, in the order every provider uses: sign-in,
 // permissions, version, then Claude Code's own display switch and the advanced
-// setup-token. Sign-in default: the regular Claude Code sign-in (/login), kept
-// in the cockpit's own config dir. The setup-token is for runtimes without a
+// setup-token. Sign-in default: the regular Claude Code sign-in, which the host
+// runs here without a terminal (AgentSignIn) and Claude Code keeps in the
+// config dir of the active space's sessions. The setup-token is for runtimes without a
 // browser; it goes to the host once (PUT /api/agents/login) and is never read
 // back — only a short prefix.
 import { useCallback, useEffect, useState } from 'react';
@@ -11,6 +12,7 @@ import type { AgentProviderInfo } from '@/lib/providers';
 import { cn } from '@/lib/utils';
 import { Button, Chip, FOCUS, Input, LABEL, Switch } from '@/shared/view/ui';
 import { api } from '@/utils/api';
+import AgentSignIn from '@/components/sign-in/AgentSignIn';
 import { getActivePane, isEmptyPane } from '@/stores/usePaneStore';
 import { setHostChatView } from '../../utils/settingsStorage';
 import SettingsCard from '../SettingsCard';
@@ -24,6 +26,8 @@ type Renderer = 'default' | 'fullscreen';
 type Account = { loggedIn: boolean; authMethod: string | null; subscriptionType: string | null; email: string | null };
 type LoginStatus = {
   mode: LoginMode;
+  /** The active space's own agent keeps its own login; the setup-token does not apply to it. Missing from an older host. */
+  ownLogin?: boolean;
   permissionMode: PermissionMode;
   renderer: Renderer;
   remoteControl: boolean;
@@ -42,9 +46,10 @@ function accountLabel(status: LoginStatus | null): string {
   return [account.email, plan, via ? `via ${via}` : null].filter(Boolean).join(' · ') || 'Signed in.';
 }
 
-// Sign in: the host opens a session that starts with Claude Code's /login —
-// in the active pane's project, else the Getting started project — and the
-// settings close so the user lands in it.
+// The way through a terminal, kept for when the sign-in here does not work: the
+// host opens a session that starts with Claude Code's /login — in the active
+// pane's project, else the Getting started project — and the settings close so
+// the user lands in it.
 async function openSignInSession(): Promise<boolean> {
   const active = getActivePane();
   const projectId = active && !isEmptyPane(active) ? active.projectId : null;
@@ -106,10 +111,13 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const setChatView = (on: boolean) => run(() => api.setChatView(on), () => setHostChatView(on));
   const chatView = status?.chatView !== false;
 
-  const tokenMode = status?.mode === 'token';
+  // The setup-token signs in the shared config's sessions only, never a space's own agent.
+  const tokenMode = status?.mode === 'token' && status.ownLogin !== true;
+  // The switch itself is the cockpit's, whichever space is active.
+  const tokenModeOn = status?.mode === 'token';
   const showTokenForm = editing || status?.token.set === false;
   // A token in use keeps the advanced part open — it decides how sessions sign in.
-  const showAdvanced = advancedOpen || tokenMode;
+  const showAdvanced = advancedOpen || tokenModeOn;
 
   return (
     <div className="space-y-6">
@@ -127,22 +135,28 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
             </Button>
           </SettingsRow>
           {!tokenMode && status?.account?.loggedIn !== true && (
-            <SettingsRow
-              label="Sign in to Claude"
-              description={claude.version ? "Opens a terminal that runs Claude Code's own sign-in (/login)." : 'Claude Code is not set up yet — see Version below.'}
-            >
-              <Button
-                size="sm"
-                disabled={busy || !claude.version}
+            <div className="space-y-3 px-4 py-4">
+              <p className="text-body text-muted-foreground">
+                {claude.version
+                  ? status?.ownLogin
+                    ? "Sign in to Claude for this space's agent: it keeps a login of its own."
+                    : 'Sign in to Claude with your subscription.'
+                  : 'Claude Code is not set up yet — see Version below.'}
+              </p>
+              <AgentSignIn provider="claude" label="Sign in to Claude" disabled={busy || !claude.version} onDone={() => void load(true)} />
+              <button
+                type="button"
+                className={cn('text-ui text-muted-foreground underline underline-offset-2 hover:text-foreground', FOCUS)}
+                disabled={!claude.version}
                 onClick={() => {
                   void openSignInSession()
                     .then((ok) => { if (ok) onCloseSettings?.(); else setError('Could not open the sign-in session.'); })
                     .catch(() => setError('The cockpit host is not reachable.'));
                 }}
               >
-                Sign in
-              </Button>
-            </SettingsRow>
+                Sign in in a terminal instead
+              </button>
+            </div>
           )}
           {error && !showAdvanced && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
         </SettingsCard>
@@ -240,7 +254,7 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
         <button
           type="button"
           onClick={() => setAdvancedOpen((open) => !open)}
-          disabled={tokenMode}
+          disabled={tokenModeOn}
           aria-expanded={showAdvanced}
           className={cn('flex min-h-(--target-min) items-center gap-1 hover:text-foreground disabled:hover:text-muted-foreground', LABEL, FOCUS)}
         >
@@ -257,13 +271,13 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
             <SettingsCard divided>
               <SettingsRow
                 label="Use the token for sessions"
-                description={tokenMode ? 'On — new sessions use the setup-token instead of the login.' : 'Off — new sessions use the Claude Code login.'}
+                description={tokenModeOn ? 'On — new sessions use the setup-token instead of the login.' : 'Off — new sessions use the Claude Code login.'}
               >
                 <Switch
-                  checked={tokenMode}
+                  checked={tokenModeOn}
                   onChange={(checked: boolean) => void setMode(checked ? 'token' : 'login')}
                   ariaLabel="Use the setup-token for sessions"
-                  disabled={busy || (!tokenMode && !status?.token.set)}
+                  disabled={busy || (!tokenModeOn && !status?.token.set)}
                 />
               </SettingsRow>
 

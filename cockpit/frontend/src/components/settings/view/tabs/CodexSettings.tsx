@@ -1,11 +1,10 @@
 // Settings › Models › Codex (beta), in the order every provider uses:
-// sign-in, permissions, version. Until the cockpit's own Codex CLI is set up,
+// sign-in (ChatGPT's device code, run by the host through app-server —
+// AgentSignIn), permissions, version. Until the cockpit's own Codex CLI is set up,
 // only the set-up row shows.
-import { useState } from 'react';
-
 import { useSetProviderSettings, type AgentProviderInfo } from '@/lib/providers';
-import { Button, Switch } from '@/shared/view/ui';
-import { getActivePane, openInPane } from '@/stores/usePaneStore';
+import { Switch } from '@/shared/view/ui';
+import AgentSignIn from '@/components/sign-in/AgentSignIn';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -41,9 +40,8 @@ const PERMISSION_MODES: ReadonlyArray<{ value: CodexPermissionMode; label: strin
   },
 ];
 
-export default function CodexSettings({ codex, onCloseSettings }: { codex: AgentProviderInfo; onCloseSettings?: () => void }) {
+export default function CodexSettings({ codex }: { codex: AgentProviderInfo; onCloseSettings?: () => void }) {
   const setSettings = useSetProviderSettings('codex');
-  const [error, setError] = useState<string | null>(null);
   const mode: CodexPermissionMode =
     PERMISSION_MODES.find((option) => option.value === codex.settings?.permissionMode)?.value ?? 'auto';
   const sandboxed = mode !== 'off';
@@ -60,34 +58,25 @@ export default function CodexSettings({ codex, onCloseSettings }: { codex: Agent
     );
   }
 
-  // Codex signs in on its own first screen: open a Codex session and the user
-  // lands on it. In the active pane's project — an empty pane that already has
-  // a project counts, openInPane reuses it.
-  const signIn = () => {
-    const projectId = getActivePane()?.projectId ?? null;
-    if (!projectId) {
-      setError('Open a project first — the sign-in runs in a session of that project.');
-      return;
-    }
-    openInPane({ surface: 'terminal', projectId, provider: 'codex' });
-    onCloseSettings?.();
-  };
-
   return (
     <div className="space-y-6">
       <SettingsSection title="Sign-in" description="The sign-in belongs to this cockpit only — a Codex you already use on this computer is not touched.">
         <SettingsCard divided>
           <SettingsRow
             label="Codex sign-in"
-            description={codex.signedIn ? 'Signed in.' : 'Not signed in yet. Opens a Codex session; its first screen is Codex’s own sign-in.'}
+            description={codex.signedIn ? 'Signed in.' : 'Not signed in yet. Sign in with your ChatGPT account: the cockpit shows a code to enter on OpenAI’s sign-in page.'}
           >
-            {!codex.signedIn && <Button size="sm" onClick={signIn}>Sign in</Button>}
+            {null}
           </SettingsRow>
+          {!codex.signedIn && (
+            <div className="px-4 py-4">
+              <AgentSignIn provider="codex" label="Sign in with ChatGPT" onDone={() => {}} />
+            </div>
+          )}
           <div className="px-4 py-3 text-body text-muted-foreground">
             The first Codex session asks once whether to trust the cockpit’s hooks — choose “Trust all”; they report the
             session’s state to the cockpit and load your brain.
           </div>
-          {error && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
         </SettingsCard>
       </SettingsSection>
 
