@@ -45,6 +45,13 @@ describe('the user\'s time zone setting', () => {
     expect(new JobStore(file).timeZone()).toBe('Asia/Bangkok')
   })
 
+  it('lists no jobs: the Jobs page is gone, a schedule is read from its task', async () => {
+    const { store } = setup('Asia/Bangkok')
+    const deps = { store, zones: store } as unknown as JobsApiDeps
+    const handled = await handleJobsApi({ headers: {} } as http.IncomingMessage, {} as http.ServerResponse, deps, '/api/jobs', 'GET', () => { throw new Error('answered') }, async () => ({}))
+    expect(handled).toBe(false)
+  })
+
   it('refuses what is no IANA zone', async () => {
     const { store, call } = setup('Asia/Bangkok')
     expect(await call('PUT', { timeZone: 'Mars/Olympus', explicit: true })).toMatchObject({ status: 400, payload: { error: { code: 'INVALID_TIME_ZONE' } } })

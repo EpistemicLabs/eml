@@ -8,7 +8,6 @@ import type { JobStore } from './job-store.js'
  *   POST /api/jobs            from a session (schedule-cli.ts); X-Cockpit-Token = the
  *                             per-boot spawn token. Body: fromSession plus the schedule
  *                             tool's input (application/jobs.ts). Answer: { text, taskId? }.
- *   GET  /api/jobs            the Jobs view, which goes: an empty list of jobs, with the time zone.
  *   GET  /api/jobs/time-zone  the page: the user's time zone (Settings › Preferences); null until one is saved.
  *   PUT  /api/jobs/time-zone  the page: { timeZone, explicit? }. Only an explicit one (the user chose it in
  *                             Settings) replaces a saved zone; without it a browser fills in the zone only
@@ -53,11 +52,6 @@ export async function handleJobsApi(
     }
     const result = await requestJobs({ jobs: deps.tool, callerOf: deps.callerOf }, await readJson(req))
     json(res, result.status, result.payload)
-    return true
-  }
-  if (pathname === '/api/jobs' && method === 'GET') {
-    // Schedules sit on their tasks (tasks-api.ts): the list stays empty until the page no longer asks for it.
-    json(res, 200, { timeZone: deps.zones.timeZone(), jobs: [] })
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'GET') {
