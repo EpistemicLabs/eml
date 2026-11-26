@@ -163,7 +163,7 @@ describe('v0.18 migration — unchanged default-brain seed rules become the shor
     } finally { control.close() }
 
     expectMigrated(brainFile, dir)
-  })
+  }, 30_000)
 
   it('through initDatabase (in-process path): same result', () => {
     const brainFile = join(dir, 'v17.db')

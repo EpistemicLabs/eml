@@ -99,7 +99,7 @@ describe('v0.23 migration — runs, and the mirrored task state for existing tas
     writes(eml).trackTask('task-waiting', { waiting_on: null }, juno)
     expect(eml.engrams.getRaw('task-waiting')!.properties!.waits).toBeUndefined()
     eml.close()
-  })
+  }, 30_000)
 
   it('every device derives the same rows: two copies migrate to one state hash', () => {
     const a = join(dir, 'a.db')

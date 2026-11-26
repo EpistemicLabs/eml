@@ -228,7 +228,7 @@ describe('jobs.json', () => {
     const aside = store.setAsideUnreadable(new Date('2026-11-26T10:00:05.000Z'))
     expect(aside).toBe(`${file}.unreadable-20261126-100005`)
     expect(readFileSync(aside!, 'utf8')).toBe(truncated)
-    expect(statSync(aside!).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(aside!).mode & 0o777).toBe(0o600)
     expect(existsSync(file)).toBe(false)
     // asked again it names the same file, and sets nothing more aside
     expect(store.setAsideUnreadable(new Date('2026-11-26T11:00:00.000Z'))).toBe(aside)
@@ -276,7 +276,7 @@ describe('jobs.json', () => {
     const aside = store.setAsideUnreadable(new Date('2026-11-26T10:00:05.000Z'))
     expect(aside).toBe(`${file}.unknown-version-20261126-100005`)
     expect(readFileSync(aside!, 'utf8')).toBe(newer)
-    expect(statSync(aside!).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(aside!).mode & 0o777).toBe(0o600)
     expect(existsSync(file)).toBe(false)
     expect(store.setAsideUnreadable(new Date('2026-11-26T11:00:00.000Z'))).toBe(aside)
     // what was found stays known after the file was set aside: the host words its notice by it
