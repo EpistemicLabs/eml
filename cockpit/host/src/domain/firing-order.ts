@@ -2,9 +2,11 @@
  * The four-line order (decision task-schedules-live-in-the-brain): what the cockpit does when a task comes due.
  * The first line that applies decides.
  *
- *   a. A session of the task is working now → a due time (a repeating time, the wake-up, a run started by hand) is
- *      skipped and recorded. A channel message from the bridge is never skipped: it goes to that session with its
- *      next turn, or the bridge is told to try again.
+ *   a. A session of the task is working now → a repeating time that is due (and a run started by hand) is skipped
+ *      and recorded. The wake-up is not: it carries a reason, like a message, so it stays due on the task and fires
+ *      in the first pass where a later line can give it to a session (application/job-runner.ts deriveTask). A
+ *      channel message from the bridge is never skipped either: it goes to that session with its next turn, or the
+ *      bridge is told to try again.
  *   b. A session of the task waits on an answer (a wait of kind question or go, not a review) → that session
  *      continues and gets the firing as a message.
  *   c. Nothing is open and the wake-up is due → the session that set it continues; when it is gone or cannot be
@@ -50,7 +52,7 @@ export interface FiringFacts {
 }
 
 export type FiringDecision =
-  /** Line a, a time: nothing runs, the run is recorded as skipped. */
+  /** Line a, a time: nothing runs now. The caller records a repeating time as skipped and keeps the wake-up due. */
   | { kind: 'skip' }
   /** Line a, a message: the working session gets it with its next turn. */
   | { kind: 'deliver'; sessionId: string }

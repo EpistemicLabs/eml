@@ -57,15 +57,17 @@ const lateness = (dueAt: string, now: number): string => {
 /**
  * What fired, as a half sentence: "the repeating time on weekdays at 08:00 (cron "0 8 * * 1-5", Asia/Makassar), due
  * Mon 9 Nov 08:00", "the wake-up set for Fri 13 Nov 10:00 (Asia/Makassar)", "a new message on mail", "the owner
- * started it by hand (Run now)". Several are joined with "; ". `zone`: where the user reads a time when the schedule
+ * started it by hand (Run now)". Several are joined with "; "; a wake-up that joined a run started by hand or by a
+ * message is named after it. `zone`: where the user reads a time when the schedule
  * names no zone.
  */
 export function firedWords(run: Pick<JobRun, 'trigger' | 'dueAt' | 'fired'>, now: number, zone: string): string {
-  if (run.trigger === 'manual') return 'the owner started it by hand (Run now)'
-  if (run.trigger !== 'schedule') return `a new message on ${run.trigger}`
   const fired: RunFired = run.fired ?? {}
   const tz = fired.timeZone ?? zone
   const parts: string[] = []
+  if (run.trigger === 'manual') parts.push('the owner started it by hand (Run now)')
+  else if (run.trigger !== 'schedule') parts.push(`a new message on ${run.trigger}`)
+  // A wake-up that came due while the run waited to start joined it, whatever started the run.
   if (fired.wake) parts.push(`the wake-up set for ${formatInZone(Date.parse(fired.wake.at), tz)} (${tz})${lateness(fired.wake.at, now)}`)
   for (const cron of fired.crons ?? []) {
     const words = cronInWords(cron.cron)
@@ -87,7 +89,7 @@ export const SCHEDULE_TASK_RULE = 'While the task has a schedule, never close it
 export function firedText(run: Pick<JobRun, 'number' | 'trigger' | 'dueAt' | 'fired' | 'message'>, task: { id: string; name: string }, now: number, zone: string): string {
   const line = `[From the cockpit, not from your user: run ${run.number} for task "${task.name}" (${task.id.slice(0, 8)}). `
     + `What fired: ${firedWords(run, now, zone)}. Nobody may be watching: ${JOB_HEADER_STATUS}. ${SCHEDULE_TASK_RULE}]`
-  const why = run.trigger === 'schedule' ? run.fired?.wake?.why?.trim() : undefined
+  const why = run.fired?.wake?.why?.trim()
   return [line, ...(why ? [`The wake-up's reason: ${why}`] : []), ...(run.message ? [run.message] : [])].join('\n\n')
 }
 

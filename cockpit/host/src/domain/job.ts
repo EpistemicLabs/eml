@@ -92,7 +92,7 @@ export interface Job {
   grants?: JobGrant[]
   /** Repeating times are due after it (ISO); set to "now" when the schedule is first seen, so past times never fire. Null: not seen yet. */
   cursor: string | null
-  /** The wake-up (`at`) fired last: it fires once, also when the brain write that clears it failed. */
+  /** The wake-up (`at`) fired last, set when a run that carries it got to a session: it fires once, also when the brain write that clears it failed. */
   firedWake: string | null
   /** When its last run started; null before the first. */
   lastRunAt: string | null
@@ -123,7 +123,7 @@ export type RunStatus =
   | 'failed'
   /** Due while the cockpit was down, too long ago to still run. */
   | 'missed'
-  /** Due while a session of the task was working, or while its previous run had not started; or its task closed before it started. */
+  /** A repeating time due while a session of the task was working, or while its previous run had not started; or its task closed before it started. */
   | 'skipped'
 
 export interface JobRun {

@@ -31,14 +31,16 @@ import { stepPrompt } from './task-runner.js'
  * minute it also derives what is due: it reads each space's open tasks (two lists per space, no read per task), and
  * for every task with a schedule it fires works out what is due against the task's record (dueOf). Several times due
  * at once are ONE firing that names all of them; a repeating time due longer ago than the late limit is recorded as
- * missed; the cursor moves before anything starts, so no time fires twice. A wake-up that fired is remembered on the
- * record and then cleared on the task. The same read keeps the records: one is made when a schedule is first seen
+ * missed; the cursor moves before anything starts, so no time fires twice. A wake-up has fired once a run that carries
+ * it got to a session: then it is remembered on the record and cleared on the task. The same read keeps the records: one is made when a schedule is first seen
  * (its cursor is now, so no time of the past fires), and one goes by domain/job.ts recordKeeping; a closed task's
  * record stops listening first.
  *
- * What a firing does follows the four-line order (domain/firing-order.ts): skipped and recorded while a session of
- * the task works, else to the session that waits on an answer, else to the session that set the wake-up, else a new
- * session. A new session reads the prompt built from its task and a line naming what fired; a session that continues
+ * What a firing does follows the four-line order (domain/firing-order.ts): a repeating time is skipped and recorded
+ * while a session of the task works, else it goes to the session that waits on an answer, else to the session that set
+ * the wake-up, else to a new session. The wake-up is never skipped: while a session works it stays due and fires in
+ * the first read where the order can give it to a session; while a run of the task waits to start it joins that run.
+ * A repeating time that comes due while the task's previous run has not started is skipped and recorded. A new session reads the prompt built from its task and a line naming what fired; a session that continues
  * reads that line alone (domain/run-text.ts).
  *
  * A run is written before anything is started, and is 'starting' while it is: a host restart in that state retries
@@ -219,6 +221,7 @@ export class JobRunner {
       if (run.status !== 'starting') continue
       // Its new session got far enough to exist: it has the prompt.
       if (run.sessionId && run.newSession && this.deps.sessionState(run.sessionId) !== 'queued') {
+        this.wakeFired(run)
         this.update(run, { status: 'started', startedAt: run.startedAt ?? new Date(this.now()).toISOString() })
         continue
       }
@@ -459,28 +462,57 @@ export class JobRunner {
       this.tell(record, 'missed', `Missed a run due ${late} ago while the cockpit was not running (cron "${missed.cron}"); the next one is on schedule.`)
       this.deps.log(`[jobs] ${name}: missed a run due ${missed.dueAt}`)
     }
+    // The cursor first: a run is never made twice for the same repeating time.
+    save()
     const firing = due.firing
-    if (!firing) {
-      save()
+    if (!firing) return
+    const zoned = timeZone ? { timeZone } : {}
+    const crons = firing.crons.length > 0 ? firing.crons : null
+    // A wake-up that rides in a run which has not ended is not due again: that run brings it.
+    const wake = firing.wake && !openRuns.some((run) => sameInstant(run.fired?.wake?.at, firing.wake!.at)) ? firing.wake : null
+    if (!crons && !wake) return
+    const cronsDueAt = crons ? crons.map((c) => c.dueAt).sort()[0] : firing.dueAt
+    /**
+     * The repeating times that are due are skipped and recorded. The wake-up is never skipped (it carries a reason,
+     * like a message): it is not marked as fired and stays on the task, so it is due again at the next read, and
+     * fires in the first one where the four-line order can give it to a session. Nothing is recorded for it meanwhile.
+     */
+    const skipCrons = (note: string) => {
+      if (!crons) return
+      this.record(task.id, cronsDueAt, 'skipped', note, { crons, ...zoned })
+      this.deps.log(`[jobs] ${name}: a time due ${cronsDueAt} is skipped, ${note}`)
+    }
+    if (openRuns.some((run) => run.status !== 'started')) {
+      skipCrons(SKIPPED_NOT_STARTED)
+      // A run of the task waits to start: the wake-up joins it, so the session that gets the run reads its reason too.
+      const waiting = wake ? openRuns.find((run) => run.status === 'waiting') : undefined
+      if (wake && waiting) {
+        this.update(waiting, { fired: { ...waiting.fired, wake, ...zoned } })
+        this.deps.log(`[jobs] ${name}: its wake-up joins run ${waiting.number}, which waits to start`)
+      }
       return
     }
-    if (firing.wake) record = { ...record, firedWake: firing.wake.at }
-    // The cursor and the fired wake-up first: a run is never made twice for the same time.
-    save()
-    const fired: RunFired = { ...(firing.wake ? { wake: firing.wake } : {}), ...(firing.crons.length > 0 ? { crons: firing.crons } : {}), ...(timeZone ? { timeZone } : {}) }
-    if (openRuns.some((run) => run.status !== 'started')) {
-      this.record(task.id, firing.dueAt, 'skipped', SKIPPED_NOT_STARTED, fired)
-    } else {
-      const facts = await this.factsOf(space, task, { times: true, wake: firing.wake ? { bySession: firing.wake.bySession } : null, message: false }, new Set())
-      if (decideFiring(facts).kind === 'skip') {
-        this.record(task.id, firing.dueAt, 'skipped', SKIPPED_WORKING, fired)
-        this.deps.log(`[jobs] ${name}: a time due ${firing.dueAt} is skipped, ${SKIPPED_WORKING}`)
-      } else {
-        const run = this.addRun(task.id, 'schedule', Date.parse(firing.dueAt), { fired })
-        this.deps.log(`[jobs] ${name}: run ${run.number} is due`)
-      }
+    const facts = await this.factsOf(space, task, { times: true, wake: wake ? { bySession: wake.bySession } : null, message: false }, new Set())
+    if (decideFiring(facts).kind === 'skip') {
+      skipCrons(SKIPPED_WORKING)
+      return
     }
-    if (firing.wake) this.clearFiredWake(space, task.id, firing.wake.at)
+    const fired: RunFired = { ...(wake ? { wake } : {}), ...(crons ? { crons } : {}), ...zoned }
+    const run = this.addRun(task.id, 'schedule', Date.parse(firing.dueAt), { fired })
+    this.deps.log(`[jobs] ${name}: run ${run.number} is due`)
+  }
+
+  /**
+   * A run that carries the wake-up got to a session (or failed for good): the wake-up has fired. It is remembered on
+   * the record first, so it fires once even when the write that takes it off the task fails, then cleared on the task.
+   */
+  private wakeFired(run: JobRun): void {
+    const at = run.fired?.wake?.at
+    const record = this.deps.store.get(run.jobId)
+    const space = record ? this.spaceOf(record) : null
+    if (!at || !record || !space) return
+    if (!sameInstant(record.firedWake, at)) this.deps.store.put({ ...record, firedWake: at })
+    this.clearFiredWake(space, record.id, at)
   }
 
   /** The wake-up fired: it goes off the task, unless the task has another one by now. Failing, the next read tries again. */
@@ -596,7 +628,7 @@ export class JobRunner {
     const name = nameOfTask(task)
     const fired: Fired = {
       times: run.trigger === 'schedule' || run.trigger === 'manual',
-      wake: run.trigger === 'schedule' && run.fired?.wake ? { bySession: run.fired.wake.bySession } : null,
+      wake: run.fired?.wake ? { bySession: run.fired.wake.bySession } : null,
       message: run.trigger !== 'schedule' && run.trigger !== 'manual',
     }
     const message = firedText(run, { id: task.id, name }, now, this.deps.timeZone())
@@ -604,8 +636,17 @@ export class JobRunner {
     for (;;) {
       const decision = decideFiring(await this.factsOf(space, task, fired, unwakeable))
       if (decision.kind === 'skip') {
-        this.update(run, { status: 'skipped', note: SKIPPED_WORKING, finishedAt: new Date(this.now()).toISOString() })
-        this.deps.log(`[jobs] ${name}: run ${run.number} skipped, ${SKIPPED_WORKING}`)
+        // A session started working meanwhile. The run's wake-up is not used up: it was never marked as fired, so it
+        // is due again at the next read. A run that was only the wake-up is taken back; any other is recorded as
+        // skipped, without the wake-up.
+        const { wake, ...rest } = this.current(run).fired ?? {}
+        if (wake && run.trigger === 'schedule' && !rest.crons?.length) {
+          this.drop(this.current(run))
+          this.deps.log(`[jobs] ${name}: its wake-up stays due, ${SKIPPED_WORKING}`)
+          return 'skipped'
+        }
+        this.update(run, { status: 'skipped', note: SKIPPED_WORKING, finishedAt: new Date(this.now()).toISOString(), ...(wake ? { fired: rest } : {}) })
+        this.deps.log(`[jobs] ${name}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
         return 'skipped'
       }
       if (decision.kind === 'retry') return wait('a session of the task is working and cannot take the message now')
@@ -645,6 +686,8 @@ export class JobRunner {
 
   private started(run: JobRun): void {
     const at = new Date(this.now()).toISOString()
+    // The wake-up the run carries has fired now, and not before: remembered before the run counts as started.
+    this.wakeFired(this.current(run))
     this.update(run, { status: 'started', startedAt: at, note: null })
     const record = this.deps.store.get(run.jobId)
     if (record) this.deps.store.put({ ...record, lastRunAt: at })
@@ -665,6 +708,8 @@ export class JobRunner {
   }
 
   private failRun(run: JobRun, why: string): void {
+    // A run that fails for good uses its wake-up up: the failure is told, and it is not tried again pass after pass.
+    this.wakeFired(this.current(run))
     this.update(run, { status: 'failed', note: why, finishedAt: new Date(this.now()).toISOString() })
     const record = this.deps.store.get(run.jobId)
     this.deps.log(`[jobs] ${this.nameOf(run.jobId)}: run ${run.number} failed: ${why}`)

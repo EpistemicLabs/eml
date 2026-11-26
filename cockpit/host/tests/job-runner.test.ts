@@ -548,13 +548,128 @@ describe('the four-line order', () => {
     expect(statuses('daily')).toEqual(['skipped'])
   })
 
-  it('a: skips a due wake-up while a session works: it fired once and is cleared on the task', async () => {
-    world.task('once', { at: '2026-11-09T02:00:00.000Z', by_session: 's-work' })
+  it('a: a wake-up due while a session works is not skipped: it stays due, pass after pass without a row, and fires once when the session stops', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
     world.session('once', 's-work', true)
     await firstSeenThen('2026-11-09T02:00:10Z')
-    expect(statuses('once')).toEqual(['skipped'])
+    for (let pass = 0; pass < 3; pass++) {
+      world.now += MIN
+      await runner.tick()
+    }
+    expect(runs('once')).toEqual([])
+    expect(world.scheduleOf('once')).toEqual({ at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
+    expect(world.store.get('once')).toMatchObject({ firedWake: null, runCount: 0 })
+    expect(world.edits).toEqual([])
+    // the session stops: the first pass after it gives the wake-up to the session that set it
+    world.sessions[0].working = false
+    world.states.set('s-work', 'idle')
+    world.now += MIN
+    await runner.tick()
+    expect(world.delivered).toEqual([{ sessionId: 's-work', text: expect.stringContaining('The wake-up\'s reason: Check the reply.') }])
     expect(world.scheduleOf('once')).toBeNull()
-    expect(world.delivered).toEqual([])
+    world.now += MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.delivered).toHaveLength(1)
+    expect(statuses('once')).toEqual(['started'])
+  })
+
+  it('a: repeating times and the wake-up due together while a session works: the times are skipped and recorded, the wake-up stays', async () => {
+    world.task('mixed', { ...HOURLY, at: '2026-11-09T01:00:00.000Z', why: 'Check the reply.' })
+    world.session('mixed', 's-work', true)
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(runs('mixed')).toEqual([expect.objectContaining({ status: 'skipped', number: 0, note: 'a session of the task was working', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], timeZone: 'UTC' } })])
+    expect(world.scheduleOf('mixed')?.at).toBe('2026-11-09T01:00:00.000Z')
+    world.now += MIN
+    await runner.tick()
+    expect(runs('mixed')).toHaveLength(1)
+    world.sessions[0].working = false
+    world.states.set('s-work', 'stopped')
+    world.now += MIN
+    await runner.tick()
+    expect(statuses('mixed')).toEqual(['skipped', 'started'])
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('mixed')).toEqual(HOURLY)
+  })
+
+  it('a: a wake-up whose run finds a session working meanwhile is not used up: the run is taken back and the wake-up fires later', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.session('once', 's-late')
+    // the session starts a turn between the read that made the run and the attempt to start it
+    let asked = 0
+    runner = new JobRunner(world.deps({ sessionsOf: () => [{ sessionId: 's-late', working: ++asked === 2 }] }))
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(asked).toBe(2)
+    expect(runs('once')).toEqual([])
+    expect(world.store.get('once')).toMatchObject({ firedWake: null, runCount: 0 })
+    expect(world.scheduleOf('once')?.at).toBe('2026-11-09T02:00:00.000Z')
+    world.now += MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
+  it('a wake-up due while a run of the task waits for room joins that run: its text names the reason, and only then is the wake-up off the task', async () => {
+    world.task('mixed', { ...HOURLY, at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', by_session: 's-gone' })
+    world.room = false
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(statuses('mixed')).toEqual(['waiting'])
+    world.now = Date.parse('2026-11-09T01:02:10Z')
+    await runner.tick()
+    // no skipped row, and the wake-up is still the task's
+    expect(statuses('mixed')).toEqual(['waiting'])
+    expect(runs('mixed')[0].fired).toEqual({ crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], wake: { at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', bySession: 's-gone' }, timeZone: 'UTC' })
+    expect(world.scheduleOf('mixed')?.at).toBe('2026-11-09T01:02:00.000Z')
+    expect(world.store.get('mixed')?.firedWake).toBeNull()
+    world.now += MIN
+    await runner.tick()
+    expect(statuses('mixed')).toEqual(['waiting'])
+    expect(world.edits).toEqual([])
+    world.room = true
+    world.now += 10 * MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('What fired: the wake-up set for Mon 9 Nov 01:02 (UTC), 11 min late; the repeating time every hour at :00 (cron "0 * * * *", UTC), due Mon 9 Nov 01:00, 13 min late.')
+    expect(world.started[0].text).toContain('The wake-up\'s reason: IMPORTANT follow-up.')
+    expect(world.scheduleOf('mixed')).toEqual(HOURLY)
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += 10 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(statuses('mixed')).toEqual(['finished'])
+  })
+
+  it('a wake-up joins a run by hand that waits for room, and its text says both', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:55:00Z')
+    expect(await runner.runNow(MAIN, world.tasks.get('once')!)).toMatchObject({ trigger: 'manual' })
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(statuses('once')).toEqual(['waiting'])
+    world.room = true
+    world.now += 5 * MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('What fired: the owner started it by hand (Run now); the wake-up set for Mon 9 Nov 10:00 (Asia/Makassar), 5 min late.')
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
+  it('a wake-up whose run fails is used up, as before: the failure is told, and it does not fire again', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.startProblem = 'the task has no project to run in'
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(statuses('once')).toEqual(['failed'])
+    expect(world.scheduleOf('once')).toBeNull()
+    world.startProblem = null
+    world.now += MIN
+    await runner.tick()
+    expect(world.started).toEqual([])
   })
 
   it('a: skips a time while another member\'s session works on the task elsewhere', async () => {

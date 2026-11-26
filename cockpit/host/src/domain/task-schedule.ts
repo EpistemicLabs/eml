@@ -155,7 +155,8 @@ export interface ScheduleDue {
  *   - A paused schedule and one past ends_at are never due; their cursor moves to now, so nothing from that time is
  *     made up afterwards.
  *
- * After a firing the caller keeps `cursor`, sets firedWake to the wake-up's at, and clears the wake-up on the task.
+ * The caller keeps `cursor` at once. The wake-up has fired only when a run that carries it got to a session: then the
+ * caller sets firedWake to its at and clears it on the task; until then it is due again at every pass.
  */
 export function dueOf(schedule: ScheduleFields | null | undefined, state: ScheduleState, now: number, lateLimitMs: number): ScheduleDue {
   const s = tidy(schedule)

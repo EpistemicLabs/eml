@@ -300,7 +300,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   pauses, resumes, ends or runs a task's schedule; the task is `task_id`, the caller's own (`target self`), or a new one
   made from name and prompt (`application/jobs.ts`, `domain/schedule-tool.ts`). What a time is for stands in the task's
   text. The cockpit of the task's owner fires it (`application/job-runner.ts`): a session of the task that works skips
-  a due time, one that waits on the owner's answer gets it as a message, a due wake-up continues the session that set
+  a due repeating time (a due wake-up is never skipped: it waits until that session stops, or joins a run that waits to start), one that waits on the owner's answer gets it as a message, a due wake-up continues the session that set
   it, anything else starts a new session; its prompt is built from the task, behind a line saying the cockpit sent it and
   what fired (`domain/firing-order.ts`, `domain/run-text.ts`). What only this machine needs sits in one record per
   task in `<home>/jobs.json` (`domain/job.ts`), with its last 100 runs: where the schedule stands, who hears of a run,
