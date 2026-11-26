@@ -914,7 +914,7 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     owned(id, { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', schedule }, ...props }, status)
   const scheduleOf = (w: ReturnType<typeof world>, id: string) => (w.byId.get(id)!.properties.delegation as { schedule?: Record<string, unknown> }).schedule
   /** A world whose engine records what the commands tell it. */
-  const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval'; listens?: string[]; held?: string[] } = {}) => {
+  const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project'; listens?: string[]; held?: string[] } = {}) => {
     const w = world(tasks)
     const told: string[] = []
     w.deps.schedule = {
@@ -996,11 +996,15 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
   })
 
   it('says why a run cannot start now, and keeps no command of it: the next click tries again', async () => {
-    for (const refusal of ['run_open', 'task_working', 'needs_approval'] as const) {
+    for (const refusal of ['run_open', 'task_working', 'needs_approval', 'no_project'] as const) {
       const w = withEngine([scheduled('daily')], { runNow: refusal })
       expect(await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal })
       expect(w.store.get('op-1')).toBeUndefined()
     }
+    // A run that cannot start is refused, not answered as started: the task has no project to run in.
+    const w = withEngine([scheduled('daily')], { runNow: 'no_project' })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' }))
+      .toEqual({ ok: false, refusal: 'no_project', message: 'The task has no project to run in: move it into a project first.' })
   })
 
   it('refuses each on a task without a schedule, a closed one, an unknown one, and another owner\'s', async () => {

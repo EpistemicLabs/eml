@@ -716,6 +716,11 @@ async function main() {
     const waiting = jobStore.runs(taskId).find((run) => run.status === 'waiting' || run.status === 'starting')
     return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
   }
+  // Where a new session of a task starts: the record's project, else the task's own; null when it has none.
+  const runProjectOf = (record: Pick<Job, 'projectId'>, task: { scope?: string | null }): string | null => {
+    const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
+    return record.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+  }
   // The engine: it fires the schedules of the tasks this member owns (application/job-runner.ts).
   const runnerSpaceOf = (space: BrainSpace): RunnerSpace => ({ key: space.main ? null : space.id, name: space.name, shared: space.shared })
   const brainOfRunnerSpace = (space: RunnerSpace) => taskBrain(spaces.resolve(space.key))
@@ -775,10 +780,10 @@ async function main() {
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     // A new session of the task: in the record's project, else the task's own, with the record's limits. It is linked
     // to the task and to the record (the ledger's jobId is the record's id), so limits, grants and run records hold.
+    projectOf: (record, task) => runProjectOf(record, task),
     startWorker: (record, task, sessionId, text) => {
       const space = spaces.resolve(record.spaceId)
-      const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
-      const projectId = record.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+      const projectId = runProjectOf(record, task)
       if (!projectId) return 'the task has no project to run in'
       const problem = ensureTaskProject(space, projectId)
       if (problem) return problem

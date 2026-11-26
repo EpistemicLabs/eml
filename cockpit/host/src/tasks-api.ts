@@ -1,7 +1,7 @@
 import type * as http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { TaskBoard } from './application/task-board.js'
-import { SCHEDULE_ON, type CommandInput, type CommandRefusal, type Submitted, type TaskCommands } from './application/task-commands.js'
+import { NO_PROJECT, SCHEDULE_ON, type CommandInput, type CommandRefusal, type Submitted, type TaskCommands } from './application/task-commands.js'
 import type { SplitBrief } from './application/split-brief.js'
 import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import type { SortSession } from './application/sort-session.js'
@@ -111,6 +111,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   run_open: 'Its last run is still going: wait for it to finish.',
   task_working: 'A session of the task is working right now: nothing is started beside it.',
   needs_approval: 'Its channel waits for your OK first.',
+  no_project: NO_PROJECT,
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
 }
@@ -148,6 +149,7 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
   scheduled: 409, not_scheduled: 409, unknown_time: 409, schedule_zone: 409, run_open: 409, task_working: 409, needs_approval: 409,
+  no_project: 422,
   no_brain: 503,
 }
 

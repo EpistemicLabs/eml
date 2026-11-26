@@ -59,7 +59,7 @@ export interface JobCaller {
 /** What the tool asks of the engine that fires the schedules (application/job-runner.ts). */
 export interface ScheduleEngine {
   /** One run of the task now; a word when it cannot start. */
-  runNow(spaceId: string | null, task: ToolTask): Promise<JobRun | 'run_open' | 'task_working' | 'needs_approval'>
+  runNow(spaceId: string | null, task: ToolTask): Promise<JobRun | 'run_open' | 'task_working' | 'needs_approval' | 'no_project'>
   /** The task's schedule was paused or resumed: the engine knows before its next read. */
   paused(taskId: string): void
   resumed(taskId: string): void
@@ -407,6 +407,7 @@ export class Jobs {
     if (run === 'needs_approval') return bad(`"${name}" waits for the user's OK on the task first`)
     if (run === 'run_open') return { status: 409, text: `"${name}" has a run still going; wait for it to finish.` }
     if (run === 'task_working') return { status: 409, text: `A session of "${name}" is working right now: nothing is started beside it.` }
+    if (run === 'no_project') return { status: 409, text: `"${name}" has no project to run in, so no session can start for it: move the task into a project first.` }
     return { status: 202, taskId: task.id, text: `Run ${run.number} of "${name}" starts as soon as there is room.` }
   }
 

@@ -47,6 +47,8 @@ class World {
   statuses = new Map<string, WorkerStatus>()
   started: Array<{ record: Job; task: RunnerTask; sessionId: string; text: string }> = []
   startProblem: string | null = null
+  /** Tasks without a project a new session could start in. */
+  noProject = new Set<string>()
   delivered: Array<{ sessionId: string; text: string }> = []
   deliveryOutcome: DeliveryOutcome = 'resumed'
   outcomes = new Map<string, DeliveryOutcome>()
@@ -128,6 +130,7 @@ class World {
         this.delivered.push({ sessionId, text })
         return this.outcomes.get(sessionId) ?? this.deliveryOutcome
       },
+      projectOf: (_record, task) => (this.noProject.has(task.id) ? null : 'eml'),
       startWorker: (record, task, sessionId, text) => {
         if (this.startProblem) return this.startProblem
         this.started.push({ record, task, sessionId, text })
@@ -991,6 +994,22 @@ describe('a run by hand', () => {
     world.task('mail', null)
     world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }], pendingApproval: true })
     expect(await runner.runNow(MAIN, task('mail'))).toBe('needs_approval')
+  })
+
+  it('is refused before it starts when a new session would be needed and the task has no project to run in', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.noProject.add('daily')
+    expect(await runner.runNow(MAIN, task())).toBe('no_project')
+    // nothing was written: no record made for it, no run that would fail
+    expect(world.store.get('daily')).toBeUndefined()
+    expect(world.store.runs('daily')).toEqual([])
+    // a session that waits on an answer continues: no new session, so no project is needed
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'go')
+    expect(await runner.runNow(MAIN, task())).toMatchObject({ trigger: 'manual' })
+    // with a project again it runs
+    world.task('other', WEEKDAYS_8)
+    expect(await runner.runNow(MAIN, task('other'))).toMatchObject({ trigger: 'manual' })
   })
 })
 

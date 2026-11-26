@@ -69,7 +69,7 @@ class World {
   other = new Brain('b')
   ended: string[] = []
   engine: string[] = []
-  runNow: JobRun | 'run_open' | 'task_working' | 'needs_approval' = { number: 1 } as JobRun
+  runNow: JobRun | 'run_open' | 'task_working' | 'needs_approval' | 'no_project' = { number: 1 } as JobRun
   moving = new Set<string>()
   changed = 0
   agent: string | null = 'atlas'
@@ -531,6 +531,8 @@ describe('run_now', () => {
     expect(await act({ action: 'run_now', job: 'Daily' })).toEqual({ status: 409, text: '"Daily" has a run still going; wait for it to finish.' })
     world.runNow = 'task_working'
     expect(await act({ action: 'run_now', job: 'Daily' })).toEqual({ status: 409, text: 'A session of "Daily" is working right now: nothing is started beside it.' })
+    world.runNow = 'no_project'
+    expect(await act({ action: 'run_now', job: 'Daily' })).toEqual({ status: 409, text: '"Daily" has no project to run in, so no session can start for it: move the task into a project first.' })
   })
 
   it('runs nothing on a task without a schedule or a channel, or on a closed one', async () => {

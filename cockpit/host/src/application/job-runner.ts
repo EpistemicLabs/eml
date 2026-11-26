@@ -120,6 +120,11 @@ export interface JobRunnerDeps {
    * task's own when it names none) and with the record's limits; returns why it could not, or null.
    */
   startWorker(record: Job, task: RunnerTask, sessionId: string, text: string): string | null
+  /**
+   * The project a new session of the task would start in (the record's, else the task's own); null: it has none, so
+   * no session can start. Run now asks before it answers. Without it nothing is known beforehand.
+   */
+  projectOf?(record: Job, task: RunnerTask): string | null
   /** Lent tools went back (their time is up, or the session reported done): the host takes them from the session. */
   onGrantEnd?(record: Job, tools: GrantTool[]): void
   /** Tell the user (notifications.ts): a run that needs them, a failure, a pause. */
@@ -155,7 +160,7 @@ const OPEN = new Set(['planned', 'active'])
 const nameOfTask = (task: RunnerTask): string => task.properties?.display_title ?? task.title ?? task.id
 
 /** What the user may be told when a run by hand cannot start. */
-export type RunNowRefusal = 'run_open' | 'task_working' | 'needs_approval'
+export type RunNowRefusal = 'run_open' | 'task_working' | 'needs_approval' | 'no_project'
 
 export class JobRunner {
   private timer: NodeJS.Timeout | null = null
@@ -220,6 +225,7 @@ export class JobRunner {
   /**
    * A run the owner started by hand (Run now), due at once. It follows the four-line order like a time: refused
    * while a session of the task works, and while the task's previous run is open. A paused schedule does not hold it.
+   * A run that would need a new session on a task without a project is refused here, not started to fail.
    */
   async runNow(space: RunnerSpace, task: RunnerTask): Promise<JobRun | RunNowRefusal> {
     const now = this.now()
@@ -227,7 +233,9 @@ export class JobRunner {
     if (record.pendingApproval) return 'needs_approval'
     if (this.deps.store.runs(task.id).some(isOpenRun)) return 'run_open'
     const facts = await this.factsOf(space, task, { times: true, wake: null, message: false }, new Set())
-    if (decideFiring(facts).kind === 'skip') return 'task_working'
+    const decision = decideFiring(facts)
+    if (decision.kind === 'skip') return 'task_working'
+    if (decision.kind === 'start' && this.deps.projectOf && this.deps.projectOf(record, task) === null) return 'no_project'
     if (!this.deps.store.get(task.id)) this.deps.store.put(record)
     this.facts.set(task.id, { name: nameOfTask(task), paused: scheduleOf(task)?.paused === true })
     const run = this.addRun(task.id, 'manual', now)

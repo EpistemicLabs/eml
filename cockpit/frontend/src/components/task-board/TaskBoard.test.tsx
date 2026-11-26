@@ -675,6 +675,16 @@ describe('the Unread fold', () => {
       expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
     });
 
+    it('a run that cannot start is said as a refusal, not as "Run started": the task has no project to run in', async () => {
+      serve(withRoutine(), { code: 'no_project', message: 'The task has no project to run in: move it into a project first.' });
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(within(await screen.findByRole('region', { name: 'Schedule' })).getByRole('button', { name: 'Run now' }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('The task has no project to run in: move it into a project first.'));
+      expect(status.textContent).not.toContain('Run started');
+    });
+
     it('the section\'s End schedule and close is the one End: it closes the task, with Undo', async () => {
       serve(withRoutine());
       mount();
