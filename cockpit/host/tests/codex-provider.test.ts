@@ -14,6 +14,7 @@ const BRAIN_TOKEN = 'eml_testprefix_testsecret'
 const HOOK_TOKEN = '0123456789abcdef'
 const MCP_TOKEN = 'f'.repeat(64)
 const MCP_URL = 'http://127.0.0.1:60001/mcp'
+const COCKPIT_MCP_URL = 'http://127.0.0.1:60001/mcp/cockpit'
 
 describe('config.toml tables', () => {
   it('replaces managed tables and leaves everything else as Codex wrote it', () => {
@@ -106,7 +107,7 @@ describe('Codex provider', () => {
     mkdirSync(codexHome, { recursive: true })
     writeFileSync(join(codexHome, 'config.toml'), `[mcp_servers.eml_brain.env]\nEML_API_URL = "http://old"\nEML_API_TOKEN = "${BRAIN_TOKEN}"\n`)
     provider.prepare({
-      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: HOOK_TOKEN, mcpUrl: MCP_URL,
+      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: HOOK_TOKEN, mcpUrl: MCP_URL, cockpitMcpUrl: COCKPIT_MCP_URL,
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
     })
   })
@@ -123,6 +124,17 @@ describe('Codex provider', () => {
     expect(config()).not.toContain('[mcp_servers.eml_brain.env]')
     expect(config()).not.toContain('env_vars')
     expect(config()).not.toContain(BRAIN_TOKEN)
+  })
+
+  it('registers the cockpit\'s own session tools the same way: the host\'s endpoint for terminal sessions, no token in the file', () => {
+    expect(config()).toContain([
+      '[mcp_servers.cockpit]',
+      `url = "${COCKPIT_MCP_URL}"`,
+      'env_http_headers = { "x-cockpit-mcp-token" = "COCKPIT_MCP_TOKEN", "x-eml-session" = "COCKPIT_SESSION_ID" }',
+      'default_tools_approval_mode = "approve"',
+      '',
+    ].join('\n'))
+    expect(config()).not.toContain(MCP_TOKEN)
   })
 
   it('writes hooks whose text does not change between boots or spaces', () => {
@@ -143,7 +155,7 @@ describe('Codex provider', () => {
     expect(first).not.toContain('--config')
     expect(JSON.parse(first).hooks.Stop[0].hooks[0]).toMatchObject({ async: true, command: expect.stringContaining('turn-hook.js') })
     provider.prepare({
-      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210', mcpUrl: MCP_URL,
+      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: 'fedcba9876543210', mcpUrl: MCP_URL, cockpitMcpUrl: COCKPIT_MCP_URL,
       writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
     })
     expect(read()).toBe(first)
@@ -238,7 +250,8 @@ describe('Codex provider', () => {
 
   it('maps hooks to turn signals under the id Codex reports', () => {
     const hook = (event: string) => provider.turnSignal({ session_id: 'their-id', hook_event_name: event })
-    expect(hook('UserPromptSubmit')).toEqual({ kind: 'turn', providerSessionId: 'their-id', state: 'working' })
+    // The user's prompt starts a new turn; a tool that ran does not.
+    expect(hook('UserPromptSubmit')).toEqual({ kind: 'turn', providerSessionId: 'their-id', state: 'working', prompt: true })
     // The reviewer answers first — waiting only once it had its time. Not in ask mode.
     expect(hook('PermissionRequest')).toEqual({ kind: 'turn', providerSessionId: 'their-id', state: 'waiting', settleMs: 12000 })
     provider.settings?.write({ permissionMode: 'ask' })
@@ -249,11 +262,12 @@ describe('Codex provider', () => {
     expect(hook('SessionStart')).toBeNull()
   })
 
-  it('runs in the terminal only: no chat, no end_turn tool, no messaging, each with its reason', () => {
+  it('runs in the terminal only, with the cockpit\'s tools from the host: no chat, nothing another session could send to, each with its reason', () => {
     expect(provider.capabilities).toEqual({
       chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
-      endTurnTool: { supported: false, reason: 'Codex sessions say how a turn ends in the text of their reply.' },
-      messaging: { supported: false, reason: 'Codex sessions have no session-to-session messaging.' },
+      endTurnTool: { supported: true },
+      messaging: { supported: false, reason: 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
+      terminalTools: { supported: true },
     })
   })
 

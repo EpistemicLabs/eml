@@ -263,6 +263,11 @@ describe('the texts', () => {
     expect(reminder(['call', 'next'])).toBe(reminder(['call']))
     expect(reminder(['next'], { tool: false })).toBe(`${reminder(['next'])} Without the end_turn tool, end your reply with the Handoff block instead.`)
     expect(reminder(['reply'], { tool: false })).toBe(reminder(['reply']))
+    // A session that gets the tool from an MCP server: the block is the way when the server did not connect.
+    const mcp = { mcpServer: 'cockpit' }
+    expect(reminder(['next'], { tool: mcp })).toBe(`${reminder(['next'])} If mcp__cockpit__end_turn is not in your tool list (the MCP server cockpit did not connect), end your reply with the Handoff block instead.`)
+    expect(reminder(['reply'], { tool: mcp })).toBe(reminder(['reply']))
+    expect(reminder(['next'], { tool: true })).toBe(reminder(['next']))
   })
 
   it('the tool answers with what it recorded, and always ends with the reply that comes after the call', () => {
@@ -345,6 +350,22 @@ describe('the texts', () => {
     expect(rules).toContain('Write no block for a turn that is plain conversation.')
     expect(rules).toContain('End your reply with this block when you stop')
     expect(rules).toContain('required unless who is the user, where it is not used')
+  })
+
+  it('a session that gets the tool from an MCP server reads both: the tool by its name there, and the block for when the server did not connect', () => {
+    const rules = turnEndRules({ owner: 'kim', agent: 'nova', tool: { mcpServer: 'cockpit' } })
+    const block = turnEndRules({ owner: 'kim', agent: 'nova', tool: false }).split('\n')
+    expect(rules.split('\n')).toEqual([
+      '## Ending a turn',
+      'The end_turn tool\'s description is the whole rule for ending a turn. The tool is mcp__cockpit__end_turn, from the MCP server cockpit.',
+      'If mcp__cockpit__end_turn is not in your tool list (the MCP server cockpit did not connect), end your reply with this block instead, when you stop and the stop changes who has to act or where the task stands. Write no block for a turn that is plain conversation. Leave out lines that are empty:',
+      // The template and the handles, word for word as a session without the tool reads them.
+      ...block.slice(2),
+    ])
+    expect(rules).toContain('### Handoff')
+    expect(rules.endsWith('Handles for who: the user is kim, you are nova.')).toBe(true)
+    // The block is named only after the tool, as the way without it.
+    expect(rules.split('is not in your tool list')[0]).not.toMatch(/handoff|block/i)
   })
 
   it('the check wakes the session with what it waited for', () => {

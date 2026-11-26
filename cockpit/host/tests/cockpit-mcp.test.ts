@@ -43,7 +43,8 @@ let terminalTurns: import('../src/application/terminal-turns.js').TerminalTurns
 let SESSION_TOOLS: typeof import('../src/domain/session-tools.js')['SESSION_TOOLS']
 let CHAT_HAS_ITS_OWN: string
 /** A hook of a session, as POST /api/hook applies it (http.ts): `state` is what the provider reads from the payload. */
-let hook: (sessionId: string, state: 'working' | 'done', reply?: string) => void
+let hook: (sessionId: string, state: 'working' | 'done', reply?: string, prompt?: true) => void
+let notServed: typeof import('../src/cockpit-mcp.js')['notServed']
 
 const scheduled: Array<[string, Record<string, unknown>]> = []
 const delivered: MessageRequest[] = []
@@ -55,7 +56,8 @@ const listen = (server: http.Server) =>
   new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)))
 
 beforeAll(async () => {
-  const { createCockpitMcpHandler, COCKPIT_MCP_PATH, CHAT_HAS_ITS_OWN: chatReason } = await import('../src/cockpit-mcp.js')
+  const { createCockpitMcpHandler, COCKPIT_MCP_PATH, CHAT_HAS_ITS_OWN: chatReason, notServed: notServedRule } = await import('../src/cockpit-mcp.js')
+  notServed = notServedRule
   const { TerminalTurns, terminalTurnEnded } = await import('../src/application/terminal-turns.js')
   const { applySessionHook } = await import('../src/application/apply-session-hook.js')
   const { SessionLedger } = await import('../src/session-ledger.js')
@@ -90,15 +92,17 @@ beforeAll(async () => {
   const turns = new TurnTracker()
   const provider = {
     adoptsSessionId: false,
-    turnSignal: (payload: Record<string, unknown>) => ({ kind: 'turn', providerSessionId: payload.id, state: payload.state }),
+    turnSignal: (payload: Record<string, unknown>) => ({ kind: 'turn', providerSessionId: payload.id, state: payload.state, ...(payload.prompt ? { prompt: true } : {}) }),
     lastReply: (payload: Record<string, unknown>) => String(payload.reply ?? ''),
   }
   const providers = { forSession: () => provider, default: () => provider } as never
-  hook = (sessionId, state, reply = '') => applySessionHook({
+  hook = (sessionId, state, reply = '', prompt) => applySessionHook({
     providers, ledger, turns,
+    // As index.ts hands it to the hook route: the user's prompt starts a new turn.
+    turnStarted: (id) => terminalTurns.forget(id),
     // As index.ts hands it to the hook route: the Stop hook takes what the session said.
     turnDone: (id, payload) => terminalTurnEnded({ turns: terminalTurns, ledger, turnEnded: (...args: Ended) => { ended.push(args) } }, id, provider.lastReply(payload)),
-  }, sessionId, { id: `provider-${sessionId}`, state, reply })
+  }, sessionId, { id: `provider-${sessionId}`, state, reply, prompt })
 })
 
 afterAll(async () => {
@@ -169,6 +173,18 @@ describe('cockpit MCP endpoint access', () => {
     expect(res.status).toBe(409)
     expect((await res.json()).error.message).toBe(CHAT_HAS_ITS_OWN)
     expect(CHAT_HAS_ITS_OWN).toBe('The cockpit MCP endpoint serves sessions that run in a terminal. This session runs in chat and has the cockpit\'s tools built in: call those instead.')
+  })
+
+  it('serves a terminal session only when its provider\'s terminal sessions get the tools here, and refuses another with that provider\'s reason', () => {
+    const provider = (terminalTools: { supported: true } | { supported: false; reason: string }) => ({ capabilities: { terminalTools } as never })
+    const served = provider({ supported: true })
+    const builtIn = provider({ supported: false, reason: 'Its sessions end a turn in the text of their reply.' })
+    expect(notServed({ runtime: 'terminal' }, served)).toBeNull()
+    expect(notServed({ runtime: 'terminal' }, builtIn)).toBe('Its sessions end a turn in the text of their reply.')
+    // The runtime comes first: a chat session has the tools built in, whatever its provider's terminal sessions get.
+    expect(notServed({ runtime: 'sdk' }, served)).toBe(CHAT_HAS_ITS_OWN)
+    expect(notServed({ runtime: 'sdk' }, builtIn)).toBe(CHAT_HAS_ITS_OWN)
+    expect(notServed(undefined, served)).toBe(CHAT_HAS_ITS_OWN)
   })
 
   it('refuses a session that moved to chat on the MCP session it opened in the terminal', async () => {
@@ -310,6 +326,22 @@ describe('end_turn from a terminal session', () => {
     terminalTurns.forget('term-1')
     hook('term-1', 'done', 'Late.')
     expect(ended).toEqual([['term-1', 'Late.']])
+    await client.close()
+  })
+
+  it('forgets what a session said in a turn that was interrupted: the user\'s next prompt starts a new turn', async () => {
+    const { client } = await connect('term-1')
+    await call(client, 'end_turn', QUESTION)
+    // A tool that ran after the call belongs to the same turn: the call stands.
+    hook('term-1', 'working')
+    hook('term-1', 'done', 'Asked.')
+    expect(ended[0][2]).toMatchObject({ call: QUESTION, said: true })
+    ended.length = 0
+    // Interrupted after the call: no Stop. The next turn makes no call and must not end with the old one.
+    await call(client, 'end_turn', QUESTION)
+    hook('term-1', 'working', '', true)
+    hook('term-1', 'done', 'Something else.')
+    expect(ended).toEqual([['term-1', 'Something else.']])
     await client.close()
   })
 })

@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import type { AgentProvider } from '../domain/agent-provider.js'
-import type { TurnContext } from '../domain/turn-end.js'
+import type { EndTurnAccess, TurnContext } from '../domain/turn-end.js'
 import type { SessionLedger } from '../session-ledger.js'
 
 /**
@@ -20,11 +20,23 @@ const NO_AGENT = 'agent'
 const HANDLES_MS = 5 * 60_000
 
 /**
- * Whether a session can call end_turn: it runs in the chat, and its provider's
- * chat sessions have the tool (domain/agent-provider.ts, capability endTurnTool).
+ * Whether a session can call end_turn: its provider's sessions have the tool
+ * (domain/agent-provider.ts, capability endTurnTool), and it runs in the chat,
+ * or in a terminal of a provider whose terminal sessions get the cockpit's
+ * tools (capability terminalTools).
  */
 export function hasEndTurnTool(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>): boolean {
-  return session?.runtime === 'sdk' && provider.capabilities.endTurnTool.supported
+  const { endTurnTool, terminalTools } = provider.capabilities
+  return endTurnTool.supported && (session?.runtime === 'sdk' || (session?.runtime === 'terminal' && terminalTools.supported))
+}
+
+/**
+ * How a session has end_turn, for the texts that tell it (domain/turn-end.ts): a chat session has it built in,
+ * a terminal session gets it from the MCP server of this name, which may not have connected.
+ */
+export function endTurnAccess(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>, mcpServer: string): EndTurnAccess {
+  if (!hasEndTurnTool(session, provider)) return false
+  return session?.runtime === 'terminal' ? { mcpServer } : true
 }
 
 /**

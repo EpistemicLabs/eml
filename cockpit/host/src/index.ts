@@ -43,13 +43,13 @@ import { TimeTracker } from './time-tracking.js'
 import { brainForLocalToken } from './brain-info.js'
 import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './brain-space.js'
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
-import { COCKPIT_MCP_PATH, createCockpitMcpHandler } from './cockpit-mcp.js'
+import { COCKPIT_MCP_PATH, COCKPIT_MCP_SERVER, createCockpitMcpHandler, notServed } from './cockpit-mcp.js'
 import type { RecordEndTurnDeps } from './application/record-end-turn.js'
 import { TerminalTurns, terminalTurnEnded } from './application/terminal-turns.js'
 import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
-import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
+import { createTurnContexts, endTurnAccess } from './application/turn-context.js'
 import { createTurnCheck } from './application/turn-check.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
@@ -392,8 +392,9 @@ async function main() {
     return 'refused' in agent ? null : sessionClient(space, agent)
   }
   const owner = config?.handle ?? 'user'
-  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts).
-  const endTurnTool = (sessionId: string) => hasEndTurnTool(ledger.get(sessionId), providers.forSession(sessionId))
+  // Whether a session has the end_turn tool is its provider's to say (domain/agent-provider.ts): built in for a chat
+  // session, from the cockpit MCP endpoint for a terminal session of a provider with terminalTools.
+  const endTurnTool = (sessionId: string) => endTurnAccess(ledger.get(sessionId), providers.forSession(sessionId), COCKPIT_MCP_SERVER)
   // A task the cockpit creates for a spawned worker is the agent's alone; the runner is held off it until the worker is on it.
   const workerHolds = createWorkerTaskHolds(Date.now, () => spawns.list())
   const sessionTask = createSessionTask({
@@ -1071,10 +1072,11 @@ async function main() {
   })
 
   const brainMcp = createBrainMcpHandler({ spaces, agents, ledger, providers, serverVersion: ABOUT.version })
-  // The cockpit's own session tools for terminal sessions (cockpit-mcp.ts). No provider's sessions are configured
-  // to call it yet; which providers' sessions it serves will be theirs to say (`served`, by default: any terminal session).
+  // The cockpit's own session tools for terminal sessions (cockpit-mcp.ts). Which providers' terminal sessions it
+  // serves is theirs to say (capability terminalTools): the others are refused with the provider's reason.
   const cockpitMcp = createCockpitMcpHandler({
     spaces, ledger, terminalTurns,
+    served: (sessionId) => notServed(ledger.get(sessionId), providers.forSession(sessionId)),
     turnOf: (sessionId) => turnContexts.of(sessionId),
     callTime,
     turnCheck: settleTurnCheck,
@@ -1091,7 +1093,7 @@ async function main() {
   })
 
   const hostDeps: HostDeps =
-    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, startOnTask, migration: taskStateMigration },
       jobs: { jobs, store: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
         sessionInfo: (sessionId) => {

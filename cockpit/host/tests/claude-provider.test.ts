@@ -26,7 +26,7 @@ describe('Claude Code provider', () => {
   beforeAll(async () => {
     const { createClaudeProvider } = await import('../src/infrastructure/providers/claude/index.js')
     provider = createClaudeProvider()
-    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', mcpUrl: 'http://127.0.0.1:60001/mcp', writableDirs: [] })
+    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', mcpUrl: 'http://127.0.0.1:60001/mcp', cockpitMcpUrl: 'http://127.0.0.1:60001/mcp/cockpit', writableDirs: [] })
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -132,7 +132,7 @@ describe('Claude Code provider', () => {
 
   it('maps hooks to turn signals', () => {
     const hook = (extra: Record<string, unknown>) => provider.turnSignal({ session_id: 's1', ...extra })
-    expect(hook({ hook_event_name: 'UserPromptSubmit' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'working' })
+    expect(hook({ hook_event_name: 'UserPromptSubmit' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'working', prompt: true })
     expect(hook({ hook_event_name: 'Stop' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'done' })
     expect(hook({ hook_event_name: 'Notification', notification_type: 'permission_prompt' }))
       .toEqual({ kind: 'turn', providerSessionId: 's1', state: 'waiting' })
@@ -142,8 +142,11 @@ describe('Claude Code provider', () => {
     expect(provider.turnSignal({ hook_event_name: 'Stop' })).toBeNull()
   })
 
-  it('has the chat, the end_turn tool and messaging', () => {
-    expect(provider.capabilities).toEqual({ chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true } })
+  it('has the chat, the end_turn tool and messaging; its terminal sessions get no tools from the host', () => {
+    expect(provider.capabilities).toEqual({
+      chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true },
+      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+    })
   })
 
   it('reads the last reply from a Stop hook: its field, else the transcript', () => {

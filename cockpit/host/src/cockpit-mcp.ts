@@ -7,10 +7,11 @@ import { endTurn, listSessions, schedule, sendMessage, type ToolAnswer } from '.
 import type { TerminalTurns } from './application/terminal-turns.js'
 import { header, mcpStatus, refuse, sessionCaller } from './brain-mcp.js'
 import type { BrainSpaces } from './brain-space.js'
+import type { AgentProvider } from './domain/agent-provider.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import type { DirectoryEntry } from './domain/session-directory.js'
 import { SESSION_TOOLS } from './domain/session-tools.js'
-import { MCP_SESSION_HEADER, MCP_TOKEN_HEADER } from './infrastructure/providers/shared.js'
+import { COCKPIT_MCP_SERVER, MCP_SESSION_HEADER, MCP_TOKEN_HEADER } from './infrastructure/providers/shared.js'
 import type { SessionLedger } from './session-ledger.js'
 
 /**
@@ -23,7 +24,8 @@ import type { SessionLedger } from './session-ledger.js'
  * Who may call is what the brain endpoint asks (brain-mcp.ts sessionCaller):
  * this machine only, the space's MCP token, a session the ledger knows in that
  * space. The space needs no agent bound: no brain is reached from here. On top,
- * the session has to be one the endpoint serves (`served`).
+ * the session has to be one the endpoint serves (`served`, notServed): a
+ * terminal session of a provider whose terminal sessions get the tools here.
  *
  * Every tool acts as the calling session and no other: the MCP session is
  * bound to it on initialize (McpHttpEndpoint), and no tool takes a session to
@@ -37,11 +39,21 @@ import type { SessionLedger } from './session-ledger.js'
 
 export const COCKPIT_MCP_PATH = '/mcp/cockpit'
 
-/** The MCP server's name, as a chat session's in-process server has it: the tools read mcp__cockpit__<tool> either way. */
-export const COCKPIT_MCP_SERVER = 'cockpit'
+export { COCKPIT_MCP_SERVER }
 
 /** Why a chat session is refused, and what it does instead. */
 export const CHAT_HAS_ITS_OWN = 'The cockpit MCP endpoint serves sessions that run in a terminal. This session runs in chat and has the cockpit\'s tools built in: call those instead.'
+
+/**
+ * Why the endpoint does not serve a session, or null: one that runs in chat has the tools built in, and a terminal
+ * session is served only when its provider's terminal sessions get the tools here (capability terminalTools);
+ * another provider's is refused with that provider's reason.
+ */
+export function notServed(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>): string | null {
+  if (session?.runtime !== 'terminal') return CHAT_HAS_ITS_OWN
+  const { terminalTools } = provider.capabilities
+  return terminalTools.supported ? null : terminalTools.reason
+}
 
 export interface CockpitMcpDeps {
   spaces: Pick<BrainSpaces, 'byMcpToken'>

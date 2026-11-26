@@ -88,9 +88,13 @@ export function listAgentsHookCommand(): HookCommand {
 /** Longer than the hook's own wait for the host. */
 export const LIST_AGENTS_HOOK_OPTIONS = { timeout: 10 }
 
-/** The task system's SessionStart hook (task-hook.ts); URL and token come from the session's env. */
-export function taskHookCommand(): HookCommand {
-  return { program: hookNode(), args: [HOOK_TASK_JS] }
+/**
+ * The task system's SessionStart hook (task-hook.ts); URL and token come from the session's env.
+ * `plain`: print the context as it is, for an agent CLI that takes a hook's stdout as context
+ * (Qwen Code); without it the hook prints the hook JSON envelope.
+ */
+export function taskHookCommand(plain = false): HookCommand {
+  return { program: hookNode(), args: [HOOK_TASK_JS, ...(plain ? ['--plain'] : [])] }
 }
 
 /** Longer than the hook's own wait for the host, which may create the task first. */
@@ -107,6 +111,19 @@ export const MCP_TOKEN_HEADER = 'x-cockpit-mcp-token'
 
 /** The header naming the cockpit session on the brain MCP endpoint; the agent CLI fills it from the session's env. */
 export const MCP_SESSION_HEADER = 'x-eml-session'
+
+/**
+ * The headers of the host's MCP endpoints and the session environment variable each one's value comes from, for an
+ * agent CLI with one MCP config for every space (Codex, Qwen Code): no token is written, the session's env picks the space.
+ */
+export const MCP_ENV_HEADERS: Readonly<Record<string, string>> = { [MCP_TOKEN_HEADER]: MCP_TOKEN_ENV, [MCP_SESSION_HEADER]: 'COCKPIT_SESSION_ID' }
+
+/**
+ * The name of the MCP server with the cockpit's own session tools: a chat session's in-process server
+ * (claude/sdk-runtime.ts) and the host's endpoint for terminal sessions (cockpit-mcp.ts) go by it, so the
+ * tools read mcp__cockpit__<tool> either way.
+ */
+export const COCKPIT_MCP_SERVER = 'cockpit'
 
 /**
  * The brain MCP server entry for Claude Code's mcp.json (one per brain space):
@@ -227,13 +244,15 @@ export function installManagedSkills(sourceDirs: string[], configDir: string): v
 
 /**
  * What a provider whose sessions run in the terminal only can do: no chat
- * view, so no end_turn tool, and no address another session could send to.
+ * view; the cockpit's tools, end_turn among them, from the host's MCP endpoint
+ * (COCKPIT_MCP_SERVER); no address another session could send to.
  */
 export function terminalOnly(label: string): ProviderCapabilities {
   return {
     // The chat's refusal for such a session, word for word (chat-bridge.ts init).
     chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
-    endTurnTool: { supported: false, reason: `${label} sessions say how a turn ends in the text of their reply.` },
-    messaging: { supported: false, reason: `${label} sessions have no session-to-session messaging.` },
+    endTurnTool: { supported: true },
+    messaging: { supported: false, reason: `${label} sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.` },
+    terminalTools: { supported: true },
   }
 }
