@@ -320,14 +320,16 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
   skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
   cockpit token in the host.
-- **A schedule's controls:** pause, resume, run now, remove one repeating time and End schedule are commands on the
-  task (`/api/v1/tasks/<id>/…`, `tasks-api.ts`); the user's own decisions for this machine (their OK for new channel
-  addresses, send or draft, the Limited switch, lent tools) and the task's last runs are under
-  `/api/v1/tasks/<id>/record` (`application/task-record.ts`). What a run needs from the user shows in the review
-  section on the run's session (Needs you, Check this). A task that could not run, or whose schedule the cockpit paused
-  after three failures, has no session saying so, so its newest run session (else whoever set it up) shows it as
-  "Needs you". Everything that tells the user outside the cockpit goes through a `Notifier` (`notifications.ts`),
-  which web push implements.
+- **A schedule's controls:** there is no Jobs view. A task's panel has a **Schedule** section: its repeating times,
+  each with Remove, the wake-up with its reason, the next run, one Pause or Resume, Run now and End for the whole
+  schedule, the user's own decisions for this machine (their OK for new channel addresses, send or draft, the Limited
+  switch, lent tools) and the last runs (a missed one stands out there). Pause, resume, run now, remove one repeating
+  time and End schedule are commands on the task (`/api/v1/tasks/<id>/…`, `tasks-api.ts`); the user's decisions and
+  the task's last runs are under `/api/v1/tasks/<id>/record` (`application/task-record.ts`). What a run needs from the
+  user shows in the review section on the run's session (Needs you, Check this). A task that could not run, or whose
+  schedule the cockpit paused after three failures, has no session saying so, so its newest run session (else whoever
+  set it up) shows it as "Needs you". Everything that tells the user outside the cockpit goes through a `Notifier`
+  (`notifications.ts`), which web push implements.
 - **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
   added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
   subscribed device with the session's name, its project and what it said; a tap opens that session. While the user
@@ -343,7 +345,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   schedule is never closed by a run: its owner ends the schedule and closes it. Nothing fires on a closed task.
 - **Mail:** the schedule tool's `mail: { domains, addresses }` puts a mail channel on the task's record: the channel
   bridge then wakes the task when such mail arrives. Replies are drafts, and it reacts only once the user gave their OK
-  on the task; adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
+  on the task (Approve in the task panel's Schedule section); adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
   A session a firing starts carries the task's id in its ledger entry (`jobId`, the record's id), so its channel tools
   act for that task on every resume. A shared space's tasks get no mail channel.
 - **Limited tasks and grants:** a task's sessions start with its maker's tools; the user can mark the task's record

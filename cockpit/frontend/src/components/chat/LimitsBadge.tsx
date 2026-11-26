@@ -64,7 +64,7 @@ export function LimitsBadge({ sessionId }: { sessionId: string }) {
         <p className="px-2 pt-1 pb-1.5 text-caption text-muted-foreground">
           {limits.liftable
             ? `The session restarts; the conversation stays.${running ? ' The running turn stops.' : ''}`
-            : 'This job answers messages from outside. Lend it tools in the Jobs view.'}
+            : 'This job answers messages from outside. Lend it tools in its task\'s panel, under Schedule.'}
         </p>
       )}
     >

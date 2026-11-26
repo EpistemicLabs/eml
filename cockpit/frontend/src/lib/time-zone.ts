@@ -170,3 +170,13 @@ export function inputStamp(at: number, zone: string = userTimeZone()): { date: s
   const c = wallClock(at, zone);
   return { date: `${c.year}-${pad(c.month)}-${pad(c.day)}`, time: `${pad(c.hour)}:${pad(c.minute)}` };
 }
+
+/** "Mon 9 Nov 08:00", with the year when it is not this one; in the user's time zone. */
+export function formatWhen(iso: string): string {
+  const zone = userTimeZone();
+  const at = Date.parse(iso);
+  const sameYear = wallClock(at, zone).year === wallClock(Date.now(), zone).year;
+  return formatInZone(at, {
+    weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }, zone).replace(/,/g, '');
+}
