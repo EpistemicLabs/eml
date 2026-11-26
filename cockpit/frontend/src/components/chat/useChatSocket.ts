@@ -96,7 +96,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null; name?: string; url?: string } & Partial<SessionLimits>;
+        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null; name?: string; url?: string; takesCode?: boolean } & Partial<SessionLimits>;
         if (frame.type === 'joined') {
           joinedRef.current = true;
           clearChatStart(sessionId);
@@ -119,7 +119,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         }
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
         else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
-        else if (frame.type === 'tool_server_sign_in' && frame.name && frame.url) setToolServerSignIn(sessionId, frame.name, frame.url);
+        else if (frame.type === 'tool_server_sign_in' && frame.name && frame.url) setToolServerSignIn(sessionId, frame.name, { url: frame.url, takesCode: frame.takesCode === true });
         else if (frame.type === 'limits') setLimits(sessionId, { deniedTools: frame.deniedTools ?? [], mcpServers: frame.mcpServers ?? null, job: frame.job ?? null, liftable: frame.liftable === true });
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
@@ -186,6 +186,8 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),
     changeToolServer: useCallback((name: string, action: ToolServerAction) => sendFrame({ type: 'tool_server', name, action }), [sendFrame]),
+    // What the user pasted back from a sign-in's page: a secret, sent once and kept nowhere.
+    finishToolServerSignIn: useCallback((name: string, code: string) => sendFrame({ type: 'tool_server', name, action: 'sign_in_code', code }), [sendFrame]),
     takeOver: useCallback(() => sendInitRef.current?.(false), []),
     reconnect: useCallback(() => setAttempt((n) => n + 1), []),
   };

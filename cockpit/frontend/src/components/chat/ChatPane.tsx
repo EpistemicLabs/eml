@@ -574,7 +574,7 @@ export function ChatPane({
   composer?: React.ReactNode;
 }) {
   const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError, toolServerSignIns } = useChatSession(sessionId);
-  const { start, send, interrupt, answer, setMode, setModel, setEffort, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
+  const { start, send, interrupt, answer, setMode, setModel, setEffort, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer, finishToolServerSignIn } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -801,6 +801,7 @@ export function ChatPane({
             }}
             onAsk={askToolServers}
             onChange={changeToolServer}
+            onFinishSignIn={finishToolServerSignIn}
             onRestart={restart}
             onClose={() => setServersOpen(false)}
           />
