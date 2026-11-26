@@ -31,7 +31,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *     was starting, never reached a session: by it the job has not run, and the run is closed, so the wake-up fires
  *     in its place, once. A repeating job's run of that kind is carried, naming its due time as a firing of its cron,
  *     only when the job's time is on the task: of a job left out (below) it is settled as history under the job's id.
- *     A carried run starts afresh (its hour to start in counts from the migration, its attempts from 0); one of a
+ *     A carried run starts afresh (it waits, also one that was starting; its hour to start in counts from the
+ *     migration, its attempts from 0); one of a
  *     repeating time due longer ago than the engine runs one late (JOB_LIMITS.lateLimitMs) is missed, not carried;
  *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
  *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
@@ -481,9 +482,12 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       }])
       return []
     }
-    // Carried, it starts afresh: its hour to start in counts from now (the engine counts from the later of its due
-    // time and its createdAt), and its attempts begin again.
-    const fresh: JobRun = { ...r, createdAt: iso(now), attempts: 0, nextAttemptAt: null }
+    // Carried, it starts afresh: it waits (one that was starting never reached a session, and the host's recovery of
+    // starting runs is over by the time the migration runs, so only a waiting run is ever started), its hour to start
+    // in counts from now (the engine counts from the later of its due time and its createdAt), and its attempts
+    // begin again.
+    const { newSession: _never, saidWake: _unsaid, ...open } = r
+    const fresh: JobRun = { ...open, status: 'waiting', sessionId: null, createdAt: iso(now), attempts: 0, nextAttemptAt: null }
     return [cron && r.trigger === 'schedule' && !r.fired ? { ...fresh, fired: { crons: [{ cron, dueAt: r.dueAt }], ...timeZone } } : fresh]
   }))
   const closedRuns = (j: JobV1) => (settled.get(j.id) ?? []).filter((r) => r.number > 0).length

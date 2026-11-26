@@ -481,6 +481,23 @@ describe('deriving what is due', () => {
       expect(planned.runs).toMatchObject([{ id: 'run-brief', status: 'waiting', attempts: 0, nextAttemptAt: null, createdAt: '2026-11-09T08:30:00.000Z' }])
     })
 
+    it('that was starting (the host\'s recovery ran before the migration): it is carried as waiting, starts on the next tick, and the task\'s next time fires', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const starting: JobRun = { ...waiting('brief', '2026-11-09T06:30:00.000Z', 1), status: 'starting', sessionId: 'never-reached', newSession: true }
+      const planned = migrate([v1('brief', '30 14 * * 1-5', ZONE)], { brief: [starting] }, now)
+      expect(planned.runs).toMatchObject([{ id: 'run-brief', status: 'waiting', attempts: 0, sessionId: null, createdAt: '2026-11-09T08:30:00.000Z' }])
+      await runner.tick()
+      expect(world.started).toHaveLength(1)
+      expect(runs('brief')).toMatchObject([{ id: 'run-brief', status: 'started' }])
+      world.statuses.set(world.started[0].sessionId, 'done')
+      world.now = Date.parse('2026-11-09T08:31:00Z')
+      await runner.tick()
+      world.now = Date.parse('2026-11-10T06:30:30Z')
+      await runner.tick()
+      expect(world.started).toHaveLength(2)
+      expect(runs('brief').at(-1)).toMatchObject({ status: 'started', dueAt: '2026-11-10T06:30:00.000Z' })
+    })
+
     it('of a repeating time due longer ago than the late limit: it is missed, kept as history, and not started', async () => {
       const now = Date.parse('2026-11-09T08:30:00Z')
       const planned = migrate([v1('brief', '30 8 * * 1-5', ZONE)], { brief: [waiting('brief', '2026-11-09T00:30:00.000Z', 3)] }, now)
