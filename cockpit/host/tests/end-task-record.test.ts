@@ -40,6 +40,13 @@ describe('ending what this cockpit keeps for a task\'s schedule', () => {
     expect(store.get('t1')?.triggers).toEqual([])
   })
 
+  it('takes an end after so many runs off: it belonged to the repeating times that ended', () => {
+    const store = new JobStore(null)
+    store.put({ ...newRecord({ id: 't1', spaceId: null }, '2026-11-01T00:00:00.000Z'), limited: true, end: { afterRuns: 3 }, runCount: 1 })
+    endTaskRecord(store, 't1', NOW)
+    expect(store.get('t1')).toMatchObject({ limited: true, end: null, runCount: 1 })
+  })
+
   it('a task without a record has nothing to end', () => {
     const store = new JobStore(null)
     endTaskRecord(store, 'none', NOW)

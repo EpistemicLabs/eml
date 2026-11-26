@@ -348,7 +348,7 @@ export class Jobs {
       schedule = written.schedule
     }
     const after = withSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, schedule)
-    const { record, waits } = this.keep(caller, after, settings, mail, changesRecord || cron !== null || at !== null)
+    const { record, waits } = this.keep(caller, after, settings, mail, changesRecord || cron !== null || at !== null, cron !== null)
     this.deps.changed?.(caller.spaceId)
     const notes = [...(goal && !setGoal ? [`The task keeps its goal ("${task.properties?.goal}").`] : []), ...(waits ? [APPROVAL_NOTE] : [])]
     return { status: 200, taskId: task.id, schedule, ...(record ? { record } : {}), text: [`Updated the schedule of "${nameOfTask(task)}".`, this.describe(after), ...notes].join('\n') }
@@ -474,9 +474,10 @@ export class Jobs {
   /**
    * Bring the task's record in line with the call. Called after the schedule is on the task: a record with nothing
    * that keeps it (a schedule, a channel, a limit) goes at the engine's next read. `make`: the task gets a record
-   * when it has none; without it only one that exists is changed.
+   * when it has none; without it only one that exists is changed. `cronsReplaced`: the call replaced the task's
+   * repeating times, so an end after so many runs that was set for the old ones is off unless the call sets a new one.
    */
-  private keep(caller: JobCaller, task: ToolTask, settings: Awaited<ReturnType<Jobs['settings']>>, mail: ChannelTrigger | null | undefined, make: boolean): { record?: Job; waits: boolean } {
+  private keep(caller: JobCaller, task: ToolTask, settings: Awaited<ReturnType<Jobs['settings']>>, mail: ChannelTrigger | null | undefined, make: boolean, cronsReplaced = false): { record?: Job; waits: boolean } {
     const before = this.deps.store.get(task.id)
     if (!before && !make) return { waits: false }
     const at = iso(this.now())
@@ -491,7 +492,7 @@ export class Jobs {
       ...(settings.provider ? { provider: settings.provider as never } : {}),
       ...(settings.notify ? { notify: settings.notify } : {}),
       // An end after so many runs counts from now: the runs the task had before are not part of it.
-      ...(settings.maxRuns !== undefined ? { end: settings.maxRuns === null ? null : { afterRuns: base.runCount + settings.maxRuns } } : {}),
+      ...(settings.maxRuns !== undefined ? { end: settings.maxRuns === null ? null : { afterRuns: base.runCount + settings.maxRuns } } : cronsReplaced ? { end: null } : {}),
     }
     let waits = false
     if (mail !== undefined) {

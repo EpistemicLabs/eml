@@ -308,6 +308,23 @@ describe('create: the settings', () => {
     expect((await act({ action: 'update', job: task.id, max_runs: null })).record?.end).toBeNull()
   })
 
+  it('an end after so many runs goes with the repeating times it was set for: replaced or ended without a new one, it is off', async () => {
+    const task = world.main.add('Old routine', { crons: [WEEKDAYS_8], time_zone: ZONE })
+    world.store.put({ ...newRecord({ id: task.id, spaceId: null }, '2026-11-01T00:00:00.000Z'), runCount: 7, end: { afterRuns: 9 }, limited: true })
+    // another setting leaves it
+    expect((await act({ action: 'update', job: task.id, notify: 'always' })).record?.end).toEqual({ afterRuns: 9 })
+    // a new cron replaces the list: the count is over, unless the call brings a new one
+    expect((await act({ action: 'update', job: task.id, cron: '0 9 * * 1-5', max_runs: 4 })).record?.end).toEqual({ afterRuns: 11 })
+    expect((await act({ action: 'update', job: task.id, cron: '0 10 * * 1-5' })).record?.end).toBeNull()
+    for (const action of ['delete', 'finish']) {
+      world.store.put({ ...world.store.get(task.id)!, end: { afterRuns: 9 } })
+      await act({ action: 'update', job: task.id, cron: WEEKDAYS_8, max_runs: 2 })
+      await act({ action, job: task.id })
+      // the record stays (limited): a schedule set later is not ended by the old count
+      expect(world.store.get(task.id)).toMatchObject({ limited: true, end: null })
+    }
+  })
+
   it('starts the sessions of a task without a project of its own where its maker works', async () => {
     const task = world.main.add('Loose task', null, { scope: 'global' })
     expect((await create({ task_id: task.id, cron: WEEKDAYS_8 })).record?.projectId).toBe('bp-eml')

@@ -276,6 +276,8 @@ export interface TaskCommandsDeps {
     paused(taskId: string): void
     /** The owner resumed the schedule: it goes on from now, and a pause after failures is over. */
     resumed(taskId: string): void
+    /** The owner removed the task's last repeating time: an end after so many runs goes with it (application/end-task-record.ts). */
+    cronsEnded?(taskId: string): void
   }
   /** A space's board changed. */
   changed(spaceId: string): void
@@ -613,6 +615,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const written = await editTaskSchedule(brain, task.id, (schedule) => removeCron(schedule, cron), {
         text: `The owner removed the repeating time "${cron}".${crons.length === 1 && !scheduleOf(task)?.at ? ' It was its only time: the task has no schedule any more and stays open.' : ''}`,
       })
+      if (!written.schedule?.crons?.length) deps.schedule?.cronsEnded?.(task.id)
       // No schedule is left: what this cockpit kept for it goes by the rule for every record (the next pass).
       if (written.schedule === null) deps.log(`[commands] task ${task.id.slice(0, 8)}: its last repeating time was removed, its schedule has ended`)
       return done()

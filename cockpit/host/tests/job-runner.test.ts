@@ -387,12 +387,99 @@ describe('deriving what is due', () => {
     world.statuses.set(world.started[1].sessionId, 'done')
     world.now += MIN
     await runner.tick()
-    expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its schedule ended after 2 runs, as it was set to.' }])
+    expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its repeating times ended after the runs they were set to have.' }])
     expect(world.tasks.get('twice')!.status).toBe('active')
     // without a schedule, a channel or an open run the record goes with the next pass
     await runner.tick()
     expect(world.store.get('twice')).toBeUndefined()
     expect(world.started).toHaveLength(2)
+  })
+
+  it('max runs ends the repeating times only: a wake-up the last run set stays, and the count is over', async () => {
+    world.task('routine', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 } })
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    // the run's session ends its turn with a time: the task has a wake-up for tomorrow
+    const wake = { at: '2026-11-10T01:00:00.000Z', why: 'Check whether the customer answered.', by_session: world.started[0].sessionId }
+    world.setSchedule('routine', { ...HOURLY, ...wake })
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toEqual({ ...wake, time_zone: 'UTC' })
+    expect(world.edits.at(-1)?.text).toBe('Its repeating times ended after the runs they were set to have.')
+    expect(world.store.get('routine')?.end).toBeNull()
+    // no repeating time fires any more; the wake-up fires at its time
+    world.now = Date.parse('2026-11-09T05:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    world.now = Date.parse('2026-11-10T01:00:10Z')
+    await runner.tick()
+    expect(statuses('routine')).toEqual(['finished', 'started'])
+    expect(world.delivered.at(-1)?.text ?? world.started.at(-1)?.text).toContain('Check whether the customer answered.')
+  })
+
+  it('max runs: while the last run is open no repeating time fires, and they go off the task once it is over', async () => {
+    world.task('routine', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 } })
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    world.states.set(world.started[0].sessionId, 'working')
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toEqual(HOURLY)
+    expect(statuses('routine')).toEqual(['started'])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toBeNull()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('a count left on a record whose task has no repeating time never ends a schedule set later', async () => {
+    // the record stays for its tool profile; its repeating times were ended some other way
+    world.task('follow', { at: '2026-11-10T00:00:00.000Z', why: 'Follow up.' })
+    world.store.put({ ...newRecord({ id: 'follow', spaceId: null }, '2026-11-01T00:00:00.000Z'), toolProfile: { deniedTools: ['Bash'], mcpServers: null }, end: { afterRuns: 3 }, runCount: 3 })
+    await runner.tick()
+    expect(world.scheduleOf('follow')).toEqual({ at: '2026-11-10T00:00:00.000Z', why: 'Follow up.' })
+    expect(world.edits).toEqual([])
+    expect(world.store.get('follow')?.end).toBeNull()
+    // and with no schedule at all
+    world.task('bare', null)
+    world.store.put({ ...newRecord({ id: 'bare', spaceId: null }, '2026-11-01T00:00:00.000Z'), limited: true, end: { afterRuns: 3 }, runCount: 3 })
+    await runner.tick()
+    expect(world.store.get('bare')).toMatchObject({ limited: true, end: null })
+  })
+
+  it('counts only the runs a repeating time fired toward max runs: not Run now, not a message, not a wake-up', async () => {
+    world.task('routine', { ...HOURLY, at: '2026-11-09T00:30:00.000Z' })
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 }, triggers: [{ type: 'mail', match: [] }] })
+    const finish = async () => { world.statuses.set(world.started.at(-1)!.sessionId, 'done'); world.now += MIN; await runner.tick() }
+    world.now = Date.parse('2026-11-09T00:30:10Z')
+    await runner.tick() // the wake-up
+    await finish()
+    expect(await runner.runNow(MAIN, world.tasks.get('routine')!)).toMatchObject({ trigger: 'manual' })
+    await runner.tick()
+    await finish()
+    // a message the bridge has to bring again moves nothing
+    world.room = false
+    expect(await runner.wake(world.store.get('routine')!, 'mail', '1 new message', 'key-1')).toBe('retry')
+    world.room = true
+    expect(await runner.wake(world.store.get('routine')!, 'mail', '1 new message', 'key-1')).toBe('delivered')
+    await finish()
+    expect(world.started).toHaveLength(3)
+    // one run of a repeating time is still left
+    const record = world.store.get('routine')!
+    expect(record.end!.afterRuns - record.runCount).toBe(1)
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(4)
+    await finish()
+    expect(world.scheduleOf('routine')).toBeNull()
   })
 })
 

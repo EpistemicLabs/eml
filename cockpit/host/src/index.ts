@@ -86,7 +86,7 @@ import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration } from './application/job-migration.js'
-import { endTaskRecord } from './application/end-task-record.js'
+import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { hasSchedule } from './domain/task-schedule.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
@@ -1005,6 +1005,7 @@ async function main() {
       heldAfterFailures: (taskId) => (jobStore.get(taskId)?.pausedReason ?? null) !== null,
       paused: (taskId) => jobRunner.paused(taskId),
       resumed: (taskId) => jobRunner.resumed(taskId),
+      cronsEnded: (taskId) => endRunCount(jobStore, taskId, Date.now()),
     },
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),

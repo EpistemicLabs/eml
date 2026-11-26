@@ -10,7 +10,7 @@ import { decideFiring, type Fired, type FiringFacts } from '../domain/firing-ord
 import { firedText, startedBy } from '../domain/run-text.js'
 import { formatDuration } from '../domain/schedule.js'
 import { runsHere } from '../domain/task-owner.js'
-import { clearWake, dueOf, hasSchedule, sameInstant, scheduleIsOff, scheduleOf, setPaused } from '../domain/task-schedule.js'
+import { clearWake, dueOf, hasSchedule, sameInstant, scheduleIsOff, scheduleOf, setCrons, setPaused } from '../domain/task-schedule.js'
 import { waitKind } from '../domain/task-turn.js'
 import { waitsOf } from '../domain/task-waits.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
@@ -156,6 +156,11 @@ const QUEUED_LIMIT_MS = 24 * 60 * 60_000
 const KEY_MEMORY_MS = 7 * 24 * 60 * 60_000
 const NO_ROOM = 'no room: too little free memory, or the running cap with every session busy'
 const OPEN = new Set(['planned', 'active'])
+/** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
+const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
+
+/** The run counts toward an end after so many runs (the record's `end`): a repeating time fired it. */
+const countsToEnd = (run: Pick<JobRun, 'trigger' | 'fired'>): boolean => run.trigger === 'schedule' && (run.fired?.crons?.length ?? 0) > 0
 
 const nameOfTask = (task: RunnerTask): string => task.properties?.display_title ?? task.title ?? task.id
 
@@ -288,7 +293,7 @@ export class JobRunner {
       return 'delivered'
     }
     if (result === 'gone') return 'refused'
-    if (result === 'retry') this.deps.store.dropRun(run)
+    if (result === 'retry') this.drop(run)
     return 'retry'
   }
 
@@ -392,8 +397,9 @@ export class JobRunner {
       this.deps.log(`[jobs] ${record.id.slice(0, 8)}: its record is removed (${standing === 'closed' ? 'the task is closed' : 'no schedule, no channel, no open run'})`)
       return
     }
-    // Without a schedule nothing was seen: one set later counts from then, and its wake-up fires whatever fired before.
-    if (current.cursor !== null || current.firedWake !== null) store.put({ ...current, cursor: null, firedWake: null, updatedAt: new Date(now).toISOString() })
+    // Without a schedule nothing was seen: one set later counts from then, its wake-up fires whatever fired before,
+    // and an end after so many runs went with the repeating times it was set for.
+    if (current.cursor !== null || current.firedWake !== null || current.end !== null) store.put({ ...current, cursor: null, firedWake: null, end: null, updatedAt: new Date(now).toISOString() })
   }
 
   /** What is due on one task this cockpit fires: missed times are recorded, and at most one firing becomes a run or is skipped. */
@@ -423,16 +429,28 @@ export class JobRunner {
       return
     }
     const openRuns = store.runs(task.id).filter(isOpenRun)
+    // An end after so many runs belongs to the repeating times: without one it counts nothing, and is off.
+    if (record.end && !schedule.crons?.length) record = { ...record, end: null }
+    // What is still to fire: the schedule, or with the runs of its repeating times used up, its wake-up alone.
+    let timed: typeof schedule | null = schedule
     if (record.end && record.runCount >= record.end.afterRuns) {
-      save()
-      // It has had its runs: the schedule ends on the task once the last one is over. The task stays open.
+      // The repeating times have had their runs: they go off the task once the last run is over, and the count with
+      // them. The wake-up is not theirs: it stays, and with it the schedule. The task stays open.
       if (openRuns.length === 0) {
-        await this.deps.editSchedule(space, task.id, () => null, `Its schedule ended after ${record.runCount} run${record.runCount === 1 ? '' : 's'}, as it was set to.`)
-        this.deps.log(`[jobs] ${name}: its schedule ended after ${record.runCount} runs`)
+        save()
+        await this.deps.editSchedule(space, task.id, (current) => setCrons(current, []), RUNS_USED_UP)
+        const kept = store.get(task.id)
+        if (kept) store.put({ ...kept, end: null, updatedAt: at })
+        this.deps.log(`[jobs] ${name}: its repeating times ended after the runs they were set to have`)
+        return
       }
-      return
+      timed = setCrons(schedule, [])
+      if (!timed) {
+        save()
+        return
+      }
     }
-    const due = dueOf(schedule, record, now, JOB_LIMITS.lateLimitMs)
+    const due = dueOf(timed, record, now, JOB_LIMITS.lateLimitMs)
     if (!sameInstant(due.cursor, record.cursor)) record = { ...record, cursor: due.cursor }
     const timeZone = schedule.time_zone
     for (const missed of due.missed) {
@@ -522,9 +540,19 @@ export class JobRunner {
       status: 'waiting', attempts: 0, nextAttemptAt: null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: null,
       ...extra,
     }
-    this.deps.store.put({ ...record, runCount: record.runCount + 1 })
+    // An end after so many runs counts the runs a repeating time fired: any other run moves the end along with it.
+    const end = record.end && !countsToEnd(run) ? { afterRuns: record.end.afterRuns + 1 } : record.end
+    this.deps.store.put({ ...record, runCount: record.runCount + 1, end })
     this.deps.store.addRun(run)
     return run
+  }
+
+  /** A run that never happened after all: its number is given back, and with it what it moved an end after so many runs by. */
+  private drop(run: JobRun): void {
+    const before = this.deps.store.get(run.jobId)
+    this.deps.store.dropRun(run)
+    const after = this.deps.store.get(run.jobId)
+    if (before && after?.end && after.runCount < before.runCount && !countsToEnd(run)) this.deps.store.put({ ...after, end: { afterRuns: after.end.afterRuns - 1 } })
   }
 
   /** A time that never ran: missed or skipped, kept in the history without a run number. */

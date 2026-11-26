@@ -923,6 +923,7 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
       heldAfterFailures: (taskId) => (engine.held ?? []).includes(taskId),
       paused: (taskId) => told.push(`paused:${taskId}`),
       resumed: (taskId) => told.push(`resumed:${taskId}`),
+      cronsEnded: (taskId) => told.push(`crons-ended:${taskId}`),
     }
     return { ...w, commands: createTaskCommands(w.deps), told }
   }
@@ -963,6 +964,7 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     expect(await w.commands.submit({ opId: 'op-x', kind: 'remove_time', spaceId: 'main', taskId: 'daily', cron: ' 0 18 * * 1-5 ' })).toMatchObject({ ok: true, command: { state: 'applied' } })
     expect(scheduleOf(w, 'daily')).toEqual({ crons: ['0 8 * * 1-5'], at: '2026-11-20T08:00:00.000Z', why: 'Check.', time_zone: 'Europe/Berlin', paused: true })
     expect(w.posts[0].body.text).toBe('The owner removed the repeating time "0 18 * * 1-5".')
+    expect(w.told).toEqual([])
   })
 
   it('removing the only time ends the schedule and leaves the task open; with a wake-up left the schedule stays', async () => {
@@ -974,6 +976,8 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     await w.commands.submit({ opId: 'op-2', kind: 'remove_time', spaceId: 'main', taskId: 'wake', cron: '0 8 * * *' })
     expect(scheduleOf(w, 'wake')).toEqual({ at: '2026-11-20T08:00:00.000Z' })
     expect(w.posts[1].body.text).toBe('The owner removed the repeating time "0 8 * * *".')
+    // the last repeating time went both times: an end after so many runs goes with it
+    expect(w.told).toEqual(['crons-ended:one', 'crons-ended:wake'])
   })
 
   it('refuses to remove a time the schedule does not have, or none', async () => {

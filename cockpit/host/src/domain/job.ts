@@ -66,7 +66,13 @@ export interface Job {
   toolProfile: ToolProfile | null
   /** Per channel: send freely or draft for review (the bridge enforces it). */
   reply: Partial<Record<ReplyChannel, ReplyMode>>
-  /** It ends on its own after so many runs, counted here (max_runs). A time to end at is the schedule's ends_at. */
+  /**
+   * Its repeating times end on their own after so many runs (max_runs): once runCount reaches afterRuns they go off
+   * the task, and this with them; the wake-up is not theirs and stays. Only a run a repeating time fired counts: any
+   * other run (Run now, a channel message, the wake-up) raises afterRuns with runCount, so afterRuns - runCount is
+   * always the runs left. It goes whenever the repeating times are ended or replaced without a new count. A time to
+   * end at is the schedule's ends_at.
+   */
   end: { afterRuns: number } | null
   notify: JobNotify
   /** Why the cockpit paused the task's schedule (failures in a row); null when it did not. The pause itself is on the task. */
