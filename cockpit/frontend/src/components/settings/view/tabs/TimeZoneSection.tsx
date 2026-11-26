@@ -29,7 +29,7 @@ export default function TimeZoneSection() {
   const description = problem
     ?? (differs
       ? `This browser runs in ${browser} (${utcOffset(browser)}). Times stay in ${saved} until you switch.`
-      : 'Agents read the times you name in it, and every time in the cockpit shows in it, on every device. Scheduled jobs that repeat keep the zone they were made in.');
+      : 'Agents read the times you name in it, and every time in the cockpit shows in it, on every device. A task\'s repeating times keep the zone they were set in.');
 
   return (
     <SettingsSection title="Time">

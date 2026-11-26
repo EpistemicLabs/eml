@@ -56,7 +56,7 @@ export function sessionNotice(facts: SessionFacts): { input: NotificationInput; 
 }
 
 const WORD: Record<NotificationKind, string> = {
-  question: 'Needs you', failed: 'Needs you', review: 'Check this', done: 'New result', missed: 'Missed run', paused: 'Job paused',
+  question: 'Needs you', failed: 'Needs you', review: 'Check this', done: 'New result', missed: 'Missed run', paused: 'Schedule paused',
 }
 
 /** iOS shows about four lines on the lock screen; a push message also has to stay well under 4 KB. */
@@ -67,7 +67,7 @@ const BODY_LIMIT = 180
  * show it without the service worker, other browsers hand it to the worker.
  */
 export function pushMessage(input: NotificationInput, origin: string): { web_push: 8030; notification: { title: string; body: string; tag: string; navigate: string } } {
-  const name = input.title.trim() || (input.sessionId ? 'Session' : 'Job')
+  const name = input.title.trim() || (input.sessionId ? 'Session' : 'Task')
   const title = `${WORD[input.kind]} · ${name}${input.project ? ` (${input.project})` : ''}`
   const body = input.body.length > BODY_LIMIT ? `${input.body.slice(0, BODY_LIMIT - 1)}…` : input.body
   const tag = input.sessionId ? `session:${input.sessionId}` : input.jobId ? `job:${input.jobId}` : 'cockpit'

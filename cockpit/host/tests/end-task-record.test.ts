@@ -22,7 +22,7 @@ describe('ending what this cockpit keeps for a task\'s schedule', () => {
     endTaskRecord(store, 't1', NOW, (_record, tools) => taken.push(tools))
     expect(store.get('t1')).toMatchObject({ id: 't1', triggers: [], grants: [], runCount: 2, updatedAt: '2026-11-26T10:00:00.000Z' })
     expect(store.get('t1')).not.toHaveProperty('pendingApproval')
-    expect(store.runs('t1').map((r) => [r.id, r.status, r.note])).toEqual([['r1', 'skipped', 'its job was ended before it started'], ['r2', 'started', null]])
+    expect(store.runs('t1').map((r) => [r.id, r.status, r.note])).toEqual([['r1', 'skipped', 'its schedule was ended before it started'], ['r2', 'started', null]])
     // only the tools still lent go back
     expect(taken).toEqual([['chrome']])
     // again: nothing more to do

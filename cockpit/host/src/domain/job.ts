@@ -237,7 +237,7 @@ export function recordKeeping(
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'
 
 /** The note of a run that was due when its schedule was ended and so never started. */
-export const ENDED_BEFORE_START = 'its job was ended before it started'
+export const ENDED_BEFORE_START = 'its schedule was ended before it started'
 /** The note of a run that was due when its task was closed some other way and so never started. */
 export const CLOSED_BEFORE_START = 'its task was closed before it started'
 /** The note of a time that came due while a session of the task was in a turn (the four-line order, line a). */

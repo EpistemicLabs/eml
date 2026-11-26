@@ -42,7 +42,7 @@ export function LimitsBadge({ sessionId }: { sessionId: string }) {
       header={(
         <div className="px-2 pt-1.5 pb-1 text-ui">
           {/* Plain text: tool, server and job names come from configuration. */}
-          <p className="pb-1 text-muted-foreground">{limits.job ? 'This job session can\'t use:' : 'This session can\'t use:'}</p>
+          <p className="pb-1 text-muted-foreground">{limits.job ? 'This session of a task\'s schedule can\'t use:' : 'This session can\'t use:'}</p>
           <ul className="flex flex-col gap-1">
             {limits.deniedTools.map((tool) => (
               <li key={tool} className="flex items-center gap-1.5">
@@ -64,7 +64,7 @@ export function LimitsBadge({ sessionId }: { sessionId: string }) {
         <p className="px-2 pt-1 pb-1.5 text-caption text-muted-foreground">
           {limits.liftable
             ? `The session restarts; the conversation stays.${running ? ' The running turn stops.' : ''}`
-            : 'This job answers messages from outside. Lend it tools in its task\'s panel, under Schedule.'}
+            : 'It runs for a task that answers messages from outside. Lend it tools in its task\'s panel, under Schedule.'}
         </p>
       )}
     >

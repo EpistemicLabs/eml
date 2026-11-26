@@ -506,7 +506,7 @@ describe('pause, resume, delete and finish', () => {
     world.store.addRun({ id: 'r1', jobId: task.id, trigger: 'schedule', number: 1, dueAt: '2026-11-09T00:00:00.000Z', createdAt: '2026-11-09T00:00:00.000Z', status: 'waiting', attempts: 0, nextAttemptAt: null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: null })
     expect((await act({ action: 'finish', job: task.id })).status).toBe(200)
     expect(world.store.get(task.id)).toMatchObject({ triggers: [], grants: [], limited: true })
-    expect(world.store.runs(task.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started' })
+    expect(world.store.runs(task.id)[0]).toMatchObject({ status: 'skipped', note: 'its schedule was ended before it started' })
     expect(world.ended).toEqual([`${task.id}:chrome`])
   })
 
