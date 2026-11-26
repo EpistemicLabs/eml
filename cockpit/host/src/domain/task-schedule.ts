@@ -92,6 +92,18 @@ const isOff = (schedule: ScheduleFields, now: number): boolean => {
   return Boolean(schedule.paused) || (ends !== null && now > ends)
 }
 
+/** The schedule fires nothing at `now`: there is none, it is paused, or its end has passed. */
+export function scheduleIsOff(schedule: ScheduleFields | null | undefined, now: number): boolean {
+  const s = tidy(schedule)
+  return !s || isOff(s, now)
+}
+
+/** Two times name the same instant, whatever their ISO form; false when either is no time. */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  const at = time(a)
+  return at !== null && at === time(b)
+}
+
 /**
  * When the schedule fires next after `now` (ISO): the earliest of its wake-up and each repeating time's next one.
  * Null: no schedule, paused, ended (nothing at or before ends_at is left), or no time ahead. A wake-up that has passed
@@ -169,6 +181,24 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
     ? { dueAt: iso(Math.min(...(wake ? [Date.parse(wake.at)] : []), ...due.map((d) => Date.parse(d.dueAt)))), wake, crons: due }
     : null
   return { firing, missed, cursor: moved ? iso(now) : iso(cursor) }
+}
+
+/** What this cockpit knows of a task's schedule beside the task: its record's state, and a run of it that waits to start. */
+export interface ScheduleFacts extends ScheduleState {
+  /** The due time of a run that waits to start (no room yet, a busy session); null or absent: none. */
+  waitingRunDueAt?: string | null
+}
+
+/**
+ * When the task is started next for its schedule, as this cockpit knows it (ISO), or null when nothing is coming: a
+ * run that waits to start (its due time), else a time that is due now and not fired yet (the wake-up, a repeating
+ * time after the cursor), else the schedule's next time ahead. What holds the task runner off a task, what the
+ * next-step check counts as a next trigger, and what the board shows as the next run. A time already due lies in the
+ * past.
+ */
+export function runComingAt(schedule: ScheduleFields | null | undefined, facts: ScheduleFacts, now: number, lateLimitMs: number): string | null {
+  if (facts.waitingRunDueAt) return facts.waitingRunDueAt
+  return dueOf(schedule, facts, now, lateLimitMs).firing?.dueAt ?? nextRunOfSchedule(schedule, now)
 }
 
 /**

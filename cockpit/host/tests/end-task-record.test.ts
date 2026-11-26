@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { endTaskRecord } from '../src/application/end-task-record.js'
 import { JobStore } from '../src/job-store.js'
-import { isHeld, newRecord, type JobRun } from '../src/domain/job.js'
+import { CLOSED_BEFORE_START, isHeld, newRecord, type JobRun } from '../src/domain/job.js'
 
 const NOW = Date.parse('2026-11-26T10:00:00.000Z')
 const run = (id: string, status: JobRun['status']): JobRun => ({
@@ -29,6 +29,15 @@ describe('ending what this cockpit keeps for a task\'s schedule', () => {
     endTaskRecord(store, 't1', NOW + 1000, (_record, tools) => taken.push(tools))
     expect(taken).toHaveLength(1)
     expect(store.get('t1')?.updatedAt).toBe('2026-11-26T10:00:00.000Z')
+  })
+
+  it('says why a waiting run never started when the task was closed some other way', () => {
+    const store = new JobStore(null)
+    store.put({ ...newRecord({ id: 't1', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
+    store.addRun(run('r1', 'waiting'))
+    endTaskRecord(store, 't1', NOW, undefined, CLOSED_BEFORE_START)
+    expect(store.runs('t1').map((r) => [r.status, r.note])).toEqual([['skipped', 'its task was closed before it started']])
+    expect(store.get('t1')?.triggers).toEqual([])
   })
 
   it('a task without a record has nothing to end', () => {

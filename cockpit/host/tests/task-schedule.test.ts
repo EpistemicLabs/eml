@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  addCron, clearWake, cronRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, sameSchedule, scheduleOf, ScheduleError, scheduleText,
-  setCrons, setEndsAt, setPaused, setWake, withSchedule,
+  addCron, clearWake, cronRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, runComingAt, sameInstant, sameSchedule, scheduleIsOff, scheduleOf, ScheduleError,
+  scheduleText, setCrons, setEndsAt, setPaused, setWake, withSchedule,
 } from '../src/domain/task-schedule.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
 
@@ -229,5 +229,61 @@ describe('a schedule in a delegation and in words', () => {
   it('reads as one line', () => {
     expect(scheduleText({ crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], at: '2026-11-27T02:00:00.000Z', time_zone: 'Asia/Makassar', paused: true })).toBe('0 13 * * 1-5; 0 18,22 * * 1-5 (Asia/Makassar), wake-up 2026-11-27T02:00:00.000Z, paused')
     expect(scheduleText(null)).toBe('none')
+  })
+})
+
+describe('a schedule that fires nothing now', () => {
+  it('is none, a paused one, or one whose end has passed; one that still has its end ahead is on', () => {
+    expect(scheduleIsOff(null, NOW)).toBe(true)
+    expect(scheduleIsOff({}, NOW)).toBe(true)
+    expect(scheduleIsOff({ ...daily, paused: true }, NOW)).toBe(true)
+    expect(scheduleIsOff({ ...daily, ends_at: '2026-11-25T09:59:59.000Z' }, NOW)).toBe(true)
+    expect(scheduleIsOff({ ...daily, ends_at: '2026-11-25T10:00:00.000Z' }, NOW)).toBe(false)
+    expect(scheduleIsOff(daily, NOW)).toBe(false)
+    expect(scheduleIsOff({ at: '2026-11-20T10:00:00.000Z' }, NOW)).toBe(false)
+  })
+})
+
+describe('two times naming the same instant', () => {
+  it('are the same whatever their ISO form; no time is the same as nothing', () => {
+    expect(sameInstant('2026-11-25T10:00:00.000Z', '2026-11-25T10:00:00Z')).toBe(true)
+    expect(sameInstant('2026-11-25T10:00:00.000Z', '2026-11-25T18:00:00+08:00')).toBe(true)
+    expect(sameInstant('2026-11-25T10:00:00.000Z', '2026-11-25T10:00:01.000Z')).toBe(false)
+    expect(sameInstant(null, null)).toBe(false)
+    expect(sameInstant('2026-11-25T10:00:00.000Z', undefined)).toBe(false)
+    expect(sameInstant('not a time', 'not a time')).toBe(false)
+  })
+})
+
+describe('when a task is started next for its schedule, as this cockpit knows it', () => {
+  it('is the schedule\'s next time ahead when nothing is due', () => {
+    expect(runComingAt(daily, { cursor: '2026-11-25T09:00:00.000Z' }, NOW, LATE)).toBe('2026-11-26T08:00:00.000Z')
+    expect(runComingAt({ at: '2026-11-25T12:00:00.000Z' }, {}, NOW, LATE)).toBe('2026-11-25T12:00:00.000Z')
+  })
+
+  it('is the time that is due and not fired yet: a wake-up that has passed, a repeating time after the cursor', () => {
+    expect(runComingAt({ at: '2026-11-25T09:30:00.000Z' }, {}, NOW, LATE)).toBe('2026-11-25T09:30:00.000Z')
+    expect(runComingAt(daily, { cursor: '2026-11-25T07:00:00.000Z' }, NOW, LATE)).toBe('2026-11-25T08:00:00.000Z')
+    // the earliest of what is due
+    expect(runComingAt({ ...daily, at: '2026-11-25T07:30:00.000Z' }, { cursor: '2026-11-25T07:00:00.000Z' }, NOW, LATE)).toBe('2026-11-25T07:30:00.000Z')
+  })
+
+  it('is not a wake-up this cockpit fired already, nor a repeating time it missed', () => {
+    expect(runComingAt({ at: '2026-11-25T09:30:00.000Z' }, { firedWake: '2026-11-25T09:30:00.000Z' }, NOW, LATE)).toBeNull()
+    expect(runComingAt({ ...daily, at: '2026-11-25T09:30:00.000Z' }, { firedWake: '2026-11-25T09:30:00.000Z', cursor: '2026-11-25T09:00:00.000Z' }, NOW, LATE)).toBe('2026-11-26T08:00:00.000Z')
+    // due more than the late limit ago: missed, so the next one counts
+    expect(runComingAt(daily, { cursor: '2026-11-24T00:00:00.000Z' }, NOW, LATE)).toBe('2026-11-26T08:00:00.000Z')
+  })
+
+  it('is the due time of a run that waits to start, before anything else, also without a schedule', () => {
+    expect(runComingAt(daily, { cursor: '2026-11-25T09:00:00.000Z', waitingRunDueAt: '2026-11-25T08:00:00.000Z' }, NOW, LATE)).toBe('2026-11-25T08:00:00.000Z')
+    expect(runComingAt(null, { waitingRunDueAt: '2026-11-25T09:59:00.000Z' }, NOW, LATE)).toBe('2026-11-25T09:59:00.000Z')
+  })
+
+  it('is nothing for a paused schedule, one past its end, and none at all', () => {
+    expect(runComingAt({ ...daily, paused: true }, { cursor: '2026-11-25T07:00:00.000Z' }, NOW, LATE)).toBeNull()
+    expect(runComingAt({ at: '2026-11-25T09:30:00.000Z', paused: true }, {}, NOW, LATE)).toBeNull()
+    expect(runComingAt({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, {}, NOW, LATE)).toBeNull()
+    expect(runComingAt(null, {}, NOW, LATE)).toBeNull()
   })
 })

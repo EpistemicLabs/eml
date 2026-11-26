@@ -17,8 +17,9 @@ import type { ToolProfile } from './tool-profile.js'
  *   - the channel triggers (mail, Slack, WhatsApp) the bridge wakes the task for.
  *
  * A record is made when the host first sees a schedule on a task it fires, and when the schedule tool or the user
- * sets one of those settings. It goes when the task has no schedule, no channel trigger and no open run. Each wake is
- * a run (JobRun), kept as the task's history under the record's id.
+ * sets one of those settings. It goes when the task has no schedule this cockpit fires, no channel trigger and no open
+ * run (recordKeeping below, which also says what stays: a limit set on it). Each wake is a run (JobRun), kept as the
+ * task's history under the record's id; it goes with the record.
  */
 
 /** A channel trigger (the bridge's; not fired by the scheduler). `match` is the bridge's to read. */
@@ -116,7 +117,7 @@ export type RunStatus =
   | 'failed'
   /** Due while the cockpit was down, too long ago to still run. */
   | 'missed'
-  /** Due while the previous run still worked. */
+  /** Due while a session of the task was working, or while its previous run had not started; or its task closed before it started. */
   | 'skipped'
 
 export interface JobRun {
@@ -140,10 +141,22 @@ export interface JobRun {
   outcome: WorkerStatus | null
   /** Why it failed, was skipped or missed, or waits. */
   note: string | null
+  /** Its session was started for this run (a new one); absent or false: a session that existed got it as a message. */
+  newSession?: boolean
   /** A channel event's key; the same key never wakes the job twice. */
   idempotencyKey?: string
   /** What a channel event says (counts, never content); the woken session reads it after the header. */
   message?: string
+  /** For a run the schedule fired: the times that came due, so the run's text names them whenever it starts. */
+  fired?: RunFired
+}
+
+/** What of a task's schedule one firing names (domain/task-schedule.ts dueOf): the wake-up and every repeating time due. */
+export interface RunFired {
+  wake?: { at: string; why: string | null; bySession: string | null }
+  crons?: Array<{ cron: string; dueAt: string }>
+  /** The zone the schedule's times are read in; absent when it names none. */
+  timeZone?: string
 }
 
 /** Limits on what sessions may schedule. */
@@ -195,8 +208,40 @@ export function mailKeys(job: { triggers: ReadonlyArray<{ type: string; match?: 
   return keys
 }
 
+/** Where a record's task stands for this cockpit: it fires its schedule, it is open without one it fires, or it is closed (or gone). */
+export type TaskStanding = 'fires' | 'open' | 'closed'
+
+/**
+ * What a pass does with a task's record (application/job-runner.ts).
+ *
+ *   - `stopListening`: the task is closed, so nothing wakes it any more: its channel triggers, lent tools and a
+ *     pending approval go, and a run that waits to start is skipped (application/end-task-record.ts).
+ *   - `remove`: the record goes. For an open task that is when it has no schedule this cockpit fires, no channel
+ *     trigger and no open run, and holds no limit the user or its maker set: a limited record and one with a tool
+ *     profile stay while the task is open, so a schedule set later starts no session with more than was allowed.
+ *     For a closed task it goes once no run of it is open (a waiting one is skipped first).
+ */
+export function recordKeeping(
+  record: Pick<Job, 'triggers' | 'grants' | 'pendingApproval' | 'limited' | 'toolProfile'>, standing: TaskStanding, runs: readonly JobRun[],
+): { stopListening: boolean; remove: boolean } {
+  if (standing === 'fires') return { stopListening: false, remove: false }
+  if (standing === 'closed') {
+    const listens = record.triggers.length > 0 || (record.grants?.length ?? 0) > 0 || record.pendingApproval === true
+    // A waiting run is skipped with the listening; one a session has goes on and keeps the record until it ends.
+    return { stopListening: listens || runs.some((run) => run.status === 'waiting'), remove: !runs.some((run) => run.status === 'starting' || run.status === 'started') }
+  }
+  const limits = record.limited === true || record.toolProfile !== null
+  return { stopListening: false, remove: record.triggers.length === 0 && !limits && !runs.some(isOpenRun) }
+}
+
 /** A run that has not come to an end: the next one waits for it. */
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'
 
-/** The note of a run that was due when its job was ended and so never started. */
+/** The note of a run that was due when its schedule was ended and so never started. */
 export const ENDED_BEFORE_START = 'its job was ended before it started'
+/** The note of a run that was due when its task was closed some other way and so never started. */
+export const CLOSED_BEFORE_START = 'its task was closed before it started'
+/** The note of a time that came due while a session of the task was in a turn (the four-line order, line a). */
+export const SKIPPED_WORKING = 'a session of the task was working'
+/** The note of a time that came due while the task's previous run still waited to start. */
+export const SKIPPED_NOT_STARTED = 'the previous run had not started yet'

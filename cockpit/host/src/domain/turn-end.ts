@@ -426,7 +426,7 @@ export const CHECKPOINT_STOP = {
 /** Sent before the cockpit stops a session nobody has used for a while. */
 export const BEFORE_IDLE_STOP = `The cockpit is about to stop this session because nobody has used it for a while. Call ${END_TURN_TOOL} now, so the task shows where it stands, and reply in one line. ${NO_TOOL} The session stops after this reply.`
 
-/** The half sentence a scheduled run's header ends "nobody may be watching: …" with (domain/job.ts runHeader). */
+/** The half sentence the line of a run for a task's schedule ends "Nobody may be watching: …" with (domain/run-text.ts firedText). */
 export const JOB_HEADER_STATUS = `end your turn with ${END_TURN_TOOL} if you have it`
 
 /** The name of the one-time job a call's when creates. */
