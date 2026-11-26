@@ -308,7 +308,8 @@ export class JobRunner {
   /**
    * A channel message for the task (the bridge's /v1 wake). It is never skipped: it goes to a session by the
    * four-line order now, or the bridge is told to try again. Only a session linked to the record gets it, an
-   * existing one or the one started for it: `delivered` is answered for nothing else. refused: the task is closed or gone. A key seen in the
+   * existing one or the one started for it (also while a session without the bridge's tools works on the task):
+   * `delivered` is answered for nothing else. refused: the task is closed or gone. A key seen in the
    * last 7 days is not woken for again.
    */
   async wake(record: Job, channel: ReplyChannel, message: string, key: string): Promise<WakeOutcome> {
@@ -727,7 +728,7 @@ export class JobRunner {
         this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
         return 'skipped'
       }
-      if (decision.kind === 'retry') return wait('a session of the task is working and none that has the channel\'s tools can take the message now')
+      if (decision.kind === 'retry') return wait('a session that has the channel\'s tools is working on the task and cannot take the message now')
       if (decision.kind === 'start') {
         if (!this.deps.hasRoom()) return wait(NO_ROOM)
         // A new session: its id is named before the start, so a restart in between finds it (recover).

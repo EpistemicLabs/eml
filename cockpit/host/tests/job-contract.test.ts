@@ -154,12 +154,12 @@ describe('job contract v1', () => {
     expect(started).toEqual([])
   })
 
-  it('answers retry while the only working session of the task is one that has no bridge tools (not started for the record)', async () => {
+  it('starts a session for the message while the only working session of the task is one that has no bridge tools (not started for the record)', async () => {
     store.put(record(JOB_ID))
     working = ['own-session']
-    expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
+    expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.delivered)
     expect(delivered).toEqual([])
-    expect(started).toEqual([])
+    expect(started).toHaveLength(1)
   })
 
   it('answers retry, never refused, to a wake under an id that is moving: a version 1 job that waits for its task, then the old id until the bridge has confirmed the new one', async () => {

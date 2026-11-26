@@ -46,11 +46,11 @@ describe('line a: a session of the task is working', () => {
     expect(decide(message, sessions)).toEqual({ kind: 'deliver', sessionId: 's2' })
   })
 
-  it('asks the bridge to retry a message no working session here can take', () => {
+  it('asks the bridge to retry a message only while a session that has the bridge\'s tools works and cannot take it now', () => {
     expect(decide(message, [session('s1', { working: true, wakeable: false })])).toEqual({ kind: 'retry' })
-    // the work is on another cockpit: nothing here takes it, and nothing starts beside it
-    expect(decide(message, [], true)).toEqual({ kind: 'retry' })
-    expect(decide(message, [session('s2', { wait: 'question' })], true)).toEqual({ kind: 'retry' })
+    // the work is on another cockpit: that session cannot touch the message, so it is handled here
+    expect(decide(message, [], true)).toEqual({ kind: 'start' })
+    expect(decide(message, [session('s2', { wait: 'question' })], true)).toEqual({ kind: 'resume', sessionId: 's2', line: 'waiting' })
   })
 
   it('never answers retry for a time, and never skips a message', () => {
@@ -64,7 +64,7 @@ describe('line a: a session of the task is working', () => {
   it('a firing that names a time and a message is never skipped either', () => {
     const both: Fired = { times: true, wake: null, message: true }
     expect(decide(both, [session('s1', { working: true })])).toEqual({ kind: 'deliver', sessionId: 's1' })
-    expect(decide(both, [], true)).toEqual({ kind: 'retry' })
+    expect(decide(both, [], true)).toEqual({ kind: 'start' })
   })
 })
 
@@ -140,11 +140,20 @@ describe('line d: nothing is open and a repeating time or a message is due', () 
 })
 
 describe('a channel message only goes to a session linked to the task\'s record: only that one has the bridge\'s tools', () => {
-  it('a: a working session that is not linked does not get it: the bridge keeps the message and tries again', () => {
-    expect(decide(message, [own('s-own', { working: true })])).toEqual({ kind: 'retry' })
-    // also beside a linked session that is idle, or waits on an answer: nothing starts or continues beside the work
-    expect(decide(message, [own('s-own', { working: true }), session('s-run')])).toEqual({ kind: 'retry' })
-    expect(decide(message, [own('s-own', { working: true }), session('s-run', { wait: 'question' })])).toEqual({ kind: 'retry' })
+  it('a: a working session that is not linked does not get it, and does not hold it up: a new linked session starts for the message', () => {
+    expect(decide(message, [own('s-own', { working: true })])).toEqual({ kind: 'start' })
+    // beside a linked session that is idle a new one starts too; a linked one that waits on an answer continues
+    expect(decide(message, [own('s-own', { working: true }), session('s-run')])).toEqual({ kind: 'start' })
+    expect(decide(message, [own('s-own', { working: true }), session('s-run', { wait: 'question' })])).toEqual({ kind: 'resume', sessionId: 's-run', line: 'waiting' })
+  })
+
+  it('a message is answered retry only for a linked session that works and cannot take it now; never because of a session that is not linked', () => {
+    const states: Array<Partial<FiringSession>> = [{}, { working: true }, { wait: 'question' }, { wait: 'review' }, { wakeable: false }, { working: true, wakeable: false }]
+    for (const a of states) for (const b of states) for (const elsewhere of [false, true]) {
+      const decision = decide(message, [own('s-own', a), session('s-run', b)], elsewhere)
+      expect(decision.kind === 'retry').toBe(b.working === true && b.wakeable === false)
+    }
+    for (const a of states) for (const elsewhere of [false, true]) expect(decide(message, [own('s-own', a)], elsewhere)).toEqual({ kind: 'start' })
   })
 
   it('a: of two working sessions the linked one gets it', () => {

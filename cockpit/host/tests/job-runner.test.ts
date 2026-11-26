@@ -1486,11 +1486,11 @@ describe('a channel message from the bridge', () => {
     expect(await wake()).toBe('delivered')
   })
 
-  it('a: asks for a retry while another member\'s session works on the task', async () => {
+  it('a: while another member\'s session works on the task the message is handled here: that session cannot touch it, so a session starts for it', async () => {
     listen()
     world.elsewhere.add('mail')
-    expect(await wake()).toBe('retry')
-    expect(world.started).toEqual([])
+    expect(await wake()).toBe('delivered')
+    expect(world.started).toHaveLength(1)
   })
 
   it('b: goes to the session that waits on an answer', async () => {
@@ -1508,10 +1508,16 @@ describe('a channel message from the bridge', () => {
     world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
     // the owner's own session on the task: it has no bridge tools, so it could not read or answer the mail
     world.session('mail', 's-own', true, false)
-    expect(await mail()).toBe('retry')
+    // the message is handled all the same: a session is started for the record beside it
+    expect(await mail()).toBe('delivered')
     expect(world.delivered).toEqual([])
-    expect(world.started).toEqual([])
-    expect(runs('mail')).toEqual([])
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')).toMatchObject([{ trigger: 'mail', status: 'started', sessionId: world.started[0].sessionId }])
+    // without room for one more session the bridge keeps the message
+    world.room = false
+    world.now += MIN
+    expect(await mail()).toBe('retry')
+    world.room = true
     // it stops and waits on the owner's answer: the message still does not go to it; a session is started for the record
     world.sessions[0].working = false
     world.states.set('s-own', 'idle')
@@ -1519,9 +1525,9 @@ describe('a channel message from the bridge', () => {
     world.now += MIN
     expect(await mail()).toBe('delivered')
     expect(world.delivered).toEqual([])
-    expect(world.started).toHaveLength(1)
+    expect(world.started).toHaveLength(2)
     // that session is the record's: working, it gets the next message; the owner's own never does
-    const linked = world.started[0].sessionId
+    const linked = world.started[1].sessionId
     world.session('mail', linked, true, true)
     world.now += MIN
     expect(await mail()).toBe('delivered')
@@ -1534,7 +1540,7 @@ describe('a channel message from the bridge', () => {
     world.now += MIN
     expect(await mail()).toBe('delivered')
     expect(world.delivered.map((d) => d.sessionId)).toEqual([linked, linked])
-    expect(world.started).toHaveLength(2)
+    expect(world.started).toHaveLength(3)
     expect(world.delivered.some((d) => d.sessionId === 's-own')).toBe(false)
   })
 
