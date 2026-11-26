@@ -19,6 +19,7 @@ const serverMetadataSchema = z.object({
   authorization_endpoint: z.string().url(),
   token_endpoint: z.string().url(),
   registration_endpoint: z.string().url().optional(),
+  revocation_endpoint: z.string().url().optional(),
   scopes_supported: z.array(z.string()).optional(),
 })
 const registrationSchema = z.object({ client_id: z.string().min(1), client_secret: z.string().optional() })
@@ -34,10 +35,12 @@ export interface OAuthValues {
   refreshToken?: string
   /** Epoch milliseconds; absent when the server gave no lifetime. */
   expiresAt?: string
+  /** Where the tokens are revoked when the sign-in is removed (RFC 7009); absent when the server names none. */
+  revocationEndpoint?: string
 }
 
 export type OAuthRefusal = { ok: false; reason: string; retryable: boolean }
-type Pending = { verifier: string; clientId: string; clientSecret?: string; tokenEndpoint: string; resource: string; redirectUri: string; at: number }
+type Pending = { verifier: string; clientId: string; clientSecret?: string; tokenEndpoint: string; revocationEndpoint?: string; resource: string; redirectUri: string; at: number }
 
 const PENDING_MS = 15 * 60_000
 const TIMEOUT_MS = 20_000
@@ -127,7 +130,7 @@ export class McpOAuth {
     const state = randomBytes(16).toString('hex')
     const verifier = randomBytes(32).toString('base64url')
     const resourceId = resource.resource ?? serverUrl
-    this.pending.set(state, { verifier, clientId: client.client_id, clientSecret: client.client_secret, tokenEndpoint: server.token_endpoint, resource: resourceId, redirectUri, at: now })
+    this.pending.set(state, { verifier, clientId: client.client_id, clientSecret: client.client_secret, tokenEndpoint: server.token_endpoint, ...(server.revocation_endpoint ? { revocationEndpoint: server.revocation_endpoint } : {}), resource: resourceId, redirectUri, at: now })
     const url = new URL(server.authorization_endpoint)
     url.search = new URLSearchParams({
       response_type: 'code',
@@ -162,6 +165,7 @@ export class McpOAuth {
       ok: true,
       values: {
         tokenEndpoint: pending.tokenEndpoint, clientId: pending.clientId, ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
+        ...(pending.revocationEndpoint ? { revocationEndpoint: pending.revocationEndpoint } : {}),
         resource: pending.resource, ...this.tokenValues(answer.token),
       },
     }
@@ -177,6 +181,28 @@ export class McpOAuth {
     if (answer.kind !== 'ok') return answer
     // A server that rotates refresh tokens sends a new one; one that doesn't keeps the old.
     return { kind: 'ok', values: { ...values, refreshToken: values.refreshToken, ...this.tokenValues(answer.token) } }
+  }
+
+  /**
+   * Revokes a removed sign-in's tokens at its server (RFC 7009): the refresh token, which ends the
+   * grant, else the access token. Best effort: false when the server names no revocation endpoint or
+   * can't be reached; the sign-in is removed here either way.
+   */
+  async revoke(values: OAuthValues): Promise<boolean> {
+    if (!values.revocationEndpoint) return false
+    const [token, hint] = values.refreshToken ? [values.refreshToken, 'refresh_token'] : [values.accessToken, 'access_token']
+    try {
+      const response = await fetch(values.revocationEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+        body: new URLSearchParams({ token, token_type_hint: hint, client_id: values.clientId, ...(values.clientSecret ? { client_secret: values.clientSecret } : {}) }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      })
+      await response.body?.cancel().catch(() => undefined)
+      return response.ok
+    } catch {
+      return false
+    }
   }
 
   private tokenValues(token: z.infer<typeof tokenSchema>): Pick<OAuthValues, 'accessToken' | 'refreshToken' | 'expiresAt'> {
@@ -214,5 +240,6 @@ export function oauthValuesOf(values: Record<string, string>): OAuthValues | nul
     ...(values.clientSecret ? { clientSecret: values.clientSecret } : {}),
     ...(values.refreshToken ? { refreshToken: values.refreshToken } : {}),
     ...(values.expiresAt ? { expiresAt: values.expiresAt } : {}),
+    ...(values.revocationEndpoint ? { revocationEndpoint: values.revocationEndpoint } : {}),
   }
 }

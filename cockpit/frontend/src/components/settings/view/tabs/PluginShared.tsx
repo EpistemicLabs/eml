@@ -2,7 +2,8 @@
 import { Mail, Plug, Puzzle, type LucideIcon } from 'lucide-react';
 
 import { PANE_VIEW_DEFS } from '@/lib/pane-views';
-import type { PluginPart, PluginTier, PluginView } from '@/lib/plugins-admin';
+import { formatAgo, formatWhen } from '@/components/jobs/jobs';
+import type { ConnectionView, PluginPart, PluginTier, PluginView } from '@/lib/plugins-admin';
 import { cn } from '@/lib/utils';
 import { Chip, Input } from '@/shared/view/ui';
 
@@ -69,4 +70,40 @@ export function SlugField({ plugin, value, onChange }: { plugin: PluginView; val
       <span className="text-ui text-muted-foreground">Its tools: mcp__{plugin.id}{value ? `-${value}` : ''}__… — give each further sign-in in a space a name of its own.</span>
     </label>
   );
+}
+
+/** How a sign-in's line reads, and whether it asks the user to act. */
+export interface SignInNote {
+  text: string;
+  /** `act`: the user has to do something (sign in again, a new key, pick it in a space). */
+  tone: 'quiet' | 'act';
+}
+
+/**
+ * What a sign-in can do now, in one line: never just "Connected". A good token says until when, a
+ * key how old it is, and a sign-in no space uses says so, since sessions would not reach it.
+ */
+export function signInNote(plugin: PluginView, connection: ConnectionView, spaceNames: (id: string) => string): SignInNote {
+  const tools = plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : '';
+  const used = connection.usedAt ? ` · last used ${formatAgo(connection.usedAt)}` : '';
+  const spaces = connection.spaces ?? null;
+  const inSpaces = spaces === null ? '' : spaces.length > 0 ? ` · in ${spaces.map(spaceNames).join(', ')}` : '';
+  if (connection.health === 'refused' || connection.signInNeeded) {
+    return { text: 'The server refused to renew this sign-in: sign in again. Sessions using it get no answer until then.', tone: 'act' };
+  }
+  if (spaces !== null && spaces.length === 0 && plugin.mcp) {
+    return { text: 'Signed in, but no space uses it: pick it for a space below, else sessions don\'t get these tools.', tone: 'act' };
+  }
+  if (connection.health === 'old') {
+    const age = connection.savedAt ? `saved ${formatAgo(connection.savedAt)}` : 'of unknown age';
+    return { text: `Key ${age}: replace it with a new one from the service, then remove this one${inSpaces}`, tone: 'act' };
+  }
+  if (connection.oauth) {
+    const until = connection.health === 'renewing'
+      ? 'Token ran out, renewed at the next use'
+      : connection.expiresAt ? `Valid until ${formatWhen(connection.expiresAt)}` : 'Signed in';
+    return { text: `${until}${tools} · renewed by the cockpit${inSpaces}${used}`, tone: 'quiet' };
+  }
+  const saved = connection.savedAt ? ` · saved ${formatAgo(connection.savedAt)}` : '';
+  return { text: `Key stored${saved}${tools}${connection.relayed ? ' · sessions reach it through the cockpit' : ''}${inSpaces}${used}, owner only, never shown`, tone: 'quiet' };
 }

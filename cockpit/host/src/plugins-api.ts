@@ -4,16 +4,16 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { partsOf, type McpPart, type PluginManifest } from './domain/plugin-manifest.js'
+import { partsOf, secretsOf, type McpPart, type PluginManifest } from './domain/plugin-manifest.js'
 import { PluginRegistry } from './infrastructure/plugins/plugin-registry.js'
 import { PluginStore } from './infrastructure/plugins/plugin-store.js'
 import { GoogleSignIn } from './infrastructure/plugins/google-sign-in.js'
-import { McpOAuth } from './infrastructure/plugins/mcp-oauth.js'
+import { McpOAuth, oauthValuesOf } from './infrastructure/plugins/mcp-oauth.js'
 import { McpRelay, RELAY_PATH, stringValues } from './infrastructure/plugins/mcp-relay.js'
 import { SharedMcpHost } from './infrastructure/plugins/shared-mcp.js'
-import type { OutsideServer } from './infrastructure/plugins/outside-servers.js'
+import type { OutsideServer, OutsideSignIn } from './infrastructure/plugins/outside-servers.js'
 import { SpacePluginService } from './application/space-plugins.js'
-import { connectionSchema, PART_KINDS, spacesOf, stdioLaunch, type SpacePlugins } from './domain/space-plugins.js'
+import { connectionHealth, connectionSchema, PART_KINDS, spacesOf, stdioLaunch, type Connection, type SpacePlugins } from './domain/space-plugins.js'
 import { CUSTOM_PLUGINS_FILE, HOST_ROOT, OFFICIAL_PLUGINS_DIR, PLUGINS_HOME } from './paths.js'
 import { redactSecrets } from './diagnostics/redact.js'
 import type { ListeningPort } from './domain/platform.js'
@@ -106,15 +106,22 @@ export const mcpOAuth = new McpOAuth()
 export const mcpRelay = new McpRelay({
   connections: () => pluginStore.connections(),
   update: async (id, change) => { await pluginStore.updateConnections((all) => all.map((c) => (c.id === id ? change(c) : c))) },
-  serverUrl: async (pluginId) => {
+  server: async (pluginId) => {
     const part = (await pluginRegistry.get(pluginId))?.parts.mcp
-    return part && part.transport !== 'stdio' && typeof part.url === 'string' ? part.url : null
+    return part && part.transport !== 'stdio' ? part : null
   },
   oauth: mcpOAuth,
   isLocal: isLocalRequest,
   shared: sharedMcp,
+  onRefused: (connection) => signInRefused(connection),
   log: (line) => console.log(line),
 })
+
+/** Who is told when a server refuses to renew a sign-in (index.ts: a push to the user's devices). */
+let signInRefused: (connection: Connection) => void = () => undefined
+export function onSignInRefused(listener: (connection: Connection) => void): void {
+  signInRefused = listener
+}
 
 /** Google sign-ins with the user's own OAuth client (<home>/plugins/google/, owner-only). */
 export const googleSignIn = new GoogleSignIn({ dir: path.join(PLUGINS_HOME, 'google') })
@@ -205,6 +212,33 @@ function mcpTarget(mcp: McpPart): string {
   return mcp.command.startsWith('${') && typeof first === 'string' ? path.basename(first) : mcp.command
 }
 
+/**
+ * A sign-in as the page sees it: never a value, but what it can do now (connectionHealth), when its
+ * token runs out, when it was saved, renewed and last used, and the spaces that use it.
+ */
+export function connectionView(connection: Connection, state: SpacePlugins, now: number, manifest: PluginManifest | null) {
+  const part = manifest?.parts.mcp
+  const staticSecret = !!part && part.transport !== 'stdio' && secretsOf(part).length > 0
+  const { values, ...rest } = connection
+  const expiresAt = values.expiresAt ? new Date(Number(values.expiresAt)).toISOString() : null
+  return {
+    ...rest,
+    slug: rest.slug ?? null,
+    secrets: Object.keys(values).filter((name) => name !== 'relayKey'),
+    address: values.address ?? null,
+    signInNeeded: rest.signInNeeded ?? false,
+    oauth: !!values.tokenEndpoint,
+    relayed: !!values.relayKey,
+    health: connectionHealth(connection, now, staticSecret),
+    expiresAt,
+    savedAt: rest.savedAt ?? null,
+    renewedAt: rest.renewedAt ?? null,
+    usedAt: rest.usedAt ?? null,
+    keyRotatedAt: rest.keyRotatedAt ?? null,
+    spaces: Object.entries(state.spaces).filter(([, space]) => space.plugins[connection.plugin]?.connections.includes(connection.id)).map(([id]) => id),
+  }
+}
+
 async function pluginViews(ctx: PluginsContext, space: string | null): Promise<PluginView[]> {
   const state = await ctx.store.spaces()
   return (await ctx.registry.list()).map((manifest) => pluginView(manifest, state, space))
@@ -253,7 +287,7 @@ export interface PluginsApiDeps {
   /** The ids of the open spaces: a switch without a space applies to all of them. */
   spaceIds?: () => string[]
   /** The claude.ai connectors and Claude Code plugin servers a space can switch off. */
-  outside?: { list(): Promise<OutsideServer[]> }
+  outside?: { list(): Promise<OutsideServer[]>; signIns?(): Promise<Record<string, OutsideSignIn>> }
   /** The pane project's folder in the request's space; null: no such project or no folder. */
   projectFolder: (projectId: string) => string | null
   /** The cockpit sessions' running agent processes, pid → session. */
@@ -367,12 +401,14 @@ export async function handlePluginsApi(
     } else if (method !== 'GET') return false
     const state = await ctx.store.spaces()
     const known = await (deps.outside?.list() ?? Promise.resolve([]))
+    const signIns = (await deps.outside?.signIns?.()) ?? {}
     const names = new Set([...known.map((s) => s.name), ...Object.values(state.spaces).flatMap((s) => s.off)])
     json(res, 200, {
       servers: [...names].sort().map((name) => ({
         name,
         kind: known.find((s) => s.name === name)?.kind ?? (name.startsWith('plugin:') ? 'claude-plugin' : 'connector'),
         off: Object.entries(state.spaces).filter(([, s]) => s.off.includes(name)).map(([id]) => id),
+        signIn: signIns[name] ?? 'unknown',
       })),
     })
     return true
@@ -403,7 +439,9 @@ export async function handlePluginsApi(
       // The relay key stays across sign-ins, so the sessions' MCP config doesn't change.
       const relayKey = previous?.values.relayKey ?? randomBytes(24).toString('base64url')
       const slug = started.slug ?? previous?.slug
-      await service.saveConnection({ id, plugin: started.plugin, label: started.label, ...(slug ? { slug } : {}), values: { ...stringValues(finished.values), relayKey } })
+      // Signed in again: when it was used and when its key changed stay; the refusal goes.
+      const kept = previous ? { ...(previous.usedAt ? { usedAt: previous.usedAt } : {}), ...(previous.keyRotatedAt ? { keyRotatedAt: previous.keyRotatedAt } : {}) } : {}
+      await service.saveConnection({ id, plugin: started.plugin, label: started.label, ...(slug ? { slug } : {}), ...kept, values: { ...stringValues(finished.values), relayKey } })
       const manifest = await registry.get(started.plugin)
       if (manifest?.tier === 'custom' && manifest.auth?.kind !== 'mcp-oauth') {
         await registry.setCustomAuth(manifest.id, { kind: 'mcp-oauth', scopes: [] })
@@ -513,30 +551,47 @@ export async function handlePluginsApi(
     // Sign-ins and secrets: set up by the user here or through remote access (remote.json lets
     // only the user's own tailnet logins in); their values are never sent back.
     if (pathname === '/api/plugins/connections' && method === 'GET') {
-      json(res, 200, { connections: (await service.connections()).map(({ values, ...rest }) => ({ ...rest, slug: rest.slug ?? null, secrets: Object.keys(values), address: values.address ?? null, signInNeeded: rest.signInNeeded ?? false, oauth: !!values.relayKey })) })
+      const state = await ctx.store.spaces()
+      const now = Date.now()
+      const manifests = await registry.list()
+      json(res, 200, { connections: (await service.connections()).map((connection) => connectionView(connection, state, now, manifests.find((m) => m.id === connection.plugin) ?? null)) })
+      return true
+    }
+    const rotating = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})\/rotate-key$/.exec(pathname)?.[1]
+    if (rotating && method === 'POST') {
+      // A new relay key: the spaces' files change now, running sessions need a restart to reach the server again.
+      const rotated = await service.rotateRelayKey(rotating)
+      json(res, rotated ? 200 : 404, rotated ? { rotated: true } : { error: { code: 'NOT_FOUND', message: 'No sign-in with a relay key under this id' } })
       return true
     }
     if (pathname === '/api/plugins/connections' && method === 'POST') {
       const body = await readJson(req)
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin))) return badRequest('plugin is a plugin this cockpit knows')
       const id = `${body.plugin}-${randomUUID().slice(0, 8)}`
-      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), ...(body.parts ? { parts: body.parts } : {}), values: body.values ?? {} })
+      // The relay key is the cockpit's to make: one sent along is dropped.
+      const { relayKey: _dropped, ...values } = (body.values && typeof body.values === 'object' ? body.values : {}) as Record<string, unknown>
+      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), ...(body.parts ? { parts: body.parts } : {}), values })
       if (!parsed.success) return badRequest('label is a short text, values maps names to strings, parts lists pane, mcp or channel')
       await service.saveConnection(parsed.data)
-      json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values) } })
+      json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values).filter((name) => name !== 'relayKey') } })
       return true
     }
     const connectionId = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})$/.exec(pathname)?.[1]
     if (connectionId && method === 'DELETE') {
       const gone = (await service.connections()).find((c) => c.id === connectionId)
       const removed = await service.removeConnection(connectionId)
+      // An OAuth sign-in's grant ends at its server too, where the server offers that (RFC 7009).
+      const granted = gone ? oauthValuesOf(gone.values) : null
+      // Not awaited: a slow revocation endpoint must not hold up the page; the sign-in is gone here already.
+      const revoked = !!(removed && granted?.revocationEndpoint && ctx.oauth)
+      if (revoked && granted && ctx.oauth) void ctx.oauth.revoke(granted).then((ok) => { if (!ok) console.log(`[plugins] revoking the removed sign-in ${connectionId} at its server failed`) })
       if (removed) ctx.shared?.retain((await service.connections()).map((c) => c.id))
       // A token file the cockpit wrote for the sign-in goes with it; one another program keeps stays.
       const tokenFile = gone?.values.tokenFile
       if (removed && tokenFile && ctx.google && path.dirname(path.resolve(tokenFile)) === path.resolve(path.dirname(ctx.google.clientFile))) {
         await fs.rm(tokenFile, { force: true })
       }
-      json(res, removed ? 200 : 404, removed ? { removed: true } : { error: { code: 'NOT_FOUND', message: 'No connection with this id' } })
+      json(res, removed ? 200 : 404, removed ? { removed: true, revoked } : { error: { code: 'NOT_FOUND', message: 'No connection with this id' } })
       return true
     }
     return false

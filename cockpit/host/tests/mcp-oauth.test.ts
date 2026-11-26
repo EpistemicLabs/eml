@@ -16,6 +16,8 @@ let base: string
 const registered: Array<Record<string, unknown>> = []
 const tokenForms: URLSearchParams[] = []
 const seen: Array<{ method: string; authorization?: string; session?: string; body: string }> = []
+const keyed: Array<{ apiKey?: string; authorization?: string }> = []
+const revoked: URLSearchParams[] = []
 let validToken = 'access-1'
 let refreshAnswer: 'ok' | 'refused' = 'ok'
 let verifierChallenge = ''
@@ -32,8 +34,13 @@ beforeAll(async () => {
       if (req.headers.authorization !== `Bearer ${validToken}`) return json(401, { error: 'unauthorized' }, { 'www-authenticate': `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"` })
       return json(200, { jsonrpc: '2.0', id: 1, result: { ok: true } }, { 'mcp-session-id': 'session-1' })
     }
+    if (url.pathname === '/keyed') {
+      keyed.push({ apiKey: req.headers['x-api-key'] as string | undefined, authorization: req.headers.authorization })
+      return json(req.headers['x-api-key'] === 'secret-key' ? 200 : 401, { jsonrpc: '2.0', id: 1, result: { ok: true } })
+    }
+    if (url.pathname === '/auth/revoke') { revoked.push(new URLSearchParams(body)); return json(200, {}) }
     if (url.pathname === '/.well-known/oauth-protected-resource/mcp') return json(200, { resource: `${base}/mcp`, authorization_servers: [`${base}/auth`], scopes_supported: ['offline_access', 'read'] })
-    if (url.pathname === '/.well-known/oauth-authorization-server/auth') return json(200, { authorization_endpoint: `${base}/auth/authorize`, token_endpoint: `${base}/auth/token`, registration_endpoint: `${base}/auth/register` })
+    if (url.pathname === '/.well-known/oauth-authorization-server/auth') return json(200, { authorization_endpoint: `${base}/auth/authorize`, token_endpoint: `${base}/auth/token`, registration_endpoint: `${base}/auth/register`, revocation_endpoint: `${base}/auth/revoke` })
     if (url.pathname === '/auth/register') { registered.push(JSON.parse(body)); return json(201, { client_id: 'client-1' }) }
     if (url.pathname === '/auth/token') {
       const form = new URLSearchParams(body)
@@ -51,7 +58,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 })
 afterAll(() => { server.close() })
-beforeEach(() => { registered.length = 0; tokenForms.length = 0; seen.length = 0; validToken = 'access-1'; refreshAnswer = 'ok' })
+beforeEach(() => { registered.length = 0; tokenForms.length = 0; seen.length = 0; keyed.length = 0; revoked.length = 0; validToken = 'access-1'; refreshAnswer = 'ok' })
 
 describe('McpOAuth', () => {
   it('finds the sign-in service from the 401, registers the cockpit for its callback and trades the code with PKCE', async () => {
@@ -65,9 +72,17 @@ describe('McpOAuth', () => {
     verifierChallenge = consent.searchParams.get('code_challenge') ?? ''
     const finished = await oauth.finish(started.state, 'code-1')
     if (!finished.ok) throw new Error(finished.reason)
-    expect(finished.values).toMatchObject({ tokenEndpoint: `${base}/auth/token`, clientId: 'client-1', resource: `${base}/mcp`, accessToken: 'access-1', refreshToken: 'refresh-1' })
+    expect(finished.values).toMatchObject({ tokenEndpoint: `${base}/auth/token`, revocationEndpoint: `${base}/auth/revoke`, clientId: 'client-1', resource: `${base}/mcp`, accessToken: 'access-1', refreshToken: 'refresh-1' })
     expect(oauth.knows(started.state)).toBe(false)
     expect((await oauth.finish(started.state, 'code-1')).ok).toBe(false)
+  })
+
+  it('revokes a removed sign-in\'s refresh token where the server names a revocation endpoint (RFC 7009)', async () => {
+    const oauth = new McpOAuth()
+    const values = { tokenEndpoint: `${base}/auth/token`, clientId: 'client-1', resource: `${base}/mcp`, accessToken: 'access-1', refreshToken: 'refresh-1' }
+    expect(await oauth.revoke(values)).toBe(false)
+    expect(await oauth.revoke({ ...values, revocationEndpoint: `${base}/auth/revoke` })).toBe(true)
+    expect(Object.fromEntries(revoked[0])).toEqual({ token: 'refresh-1', token_type_hint: 'refresh_token', client_id: 'client-1' })
   })
 
   it('says why a server without OAuth metadata or registration cannot be signed in to', async () => {
@@ -82,14 +97,19 @@ describe('McpRelay', () => {
   let relayServer: Server
   let relay: string
   let local = true
+  let refusedTold: string[] = []
+  let instance: McpRelay
 
   beforeAll(async () => {
-    const instance = new McpRelay({
+    instance = new McpRelay({
       connections: async () => connections,
       update: async (id, change) => { connections = connections.map((c) => (c.id === id ? change(c) : c)) },
-      serverUrl: async (plugin) => (plugin === 'qonto' ? `${base}/mcp` : null),
+      server: async (plugin) => plugin === 'qonto'
+        ? { transport: 'http', url: `${base}/mcp`, headers: {} }
+        : plugin === 'keyed' ? { transport: 'http', url: `${base}/keyed`, headers: { 'X-Api-Key': { secret: 'apiKey' } } } : null,
       oauth: new McpOAuth(),
       isLocal: () => local,
+      onRefused: (c) => { refusedTold.push(c.id) },
     })
     relayServer = createServer((req, res) => { void instance.handle(req, res) })
     await new Promise<void>((resolve) => relayServer.listen(0, '127.0.0.1', resolve))
@@ -98,6 +118,7 @@ describe('McpRelay', () => {
   afterAll(() => { relayServer.close() })
   beforeEach(() => {
     local = true
+    refusedTold = []
     connections = [{ id: 'qonto-a', plugin: 'qonto', label: 'Company A', values: { ...values, tokenEndpoint: `${base}/auth/token`, resource: `${base}/mcp` } }]
   })
 
@@ -128,6 +149,42 @@ describe('McpRelay', () => {
     expect(res.status).toBe(401)
     expect((await res.json()).error.message).toContain('sign in again')
     expect(connections[0].signInNeeded).toBe(true)
+    expect(refusedTold).toEqual(['qonto-a'])
+    // Refused again: already marked, so nobody is told twice.
+    expect((await call()).status).toBe(401)
+    expect(refusedTold).toEqual(['qonto-a'])
+  })
+
+  it('notes the renewal and the use on the sign-in', async () => {
+    validToken = 'access-2'
+    expect((await call()).status).toBe(200)
+    expect(connections[0].renewedAt).toMatch(/^\d{4}-/)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(connections[0].usedAt).toMatch(/^\d{4}-/)
+  })
+
+  it('renews ahead of use a sign-in that runs out soon, and leaves one that is still good', async () => {
+    connections = [
+      { ...connections[0], id: 'qonto-soon', values: { ...connections[0].values, expiresAt: String(Date.now() + 60_000) } },
+      { ...connections[0], id: 'qonto-later', values: { ...connections[0].values, expiresAt: String(Date.now() + 3600_000) } },
+    ]
+    validToken = 'access-3'
+    expect(await instance.renewDue()).toEqual({ 'qonto-soon': 'renewed' })
+    expect(connections[0].values.accessToken).toBe('access-3')
+    expect(connections[1].values.accessToken).toBe('access-1')
+  })
+
+  it('fills a static secret into the server\'s header, so the session never holds it', async () => {
+    connections = [{ id: 'keyed-a', plugin: 'keyed', label: 'Keyed', values: { apiKey: 'secret-key', relayKey: 'key-k' } }]
+    const res = await call('key-k', 'keyed-a')
+    expect(res.status).toBe(200)
+    expect(keyed).toEqual([{ apiKey: 'secret-key', authorization: undefined }])
+  })
+
+  it('passes the session\'s query along to a static-secret server', async () => {
+    connections = [{ id: 'keyed-a', plugin: 'keyed', label: 'Keyed', values: { apiKey: 'secret-key', relayKey: 'key-k' } }]
+    const res = await fetch(`${relay}/mcp-relay/keyed-a?page=2`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eml-relay-key': 'key-k' }, body: '{}' })
+    expect(res.status).toBe(200)
   })
 
   it('refuses a wrong key, an unknown sign-in and anything not from this machine', async () => {
@@ -156,8 +213,8 @@ describe('mcpServersFor with an OAuth sign-in', () => {
     expect(mcpServersFor('sachi', state, [qonto], connections, vars).servers).toEqual({ 'qonto-b': { type: 'http', url: 'http://127.0.0.1:4317/mcp-relay/qonto-b', headers: { 'x-eml-relay-key': 'key-qonto-b' } } })
   })
 
-  it('leaves a space without a sign-in on the server itself, where Claude signs in', () => {
+  it('leaves the server out of a space without a sign-in and says so, instead of a direct entry nobody signed in to', () => {
     const state = setPlugin(emptySpacePlugins(), 'main', 'qonto', { connections: [] })
-    expect(mcpServersFor('main', state, [qonto], [], vars).servers).toEqual({ qonto: { type: 'http', url: 'https://mcp.qonto.example/mcp', headers: {} } })
+    expect(mcpServersFor('main', state, [qonto], [], vars)).toEqual({ servers: {}, problems: ['Qonto: no sign-in picked for this space'] })
   })
 })

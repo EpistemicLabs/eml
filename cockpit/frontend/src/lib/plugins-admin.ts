@@ -39,6 +39,22 @@ export interface ConnectionView {
   oauth?: boolean;
   /** The server refused to renew it: the user signs in again. */
   signInNeeded?: boolean;
+  /** Sessions reach its server through the cockpit's relay, with a key of their own; the secret stays here. */
+  relayed?: boolean;
+  /**
+   * What it can do now (host: domain/space-plugins.ts connectionHealth): ok · renewing (its token ran
+   * out, the cockpit renews it at the next use or sweep) · refused (sign in again) · old (a key due for a new one).
+   */
+  health?: 'ok' | 'renewing' | 'refused' | 'old';
+  /** When its access token runs out (ISO); null for a static secret. */
+  expiresAt?: string | null;
+  /** When the user last set it (ISO); null when the cockpit doesn't know. */
+  savedAt?: string | null;
+  renewedAt?: string | null;
+  usedAt?: string | null;
+  keyRotatedAt?: string | null;
+  /** The spaces that use it. */
+  spaces?: string[];
 }
 
 export interface OutsideServerView {
@@ -46,6 +62,8 @@ export interface OutsideServerView {
   kind: 'connector' | 'claude-plugin';
   /** The spaces it is switched off in. */
   off: string[];
+  /** Whether Claude Code holds a sign-in for it (host: outside-servers.ts readOutsideSignIns). */
+  signIn?: 'signed-in' | 'needs-sign-in' | 'unknown';
 }
 
 const adminKey = ['plugins-admin'] as const;
@@ -171,6 +189,11 @@ export function useAddConnection() {
 
 export function useRemoveConnection() {
   return useChange((id: string) => request(`/api/plugins/connections/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+}
+
+/** A new relay key for a sign-in: the spaces' files change, running sessions need a restart. */
+export function useRotateRelayKey() {
+  return useChange((id: string) => request(`/api/plugins/connections/${encodeURIComponent(id)}/rotate-key`, { method: 'POST' }));
 }
 
 export function useRemoveCustom() {

@@ -24,6 +24,7 @@ const PLUGINS = [
   plugin({ id: 'note', name: 'Note', pane: 'note', enabled: true, spaces: { 'main-id': null } }),
   plugin({ id: 'stripe', name: 'stripe', tier: 'custom', parts: ['mcp'], mcp: { transport: 'stdio', target: 'npx', settings: [] }, imported: true }),
   plugin({ id: 'qonto', name: 'Qonto', tier: 'custom', parts: ['mcp'], mcp: { transport: 'http', target: 'https://mcp.qonto.example/mcp', settings: [] }, auth: { kind: 'mcp-oauth', scopes: [] }, spaces: { 'main-id': ['qonto-a'] } }),
+  plugin({ id: 'pay', name: 'Pay', tier: 'custom', parts: ['mcp'], mcp: { transport: 'http', target: 'https://mcp.pay.example', settings: [] }, auth: { kind: 'mcp-oauth', scopes: [] }, spaces: { 'main-id': [] } }),
   plugin({ id: 'gmail', name: 'Gmail', parts: ['mcp', 'channel'], channel: 'gmail', mcp: { transport: 'stdio', target: 'node', settings: [{ name: 'GMAIL_ADDRESS', secret: true }] }, auth: { kind: 'google-oauth', scopes: [] }, spaces: { 'main-id': ['work'] } }),
 ];
 
@@ -37,13 +38,13 @@ beforeEach(async () => {
     const method = init?.method ?? 'GET';
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : null });
     const body = url.startsWith('/api/spaces') ? { spaces: SPACES }
-      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }, { id: 'qonto-a', plugin: 'qonto', label: 'Company A', secrets: ['accessToken'], slug: null, address: null, oauth: true, signInNeeded: true }] }
+      : url === '/api/plugins/connections' && method === 'GET' ? { connections: [{ id: 'work', plugin: 'gmail', label: 'Work mailbox', secrets: ['address'], slug: null, address: 'me@work.example' }, { id: 'invoice', plugin: 'gmail', label: 'Invoices', secrets: ['address'], slug: 'invoice', address: 'invoice@work.example' }, { id: 'qonto-a', plugin: 'qonto', label: 'Company A', secrets: ['accessToken'], slug: null, address: null, oauth: true, signInNeeded: true }, { id: 'pay-1', plugin: 'pay', label: 'Company P', secrets: [], slug: null, address: null, oauth: true, relayed: true, health: 'ok', expiresAt: '2030-01-01T00:00:00.000Z', spaces: [] }] }
       : url === '/api/plugins/oauth/sign-in' ? { url: 'https://mcp.qonto.example/authorize?state=s', paste: true }
       : url === '/api/plugins/oauth/finish' ? { connection: { id: 'qonto-a', label: 'Company A' } }
       : url === '/api/plugins/google/client' ? { configured: method === 'PUT', fromSignIns: [{ id: 'work', label: 'Work mailbox' }] }
       : url === '/api/plugins/connections' ? { connection: { id: 'lookup-1', plugin: 'lookup', label: 'Settings', secrets: ['API_KEY'] } }
       : url.startsWith('/api/plugins/custom') ? { plugin: {} }
-      : url.startsWith('/api/plugins/outside') ? { servers: [{ name: 'claude.ai Slack', kind: 'connector', off: ['other-id'] }] }
+      : url.startsWith('/api/plugins/outside') ? { servers: [{ name: 'claude.ai Slack', kind: 'connector', off: ['other-id'] }, { name: 'plugin:pay:pay', kind: 'claude-plugin', off: [], signIn: 'needs-sign-in' }] }
       : url.startsWith('/api/plugins') ? { plugins: PLUGINS, importNotice: { count: 1 } }
       : {};
     return new Response(JSON.stringify(body), { status: url.startsWith('/api/plugins/custom') && method === 'POST' ? 201 : 200 });
@@ -88,6 +89,21 @@ describe('Settings › Plugins', () => {
     fireEvent.change(screen.getByPlaceholderText('invoice'), { target: { value: 'b' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(calls.filter((c) => c.url === '/api/plugins/oauth/sign-in').at(-1)?.body).toEqual({ plugin: 'qonto', label: 'Company B', slug: 'b' }));
+  });
+
+  it('says when a sign-in is used in no space, and puts it to work there in one click', async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole('button', { name: /^Pay/ }));
+    expect(await screen.findByText(/no space uses it/)).toBeTruthy();
+    expect(screen.getByText('not used here')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use Company P' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ id: 'pay', space: 'main-id', enabled: true, connections: ['pay-1'] }));
+  });
+
+  it('marks a Claude Code server that has no sign-in in the spaces table', async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Spaces' }));
+    expect(await screen.findByText(/Not signed in: its tools fail/)).toBeTruthy();
   });
 
   it('switches a plugin in one space from the table', async () => {
