@@ -396,7 +396,8 @@ class CodexChatRuntime implements SessionRuntime {
     if (!answered) return
     this.client?.respond(answered.id, answered.result)
     this.emitAll(answered.events)
-    if (answered.note) this.pass(answered.note, !(answer.decision === 'deny' && answer.interrupt))
+    // Into the running turn only when it goes on: a refusal that ends it (a request without "decline") would lose it.
+    if (answered.note) this.pass(answered.note, !answered.endsTurn && !answered.stopTurn)
     if (answered.stopTurn) void this.interrupt().catch((error: unknown) => this.emit({ kind: 'error', message: error instanceof Error ? error.message : String(error) }))
   }
 

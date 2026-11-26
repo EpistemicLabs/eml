@@ -297,6 +297,7 @@ describe('CodexEventMapper, approvals', () => {
         const outcome = decision === 'deny' ? 'denied' : decision === 'always' && scope ? 'always' : 'allowed'
         expect(mapper.answer(card.requestId, { decision })).toEqual({
           id, result: { decision: expected }, events: [{ kind: 'request_settled', requestId: card.requestId, outcome }],
+          ...(expected === 'cancel' ? { endsTurn: true } : {}),
         })
       }
     }

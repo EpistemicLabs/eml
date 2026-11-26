@@ -379,6 +379,29 @@ describe('the Codex chat runtime, approvals', () => {
     await runtime.close()
   })
 
+  it('keeps the words of a refusal for the next message when the request has no "decline" and the refusal ends the turn', async () => {
+    const { runtime, server } = start({}, (fake) => {
+      fake.turnsEnd = false
+      fake.answer('turn/steer', () => ({ turnId: 'turn-1' }))
+    })
+    runtime.send('m1', 'first')
+    await flush()
+    const asked = server.ask('item/commandExecution/requestApproval', {
+      threadId: server.threadId, turnId: 'turn-1', itemId: 'exec-1', command: 'touch /etc/x', availableDecisions: ['accept', 'cancel'],
+    })
+    await flush()
+    runtime.answerPermission(`req-${asked}-exec-1`, { decision: 'deny', message: 'Use the project folder.' })
+    await flush()
+    expect(server.received.filter((message) => message.id === asked && message.method === undefined)).toEqual([{ id: asked, result: { decision: 'cancel' } }])
+    expect(server.requestsOf('turn/steer')).toEqual([])
+    server.completeTurn('interrupted')
+    await flush()
+    runtime.send('m2', 'go on')
+    await flush()
+    expect(server.requestsOf('turn/start')[1]?.input).toEqual([hiddenText('The user declined Run touch /etc/x: Use the project folder.'), text('go on')])
+    await runtime.close()
+  })
+
   it('refuses a call and lets the turn go on, or refuses it and stops the turn; words go to the agent another way', async () => {
     const { runtime, events, server } = start({}, (fake) => {
       fake.turnsEnd = false

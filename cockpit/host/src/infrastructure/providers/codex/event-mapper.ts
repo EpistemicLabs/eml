@@ -232,6 +232,8 @@ export interface ApprovalAnswer {
   result: ServerRequestResponse
   events: RuntimeEvent[]
   stopTurn?: boolean
+  /** The response itself ends the turn (Codex's "cancel"): a note cannot go into it any more. */
+  endsTurn?: boolean
   note?: string
 }
 
@@ -457,7 +459,7 @@ export class CodexEventMapper {
     if (answer.decision === 'answer') return null
     this.requests.delete(requestId)
     const settled = (result: ApprovalResponse, outcome: 'allowed' | 'always' | 'denied', extra: Partial<ApprovalAnswer> = {}): ApprovalAnswer => (
-      { id: open.id, result, events: [{ kind: 'request_settled', requestId, outcome }], ...extra }
+      { id: open.id, result, events: [{ kind: 'request_settled', requestId, outcome }], ...('decision' in result && result.decision === 'cancel' ? { endsTurn: true } : {}), ...extra }
     )
     if (answer.decision === 'deny') {
       // Codex's refusals carry no words: the runtime passes them on (`note`).
