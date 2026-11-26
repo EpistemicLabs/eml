@@ -663,12 +663,10 @@ async function main() {
   // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2). A version 1 file
   // converted at this start keeps the spaces the cockpit has now: only those get the look for left-over schedules.
   const jobStore = new JobStore(undefined, spaces.list().map((space) => (space.main ? null : space.id)))
-  // Sessions of version 1 jobs the migration dropped kept those jobs' ids in the ledger: they name their task from now
-  // on (application/session-job-repair.ts). Not while jobs.json could not be read: every id would look stale then.
-  if (!jobStore.notUsable()) {
-    const repaired = repairSessionJobIds(ledger, (id) => jobStore.get(id) !== undefined || jobStore.pendingV1()?.jobs[id] !== undefined)
-    if (repaired > 0) log(`[jobs] ${repaired} session(s) named a job of version 1 that no longer exists: they name their task now`)
-  }
+  // A ledger jobId names a record or a version 1 job that still waits; any other id is replaced at start by the
+  // session's task id when it has one (application/session-job-repair.ts).
+  const repaired = repairSessionJobIds(ledger, jobStore)
+  if (repaired > 0) log(`[jobs] ${repaired} session(s) named a job that is neither a record nor a version 1 job that waits: they name their task now`)
   // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({

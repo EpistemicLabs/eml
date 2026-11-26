@@ -62,9 +62,9 @@ export interface JobMigrationDeps {
   me: string
   /**
    * The sessions that worked for a job work for the task's record from now on (the ledger's jobId): the task's id, also
-   * for a job that did not move onto its task. Null: the job had no task.
+   * for a job that did not move onto its task.
    */
-  moveSessions(fromJobId: string, toTaskId: string | null): void
+  moveSessions(fromJobId: string, toTaskId: string): void
   now(): number
   log(line: string): void
   /**
@@ -246,9 +246,9 @@ export function createJobMigration(deps: JobMigrationDeps) {
     deps.store.migrateV1(step)
     if (step.record) for (const jobId of task.renamed) deps.moveSessions(jobId, step.record.id)
     // The sessions of the jobs that leave the version 1 data without going on under the record (dropped, or left out)
-    // work for their task too: no session keeps a version 1 job's id, which names no record and no task.
+    // work for their task too. Without a task they keep the job's id, and stay as limited as they were.
     const moved = new Set(step.record ? task.renamed : [])
-    for (const jobId of task.settles) if (!moved.has(jobId)) deps.moveSessions(jobId, taskId)
+    if (taskId) for (const jobId of task.settles) if (!moved.has(jobId)) deps.moveSessions(jobId, taskId)
   }
 
   /**

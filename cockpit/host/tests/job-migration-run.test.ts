@@ -335,6 +335,13 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
   })
 
+  it('leaves the sessions of a dropped job without a task as they are: they have no task to name', async () => {
+    const w = world([v1('j1', { taskId: null, endedAt: '2026-11-20T00:00:00.000Z' })], [])
+    expect(await w.migration.run()).toMatchObject({ dropped: 1, failed: [] })
+    expect(w.store.pendingV1()).toBeNull()
+    expect(w.moved).toEqual([])
+  })
+
   it('leaves a job it cannot place where it is, and says so at every start', async () => {
     const w = world([v1('j1', { taskId: null, target: { type: 'session', sessionId: 's1' } })], [])
     expect(await w.migration.run()).toMatchObject({ moved: 0, left: 1, failed: [] })
