@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, handOverBanner, goalBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
+import { conflictBanner, closedSubjectBanner, unresolvedLinksBanner, openSubtasksBanner, statusTracksBanner, boundItemsBanner, writeBanner, handOverBanner, handOver, goalBanner, CONFLICT_ESCALATION_COVERAGE } from '../src/tools/_helpers'
 
 // v0.10.9 write-time conflict guardrail — rendering layer. conflictBanner turns the
 // store response's advisory `potential_conflicts` into the banner prepended to the
@@ -222,6 +222,36 @@ describe('handOverBanner', () => {
     expect(handOverBanner({ delegate: 'atlas' })).toContain('no checkpoint')
     expect(handOverBanner({ delegate: 'atlas', checkpoint: 'after' })).toBeNull()
     expect(handOverBanner({})).toBeNull()
+  })
+})
+
+describe('handOver — an agent completing delegate + checkpoint hands the task over', () => {
+  const NOW = new Date('2026-11-26T08:00:00.000Z')
+  const request = { requested_at: '2026-11-26T08:00:00.000Z' }
+
+  it('writes the delegation with a request when the call completes the pair', () => {
+    expect(handOver({ status: 'active', properties: {} }, { delegate: 'atlas', checkpoint: 'after' }, NOW)).toEqual({ agent: 'atlas', checkpoint: 'after', ...request })
+    expect(handOver({ status: 'planned', properties: { delegate: 'atlas' } }, { checkpoint: 'before' }, NOW)).toEqual({ agent: 'atlas', checkpoint: 'before', ...request })
+  })
+  it('hands a task over to a new agent', () => {
+    const before = { status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', delegation: { requested_at: '2026-11-20T08:00:00.000Z' } } }
+    expect(handOver(before, { delegate: 'motti' }, NOW)).toEqual({ agent: 'motti', checkpoint: 'after', ...request })
+  })
+  it('leaves the fields as given for half a pair, a pair that was already there, a closed or unknown task', () => {
+    expect(handOver({ status: 'active', properties: {} }, { delegate: 'atlas' }, NOW)).toBeNull()
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after' } }, { checkpoint: 'before' }, NOW)).toBeNull()
+    expect(handOver({ status: 'resolved', properties: {} }, { delegate: 'atlas', checkpoint: 'after' }, NOW)).toBeNull()
+    expect(handOver(null, { delegate: 'atlas', checkpoint: 'after' }, NOW)).toBeNull()
+  })
+  it('leaves an open request of the same agent as it is', () => {
+    const before = { status: 'active', properties: { delegate: 'atlas', delegation: { requested_at: '2026-11-20T08:00:00.000Z' } } }
+    expect(handOver(before, { checkpoint: 'after' }, NOW)).toBeNull()
+  })
+  it('never hands over a task that has a schedule: the flat write keeps the schedule', () => {
+    const schedule = { crons: ['0 8 * * 1-5'] }
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', delegation: { schedule } } }, { checkpoint: 'after' }, NOW)).toBeNull()
+    // brain schema 24: the schedule is the task's and stays with a new agent, so the delegation is not written as a whole here
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', delegation: { schedule } } }, { delegate: 'motti' }, NOW)).toBeNull()
   })
 })
 
