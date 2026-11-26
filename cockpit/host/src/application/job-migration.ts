@@ -257,10 +257,6 @@ export function createJobMigration(deps: JobMigrationDeps) {
       // there by seeing it.
       let removed = true
       for (const left of planned.plan.leftovers ?? []) {
-        if (!left.remove) {
-          deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)} has a schedule without a job; in a shared space it is left as it is`)
-          continue
-        }
         try {
           await writeTaskSchedule(brain, left.taskId, null, { text: leftoverNote(left.schedule) })
           result.leftovers += 1

@@ -2,7 +2,7 @@ import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
 import { everyParagraph, isOpenTask, nameOfTask, narrowedProfile, withParagraph } from './schedule-tool.js'
-import { firingOf, ownerOf } from './task-owner.js'
+import { firesHere, firingOf, ownerOf } from './task-owner.js'
 import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
@@ -53,8 +53,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  * A schedule the mirror left on a task that has no job at all (not even an ended one) was run by nothing before, and
  * would start to fire now that the task is the truth. In the first pass of a space such a schedule is removed, with a
  * journal line: on an open task this cockpit fires, that has no local record (a record means someone set the schedule
- * here since). Never on another member's task, and not in a shared space, where another member's cockpit may have
- * written the schedule when its jobs moved: there it is left and reported.
+ * here since). The rule is the same in a local and in a shared space. A task this cockpit does not fire is never
+ * touched and not named: what stands on it is its owner's cockpit's to judge.
  *
  * The plan is safe to make and write again: a job that moved is gone from the version 1 data, and a schedule, text
  * or record that is already there is not written twice.
@@ -150,13 +150,11 @@ export interface TaskMigration {
   pausedByJob?: boolean
 }
 
-/** A schedule on an open task of this member's that has no job at all and no record: the old mirror left it. */
+/** A schedule on an open task this cockpit fires that has no job at all and no record: the old mirror left it, and it is removed. */
 export interface LeftoverSchedule {
   taskId: string
   title: string
   schedule: ScheduleFields
-  /** It is removed. False in a shared space: another member's cockpit may have written it, so it is left and reported. */
-  remove: boolean
 }
 
 /** The journal line of a left-over schedule that is removed. */
@@ -493,9 +491,10 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
   for (const task of input.scheduled ?? []) {
     const schedule = scheduleOf(task)
     if (!schedule || !isOpenTask(task) || byTask.has(task.id) || input.records?.has(task.id)) continue
-    // Only a task this cockpit would fire by seeing it: never another member's, nor one no member owns.
-    if (firingOf(input.space.shared, task, input.me, input.members ?? null) !== 'mine') continue
-    leftovers.push({ taskId: task.id, title: nameOfTask(task), schedule, remove: input.space.shared === false })
+    // Only a task this cockpit fires (the one rule, in every space; none of these has a record): never another
+    // member's, nor one no member owns.
+    if (!firesHere(firingOf(input.space.shared, task, input.me, input.members ?? null), false)) continue
+    leftovers.push({ taskId: task.id, title: nameOfTask(task), schedule })
   }
   return { tasks, leftovers, elsewhere: input.jobs.length - mine.length }
 }
@@ -559,9 +558,7 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
   const leftovers = plan.leftovers ?? []
   for (const left of leftovers) {
     out.push(`## ${left.title} (${left.taskId.slice(0, 8)}) — a schedule without a job`, '')
-    out.push(left.remove
-      ? `- A schedule without a job was left on this task (${scheduleText(left.schedule)}); removed.`
-      : `- A schedule without a job is on this task (${scheduleText(left.schedule)}). In a shared space another member's cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on: end it on the task if it is not wanted.`)
+    out.push(`- A schedule without a job was left on this task (${scheduleText(left.schedule)}); removed.`)
     out.push('')
   }
   if (plan.tasks.length === 0 && leftovers.length === 0) out.push('Nothing to move.', '')

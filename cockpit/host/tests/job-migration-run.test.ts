@@ -388,15 +388,17 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(existsSync(`${w.file}.v1-backup`)).toBe(true)
   })
 
-  it('in a shared space the schedule is left as it is, logged and reported, and the space counts as looked through', async () => {
-    const w = world([], [task('left', stale)], { team: true })
+  it('in a shared space the schedule left on a task this cockpit fires is removed as in a local one, and counts for the notice; another member\'s task is not touched', async () => {
+    const theirs = task('theirs', { ...stale, assignee_ids: ['other'] })
+    const w = world([], [task('left', stale), theirs], { team: true })
     w.spaces.shift()
     const result = await w.migration.run()
-    expect(result).toMatchObject({ leftovers: 0, failed: [], unlooked: 0 })
-    expect(w.posts).toEqual([])
-    expect(w.logs).toContain('[jobs] migration, space space-2: task left has a schedule without a job; in a shared space it is left as it is')
-    expect(result.reports[0]).toContain('In a shared space another member\'s cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on')
-    expect(w.saved).toHaveLength(1)
+    expect(result).toMatchObject({ leftovers: 1, failed: [], unlooked: 0 })
+    expect(w.posts).toEqual([{ space: 'space-2', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } }])
+    expect(w.byId.get('theirs')).toEqual(theirs)
+    expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+    expect(result.reports[0]).not.toContain('theirs')
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 0 moved, 0 not moved, 1 schedule without a job removed — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
     expect(w.store.awaitsLeftoverLook('space-2')).toBe(false)
   })
 

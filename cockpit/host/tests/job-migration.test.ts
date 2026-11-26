@@ -317,7 +317,7 @@ describe('planning jobs onto their tasks', () => {
       const stale = leftover('t2')
       const p = plan([j, cron('0 9 * * *', { taskId: 't3', endedAt: '2026-11-20T00:00:00.000Z' })], [task(), leftover('t3')], { scheduled: [stale, leftover('t1'), leftover('t3'), leftover('t4')], records: new Set(['t4']) })
       // t1 has a live job and t3 an ended one: they are planned as tasks. t4 has a record: someone set its schedule here since.
-      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, remove: true }])
+      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }])
       const report = jobMigrationReport(p, { space: 'Main', at: 'now', dryRun: false })
       expect(report).toContain('## Task t2 (t2) — a schedule without a job')
       expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
@@ -336,14 +336,15 @@ describe('planning jobs onto their tasks', () => {
       expect(plan([j], [task()], { scheduled: [leftover('t2', { status: 'resolved' })], records: new Set() }).leftovers).toEqual([])
     })
 
-    it('in a shared space it is not removed: another member\'s cockpit may have written it when its jobs moved; the report says so', () => {
+    it('is judged the same way in a shared space: a task this cockpit fires loses it; a task it does not fire is not touched and not named', () => {
       const j = cron('0 8 * * 1-5')
-      const mine = leftover('t2')
-      const p = plan([j], [task()], { space: { key: null, name: 'Team', shared: true }, members: ['member', 'other'], scheduled: [mine], records: new Set() })
-      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, remove: false }])
-      expect(jobMigrationReport(p, { space: 'Team', at: 'now', dryRun: false })).toContain(
-        '- A schedule without a job is on this task (0 7 * * * (UTC)). In a shared space another member\'s cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on: end it on the task if it is not wanted.',
-      )
+      const shared: Partial<JobMigrationInput> = { space: { key: null, name: 'Team', shared: true }, members: ['member', 'other'] }
+      const p = plan([j], [task()], { ...shared, scheduled: [leftover('t2'), leftover('t3', {}, { assignee_ids: ['other'] }), leftover('t4', { ingested_by: 'atlas' }, { assignee_ids: [] })], records: new Set() })
+      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }])
+      const report = jobMigrationReport(p, { space: 'Team', at: 'now', dryRun: false })
+      expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+      expect(report).not.toContain('t3')
+      expect(report).not.toContain('In a shared space')
     })
   })
 
