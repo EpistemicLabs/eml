@@ -103,8 +103,12 @@ export interface JobRunnerDeps {
   task(space: RunnerSpace, taskId: string): Promise<RunnerTask | null>
   /** A session this cockpit does not have works on the task right now (another member's run, domain/runs.ts). */
   workingElsewhere?(space: RunnerSpace, taskId: string): Promise<boolean>
-  /** This cockpit's sessions on the task that are not put away, newest first, each with whether it is in a turn. */
-  sessionsOf(taskId: string): Array<{ sessionId: string; working: boolean }>
+  /**
+   * This cockpit's sessions on the task that are not put away, newest first, each with whether it is in a turn and
+   * whether it is linked to the task's record (its ledger entry names the record as its job: it was started for it,
+   * so it is launched with the channel bridge's tools). A channel message only goes to a linked session.
+   */
+  sessionsOf(taskId: string): Array<{ sessionId: string; working: boolean; linked?: boolean }>
   /** Write an edit of the task's schedule to the brain, with a journal line (application/task-schedule-write.ts). */
   editSchedule(space: RunnerSpace, taskId: string, edit: ScheduleEdit, text?: string): Promise<void>
   /** Room for one more running session (StartWorker.hasRoom; may stop a quiet one to make it). */
@@ -270,7 +274,8 @@ export class JobRunner {
 
   /**
    * A channel message for the task (the bridge's /v1 wake). It is never skipped: it goes to a session by the
-   * four-line order now, or the bridge is told to try again. refused: the task is closed or gone. A key seen in the
+   * four-line order now, or the bridge is told to try again. Only a session linked to the record gets it, an
+   * existing one or the one started for it: `delivered` is answered for nothing else. refused: the task is closed or gone. A key seen in the
    * last 7 days is not woken for again.
    */
   async wake(record: Job, channel: ReplyChannel, message: string, key: string): Promise<WakeOutcome> {
@@ -526,7 +531,7 @@ export class JobRunner {
     const waits = waitsOf(task.properties ?? undefined)
     const sessions = this.deps.sessionsOf(task.id).map((session) => {
       const wait = waits.find((w) => (w.session_id ?? w.id) === session.sessionId)
-      return { sessionId: session.sessionId, working: session.working, wait: wait ? waitKind(wait) : null, wakeable: !unwakeable.has(session.sessionId) }
+      return { sessionId: session.sessionId, working: session.working, wait: wait ? waitKind(wait) : null, wakeable: !unwakeable.has(session.sessionId), linked: session.linked === true }
     })
     const workingElsewhere = sessions.some((s) => s.working) ? false : await this.deps.workingElsewhere?.(space, task.id).catch(() => false) ?? false
     return { fired, sessions, workingElsewhere }
@@ -649,7 +654,7 @@ export class JobRunner {
         this.deps.log(`[jobs] ${name}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
         return 'skipped'
       }
-      if (decision.kind === 'retry') return wait('a session of the task is working and cannot take the message now')
+      if (decision.kind === 'retry') return wait('a session of the task is working and none that has the channel\'s tools can take the message now')
       if (decision.kind === 'start') {
         if (!this.deps.hasRoom()) return wait(NO_ROOM)
         // A new session: its id is named before the start, so a restart in between finds it (recover).

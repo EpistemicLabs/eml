@@ -12,7 +12,9 @@ const wake = (bySession: string | null = 's-set'): Fired => ({ times: true, wake
 const message: Fired = { times: false, wake: null, message: true }
 const manual = cron
 
-const session = (sessionId: string, patch: Partial<FiringSession> = {}): FiringSession => ({ sessionId, working: false, wait: null, wakeable: true, ...patch })
+// A session is linked to the task's record unless a test says otherwise: only the message tests care.
+const session = (sessionId: string, patch: Partial<FiringSession> = {}): FiringSession => ({ sessionId, working: false, wait: null, wakeable: true, linked: true, ...patch })
+const own = (sessionId: string, patch: Partial<FiringSession> = {}): FiringSession => session(sessionId, { linked: false, ...patch })
 const decide = (fired: Fired, sessions: FiringSession[] = [], workingElsewhere = false) => decideFiring({ fired, sessions, workingElsewhere })
 
 describe('line a: a session of the task is working', () => {
@@ -134,5 +136,51 @@ describe('line d: nothing is open and a repeating time or a message is due', () 
   it('starts a new session beside idle sessions of the task: an idle session is not open', () => {
     expect(decide(cron, [session('s1'), session('s2')])).toEqual({ kind: 'start' })
     expect(decide(message, [session('s1')])).toEqual({ kind: 'start' })
+  })
+})
+
+describe('a channel message only goes to a session linked to the task\'s record: only that one has the bridge\'s tools', () => {
+  it('a: a working session that is not linked does not get it: the bridge keeps the message and tries again', () => {
+    expect(decide(message, [own('s-own', { working: true })])).toEqual({ kind: 'retry' })
+    // also beside a linked session that is idle, or waits on an answer: nothing starts or continues beside the work
+    expect(decide(message, [own('s-own', { working: true }), session('s-run')])).toEqual({ kind: 'retry' })
+    expect(decide(message, [own('s-own', { working: true }), session('s-run', { wait: 'question' })])).toEqual({ kind: 'retry' })
+  })
+
+  it('a: of two working sessions the linked one gets it', () => {
+    expect(decide(message, [own('s-own', { working: true }), session('s-run', { working: true })])).toEqual({ kind: 'deliver', sessionId: 's-run' })
+    expect(decide(message, [own('s-own', { working: true }), session('s-run', { working: true, wakeable: false })])).toEqual({ kind: 'retry' })
+  })
+
+  it('b: a session that waits on an answer and is not linked is passed over: a new session starts, so the message is handled', () => {
+    for (const wait of ['question', 'go']) expect(decide(message, [own('s-own', { wait })])).toEqual({ kind: 'start' })
+    expect(decide(message, [own('s-own', { wait: 'question' }), session('s-run')])).toEqual({ kind: 'start' })
+  })
+
+  it('b: of two waiting sessions the linked one continues, whatever the order and the kind of wait', () => {
+    expect(decide(message, [own('s-own', { wait: 'question' }), session('s-run', { wait: 'go' })])).toEqual({ kind: 'resume', sessionId: 's-run', line: 'waiting' })
+    expect(decide(message, [session('s-run', { wait: 'question' }), own('s-own', { wait: 'question' })])).toEqual({ kind: 'resume', sessionId: 's-run', line: 'waiting' })
+  })
+
+  it('c: a message that comes with the wake-up does not continue the session that set it unless it is linked', () => {
+    const both: Fired = { times: true, wake: { bySession: 's-set' }, message: true }
+    expect(decide(both, [own('s-set')])).toEqual({ kind: 'start' })
+    expect(decide(both, [session('s-set')])).toEqual({ kind: 'resume', sessionId: 's-set', line: 'wake' })
+  })
+
+  it('never names a session that is not linked for a message, whatever the task\'s sessions do', () => {
+    const states: Array<Partial<FiringSession>> = [{}, { working: true }, { wait: 'question' }, { wait: 'go' }, { wait: 'review' }, { wakeable: false }, { working: true, wakeable: false }]
+    for (const a of states) for (const b of states) for (const elsewhere of [false, true]) {
+      const decision = decide(message, [own('s-own', a), session('s-run', b)], elsewhere)
+      expect(decision.kind).not.toBe('skip')
+      if ('sessionId' in decision) expect(decision.sessionId).toBe('s-run')
+    }
+  })
+
+  it('times keep the order as it is: a session that is not linked is skipped for, continued and woken like any other', () => {
+    expect(decide(cron, [own('s-own', { working: true })])).toEqual({ kind: 'skip' })
+    expect(decide(cron, [own('s-own', { wait: 'question' })])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'waiting' })
+    expect(decide(wake('s-own'), [own('s-own')])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'wake' })
+    expect(decide(manual, [own('s-own', { wait: 'go' })])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'waiting' })
   })
 })

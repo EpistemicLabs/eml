@@ -51,7 +51,7 @@ describe('job contract v1', () => {
       // every pass reads the tasks: no minute to wait
       store, me: 'lasse', deriveEveryMs: 0, spaces: () => [{ key: null, name: 'Main', shared: false }],
       openTasks: async () => (task && ['planned', 'active'].includes(task.status) ? [task] : []), task: async (_space, id) => (task && id === task.id ? task : null),
-      sessionsOf: () => working.map((sessionId) => ({ sessionId, working: true })), editSchedule: async () => {},
+      sessionsOf: () => working.map((sessionId) => ({ sessionId, working: true, linked: !sessionId.startsWith('own-') })), editSchedule: async () => {},
       hasRoom: () => room, sessionState: (id) => (started.includes(id) ? 'idle' : 'queued'), sessionRuns: (id) => working.includes(id),
       statusSince: () => null, deliver: async (sessionId) => { delivered.push(sessionId); return 'delivered' }, notify: () => {}, flag: () => {}, log: () => {}, timeZone: () => 'UTC',
       startWorker: (_record, _task, sessionId) => { started.push(sessionId); return null },
@@ -149,6 +149,14 @@ describe('job contract v1', () => {
     working = ['s-work']
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.delivered)
     expect(delivered).toEqual(['s-work'])
+    expect(started).toEqual([])
+  })
+
+  it('answers retry while the only working session of the task is one that has no bridge tools (not started for the record)', async () => {
+    store.put(record(JOB_ID))
+    working = ['own-session']
+    expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
+    expect(delivered).toEqual([])
     expect(started).toEqual([])
   })
 

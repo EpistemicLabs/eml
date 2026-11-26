@@ -16,6 +16,13 @@
  * A firing that names the wake-up and repeating times is one run, and goes where the wake-up goes: the session that
  * set it knows what it wanted to check, and the firing's text names the repeating times too.
  *
+ * A channel message is for a session that has the bridge's tools: only a session linked to the task's record was
+ * launched with them (application/channel-job-launch.ts), and without them a session can neither read nor answer the
+ * message. So for a message, lines a to c count linked sessions only. While any session of the task works and no
+ * linked one can take the message, the bridge keeps it and tries again; with nothing working, a linked session that
+ * waits on an answer continues, else a new session starts, linked from its start — also when a session that is not
+ * linked (the owner's own) waits on an answer. Times keep the order as it stands above: any session of the task counts.
+ *
  * Pure: the caller says what it knows of the task's sessions, carries the answer out, and asks again without a
  * session that turned out not to take a message.
  */
@@ -32,6 +39,11 @@ export interface FiringSession {
   wait: string | null
   /** A message reaches it: it is known here, not put away, and has not refused one. */
   wakeable: boolean
+  /**
+   * It was started for the task's record (its ledger entry names the record as its job), so every launch gives it
+   * the channel bridge's tools. A channel message only goes to such a session.
+   */
+  linked: boolean
 }
 
 export interface Fired {
@@ -60,23 +72,25 @@ export type FiringDecision =
   | { kind: 'resume'; sessionId: string; line: 'waiting' | 'wake' }
   /** Lines c and d: a new session of the task starts. */
   | { kind: 'start' }
-  /** Line a, a message no working session here can take: the bridge tries again. Never for a time. */
+  /** Line a, a message no working session here can take (none is linked, or it takes none): the bridge tries again. Never for a time. */
   | { kind: 'retry' }
 
 export function decideFiring(facts: FiringFacts): FiringDecision {
   const { fired, sessions } = facts
+  // Who may get this firing: any session of the task for a time, only a linked one for a message.
+  const takes = (s: FiringSession) => s.wakeable && (!fired.message || s.linked)
   const working = sessions.filter((s) => s.working)
   if (working.length > 0 || facts.workingElsewhere) {
     if (!fired.message) return { kind: 'skip' }
-    const taker = working.find((s) => s.wakeable)
+    const taker = working.find(takes)
     return taker ? { kind: 'deliver', sessionId: taker.sessionId } : { kind: 'retry' }
   }
   // A question comes before a plan waiting for its go, as the task's most urgent wait does (domain/task-waits.ts).
   for (const kind of ANSWER_WAITS) {
-    const waiting = sessions.find((s) => s.wakeable && s.wait === kind)
+    const waiting = sessions.find((s) => takes(s) && s.wait === kind)
     if (waiting) return { kind: 'resume', sessionId: waiting.sessionId, line: 'waiting' }
   }
-  const setter = fired.wake?.bySession ? sessions.find((s) => s.sessionId === fired.wake!.bySession && s.wakeable) : undefined
+  const setter = fired.wake?.bySession ? sessions.find((s) => s.sessionId === fired.wake!.bySession && takes(s)) : undefined
   if (setter) return { kind: 'resume', sessionId: setter.sessionId, line: 'wake' }
   return { kind: 'start' }
 }

@@ -757,7 +757,8 @@ async function main() {
     },
     sessionsOf: (taskId) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' })),
+      // Linked: started for the task's record, so each of its launches gets the bridge's tools (withChannelTools).
+      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working', linked: e.jobId === taskId })),
     editSchedule: async (space, taskId, edit, text) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error(`space ${space.name} has no agent`)

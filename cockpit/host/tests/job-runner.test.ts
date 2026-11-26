@@ -41,7 +41,8 @@ class World {
   listLimit = Infinity
   listReads = 0
   taskReads: string[] = []
-  sessions: Array<{ taskId: string; sessionId: string; working: boolean }> = []
+  /** `linked`: the session was started for the task's record (the ledger's jobId), so it has the bridge's tools. */
+  sessions: Array<{ taskId: string; sessionId: string; working: boolean; linked: boolean }> = []
   elsewhere = new Set<string>()
   states = new Map<string, RunSessionState>()
   statuses = new Map<string, WorkerStatus>()
@@ -84,8 +85,8 @@ class World {
     this.patch(id, { properties: { ...task.properties, delegation } })
   }
 
-  session(taskId: string, sessionId: string, working = false): void {
-    this.sessions.unshift({ taskId, sessionId, working })
+  session(taskId: string, sessionId: string, working = false, linked = true): void {
+    this.sessions.unshift({ taskId, sessionId, working, linked })
     this.states.set(sessionId, working ? 'working' : 'idle')
   }
 
@@ -113,7 +114,7 @@ class World {
       },
       waitsForMigration: (taskId) => this.unmoved.has(taskId),
       workingElsewhere: async (_space, taskId) => this.elsewhere.has(taskId),
-      sessionsOf: (taskId) => this.sessions.filter((s) => s.taskId === taskId).map(({ sessionId, working }) => ({ sessionId, working })),
+      sessionsOf: (taskId) => this.sessions.filter((s) => s.taskId === taskId).map(({ sessionId, working, linked }) => ({ sessionId, working, linked })),
       editSchedule: async (_space, taskId, edit, text) => {
         if (this.editFails) throw new Error('the brain refused the write')
         const before = this.scheduleOf(taskId)
@@ -1276,6 +1277,51 @@ describe('a channel message from the bridge', () => {
     world.wait('mail', 's-asks', 'question')
     expect(await wake()).toBe('delivered')
     expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-asks'])
+    expect(world.started).toEqual([])
+  })
+
+  it('never answers delivered unless a session linked to the record got the message, or one was started for it', async () => {
+    const mail = () => runner.wake(world.store.get('mail')!, 'mail', '1 new message', `key-${world.now}`)
+    world.task('mail', null)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
+    // the owner's own session on the task: it has no bridge tools, so it could not read or answer the mail
+    world.session('mail', 's-own', true, false)
+    expect(await mail()).toBe('retry')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    // it stops and waits on the owner's answer: the message still does not go to it; a session is started for the record
+    world.sessions[0].working = false
+    world.states.set('s-own', 'idle')
+    world.wait('mail', 's-own', 'question')
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toHaveLength(1)
+    // that session is the record's: working, it gets the next message; the owner's own never does
+    const linked = world.started[0].sessionId
+    world.session('mail', linked, true, true)
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual([linked])
+    // a linked session that takes no message, beside the owner's own: a new one starts, never the owner's
+    world.sessions[0].working = false
+    world.states.set(linked, 'stopped')
+    world.wait('mail', linked, 'question')
+    world.outcomes.set(linked, 'unknown')
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual([linked, linked])
+    expect(world.started).toHaveLength(2)
+    expect(world.delivered.some((d) => d.sessionId === 's-own')).toBe(false)
+  })
+
+  it('a time still continues the owner\'s own session that waits on an answer, linked or not', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-own', false, false)
+    world.wait('daily', 's-own', 'question')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-own'])
     expect(world.started).toEqual([])
   })
 
