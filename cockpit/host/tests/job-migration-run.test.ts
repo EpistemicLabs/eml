@@ -448,6 +448,28 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
   })
 
+  it('a space no agent is bound to needs no look: nothing there can fire, so it does not keep the looks open; one that is bound and has no brain now still waits', async () => {
+    const w = world([], [task('t1')], { noBrain: ['space-2'] })
+    // bound (agent motti), and no brain to ask now: it waits
+    expect(await w.migration.run()).toMatchObject({ unlooked: 1 })
+    expect(w.logs).toContain('[jobs] migration, space space-2: not looked through yet for schedules left without a job: no brain to ask')
+    expect(JSON.parse(readFileSync(w.file, 'utf8')).leftoverLooksOver).toBeUndefined()
+    // no agent is bound to it: it has no brain because nothing runs there
+    w.spaces[1].agent = null as never
+    expect(await w.migration.run()).toMatchObject({ unlooked: 0, failed: [] })
+    expect(w.logs).toContain('[jobs] migration, space space-2: no agent is bound to it, so nothing there can fire: it needs no look for schedules left without a job')
+    expect(JSON.parse(readFileSync(w.file, 'utf8'))).toMatchObject({ leftoversChecked: [''], leftoverLooksOver: true })
+  })
+
+  it('jobs of a space no agent is bound to wait all the same, and are said', async () => {
+    const w = world([v1('j2', { spaceId: 'space-2', taskId: 't2' })], [task('t2')], { noBrain: ['space-2'] })
+    w.spaces[1].agent = null as never
+    const result = await w.migration.run()
+    expect(result.failed).toEqual(['Team: no brain to ask, its 1 job(s) wait'])
+    expect(result).toMatchObject({ jobs: { moved: 0, notMoved: 1 }, unlooked: 0 })
+    expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j2'])
+  })
+
   it('a home that never had a version 1 file is not looked through: nothing there can be a leftover, and no space is asked', async () => {
     const w = world([], [task('later', stale)])
     writeFileSync(w.file, JSON.stringify({ version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }))

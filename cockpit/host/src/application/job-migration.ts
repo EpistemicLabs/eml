@@ -142,26 +142,36 @@ export function createJobMigration(deps: JobMigrationDeps) {
     space.shared ?? (deps.spaceKind ? await deps.spaceKind(space).catch(() => null) : null)
 
   /**
-   * Why a space can be neither planned nor looked through in this pass, or null: it can. It waits then, and a later
-   * pass asks again.
-   *   - no brain to ask;
-   *   - its kind is not known: whose cockpit fires a task depends on it;
-   *   - its brain is not at schema 24 yet: a schedule of schema 23 reads as none (domain/task-schedule.ts scheduleOf),
-   *     so a look through it would find nothing left over and call it done.
+   * Whether a space can be planned and looked through in this pass; when not, why, and what becomes of its look for
+   * schedules left without a job:
+   *
+   *   - `later`: it waits, and a later pass asks again — it has an agent and no brain to ask now; its kind is not
+   *     known (whose cockpit fires a task depends on it); its brain is not at schema 24 yet, or its schema could not
+   *     be read (a schedule of schema 23 reads as none, domain/task-schedule.ts scheduleOf: a look would find nothing
+   *     left over and call it done). A brain that does not answer the plan's reads waits the same way (runOnce).
+   *   - `none`: no agent is bound to the space, so the host has no task brain for it and the engine fires nothing
+   *     there. It needs no look and keeps the looks of the home open for nobody. Its version 1 jobs still wait.
    */
-  const waitsFor = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'> | null): Promise<string | null> => {
-    if (!brain) return NO_BRAIN
-    if (await kindOf(space) === null) return KIND_UNKNOWN
+  const readinessOf = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'> | null): Promise<{ ready: true } | { ready: false; why: string; look: 'later' | 'none' }> => {
+    if (!brain) return { ready: false, why: NO_BRAIN, look: isUnbound(space) ? 'none' : 'later' }
+    if (await kindOf(space) === null) return { ready: false, why: KIND_UNKNOWN, look: 'later' }
     const schema = deps.brainSchema(space)
-    if (schema === null) return 'the schema of its brain could not be read'
-    if (schema < SCHEDULES_ON_TASKS_SCHEMA) return `its brain is at schema ${schema}, not at ${SCHEDULES_ON_TASKS_SCHEMA} yet`
-    return null
+    if (schema === null) return { ready: false, why: 'the schema of its brain could not be read', look: 'later' }
+    if (schema < SCHEDULES_ON_TASKS_SCHEMA) return { ready: false, why: `its brain is at schema ${schema}, not at ${SCHEDULES_ON_TASKS_SCHEMA} yet`, look: 'later' }
+    return { ready: true }
   }
 
   /** The space still waits for its one look for schedules left without a job (job-store.ts awaitsLeftoverLook). */
   const awaitsLook = (space: BrainSpace): boolean => deps.store.awaitsLeftoverLook?.(keyOf(space)) === true
-  /** Spaces said in the log to wait for that look: once each, not at every pass. */
-  const saidUnlooked = new Set<string | null>()
+  /** No agent is bound to the space: the host has no task brain for it, and the engine fires nothing there. */
+  const isUnbound = (space: BrainSpace): boolean => space.agent === null
+  /** What was said in the log of a space's look: each line once per space, not at every pass. */
+  const saidOfLook = new Set<string>()
+  const said = (line: string) => {
+    if (saidOfLook.has(line)) return
+    saidOfLook.add(line)
+    deps.log(`[jobs] migration, ${line}`)
+  }
 
   /**
    * The plan of one space, from the version 1 data and the brain as they are now; null when it has no job to move and
@@ -241,19 +251,17 @@ export function createJobMigration(deps: JobMigrationDeps) {
       return result
     }
     /** The space has no job that waits, and cannot be looked through now: it waits, said once in the log. */
-    const unlooked = (space: BrainSpace, why: string) => {
-      if (saidUnlooked.has(keyOf(space))) return
-      saidUnlooked.add(keyOf(space))
-      deps.log(`[jobs] migration, ${spaceTag(space)}: not looked through yet for schedules left without a job: ${why}`)
-    }
+    const unlooked = (space: BrainSpace, why: string) => said(`${spaceTag(space)}: not looked through yet for schedules left without a job: ${why}`)
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
       const waiting = Object.values(deps.store.pendingV1()?.jobs ?? {}).filter((j) => (j.spaceId ?? null) === keyOf(space)).length
       if (waiting === 0 && !awaitsLook(space)) continue
-      const why = await waitsFor(space, brain)
-      if (why !== null || !brain) {
-        if (waiting === 0) unlooked(space, why ?? NO_BRAIN)
-        else failed(`${space.name}: ${why}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${why}, its ${waiting} job(s) wait`)
+      const readiness = await readinessOf(space, brain)
+      if (!readiness.ready || !brain) {
+        const why = readiness.ready ? NO_BRAIN : readiness.why
+        if (waiting > 0) failed(`${space.name}: ${why}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${why}, its ${waiting} job(s) wait`)
+        else if (!readiness.ready && readiness.look === 'none') said(`${spaceTag(space)}: no agent is bound to it, so nothing there can fire: it needs no look for schedules left without a job`)
+        else unlooked(space, why)
         result.jobs.notMoved += waiting
         continue
       }
@@ -310,7 +318,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const known = new Set(deps.spaces().map(keyOf))
     const homeless = rest.filter((j) => !known.has(j.spaceId ?? null)).length
     if (homeless > 0) failed(`${homeless} job(s) of a space this cockpit no longer has stay as they are`, `${homeless} job(s) of a space this cockpit no longer has stay as they are`)
-    if (looks) result.unlooked = deps.spaces().filter(awaitsLook).length
+    // A space no agent is bound to needs no look: it does not count.
+    if (looks) result.unlooked = deps.spaces().filter((space) => awaitsLook(space) && !isUnbound(space)).length
     // Every space this cockpit has was looked through: a space it gets later waits for no look.
     if (looks && result.unlooked === 0) deps.store.endLeftoverLooks?.()
     if (hadJobs) deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
