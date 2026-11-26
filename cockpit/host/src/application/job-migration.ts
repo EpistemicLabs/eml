@@ -1,7 +1,7 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { JobV1 } from '../domain/job-v1.js'
-import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
+import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, SCHEDULES_ON_TASKS_SCHEMA, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
 import type { NotificationInput } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
 import { openTasks, taskById } from './task-read.js'
@@ -23,8 +23,9 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  * between a task's brain write and its store write plans that one task again: its schedule and text are found as
  * they should be and are not written twice; only its journal lines repeat.
  *
- * A brain that is not at schema 24 yet refuses the new schedule shape: that task's write fails and its jobs wait.
- * A space the brain server has not said the kind of (shared or local) is not planned at all: its jobs wait too.
+ * A space whose brain is not at schema 24 yet (the brain server's control data says which it is at) is neither
+ * planned nor looked through: its jobs wait. So does a space the brain server has not said the kind of (shared or
+ * local).
  *
  * In a home that was on version 1, every space is looked through once for schedules the old mirror left on tasks
  * without a job (domain/job-migration.ts), before any job of it moves, and also when it has no job: nothing ran such
@@ -42,6 +43,11 @@ export interface JobMigrationDeps {
    * null); null: still not known. A space of unknown kind is not planned: whose cockpit fires a task depends on it.
    */
   spaceKind?(space: BrainSpace): Promise<boolean | null>
+  /**
+   * The schema version of the space's brain, as the brain server's control data has it (update-status.ts
+   * brainSchemaVersion); null: it could not be read. A space whose brain is not at schema 24 is not planned.
+   */
+  brainSchema(space: BrainSpace): number | null
   /** This cockpit's member. */
   me: string
   /** The sessions that worked for a job work for the task's record from now on (the ledger's jobId). */
@@ -124,6 +130,7 @@ export async function membersOf(brain: Pick<EmlApi, 'get'>): Promise<string[] | 
 
 /** What a pass says of a space it cannot plan yet because its kind is not known. */
 export const KIND_UNKNOWN = 'the brain server has not said yet whether it is shared'
+const NO_BRAIN = 'no brain to ask'
 
 export function createJobMigration(deps: JobMigrationDeps) {
   let running: Promise<JobMigrationResult> | null = null
@@ -133,6 +140,23 @@ export function createJobMigration(deps: JobMigrationDeps) {
   /** Shared, local, or null: not known yet (asked again each time). */
   const kindOf = async (space: BrainSpace): Promise<boolean | null> =>
     space.shared ?? (deps.spaceKind ? await deps.spaceKind(space).catch(() => null) : null)
+
+  /**
+   * Why a space can be neither planned nor looked through in this pass, or null: it can. It waits then, and a later
+   * pass asks again.
+   *   - no brain to ask;
+   *   - its kind is not known: whose cockpit fires a task depends on it;
+   *   - its brain is not at schema 24 yet: a schedule of schema 23 reads as none (domain/task-schedule.ts scheduleOf),
+   *     so a look through it would find nothing left over and call it done.
+   */
+  const waitsFor = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'> | null): Promise<string | null> => {
+    if (!brain) return NO_BRAIN
+    if (await kindOf(space) === null) return KIND_UNKNOWN
+    const schema = deps.brainSchema(space)
+    if (schema === null) return 'the schema of its brain could not be read'
+    if (schema < SCHEDULES_ON_TASKS_SCHEMA) return `its brain is at schema ${schema}, not at ${SCHEDULES_ON_TASKS_SCHEMA} yet`
+    return null
+  }
 
   /** The space still waits for its one look for schedules left without a job (job-store.ts awaitsLeftoverLook). */
   const awaitsLook = (space: BrainSpace): boolean => deps.store.awaitsLeftoverLook?.(keyOf(space)) === true
@@ -226,16 +250,10 @@ export function createJobMigration(deps: JobMigrationDeps) {
       const brain = deps.brain(space)
       const waiting = Object.values(deps.store.pendingV1()?.jobs ?? {}).filter((j) => (j.spaceId ?? null) === keyOf(space)).length
       if (waiting === 0 && !awaitsLook(space)) continue
-      if (!brain) {
-        if (waiting === 0) unlooked(space, 'no brain to ask')
-        else failed(`${space.name}: no brain to ask, its ${waiting} job(s) wait`, `${spaceTag(space)}: no brain to ask, its ${waiting} job(s) wait`)
-        result.jobs.notMoved += waiting
-        continue
-      }
-      // Whose cockpit fires a task depends on the space's kind: not known, nothing of it is planned, and it waits.
-      if (await kindOf(space) === null) {
-        if (waiting === 0) unlooked(space, KIND_UNKNOWN)
-        else failed(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
+      const why = await waitsFor(space, brain)
+      if (why !== null || !brain) {
+        if (waiting === 0) unlooked(space, why ?? NO_BRAIN)
+        else failed(`${space.name}: ${why}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${why}, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }

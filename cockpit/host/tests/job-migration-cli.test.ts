@@ -20,7 +20,7 @@ const job = (id: string, patch: Record<string, unknown> = {}) => ({
 type TaskRow = { id: string; status?: string; content?: string; properties?: Record<string, unknown> }
 
 /** A home in a folder of its own: a jobs.json when `jobs` is given, and a brain file per space with these tasks. */
-function homeWith(opts: { jobs?: unknown; tasks?: TaskRow[]; spaces?: Array<{ token: string; name?: string }>; config?: boolean } = {}) {
+function homeWith(opts: { jobs?: unknown; tasks?: TaskRow[]; spaces?: Array<{ token: string; name?: string }>; config?: boolean; schema?: number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cockpit-migrate-jobs-'))
   const jobsFile = join(dir, 'jobs.json')
   if (opts.jobs !== undefined) writeFileSync(jobsFile, JSON.stringify(opts.jobs))
@@ -32,7 +32,7 @@ function homeWith(opts: { jobs?: unknown; tasks?: TaskRow[]; spaces?: Array<{ to
   const home: MigrateJobsHome = {
     dir, jobsFile,
     config: async () => (opts.config === false ? null : { token: 'main-token', handle: 'owner', mainName: 'Main', spaces: opts.spaces ?? [] }),
-    brainOf: (token) => (token === 'main-token' ? { brainId: 'main-brain', brainFile } : token === 'team-token' ? { brainId: 'space-2', brainFile } : { brainId: null, brainFile: null }),
+    brainOf: (token) => (token === 'main-token' ? { brainId: 'main-brain', brainFile, schemaVersion: opts.schema ?? 24 } : token === 'team-token' ? { brainId: 'space-2', brainFile, schemaVersion: 24 } : { brainId: null, brainFile: null, schemaVersion: null }),
   }
   const printed: string[] = []
   return { dir, jobsFile, home, printed, run: (argv: string[] = ['migrate-jobs']) => runMigrateJobsCommand(argv, (text) => printed.push(text), home) }
@@ -87,6 +87,23 @@ describe('eml-cockpit migrate-jobs', () => {
     const text = h.printed.join('')
     expect(text).toContain('## Task left (left) — a schedule without a job')
     expect(text).not.toContain('Task closed')
+  })
+
+  it('a brain file still at schema 23: a schedule in the old shape is read as the host will find it after the brain moved, and the output says so', async () => {
+    // schema 23 held one cron and a session; schema 24 holds a list of crons
+    const old = (cron: string) => ({ delegation: { agent: 'atlas', schedule: { cron, time_zone: 'UTC', session: 'new' } } })
+    const h = homeWith({ schema: 23, jobs: { version: 1, jobs: { j1: job('j1') }, runs: {}, keys: {} }, tasks: [{ id: 't1', properties: old('0 8 * * 1-5') }, { id: 'left', properties: old('0 7 * * *') }] })
+    await h.run()
+    const text = h.printed.join('')
+    expect(text).toContain('Main: its brain is at schema 23: the host moves it at its first start on the new version; planned here as it will be then.\n\n# Schedules onto tasks — dry run\n')
+    // the leftover is found, though it reads as no schedule in the new shape
+    expect(text).toContain('## Task left (left) — a schedule without a job\n\n- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+    // and the task's current schedule is the one its job gives it
+    expect(text).toContain('- The task has that schedule already: it is not written again.')
+    // a brain at schema 24 gets no such line
+    const now = homeWith({ jobs: { version: 1, jobs: { j1: job('j1') }, runs: {}, keys: {} }, tasks: [{ id: 't1' }] })
+    await now.run()
+    expect(now.printed.join('')).not.toContain('its brain is at schema')
   })
 
   it('looks through the main space of a home that was on version 1 also when it holds no job; a home that never was has nothing to move', async () => {

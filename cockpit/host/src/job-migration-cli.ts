@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import { readCockpitConfig, type CockpitConfig } from './config.js'
 import { COCKPIT_HOME, JOBS_FILE } from './paths.js'
 import { readBrainInfo, type BrainInfo } from './brain-info.js'
-import { jobMigrationReport, planJobMigration, type JobMigrationTask } from './domain/job-migration.js'
+import { jobMigrationReport, planJobMigration, scheduleAtSchema24, SCHEDULES_ON_TASKS_SCHEMA, type JobMigrationTask } from './domain/job-migration.js'
 import { JobStore } from './job-store.js'
 import { routineTaskOfJob } from './application/job-migration.js'
 
@@ -14,8 +14,10 @@ import { routineTaskOfJob } from './application/job-migration.js'
  * which jobs are dropped and why, which per-machine settings move.
  *
  * It only reads: jobs.json, the config, control.db and each space's brain file (opened read-only). It writes nothing
- * and needs no running host, so it can be pointed at a copy of a home. The brain may still be at schema 23: only a
- * task's status, owner, text and delegation are read. There is no --run: the host writes the migration at its start.
+ * and needs no running host, so it can be pointed at a copy of a home. The brain may still be at schema 23, where the
+ * host itself would wait: a task's schedule is read in either shape, as the brain's own step to 24 will leave it
+ * (domain/job-migration.ts scheduleAtSchema24), so the plan is the one the host makes once the brain has moved; the
+ * output says so. There is no --run: the host writes the migration at its start.
  */
 
 const require = createRequire(import.meta.url)
@@ -27,6 +29,13 @@ type TaskRow = { id: string; status: string; title: string | null; content: stri
 function taskOfRow(row: TaskRow): JobMigrationTask {
   let properties: JobMigrationTask['properties'] = null
   try { properties = row.properties ? JSON.parse(row.properties) as JobMigrationTask['properties'] : null } catch { /* a task without readable properties has none */ }
+  // The schedule in the shape of schema 24, also from a brain file still at 23.
+  const delegation = properties?.delegation
+  if (properties && delegation && typeof delegation === 'object' && 'schedule' in delegation) {
+    const { schedule: stored, ...rest } = delegation
+    const schedule = scheduleAtSchema24(stored)
+    properties = { ...properties, delegation: schedule ? { ...rest, schedule } : rest }
+  }
   return { id: row.id, status: row.status, title: row.title, content: row.content, ingested_by: row.ingested_by, properties }
 }
 
@@ -46,7 +55,7 @@ export interface MigrateJobsHome {
   dir: string
   jobsFile: string
   config(): Promise<Pick<CockpitConfig, 'token' | 'handle' | 'mainName' | 'spaces'> | null>
-  brainOf(token: string): Pick<BrainInfo, 'brainId' | 'brainFile'>
+  brainOf(token: string): Pick<BrainInfo, 'brainId' | 'brainFile' | 'schemaVersion'>
 }
 
 const THIS_HOME: MigrateJobsHome = { dir: COCKPIT_HOME, jobsFile: JOBS_FILE, config: readCockpitConfig, brainOf: readBrainInfo }
@@ -94,7 +103,11 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
         ...(first ? { scheduled: scheduledFrom(db), records: new Set(store.list().map((record) => record.id)) } : {}),
       })
       // A space that has no job and nothing left over has nothing to report, as in the host's pass.
-      if (mine.length > 0 || (plan.leftovers?.length ?? 0) > 0) out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
+      if (mine.length > 0 || (plan.leftovers?.length ?? 0) > 0) {
+        // The host waits for a brain that is not at schema 24 yet; the dry run shows what it does once it is.
+        if (info.schemaVersion !== null && info.schemaVersion < SCHEDULES_ON_TASKS_SCHEMA) out(`${space.name}: its brain is at schema ${info.schemaVersion}: the host moves it at its first start on the new version; planned here as it will be then.\n\n`)
+        out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
+      }
     } finally {
       db.close()
     }

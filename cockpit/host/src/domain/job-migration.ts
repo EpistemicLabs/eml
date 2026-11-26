@@ -60,6 +60,31 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  * or record that is already there is not written twice.
  */
 
+/** The brain schema from which a task holds its schedule: a space's jobs are planned against a brain at it, never an older one. */
+export const SCHEDULES_ON_TASKS_SCHEMA = 24
+
+/**
+ * A stored schedule as a brain at schema 24 holds it, from either shape. Schema 23 held one `cron` and a `session`;
+ * the brain's own step to 24 (packages/core v0.24_migrate.sql) makes the cron a list of one, keeps at, time_zone and
+ * paused, and drops the rest; a schedule with neither a cron nor an at is none. A schedule in the new shape is
+ * returned as it is. For a reader of a brain file that may still be at 23 (the dry run by hand); the host itself only
+ * plans against a brain at 24.
+ */
+export function scheduleAtSchema24(stored: unknown): ScheduleFields | null {
+  if (!stored || typeof stored !== 'object') return null
+  const raw = stored as Record<string, unknown>
+  if (!('cron' in raw) && !('session' in raw)) return raw as ScheduleFields
+  const cron = typeof raw.cron === 'string' ? raw.cron.trim() : ''
+  const at = typeof raw.at === 'string' ? raw.at : null
+  if (!cron && at === null) return null
+  return {
+    ...(cron ? { crons: [cron] } : {}),
+    ...(at !== null ? { at } : {}),
+    ...(typeof raw.time_zone === 'string' && raw.time_zone.trim() ? { time_zone: raw.time_zone } : {}),
+    ...(typeof raw.paused === 'boolean' ? { paused: raw.paused } : {}),
+  }
+}
+
 export interface JobMigrationTask {
   id: string
   status: string

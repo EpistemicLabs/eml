@@ -18,7 +18,7 @@ const v1 = (id: string, patch: Record<string, unknown> = {}) => ({
 const openRun = (jobId: string) => ({ id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt: '2026-11-26T08:00:00.000Z', createdAt: '2026-11-26T08:00:00.000Z', status: 'started', attempts: 1, nextAttemptAt: null, sessionId: 's1', startedAt: '2026-11-26T08:00:05.000Z', finishedAt: null, outcome: null, note: null })
 const task = (id: string, properties: Record<string, unknown> = {}, status = 'active'): Task => ({ id, type: 'task', status, title: id, content: 'Keep the customer informed.', properties: { assignee_ids: ['member'], ...properties } })
 
-function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null } = {}) {
+function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null; schema?: Record<string, number | null> } = {}) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
   const original = JSON.stringify({ version: 1, timeZone: 'UTC', jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), runs: opts.runs ?? {}, keys: {} })
   writeFileSync(file, original)
@@ -74,6 +74,8 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
     saveReport: (markdown: string) => { saved.push(markdown); return '/home/someone/.eml-cockpit/jobs-migration-report.md' },
     notify: (input: Record<string, unknown>) => { notices.push(input) },
     spaceKind: async (space: { shared: boolean | null }) => { kind.asked += 1; return space.shared ?? kind.answer },
+    // The brain's schema as the host's control data has it: 24 unless a test says otherwise.
+    brainSchema: (space: { id: string }) => (opts.schema && space.id in opts.schema ? opts.schema[space.id] : 24),
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'member', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
@@ -178,7 +180,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const first = createJobMigration({
       store: { pendingV1: () => w.store.pendingV1(), migrateV1: () => { throw new Error('host stopped') } }, spaces: () => [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }] as never,
       brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async (_p: string, body: Record<string, unknown>) => { w.posts.push({ space: 'main-id', path: _p, body }); const t = w.byId.get('t1')!; t.content = body.content as string; t.properties.delegation = body.delegation; return t } }),
-      me: 'member', moveSessions: () => {}, now: () => NOW, log: () => {},
+      me: 'member', moveSessions: () => {}, now: () => NOW, log: () => {}, brainSchema: () => 24,
     } as never)
     expect((await first.run()).failed).toEqual(['Main: "t1": host stopped'])
     expect(w.posts).toHaveLength(1)
@@ -428,6 +430,24 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.map((p) => [p.space, p.path])).toEqual([['main-id', '/task/left/track']])
   })
 
+  it('a space whose brain is not at schema 24 yet is neither planned nor looked through: an old-shape schedule reads as none there, so the space waits and is tried again', async () => {
+    // schema 23: one cron, no list. Read as schema 24 it is no schedule at all.
+    const old = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { cron: '0 7 * * *', time_zone: 'UTC', session: 'new' } } }
+    const w = world([v1('j2', { spaceId: 'space-2', taskId: 't2' })], [task('t2'), task('left', old)], { schema: { 'main-id': 23, 'space-2': null } })
+    const first = await w.migration.run()
+    expect(first).toMatchObject({ moved: 0, leftovers: 0, unlooked: 2, jobs: { moved: 0, notMoved: 1 } })
+    expect(first.failed).toEqual(['Team: the schema of its brain could not be read, its 1 job(s) wait'])
+    expect(w.posts).toEqual([])
+    expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([true, true])
+    expect(w.logs).toContain('[jobs] migration, space main: not looked through yet for schedules left without a job: its brain is at schema 23, not at 24 yet')
+    expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j2'])
+    // the brains were migrated: the schedule has its new shape, and is found
+    w.opts.schema = {}
+    w.byId.get('left')!.properties.delegation = { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }
+    expect(await w.migration.run()).toMatchObject({ moved: 1, leftovers: 1, unlooked: 0, failed: [] })
+    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
+  })
+
   it('a home that never had a version 1 file is not looked through: nothing there can be a leftover, and no space is asked', async () => {
     const w = world([], [task('later', stale)])
     writeFileSync(w.file, JSON.stringify({ version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }))
@@ -522,7 +542,7 @@ describe('the report of a real run is kept, and the user is told of what did not
     const w = world([v1('j1')], [task('t1')])
     const migration = createJobMigration({
       store: w.store, spaces: () => [w.spaces[0]] as never, brain: () => ({ get: async (path: string) => (path === '/list' ? { engrams: [] } : structuredClone(w.byId.get(path.slice('/engram/'.length))!)), post: async () => ({}) }),
-      me: 'member', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') },
+      me: 'member', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') }, brainSchema: () => 24,
     } as never)
     expect(await migration.run()).toMatchObject({ moved: 1, reportFile: null })
     expect(w.logs.some((l) => l.includes('its report could not be written: disk full'))).toBe(true)

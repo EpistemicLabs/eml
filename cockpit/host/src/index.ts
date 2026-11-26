@@ -90,6 +90,7 @@ import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
 import { openTasks, taskById } from './application/task-read.js'
 import { createMigrationWatch, pendingSpaces } from './application/job-migration-watch.js'
+import { brainSchemaVersion } from './update-status.js'
 import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { keepRecord } from './application/record-profile.js'
 import { hasSchedule } from './domain/task-schedule.js'
@@ -865,6 +866,8 @@ async function main() {
   const jobMigration = createJobMigration({
     store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,
     spaceKind: spaceKindOf,
+    // As the brain server's control data has it: a brain that is not at schema 24 yet is not planned.
+    brainSchema: (space) => { try { return brainSchemaVersion(space.id) } catch { return null } },
     // The channel bridge files its messages, wakes and drafts by job id: it follows a moved job's new id.
     renameInBridge: (from, to) => renameBridgeJob(bridgeFiles(), from, to),
     // Each real run's report is kept, appended to one file in the home; the user is told when a job did not move.

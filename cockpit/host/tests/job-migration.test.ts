@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { jobMigrationReport, MIGRATED_AWAY, planJobMigration, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { jobMigrationReport, MIGRATED_AWAY, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
@@ -503,5 +503,20 @@ describe('the report of the plan', () => {
     expect(report).toContain(`- Job "Their job" (${theirs.id.slice(0, 8)}): NOT MOVED, IT NO LONGER FIRES: the task "Task t2" (t2) is other's`)
     expect(jobMigrationReport(p, { space: 'Main', at: 'now', dryRun: false })).toContain('# Schedules onto tasks — run')
     expect(jobMigrationReport({ tasks: [], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: true })).toContain('Nothing to move.')
+  })
+})
+
+describe('a stored schedule read as schema 24 holds it', () => {
+  it('a schema 23 schedule becomes what the brain\'s step to 24 leaves: the cron a list of one, at, time_zone and paused kept, the session gone', () => {
+    expect(scheduleAtSchema24({ cron: ' 0 7 * * * ', time_zone: 'UTC', session: 'new', paused: true })).toEqual({ crons: ['0 7 * * *'], time_zone: 'UTC', paused: true })
+    expect(scheduleAtSchema24({ at: AHEAD, session: 'resume', time_zone: ' ' })).toEqual({ at: AHEAD })
+    // neither a cron nor a time: no schedule
+    expect(scheduleAtSchema24({ cron: ' ', session: 'new' })).toBeNull()
+  })
+
+  it('a schedule in the new shape is returned as it is, and nothing is no schedule', () => {
+    const now = { crons: ['0 7 * * *', '0 9 * * *'], at: AHEAD, why: 'Look.', by_session: 's1', time_zone: 'UTC', ends_at: LATER }
+    expect(scheduleAtSchema24(now)).toBe(now)
+    expect([scheduleAtSchema24(null), scheduleAtSchema24(undefined), scheduleAtSchema24('x')]).toEqual([null, null, null])
   })
 })
