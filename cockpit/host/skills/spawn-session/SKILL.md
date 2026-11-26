@@ -42,19 +42,20 @@ The worker has the brain, not this conversation. The prompt must stand alone:
 3. **Constraints** — what not to touch, decisions already made, how the user
    wants to work (plan before build, commit rules).
 4. **Hand-back** — where the result goes (commit, brain status/log) and how
-   the worker talks back. For a Claude worker, add this section with your own
-   address filled in (`echo "$COCKPIT_SESSION_ADDRESS"`):
+   the worker talks back. When `$COCKPIT_SESSION_ADDRESS` is set, add this
+   section with your own address filled in (`echo "$COCKPIT_SESSION_ADDRESS"`):
 
    > **Talking back:** You were started by the session `<your address>`.
-   > Reach it with SendMessage (`to: "<your address>"`). Ask it when you hit a
+   > Reach it with SendMessage, or the send_message tool of the MCP server
+   > cockpit if you have that instead (`to: "<your address>"`). Ask it when you hit a
    > real decision instead of guessing; it answers within the decisions
    > already made or asks its user. When you are done, send it a summary
    > (what changed, where the result is, what is open). The result itself goes
    > to the commit or the brain, not into the message.
 
-   A Codex worker cannot send messages: its hand-back is its pane and the
-   brain only, so tell it to stop and wait in its pane when it hits a real
-   decision.
+   Without it, this session cannot be messaged back: the worker's hand-back is
+   its pane and the brain only, so tell it to stop and wait in its pane when it
+   hits a real decision.
 
 ## Run it
 
@@ -82,7 +83,7 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
   a new step of your own task — only when the work is part of your task. Without any of them,
   the worker gets a task of its own and its task notes that you started it.
 
-For a worker that can message, the output ends with `Worker address: <address>`.
+For a worker that can be messaged, the output ends with `Worker address: <address>`.
 
 If `COCKPIT_SPAWN_JS` is not set, this session is not running in the cockpit —
 say so instead of trying another way.
@@ -122,5 +123,5 @@ With a worker address:
 - Its summary tells you it is done: check the result where it says, then tell
   your user.
 
-Without one (a Codex worker), its results arrive through its own pane and the
-brain.
+Without one (a worker that cannot be messaged, such as a Codex worker in a
+terminal), its results arrive through its own pane and the brain.
