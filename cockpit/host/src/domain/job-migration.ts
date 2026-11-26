@@ -1,7 +1,9 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
-import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
+import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
+import { narrowedProfile } from './schedule-tool.js'
 import { firingOf, ownerOf } from './task-owner.js'
+import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
 /**
@@ -22,7 +24,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, 
  *   - a paused job → with all of the task's timed jobs paused, the schedule is paused; a paused job next to running
  *     ones is left out, with a journal line (the one Pause is for the whole schedule, and it would run again);
  *   - its per-machine settings (who hears of a run, limited and lent tools, tool profile, reply mode, max runs, mail
- *     triggers, where a new session starts) → the task's record; its runs go on under the record.
+ *     triggers, where a new session starts) → the task's record; its runs go on under the record. Of several jobs
+ *     on one task the strictest wins: the narrowest tools, the limit, the draft reply; and the loudest telling.
  *
  * The task's schedule is built from its jobs alone: what the mirror left in the delegation is replaced. Not every
  * job moves:
@@ -131,6 +134,9 @@ const iso = (at: number) => new Date(at).toISOString()
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim()
 const nameOf = (task: JobMigrationTask) => task.properties?.display_title ?? task.title ?? task.id
+
+/** Who hears of a run, loudest first: of several jobs on one task the loudest wins, so no run goes untold that one of them told. */
+const LOUDEST: readonly JobNotify[] = ['always', 'needs-me', 'never']
 
 /** The note of a run that was open when its job was dropped by the migration. */
 export const MIGRATED_AWAY = 'its job ended when schedules moved onto tasks'
@@ -312,7 +318,9 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     ? { setSchedule, content: appended.length > 0 ? content : null, appended, journal }
     : null
 
-  // The record: what this machine keeps for the task, from its oldest job; the stricter of two wins where it can.
+  // The record: what this machine keeps for the task. Of several jobs the strictest wins: the tools are the narrowest
+  // of all (the schedule tool's rule, a job without a profile widens nothing), a limit and a draft reply hold if any
+  // had them; runs are told as the loudest of them said. Where a new session starts comes from the oldest job.
   const primary = live[0]
   const allRuns = live.flatMap((j) => input.runs[j.id] ?? [])
   const triggers = live.flatMap(channelsOf)
@@ -329,10 +337,12 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     const overdue = kept.filter((j) => !allPaused && scheduleTriggerOf(j)?.cron !== undefined && j.nextRunAt && Date.parse(j.nextRunAt) <= now).map((j) => Date.parse(j.nextRunAt!))
     const started = allRuns.map((r) => r.startedAt).filter((s): s is string => Boolean(s)).sort()
     const reason = allPaused ? timed.find((j) => j.pausedReason)?.pausedReason ?? null : null
+    const toolProfile = live.reduce<ToolProfile | null>((kept, j) => narrowedProfile(kept, j.toolProfile, undefined) as ToolProfile | null, null)
+    const notify = LOUDEST.find((n) => live.some((j) => j.notify === n)) ?? primary.notify
     record = {
       id: taskId, spaceId: input.space.key, taskId, createdBy: primary.createdBy, createdAt: primary.createdAt, updatedAt: iso(now),
       triggers, projectId: starts?.projectId ?? null, ...(starts?.provider ? { provider: starts.provider } : {}),
-      toolProfile: primary.toolProfile, reply, end: counted ? { afterRuns: counted.end!.afterRuns! } : null, notify: primary.notify,
+      toolProfile, reply, end: counted ? { afterRuns: counted.end!.afterRuns! } : null, notify,
       pausedReason: reason,
       ...(live.some((j) => j.pendingApproval) ? { pendingApproval: true } : {}),
       ...(live.some((j) => j.limited) ? { limited: true } : {}),
@@ -343,14 +353,14 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     }
     settings.push(`tells ${record.notify}`)
     if (record.limited) settings.push(`limited${record.grants?.length ? `, lent ${record.grants.map((g) => g.tool).join(', ')}` : ''}`)
-    if (record.toolProfile) settings.push('its tool profile')
+    if (record.toolProfile) settings.push(live.length > 1 ? `its tool profile (the narrowest of its ${live.length} jobs)` : 'its tool profile')
     for (const trigger of triggers) settings.push(`wakes on ${trigger.type} (${trigger.match.length} sender${trigger.match.length === 1 ? '' : 's'})${record.pendingApproval ? ', waiting for the user\'s OK' : ''}`)
     for (const [channel, mode] of Object.entries(reply)) settings.push(`${channel} replies: ${mode}`)
     if (record.end) settings.push(`ends after ${record.end.afterRuns} runs (${record.runCount} so far)`)
     if (record.projectId) settings.push(`new sessions start in ${record.projectId}${record.provider ? ` with ${record.provider}` : ''}`)
     if (record.pausedReason) settings.push(`paused by the cockpit: ${record.pausedReason}`)
     if (ownerless) settings.push('no member owns the task: this cockpit fires it, because it keeps its record')
-    if (live.length > 1) settings.push(`taken from its oldest job "${primary.name}"; limited, lent tools, reply mode and channels from all ${live.length}`)
+    if (live.length > 1) settings.push(`from its ${live.length} jobs: new sessions start where the oldest one ("${primary.name}") started them; the tools are the narrowest, a limit and draft replies hold if any had them, runs are told as the loudest of them said, lent tools and channels are those of all`)
     const open = allRuns.filter(isOpenRun).length
     if (allRuns.length > 0) settings.push(`${allRuns.length} run${allRuns.length === 1 ? '' : 's'} carried over${open ? ` (${open} open)` : ''}`)
   }

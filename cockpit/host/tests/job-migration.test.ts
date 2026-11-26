@@ -163,6 +163,32 @@ describe('planning jobs onto their tasks', () => {
     expect(other.tasks.map((t) => [t.taskId, t.settles, t.record?.spaceId])).toEqual([['t2', [there.id], 'space-2']])
   })
 
+  it('two jobs on one task: the record\'s tools are the narrowest of both, whichever is older, and a job without a profile widens nothing', () => {
+    const narrow = { deniedTools: ['Bash'], mcpServers: [] as string[] }
+    // the older job had all its tools, the newer one was narrowed: the task's sessions keep the narrow profile
+    expect(plan([cron('0 8 * * *'), cron('0 18 * * *', { toolProfile: narrow })]).tasks[0].record?.toolProfile).toEqual(narrow)
+    expect(plan([cron('0 8 * * *', { toolProfile: narrow }), cron('0 18 * * *')]).tasks[0].record?.toolProfile).toEqual(narrow)
+    // two profiles: every denied tool of either, only the MCP servers both allow
+    const [t] = plan([
+      cron('0 8 * * *', { toolProfile: { deniedTools: ['Bash'], mcpServers: ['eml_brain', 'slack'] } }),
+      cron('0 18 * * *', { toolProfile: { deniedTools: ['WebFetch'], mcpServers: ['eml_brain'] } }),
+      once(AHEAD, { toolProfile: { deniedTools: ['Bash'], mcpServers: null } }),
+    ]).tasks
+    expect(t.record?.toolProfile).toEqual({ deniedTools: ['Bash', 'WebFetch'], mcpServers: ['eml_brain'] })
+    expect(t.settings).toContain('its tool profile (the narrowest of its 3 jobs)')
+    // none had one: none
+    expect(plan([cron('0 8 * * *'), cron('0 18 * * *')]).tasks[0].record?.toolProfile).toBeNull()
+  })
+
+  it('two jobs on one task: who hears of a run is the loudest of them; new sessions start where the oldest job started them, and the report says so', () => {
+    const told = (a: JobV1['notify'], b: JobV1['notify']) => plan([cron('0 8 * * *', { notify: a }), cron('0 18 * * *', { notify: b })]).tasks[0].record?.notify
+    expect([told('never', 'needs-me'), told('needs-me', 'never'), told('never', 'always'), told('always', 'never'), told('needs-me', 'always'), told('never', 'never')])
+      .toEqual(['needs-me', 'needs-me', 'always', 'always', 'always', 'never'])
+    const [t] = plan([cron('0 8 * * *', { name: 'Morning', target: { type: 'worker', projectId: 'bp-ops' } }), cron('0 18 * * *', { name: 'Evening', target: { type: 'worker', projectId: 'bp-sales' } })]).tasks
+    expect(t.record?.projectId).toBe('bp-ops')
+    expect(t.settings).toContain('from its 2 jobs: new sessions start where the oldest one ("Morning") started them; the tools are the narrowest, a limit and draft replies hold if any had them, runs are told as the loudest of them said, lent tools and channels are those of all')
+  })
+
   describe('whose jobs move where: one rule with the engine (domain/task-owner.ts firingOf)', () => {
     const shared: Partial<JobMigrationInput> = { space: { key: null, name: 'Team', shared: true }, members: ['lasse', 'dominik'] }
     const outcome = (t: JobMigrationTask, patch: Partial<JobMigrationInput> = shared) => plan([cron('0 8 * * 1-5')], [t], patch).tasks[0]
@@ -314,7 +340,7 @@ describe('planning jobs onto their tasks', () => {
       reply: { mail: 'draft' }, grants: [{ tool: 'chrome', until: '2026-11-26T11:00:00.000Z', reason: null }],
       toolProfile: { deniedTools: ['Bash'], mcpServers: null }, projectId: 'bp-customer', provider: 'codex',
     })
-    expect(t.settings).toEqual(expect.arrayContaining(['tells needs-me', 'limited, lent chrome', 'its tool profile', 'wakes on mail (1 sender), waiting for the user\'s OK', 'mail replies: draft', 'new sessions start in bp-customer with codex']))
+    expect(t.settings).toEqual(expect.arrayContaining(['tells needs-me', 'limited, lent chrome', 'its tool profile (the narrowest of its 2 jobs)', 'wakes on mail (1 sender), waiting for the user\'s OK', 'mail replies: draft', 'new sessions start in bp-customer with codex']))
     // a job only a channel wakes: no schedule, but a record that listens
     const [only] = plan([job({ triggers: [{ type: 'mail', match: [] }], nextRunAt: null })]).tasks
     expect(only).toMatchObject({ schedule: null, brain: null, record: { id: 't1', triggers: [{ type: 'mail' }] } })
