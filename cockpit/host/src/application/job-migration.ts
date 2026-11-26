@@ -92,6 +92,8 @@ export interface JobMigrationResult {
   leftovers: number
   /** Schedules that arrived paused as a whole because one of their repeating jobs was paused, while others ran. */
   arrivedPaused: number
+  /** Schedules whose times all wait for the user's OK, because every job of their task was waiting for it. */
+  arrivedHeld: number
   /** Where this run's report was kept; null: none was written (nothing was planned, nothing changed since the last one, or it failed). */
   reportFile: string | null
   /** Spaces this run could not look through yet for schedules left without a job: a later pass tries again. */
@@ -263,7 +265,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   const runOnce = async (): Promise<JobMigrationResult> => {
-    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 }
+    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, arrivedHeld: 0, reportFile: null, unlooked: 0 }
     /** What was not done: for the result and the report as the user reads it (names), and for the log (ids). */
     const failed = (shown: string, logged: string) => {
       result.failed.push(shown)
@@ -339,6 +341,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
           await applyTask(space, brain, task, task.taskId ? planned.tasks[task.taskId] ?? null : null)
           result[task.outcome] += 1
           if (task.pausedByJob) result.arrivedPaused += 1
+          if (task.heldForOk) result.arrivedHeld += 1
           result.jobs.moved += fates.moved
           result.jobs.notMoved += fates.lost + fates.waits
         } catch (err) {
@@ -377,7 +380,9 @@ export function createJobMigration(deps: JobMigrationDeps) {
         const stale = result.leftovers > 0 ? `, ${result.leftovers} schedule${result.leftovers === 1 ? '' : 's'} without a job removed` : ''
         // A routine that ran before and is paused now is a change the user did not make: said too.
         const paused = result.arrivedPaused > 0 ? `, ${result.arrivedPaused} schedule${result.arrivedPaused === 1 ? '' : 's'} arrived paused` : ''
-        if (result.jobs.notMoved + result.leftovers + result.arrivedPaused > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)}${stale}${paused} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
+        // Times that wait for the user's OK do not fire until it is given: said too.
+        const held = result.arrivedHeld > 0 ? `, ${result.arrivedHeld} schedule${result.arrivedHeld === 1 ? ' waits' : 's wait'} for your OK` : ''
+        if (result.jobs.notMoved + result.leftovers + result.arrivedPaused + result.arrivedHeld > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)}${stale}${paused}${held} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
       } catch (err) {
         deps.log(`[jobs] migration: its report could not be written: ${(err as Error).message}`)
       }

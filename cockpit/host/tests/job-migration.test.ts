@@ -497,7 +497,8 @@ describe('planning jobs onto their tasks', () => {
       grants: [{ tool: 'chrome', until: '2026-11-26T11:00:00.000Z', reason: null }, { tool: 'SendMessage', until: '2026-11-26T09:00:00.000Z', reason: null }],
       toolProfile: { deniedTools: ['Bash'], mcpServers: null }, target: { type: 'worker', projectId: 'bp-customer', provider: 'codex' as never },
     })
-    const [t] = plan([mail, cron('0 8 * * 1-5', { reply: { mail: 'draft' } })]).tasks
+    // both wait for the user's OK: a held job next to one that runs is not moved (a test below)
+    const [t] = plan([mail, cron('0 8 * * 1-5', { reply: { mail: 'draft' }, pendingApproval: true })]).tasks
     expect(t.record).toMatchObject({
       triggers: [{ type: 'mail', match: [{ kind: 'domain', domain: 'customer.example' }] }], pendingApproval: true, limited: true,
       // drafting wins where two jobs differ; a grant that ran out is not carried
@@ -589,14 +590,43 @@ describe('planning jobs onto their tasks', () => {
     })
   })
 
-  it('a job that waited for the user\'s OK never fired in version 1: its time is not overdue, and its hold is the record\'s', () => {
+  it('a job that waited for the user\'s OK never fired in version 1: its time is not overdue, and when every job of the task waited, the hold is the record\'s', () => {
     const held = cron('0 9 * * *', { pendingApproval: true, nextRunAt: '2026-11-26T08:00:00.000Z' })
-    const [t] = plan([cron('0 13 * * 1-5', { nextRunAt: '2026-11-26T12:00:00.000Z' }), held]).tasks
+    const [t] = plan([cron('0 13 * * 1-5', { pendingApproval: true, nextRunAt: '2026-11-26T12:00:00.000Z' }), held]).tasks
     expect(t.record).toMatchObject({ cursor: '2026-11-26T10:00:00.000Z', pendingApproval: true })
+    expect(t.schedule?.crons).toEqual(['0 9 * * *', '0 13 * * 1-5'])
+    expect(t.heldForOk).toBe(true)
+    expect(t.jobs.map((j) => j.kind)).toEqual(['moved', 'moved'])
+    expect(jobMigrationReport({ tasks: [t], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: false })).toContain('- The task\'s times wait for your OK: its jobs were waiting for it, and a task has one hold for all its times. Give the OK on the task in the cockpit; its wake-up still fires.')
     // a paused one is not overdue either (and pauses the whole schedule)
     expect(plan([cron('0 13 * * 1-5'), cron('0 9 * * *', { paused: true, nextRunAt: '2026-11-26T08:00:00.000Z' })]).tasks[0].record?.cursor).toBe('2026-11-26T10:00:00.000Z')
     // a time that is due and not held still is
     expect(plan([cron('0 9 * * *', { nextRunAt: '2026-11-26T08:00:00.000Z' }), held]).tasks[0].record?.cursor).toBe('2026-11-26T07:59:59.999Z')
+  })
+
+  it('one job that waited for the user\'s OK next to one that ran: the held one is not moved, it is named loudly with the call that brings it back, and the record holds nothing', () => {
+    const daily = cron('0 13 * * 1-5', { runCount: 2 })
+    const held = cron('0 9 * * *', {
+      name: 'Mail answers', prompt: 'Answer the mail.', pendingApproval: true, nextRunAt: '2026-11-26T08:00:00.000Z', runCount: 0, reply: { mail: 'draft' },
+      triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Europe/Berlin' }, { type: 'mail', match: [{ kind: 'address', address: 'anna@example.com' }, { kind: 'domain', domain: 'acme.example' }] }],
+    })
+    const [t] = plan([daily, held], [task()], { runs: { [held.id]: [{ ...run(held.id, 'r9', 'waiting'), trigger: 'mail', sessionId: null, startedAt: null }] } }).tasks
+    expect(t.schedule).toEqual({ crons: ['0 13 * * 1-5'], time_zone: 'Europe/Berlin' })
+    expect(t.record).not.toHaveProperty('pendingApproval')
+    expect(t.record).toMatchObject({ triggers: [], reply: {}, runCount: 2 })
+    expect(t.heldForOk).toBeUndefined()
+    expect(t.settles.sort()).toEqual([daily.id, held.id].sort())
+    expect(t.renamed).toEqual([daily.id])
+    expect(t.runs).toEqual([])
+    expect(t.history[held.id]).toMatchObject([{ id: 'r9', status: 'skipped', note: NOT_MOVED }])
+    expect(t.brain?.appended).toEqual(['Every 0 13 * * 1-5: Write the brief.'])
+    expect(t.jobs.find((j) => j.id === held.id)).toEqual({
+      id: held.id, name: 'Mail answers', kind: 'lost',
+      what: 'cron "0 9 * * *" (Europe/Berlin), woken by mail → NOT MOVED, IT NO LONGER FIRES: it was waiting for your OK, and the task\'s other jobs run; a task has one hold for all its times. To bring it back, set it up on the task again with the schedule tool: action "create", task_id "t1", cron "0 9 * * *", timezone "Europe/Berlin", prompt "Answer the mail.", mail {"addresses":["anna@example.com"],"domains":["acme.example"]}',
+    })
+    // a held job with a mail channel and no time: the call has no time either
+    const mailOnly = job({ name: 'Inbox', prompt: 'Read the inbox.', pendingApproval: true, triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'bob@example.com' }] }] })
+    expect(plan([daily, mailOnly]).tasks[0].jobs.find((j) => j.id === mailOnly.id)?.what).toBe('no time, woken by mail → NOT MOVED, IT NO LONGER FIRES: it was waiting for your OK, and the task\'s other jobs run; a task has one hold for all its times. To bring it back, set it up on the task again with the schedule tool: action "create", task_id "t1", prompt "Read the inbox.", mail {"addresses":["bob@example.com"]}')
   })
 
   it('a job without a task gets a task made for it; without a project of the brain it stays as it is; one that is over is dropped', () => {

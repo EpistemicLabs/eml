@@ -401,7 +401,7 @@ describe('deriving what is due', () => {
     expect(runs('mail').at(-1)!.fired?.crons).toEqual([{ cron: '0 18,22 * * 1-5', dueAt: '2026-11-09T14:00:00.000Z' }])
   })
 
-  it('the reviewer\'s case: a mail routine and a job that waited for the OK on one task, moved at 13:30, fire no 09:00 run, no second 13:00 and no missed time', async () => {
+  it('the reviewer\'s case: a mail routine and a job that waited for the OK on one task, moved at 13:30: the held job is not moved, the others are not held, and there is no 09:00 run, no second 13:00 and no missed time', async () => {
     const now = Date.parse('2026-11-09T05:30:00Z') // Monday 13:30 in Asia/Makassar
     const v1 = (id: string, cron: string, nextRunAt: string, patch: Record<string, unknown> = {}) => ({
       id, name: id, kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'mail',
@@ -419,16 +419,21 @@ describe('deriving what is due', () => {
       jobs: jobs as never, runs: {}, keys: {}, space: { key: null, name: 'Main', shared: false }, me: 'member', now,
       tasks: { mail: { id: 'mail', status: 'active', content: task.content, properties: task.properties as never } }, routineTaskOf: () => null,
     }).tasks
-    // the held job's time is not counted as overdue: the cursor is the migration's now
-    expect(planned.record).toMatchObject({ cursor: '2026-11-09T05:30:00.000Z', pendingApproval: true })
+    // the held job is not moved (one hold of a task would hold the others' times too); the cursor is the migration's now
+    expect(planned.schedule?.crons).toEqual(['0 13 * * 1-5', '0 18,22 * * 1-5'])
+    expect(planned.jobs.find((j) => j.id === 'morning')).toMatchObject({ kind: 'lost', what: expect.stringContaining('NOT MOVED, IT NO LONGER FIRES: it was waiting for your OK') })
+    expect(planned.record).toMatchObject({ cursor: '2026-11-09T05:30:00.000Z', triggers: [] })
+    expect(planned.record).not.toHaveProperty('pendingApproval')
     world.setSchedule('mail', planned.schedule)
     world.store.put({ ...planned.record!, updatedAt: '2026-11-01T00:00:00.000Z' })
     world.now = now
     await runner.tick()
+    expect(world.started).toEqual([])
+    // the evening time runs, as it did before the update
     world.now = Date.parse('2026-11-09T10:00:30Z')
     await runner.tick()
-    expect(world.started).toEqual([])
-    expect(runs('mail')).toEqual([])
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')).toMatchObject([{ status: 'started', dueAt: '2026-11-09T10:00:00.000Z' }])
     expect(world.alerts).toEqual([])
   })
 

@@ -37,6 +37,10 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
  *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
  *     one-time job next to running ones is left out, with a journal line;
+ *   - a job waiting for the user's OK → in version 1 only it was held, and a task has one hold for all its times: next
+ *     to a job of the task that was not held it is not moved but ends here, and the report says so loudly, with the
+ *     schedule-tool call (its mail senders too) that sets it up again; when every job of the task was held, the
+ *     task's record carries the hold, and the report says that the task's times wait for the user's OK;
  *   - a repeating job in another time zone than the task's first → left out (a task's times are read in one zone),
  *     and said loudly: the journal and the report say that it no longer fires and give the schedule-tool call that
  *     puts it on a task of its own;
@@ -190,6 +194,8 @@ export interface TaskMigration {
   settings: string[]
   /** The schedule is paused because one of the task's repeating jobs was, while others ran: the report says how to resume. */
   pausedByJob?: boolean
+  /** Every job of the task waited for the user's OK: the record carries the hold, and the task's times wait for the OK. */
+  heldForOk?: true
 }
 
 /** A schedule on an open task this cockpit fires that has no job at all and no record: the old mirror left it, and it is removed. */
@@ -272,6 +278,17 @@ function dropped(taskId: string | null, title: string, jobs: readonly JobV1[], i
   }
 }
 
+/** The schedule-tool call that sets a version 1 job up again on its task: its time, zone, prompt and mail senders. */
+function createCall(job: JobV1, taskId: string): string {
+  const trigger = scheduleTriggerOf(job)
+  const time = !trigger ? '' : `${trigger.cron !== undefined ? `cron "${trigger.cron.trim()}"` : `at "${trigger.at}"`}, timezone "${trigger.timeZone}", `
+  const match = channelsOf(job).filter((t) => t.type === 'mail').flatMap((t) => t.match as Array<Record<string, unknown>>)
+  const addresses = match.flatMap((m) => (typeof m.address === 'string' ? [m.address] : []))
+  const domains = match.flatMap((m) => (typeof m.domain === 'string' ? [m.domain] : []))
+  const mail = addresses.length + domains.length > 0 ? `, mail ${JSON.stringify({ ...(addresses.length ? { addresses } : {}), ...(domains.length ? { domains } : {}) })}` : ''
+  return `action "create", task_id "${taskId}", ${time}prompt "${cut(flat(job.prompt), NOTE_CHARS)}"${mail}`
+}
+
 const describe = (job: JobV1): string => {
   const t = scheduleTriggerOf(job)
   const when = !t ? 'no time' : t.cron !== undefined ? `cron "${t.cron}" (${t.timeZone})` : `once at ${t.at}`
@@ -308,9 +325,15 @@ function notMine(task: JobMigrationTask, owner: string | null, jobs: readonly Jo
 function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
   const now = input.now
   const taskId = create ? '' : task.id
-  const live = jobs.filter((j) => !j.endedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const alive = jobs.filter((j) => !j.endedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  // In version 1 only the job that waited for the user's OK was held; a task has one hold for all its times. So a
+  // held job next to one that runs is not moved (its hold would hold the others too): it ends here, named loudly with
+  // the call that sets it up again. Only when every job of the task was held does the task's record carry the hold.
+  const heldOut = alive.some((j) => !j.pendingApproval) ? alive.filter((j) => j.pendingApproval) : []
+  const live = alive.filter((j) => !heldOut.includes(j))
   const ended = jobs.filter((j) => j.endedAt)
   const lines: TaskMigration['jobs'] = ended.map((j) => ({ id: j.id, name: j.name, what: 'had ended: its runs stay as history', kind: 'history' }))
+  for (const job of heldOut) lines.push({ id: job.id, name: job.name, what: `${describe(job)} → NOT MOVED, IT NO LONGER FIRES: it was waiting for your OK, and the task's other jobs run; a task has one hold for all its times. To bring it back, set it up on the task again with the schedule tool: ${createCall(job, task.id)}`, kind: 'lost' })
   const journal: string[] = []
   const appended: string[] = []
   let appendedCrons = 0
@@ -535,6 +558,8 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     if (allRuns.length > 0) settings.push(`${allRuns.length} run${allRuns.length === 1 ? '' : 's'} carried over${open ? ` (${open} open)` : ''}`)
   }
   const at = iso(now)
+  // A held job that was not moved leaves its runs as history: one that never reached a session is not run by anything now.
+  const heldHistory = heldOut.map((j) => [j.id, (input.runs[j.id] ?? []).map((r) => (unreached(r) ? { ...r, status: 'skipped' as const, note: NOT_MOVED, finishedAt: at } : closed(r, at)))] as const)
   return {
     taskId: create ? null : task.id, create, title: nameOfTask(task), outcome: 'moved',
     why: null, schedule, brain, record,
@@ -543,10 +568,12 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     history: Object.fromEntries([
       ...ended.map((j) => [j.id, input.runs[j.id] ?? []] as const),
       ...(record ? [...settled.entries()] : live.map((j) => [j.id, (input.runs[j.id] ?? []).map((r) => closed(r, at))] as const)),
+      ...heldHistory,
     ]),
     settles: jobs.map((j) => j.id), renamed: record ? live.map((j) => j.id) : [],
     jobs: lines, settings,
     ...(schedule?.paused && pausedCrons.length > 0 && !timed.every((j) => j.paused) ? { pausedByJob: true } : {}),
+    ...(record?.pendingApproval && schedule ? { heldForOk: true as const } : {}),
   }
 }
 
@@ -688,6 +715,7 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
       if (s) {
         out.push(`- Repeating times: ${s.crons?.length ? `${s.crons.join('; ')}${s.time_zone ? ` (${s.time_zone})` : ''}` : 'none'}`)
         out.push(`- Wake-up: ${s.at ? `${s.at}${s.by_session ? `, set by session ${s.by_session.slice(0, 8)}` : ''} — "${cut(flat(s.why ?? ''), 200)}"` : 'none'}`)
+        if (t.heldForOk) out.push('- The task\'s times wait for your OK: its jobs were waiting for it, and a task has one hold for all its times. Give the OK on the task in the cockpit; its wake-up still fires.')
         if (s.paused) out.push(t.pausedByJob ? '- The schedule is paused: one of its repeating jobs was. Resume it on the task (its Schedule section, or the schedule tool\'s resume).' : '- The schedule is paused.')
         if (s.ends_at) out.push(`- It ends at ${s.ends_at}.`)
         out.push(t.brain?.setSchedule ? '- That schedule is written to the task.' : '- The task has that schedule already: it is not written again.')
