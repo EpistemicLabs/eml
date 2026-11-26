@@ -4,8 +4,7 @@ import { readCockpitConfig } from './config.js'
 import { COCKPIT_HOME, JOBS_FILE } from './paths.js'
 import { readBrainInfo } from './brain-info.js'
 import { jobMigrationReport, planJobMigration, type JobMigrationTask } from './domain/job-migration.js'
-import type { JobV1 } from './domain/job-v1.js'
-import type { JobRun } from './domain/job.js'
+import { JobStore } from './job-store.js'
 import { routineTaskOfJob } from './application/job-migration.js'
 
 /**
@@ -22,17 +21,6 @@ import { routineTaskOfJob } from './application/job-migration.js'
 const require = createRequire(import.meta.url)
 type Db = { prepare(sql: string): { get(...args: unknown[]): unknown; all(...args: unknown[]): unknown[] }; close(): void }
 const Database = require('better-sqlite3') as new (file: string, opts?: { readonly?: boolean; fileMustExist?: boolean }) => Db
-
-interface V1Data { jobs: Record<string, JobV1>; runs: Record<string, JobRun[]>; keys: Record<string, Record<string, string>> }
-
-/** The version 1 jobs of a jobs.json that are not migrated yet; null when it holds none. */
-export function pendingJobsOf(raw: string): V1Data | null {
-  const parsed = JSON.parse(raw) as { version?: number; jobs?: unknown; runs?: unknown; keys?: unknown; v1?: { jobs?: unknown; runs?: unknown; keys?: unknown } }
-  const from = parsed.version === 1 ? parsed : parsed.version === 2 ? parsed.v1 : undefined
-  const part = <T>(value: unknown) => (value && typeof value === 'object' ? value as Record<string, T> : {})
-  const data: V1Data = { jobs: part(from?.jobs), runs: part(from?.runs), keys: part(from?.keys) }
-  return Object.keys(data.jobs).length > 0 ? data : null
-}
 
 type TaskRow = { id: string; status: string; title: string | null; content: string; properties: string | null; ingested_by: string | null }
 
@@ -53,23 +41,16 @@ function scheduledFrom(db: Db): JobMigrationTask[] {
   return rows.map(taskOfRow).filter((task) => task.properties?.delegation?.schedule)
 }
 
-/** What a version 2 jobs.json says beside the jobs still to move: the records it holds, and the spaces already looked through for left-over schedules. */
-export function passStateOf(raw: string): { records: Set<string>; leftoversChecked: Set<string> } {
-  const parsed = JSON.parse(raw) as { version?: number; jobs?: unknown; leftoversChecked?: unknown }
-  const records = parsed.version === 2 && parsed.jobs && typeof parsed.jobs === 'object' ? Object.keys(parsed.jobs) : []
-  return { records: new Set(records), leftoversChecked: new Set(Array.isArray(parsed.leftoversChecked) ? parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') : []) }
-}
-
 export async function runMigrateJobsCommand(argv: string[], out: (text: string) => void = (text) => { process.stdout.write(text) }): Promise<boolean> {
   if (argv[0] !== 'migrate-jobs') return false
   if (argv.includes('--run')) throw new Error('migrate-jobs is the dry run only: the host writes the migration at its start')
   const config = await readCockpitConfig()
   if (!config) throw new Error(`no cockpit config in ${COCKPIT_HOME}: this home is not set up`)
   if (!fs.existsSync(JOBS_FILE)) { out(`no jobs.json in ${COCKPIT_HOME}: nothing to move\n`); return true }
-  const raw = fs.readFileSync(JOBS_FILE, 'utf8')
-  const pending = pendingJobsOf(raw)
-  const state = passStateOf(raw)
-  if (!pending) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
+  // Read as the host reads it (job-store.ts); the store writes only on a change, and none is made here.
+  const store = new JobStore(JOBS_FILE)
+  const pending = store.pendingV1()
+  if (!pending || Object.keys(pending.jobs).length === 0) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
   const jobs = Object.values(pending.jobs)
   const me = config.handle ?? 'user'
   const now = Date.now()
@@ -95,10 +76,10 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
       const tasks: Record<string, JobMigrationTask | null> = {}
       for (const id of new Set(mine.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = taskFrom(db, id)
       // As the host's first pass of a space: the schedules the old mirror left on tasks without a job are named too.
-      const first = !state.leftoversChecked.has(key ?? '')
+      const first = !store.leftoversChecked(key)
       const plan = planJobMigration({
         jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me),
-        ...(first ? { scheduled: scheduledFrom(db), records: state.records } : {}),
+        ...(first ? { scheduled: scheduledFrom(db), records: new Set(store.list().map((record) => record.id)) } : {}),
       })
       out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
     } finally {

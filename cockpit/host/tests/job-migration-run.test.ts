@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EmlApiError } from '@engramprotocol/mcp-server'
 import { createJobMigration } from '../src/application/job-migration.js'
-import { passStateOf, pendingJobsOf } from '../src/job-migration-cli.js'
 import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-26T10:00:00.000Z')
@@ -436,24 +435,5 @@ describe('the report of a real run is kept, and the user is told of what did not
     } as never)
     expect(await migration.run()).toMatchObject({ moved: 1, reportFile: null })
     expect(w.logs.some((l) => l.includes('its report could not be written: disk full'))).toBe(true)
-  })
-})
-
-describe('the jobs a dry run by hand reads from jobs.json', () => {
-  it('are the jobs of a version 1 file, or what a version 2 file still holds of them', () => {
-    const jobs = { j1: v1('j1') }
-    expect(pendingJobsOf(JSON.stringify({ version: 1, jobs, runs: { j1: [] }, keys: {} }))).toEqual({ jobs, runs: { j1: [] }, keys: {} })
-    expect(pendingJobsOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {}, v1: { jobs, runs: {}, keys: {} } }))?.jobs).toEqual(jobs)
-    expect(pendingJobsOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {} }))).toBeNull()
-    expect(pendingJobsOf(JSON.stringify({ version: 1, jobs: {}, runs: {}, keys: {} }))).toBeNull()
-  })
-
-  it('come with what the host\'s pass knows beside them: the records it holds, and the spaces already looked through for left-over schedules', () => {
-    const state = passStateOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {}, leftoversChecked: ['', 'space-2'] }))
-    expect([...state.records]).toEqual(['t1'])
-    expect([...state.leftoversChecked]).toEqual(['', 'space-2'])
-    // a version 1 file: nothing was looked through yet, and its jobs are no records
-    const fresh = passStateOf(JSON.stringify({ version: 1, jobs: { j1: v1('j1') }, runs: {}, keys: {} }))
-    expect([fresh.records.size, fresh.leftoversChecked.size]).toEqual([0, 0])
   })
 })
