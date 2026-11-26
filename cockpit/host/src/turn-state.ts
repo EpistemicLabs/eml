@@ -7,7 +7,7 @@ import type { RunningCommand, WorkflowWait } from './domain/session-runtime.js'
  * (delivered to POST /api/hook, read by the provider's turnSignal):
  *
  *   working   the user sent a prompt, the agent is on it
- *   done      the assistant turn finished
+ *   done      the assistant turn finished, or the user stopped it
  *   waiting   the agent stopped and needs the human (permission, question)
  *
  * The PTY registry only knows whether the process lives; this is what the

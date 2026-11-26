@@ -1126,7 +1126,12 @@ export class ChatBridge {
           break
         }
         // The last subagent came back between the Stop hook and here, or the user stopped the turn: nothing follows.
-        if (!entry.closing) this.releaseHeld(entry)
+        if (!entry.closing) {
+          const held = entry.held
+          this.releaseHeld(entry)
+          // A stop brings no Stop hook: its turn state ends here. Done without a result, so nothing is new to look at.
+          if (event.reason === 'interrupted' && !held) this.ctx.onTurn(entry.sessionId, 'done')
+        }
         const attention = attentionAfterTurn({
           // A turn that ended without its Stop hook (an error) goes by how the session was started.
           alone: entry.alone ?? this.ctx.ledger.get(entry.sessionId)?.worker === true, clients: entry.clients.size, declared: entry.declared, reason: event.reason,
