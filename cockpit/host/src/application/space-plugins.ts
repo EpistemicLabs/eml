@@ -148,12 +148,15 @@ export class SpacePluginService {
    */
   async saveConnection(connection: Connection, now = new Date()): Promise<void> {
     const remote = await this.isRemote(connection.plugin)
+    const isNew = !(await this.store.connections()).some((c) => c.id === connection.id)
     const stamped: Connection = {
       ...connection,
       savedAt: now.toISOString(),
       values: remote && !connection.values.relayKey ? { ...connection.values, relayKey: newRelayKey() } : connection.values,
     }
     await this.store.updateConnections((all) => [...all.filter((c) => c.id !== connection.id), stamped])
+    // A new sign-in starts working where its plugin is on without one (an OAuth sign-in, a key, a mailbox).
+    if (isNew) await this.attachWhereMissing(connection.plugin, connection.id, false)
     await this.refreshAll()
   }
 
@@ -162,7 +165,7 @@ export class SpacePluginService {
    * after the plugin was switched on would otherwise sit unused while the page called it connected.
    * Returns the spaces it was added to.
    */
-  async attachWhereMissing(pluginId: string, connectionId: string): Promise<string[]> {
+  async attachWhereMissing(pluginId: string, connectionId: string, refresh = true): Promise<string[]> {
     const added: string[] = []
     await this.store.updateSpaces((state) => Object.entries(state.spaces).reduce((next, [spaceId, space]) => {
       const on = space.plugins[pluginId]
@@ -170,22 +173,24 @@ export class SpacePluginService {
       added.push(spaceId)
       return setPlugin(next, spaceId, pluginId, { connections: [connectionId] })
     }, state))
-    if (added.length > 0) await this.refreshAll()
+    if (added.length > 0 && refresh) await this.refreshAll()
     return added
   }
 
   /**
    * Once at start: every sign-in of a remote server gets a relay key, so one stored before the relay
-   * served static secrets leaves the spaces' mcp.json at the next rewrite. Returns the ids it changed.
+   * served static secrets leaves the spaces' mcp.json at the next rewrite. One saved before the cockpit
+   * kept the time gets today as its saved time, so its key's age counts from here rather than showing
+   * every older key as overdue at once. Returns the ids it changed.
    */
-  async ensureRelayKeys(): Promise<string[]> {
+  async ensureRelayKeys(now = new Date()): Promise<string[]> {
     const manifests = await this.registry.list()
     const remote = new Set(manifests.filter((m) => m.parts.mcp && m.parts.mcp.transport !== 'stdio').map((m) => m.id))
     const changed: string[] = []
     await this.store.updateConnections((all) => all.map((c) => {
-      if (!remote.has(c.plugin) || c.values.relayKey) return c
+      if (!remote.has(c.plugin) || (c.values.relayKey && c.savedAt)) return c
       changed.push(c.id)
-      return { ...c, values: { ...c.values, relayKey: newRelayKey() } }
+      return { ...c, savedAt: c.savedAt ?? now.toISOString(), values: c.values.relayKey ? c.values : { ...c.values, relayKey: newRelayKey() } }
     }))
     if (changed.length > 0) await this.refreshAll()
     return changed

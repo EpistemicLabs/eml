@@ -415,11 +415,17 @@ describe('sign-ins and the spaces that use them', () => {
       expect(k1.values.relayKey).toMatch(/^[\w-]{32}$/)
       expect(l1.values.relayKey).toBeUndefined()
 
-      expect(await service.attachWhereMissing('keyed', 'k1')).toEqual(['a', 'b'])
+      // Saved after the plugin was on in a and b: both use it at once.
+      expect((await store.spaces()).spaces.a.plugins.keyed).toEqual({ connections: ['k1'] })
+      expect((await store.spaces()).spaces.b.plugins.keyed).toEqual({ connections: ['k1'] })
       await service.setPlugin('b', 'keyed', true, [])
       await service.saveConnection({ id: 'k2', plugin: 'keyed', label: 'z', values: { 'header:Authorization': 'Bearer placeholder-2' } })
       // Space a has its sign-in already: only b, which has none, takes the new one.
-      expect(await service.attachWhereMissing('keyed', 'k2')).toEqual(['b'])
+      expect((await store.spaces()).spaces.a.plugins.keyed).toEqual({ connections: ['k1'] })
+      expect((await store.spaces()).spaces.b.plugins.keyed).toEqual({ connections: ['k2'] })
+      // Saved again (a new key for k1): no space changes.
+      await service.saveConnection({ id: 'k1', plugin: 'keyed', label: 'x', values: { 'header:Authorization': 'Bearer placeholder-3', relayKey: k1.values.relayKey } })
+      expect((await store.spaces()).spaces.b.plugins.keyed).toEqual({ connections: ['k2'] })
       expect((await service.snapshot()).filesFor('a').mcpServers.keyed).toEqual({ type: 'http', url: 'http://127.0.0.1:4317/mcp-relay/k1', headers: { 'x-eml-relay-key': k1.values.relayKey } })
 
       expect(await service.rotateRelayKey('k1', new Date('2026-07-01T00:00:00Z'))).toBe(true)
@@ -457,7 +463,7 @@ describe('Claude Code\'s own sign-ins', () => {
         'plugin:a:b|1': { serverName: 'plugin:a:b', accessToken: 'placeholder' },
         'plugin:a:b|2': { serverName: 'plugin:a:b', accessToken: '' },
       } }))
-      writeFileSync(join(dir, 'mcp-needs-auth-cache.json'), JSON.stringify({ 'claude.ai Drive': { timestamp: 1 } }))
+      writeFileSync(join(dir, 'mcp-needs-auth-cache.json'), JSON.stringify({ 'claude.ai Drive': { timestamp: 1 }, 'plugin:a:b': { timestamp: 1 } }))
       expect(await readOutsideSignIns(dir)).toEqual({ 'plugin:x:y': 'needs-sign-in', 'plugin:a:b': 'signed-in', 'claude.ai Drive': 'needs-sign-in' })
       expect(await readOutsideSignIns(join(dir, 'missing'))).toEqual({})
     } finally {

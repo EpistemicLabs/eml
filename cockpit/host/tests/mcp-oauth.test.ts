@@ -181,6 +181,12 @@ describe('McpRelay', () => {
     expect(keyed).toEqual([{ apiKey: 'secret-key', authorization: undefined }])
   })
 
+  it('passes the session\'s query along to a static-secret server', async () => {
+    connections = [{ id: 'keyed-a', plugin: 'keyed', label: 'Keyed', values: { apiKey: 'secret-key', relayKey: 'key-k' } }]
+    const res = await fetch(`${relay}/mcp-relay/keyed-a?page=2`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-eml-relay-key': 'key-k' }, body: '{}' })
+    expect(res.status).toBe(200)
+  })
+
   it('refuses a wrong key, an unknown sign-in and anything not from this machine', async () => {
     expect((await call('wrong-key')).status).toBe(403)
     expect((await call('key-1', 'qonto-b')).status).toBe(403)

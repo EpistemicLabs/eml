@@ -155,7 +155,11 @@ export class McpRelay {
    */
   async renewDue(): Promise<Record<string, 'renewed' | 'refused' | 'unreachable'>> {
     const outcome: Record<string, 'renewed' | 'refused' | 'unreachable'> = {}
-    for (const connection of dueForRenewal(await this.deps.connections(), this.now())) {
+    for (const { id } of dueForRenewal(await this.deps.connections(), this.now())) {
+      // Read again right before: a session's request may have renewed it meanwhile, and a rotated
+      // refresh token must never be sent twice (servers revoke the grant on reuse).
+      const connection = (await this.deps.connections()).find((c) => c.id === id)
+      if (!connection || dueForRenewal([connection], this.now()).length === 0) continue
       const values = oauthValuesOf(connection.values)
       if (!values) continue
       const answer = await this.renew(connection.id, values)
@@ -182,8 +186,10 @@ export class McpRelay {
       const value = req.headers[name]
       if (typeof value === 'string') headers[name] = value
     }
-    const query = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?')) : ''
-    return fetch(`${upstream}${query}`, { method: req.method ?? 'GET', headers, body: body && body.length > 0 ? new Uint8Array(body) : undefined, signal })
+    const query = (req.url ?? '').includes('?') ? (req.url ?? '').slice((req.url ?? '').indexOf('?') + 1) : ''
+    // An upstream URL may carry its own query (a key kept as a secret): the session's joins it.
+    const target = query ? `${upstream}${upstream.includes('?') ? '&' : '?'}${query}` : upstream
+    return fetch(target, { method: req.method ?? 'GET', headers, body: body && body.length > 0 ? new Uint8Array(body) : undefined, signal })
   }
 
   /** New tokens, kept in the connection; `refused` marks the sign-in for signing in again. */

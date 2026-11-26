@@ -233,7 +233,8 @@ export function mcpServersFor(
       }
       // A remote server with a stored secret (an API key in a header): the relay adds it, so the
       // session's mcp.json carries only the relay key, never the secret itself.
-      if (part.transport !== 'stdio' && connection?.values.relayKey && vars.RELAY && missing.length === 0) {
+      // Streamable HTTP only: an SSE server's separate message endpoint would not pass through.
+      if (part.transport === 'http' && connection?.values.relayKey && vars.RELAY && missing.length === 0) {
         config = { type: 'http', url: `${vars.RELAY}/${connection.id}`, headers: { 'x-eml-relay-key': connection.values.relayKey } }
       }
       if (missing.length > 0) {

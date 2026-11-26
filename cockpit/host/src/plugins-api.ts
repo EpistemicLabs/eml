@@ -442,8 +442,6 @@ export async function handlePluginsApi(
       // Signed in again: when it was used and when its key changed stay; the refusal goes.
       const kept = previous ? { ...(previous.usedAt ? { usedAt: previous.usedAt } : {}), ...(previous.keyRotatedAt ? { keyRotatedAt: previous.keyRotatedAt } : {}) } : {}
       await service.saveConnection({ id, plugin: started.plugin, label: started.label, ...(slug ? { slug } : {}), ...kept, values: { ...stringValues(finished.values), relayKey } })
-      // A new sign-in starts working where its plugin is on without one.
-      if (!previous) await service.attachWhereMissing(started.plugin, id)
       const manifest = await registry.get(started.plugin)
       if (manifest?.tier === 'custom' && manifest.auth?.kind !== 'mcp-oauth') {
         await registry.setCustomAuth(manifest.id, { kind: 'mcp-oauth', scopes: [] })
@@ -570,10 +568,12 @@ export async function handlePluginsApi(
       const body = await readJson(req)
       if (typeof body.plugin !== 'string' || !(await registry.get(body.plugin))) return badRequest('plugin is a plugin this cockpit knows')
       const id = `${body.plugin}-${randomUUID().slice(0, 8)}`
-      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), ...(body.parts ? { parts: body.parts } : {}), values: body.values ?? {} })
+      // The relay key is the cockpit's to make: one sent along is dropped.
+      const { relayKey: _dropped, ...values } = (body.values && typeof body.values === 'object' ? body.values : {}) as Record<string, unknown>
+      const parsed = connectionSchema.safeParse({ id, plugin: body.plugin, label: body.label ?? '', ...(body.slug ? { slug: body.slug } : {}), ...(body.parts ? { parts: body.parts } : {}), values })
       if (!parsed.success) return badRequest('label is a short text, values maps names to strings, parts lists pane, mcp or channel')
       await service.saveConnection(parsed.data)
-      json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values) } })
+      json(res, 201, { connection: { id, plugin: parsed.data.plugin, label: parsed.data.label, secrets: Object.keys(parsed.data.values).filter((name) => name !== 'relayKey') } })
       return true
     }
     const connectionId = /^\/api\/plugins\/connections\/([a-z0-9][a-z0-9-]{0,62})$/.exec(pathname)?.[1]
@@ -582,7 +582,9 @@ export async function handlePluginsApi(
       const removed = await service.removeConnection(connectionId)
       // An OAuth sign-in's grant ends at its server too, where the server offers that (RFC 7009).
       const granted = gone ? oauthValuesOf(gone.values) : null
-      const revoked = removed && granted && ctx.oauth ? await ctx.oauth.revoke(granted) : false
+      // Not awaited: a slow revocation endpoint must not hold up the page; the sign-in is gone here already.
+      const revoked = !!(removed && granted?.revocationEndpoint && ctx.oauth)
+      if (revoked && granted && ctx.oauth) void ctx.oauth.revoke(granted).then((ok) => { if (!ok) console.log(`[plugins] revoking the removed sign-in ${connectionId} at its server failed`) })
       if (removed) ctx.shared?.retain((await service.connections()).map((c) => c.id))
       // A token file the cockpit wrote for the sign-in goes with it; one another program keeps stays.
       const tokenFile = gone?.values.tokenFile

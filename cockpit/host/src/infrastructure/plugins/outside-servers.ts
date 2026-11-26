@@ -46,7 +46,8 @@ export async function readOutsideSignIns(configDir: string): Promise<Record<stri
   }
   const needsAuth = await readJsonFile(path.join(configDir, 'mcp-needs-auth-cache.json'))
   if (needsAuth && typeof needsAuth === 'object') {
-    for (const name of Object.keys(needsAuth as Record<string, unknown>)) states[name] = 'needs-sign-in'
+    // A note left from before a sign-in: a token in .credentials.json wins over it.
+    for (const name of Object.keys(needsAuth as Record<string, unknown>)) if (states[name] !== 'signed-in') states[name] = 'needs-sign-in'
   }
   return states
 }
