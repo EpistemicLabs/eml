@@ -742,7 +742,7 @@ async function main() {
     holdsFirstSight: (space) => !jobStore.leftoversChecked(space.key) && Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => (job.spaceId ?? null) === space.key),
     task: async (space, taskId) => {
       const brain = brainOfRunnerSpace(space)
-      if (!brain) throw new Error(`space ${space.name} has no agent`)
+      if (!brain) throw new Error('its space has no agent')
       return taskById<RunnerTask>(brain, taskId)
     },
     // Another member's session works on it: only a shared space has one (domain/runs.ts).
@@ -757,7 +757,7 @@ async function main() {
     sessionsOf: (taskId) => sessionsOnTask(ledger.list(), taskId, (sessionId) => turns.get(sessionId)?.state === 'working'),
     editSchedule: async (space, taskId, edit, text) => {
       const brain = brainOfRunnerSpace(space)
-      if (!brain) throw new Error(`space ${space.name} has no agent`)
+      if (!brain) throw new Error('its space has no agent')
       await editTaskSchedule(brain, taskId, edit, { agent: spaces.resolve(space.key).agent, ...(text ? { text } : {}) })
       void taskBoard.refresh().catch(() => {})
     },

@@ -197,6 +197,9 @@ const NO_ROOM = 'no room: too little free memory, or the running cap with every 
 /** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
 const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
 
+/** A task in a log line: its id, never its name. */
+const tagOf = (taskId: string): string => `task ${taskId.slice(0, 8)}`
+
 /** The run counts toward an end after so many runs (the record's `end`): a repeating time fired it. */
 const countsToEnd = (run: Pick<JobRun, 'trigger' | 'fired'>): boolean => run.trigger === 'schedule' && (run.fired?.crons?.length ?? 0) > 0
 
@@ -346,7 +349,7 @@ export class JobRunner {
     if (shared !== null) this.kindless.delete(space.key)
     else if (!this.kindless.has(space.key)) {
       this.kindless.add(space.key)
-      this.deps.log(`[jobs] ${space.name}: the brain server has not said yet whether it is shared: nothing fires here until it has`)
+      this.deps.log(`[jobs] space ${space.key ?? 'main'}: the brain server has not said yet whether it is shared: nothing fires here until it has`)
     }
     return shared
   }
@@ -376,7 +379,7 @@ export class JobRunner {
         try {
           await this.deriveSpace(space, now)
         } catch (err) {
-          this.deps.log(`[jobs] ${space.name}: its schedules were not read: ${(err as Error).message}`)
+          this.deps.log(`[jobs] space ${space.key ?? 'main'}: its schedules were not read: ${(err as Error).message}`)
         }
       }
     }
@@ -419,7 +422,7 @@ export class JobRunner {
       try {
         await this.deriveTask(space, task, now)
       } catch (err) {
-        this.deps.log(`[jobs] ${nameOfTask(task)}: its schedule was not derived: ${(err as Error).message}`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: its schedule was not derived: ${(err as Error).message}`)
       }
     }
     const holds = this.deps.holdsFirstSight?.(space) === true
@@ -456,14 +459,14 @@ export class JobRunner {
     const { store } = this.deps
     if (recordKeeping(record, standing, store.runs(record.id)).stopListening) {
       endTaskRecord(store, record.id, now, this.deps.onGrantEnd, CLOSED_BEFORE_START)
-      this.deps.log(`[jobs] ${this.nameOf(record.id)}: its task is closed, so nothing wakes it any more`)
+      this.deps.log(`[jobs] ${tagOf(record.id)}: its task is closed, so nothing wakes it any more`)
     }
     const current = store.get(record.id)
     if (!current) return
     if (recordKeeping(current, standing, store.runs(record.id)).remove) {
       store.remove(record.id)
       this.facts.delete(record.id)
-      this.deps.log(`[jobs] ${record.id.slice(0, 8)}: its record is removed (${standing === 'closed' ? 'the task is closed' : 'no schedule, no channel, no open run'})`)
+      this.deps.log(`[jobs] ${tagOf(record.id)}: its record is removed (${standing === 'closed' ? 'the task is closed' : 'no schedule, no channel, no open run'})`)
       return
     }
     // Without a schedule nothing was seen: one set later counts from then, its wake-up fires whatever fired before,
@@ -513,7 +516,7 @@ export class JobRunner {
         await this.deps.editSchedule(space, task.id, (current) => setCrons(current, []), RUNS_USED_UP)
         const kept = store.get(task.id)
         if (kept) store.put({ ...kept, end: null, updatedAt: at })
-        this.deps.log(`[jobs] ${name}: its repeating times ended after the runs they were set to have`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: its repeating times ended after the runs they were set to have`)
         return
       }
       timed = setCrons(schedule, [])
@@ -530,7 +533,7 @@ export class JobRunner {
       const late = formatDuration(now - Date.parse(missed.dueAt))
       this.record(task.id, missed.dueAt, 'missed', `due ${late} ago while the cockpit was not running`, { crons: [missed], ...(timeZone ? { timeZone } : {}) })
       this.tell(record, 'missed', `Missed a run due ${late} ago while the cockpit was not running (cron "${missed.cron}"); the next one is on schedule.`)
-      this.deps.log(`[jobs] ${name}: missed a run due ${missed.dueAt}`)
+      this.deps.log(`[jobs] ${tagOf(task.id)}: missed a run due ${missed.dueAt}`)
     }
     // The cursor first: a run is never made twice for the same repeating time.
     save()
@@ -550,7 +553,7 @@ export class JobRunner {
     const skipCrons = (note: string) => {
       if (!crons) return
       this.record(task.id, cronsDueAt, 'skipped', note, { crons, ...zoned })
-      this.deps.log(`[jobs] ${name}: a time due ${cronsDueAt} is skipped, ${note}`)
+      this.deps.log(`[jobs] ${tagOf(task.id)}: a time due ${cronsDueAt} is skipped, ${note}`)
     }
     if (openRuns.some((run) => run.status !== 'started')) {
       skipCrons(SKIPPED_NOT_STARTED)
@@ -558,7 +561,7 @@ export class JobRunner {
       const waiting = wake ? openRuns.find((run) => run.status === 'waiting') : undefined
       if (wake && waiting) {
         this.update(waiting, { fired: { ...waiting.fired, wake, ...zoned } })
-        this.deps.log(`[jobs] ${name}: its wake-up joins run ${waiting.number}, which waits to start`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: its wake-up joins run ${waiting.number}, which waits to start`)
       }
       return
     }
@@ -569,7 +572,7 @@ export class JobRunner {
     }
     const fired: RunFired = { ...(wake ? { wake } : {}), ...(crons ? { crons } : {}), ...zoned }
     const run = this.addRun(task.id, 'schedule', Date.parse(firing.dueAt), { fired })
-    this.deps.log(`[jobs] ${name}: run ${run.number} is due`)
+    this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} is due`)
   }
 
   /**
@@ -588,7 +591,7 @@ export class JobRunner {
   /** The wake-up fired: it goes off the task, unless the task has another one by now. Failing, the next read tries again. */
   private clearFiredWake(space: RunnerSpace, taskId: string, at: string): void {
     this.writes.push(this.deps.editSchedule(space, taskId, (schedule) => (sameInstant(schedule?.at, at) ? clearWake(schedule) : schedule))
-      .catch((err: unknown) => this.deps.log(`[jobs] ${this.nameOf(taskId)}: its fired wake-up was not cleared on the task: ${(err as Error).message}`)))
+      .catch((err: unknown) => this.deps.log(`[jobs] ${tagOf(taskId)}: its fired wake-up was not cleared on the task: ${(err as Error).message}`)))
   }
 
   /** What the four-line order reads of the task: its sessions here with their turn and their wait, and work elsewhere. */
@@ -694,7 +697,7 @@ export class JobRunner {
     // Nothing fires on a closed task: the run that was due is skipped, and nothing counts as a failure.
     if (!space || !task || !isOpenTask(task)) {
       this.update(run, { status: 'skipped', note: CLOSED_BEFORE_START, finishedAt: new Date(now).toISOString() })
-      this.deps.log(`[jobs] ${this.nameOf(record.id)}: run ${run.number} skipped, ${CLOSED_BEFORE_START}`)
+      this.deps.log(`[jobs] ${tagOf(record.id)}: run ${run.number} skipped, ${CLOSED_BEFORE_START}`)
       return 'gone'
     }
     const name = nameOfTask(task)
@@ -714,11 +717,11 @@ export class JobRunner {
         const { wake, ...rest } = this.current(run).fired ?? {}
         if (wake && run.trigger === 'schedule' && !rest.crons?.length) {
           this.drop(this.current(run))
-          this.deps.log(`[jobs] ${name}: its wake-up stays due, ${SKIPPED_WORKING}`)
+          this.deps.log(`[jobs] ${tagOf(task.id)}: its wake-up stays due, ${SKIPPED_WORKING}`)
           return 'skipped'
         }
         this.update(run, { status: 'skipped', note: SKIPPED_WORKING, finishedAt: new Date(this.now()).toISOString(), ...(wake ? { fired: rest } : {}) })
-        this.deps.log(`[jobs] ${name}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
         return 'skipped'
       }
       if (decision.kind === 'retry') return wait('a session of the task is working and none that has the channel\'s tools can take the message now')
@@ -735,7 +738,7 @@ export class JobRunner {
           return 'failed'
         }
         this.started(run)
-        this.deps.log(`[jobs] ${name}: run ${run.number} started session ${sessionId}`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} started session ${sessionId}`)
         return 'started'
       }
       const sessionId = decision.sessionId
@@ -745,14 +748,14 @@ export class JobRunner {
       const outcome = await this.deps.deliver(sessionId, message)
       if (outcome === 'delivered' || outcome === 'resumed') {
         this.started(run)
-        this.deps.log(`[jobs] ${name}: run ${run.number} ${outcome} to ${sessionId} (${decision.kind === 'deliver' ? 'it is working' : decision.line === 'wake' ? 'it set the wake-up' : 'it waits on an answer'})`)
+        this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} ${outcome} to ${sessionId} (${decision.kind === 'deliver' ? 'it is working' : decision.line === 'wake' ? 'it set the wake-up' : 'it waits on an answer'})`)
         return 'started'
       }
       if (outcome === 'busy' || outcome === 'running') return wait('its session was busy (running in a terminal, or switching)', true)
       // It is gone or takes no message: the order is asked again without it (a new session, or the bridge tries again).
       unwakeable.add(sessionId)
       this.update(run, { status: 'waiting', attempts: before.attempts, sessionId: null })
-      this.deps.log(`[jobs] ${name}: run ${run.number} did not reach ${sessionId} (${outcome})`)
+      this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} did not reach ${sessionId} (${outcome})`)
     }
   }
 
@@ -784,7 +787,7 @@ export class JobRunner {
     this.wakeFired(this.current(run))
     this.update(run, { status: 'failed', note: why, finishedAt: new Date(this.now()).toISOString() })
     const record = this.deps.store.get(run.jobId)
-    this.deps.log(`[jobs] ${this.nameOf(run.jobId)}: run ${run.number} failed: ${why}`)
+    this.deps.log(`[jobs] ${tagOf(run.jobId)}: run ${run.number} failed: ${why}`)
     if (record) this.countFailure(record, `run ${run.number} failed: ${why}`)
   }
 
@@ -811,7 +814,7 @@ export class JobRunner {
       if (!space) throw new Error('its space is gone')
       await this.deps.editSchedule(space, taskId, (schedule) => setPaused(schedule, true), `The cockpit paused its schedule after ${reason}. Resume it on the task once fixed.`)
     } catch (err) {
-      this.deps.log(`[jobs] ${name}: its schedule could not be paused after ${reason}: ${(err as Error).message}`)
+      this.deps.log(`[jobs] ${tagOf(taskId)}: its schedule could not be paused after ${reason}: ${(err as Error).message}`)
       return
     }
     const record = this.deps.store.get(taskId)

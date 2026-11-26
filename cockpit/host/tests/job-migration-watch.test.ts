@@ -84,6 +84,11 @@ describe('the jobs migration keeps trying, and tells the user', () => {
     await w.next() // 51 min: moved
     expect(w.notices).toHaveLength(2)
     expect(w.notices[1]).toEqual({ kind: 'done', title: 'Team', sessionId: null, spaceId: 'space-2', jobId: 'jobs-migration:space-2', body: 'Its schedules have moved onto their tasks and fire again.' })
+    // the notices name the space; the log names it by its id
+    expect(w.logs).toEqual([
+      '[jobs] migration, space space-2: its schedules are not firing yet: 3 jobs from before the update have not moved onto their tasks; the user is told',
+      '[jobs] migration, space space-2: its schedules have moved onto their tasks and fire again',
+    ])
     expect(await w.next()).toBeNull()
   })
 

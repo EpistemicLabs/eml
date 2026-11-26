@@ -66,7 +66,7 @@ export function createMigrationWatch(deps: MigrationWatchDeps) {
       if (keys.has(key)) continue
       waiting.delete(key)
       if (!state.told) continue
-      deps.log(`[jobs] migration, ${state.name}: its schedules have moved onto their tasks and fire again`)
+      deps.log(`[jobs] migration, space ${key ?? 'main'}: its schedules have moved onto their tasks and fire again`)
       deps.notify({ kind: 'done', title: state.name, body: 'Its schedules have moved onto their tasks and fire again.', jobId: noticeId(key), sessionId: null, spaceId: key })
     }
     for (const space of pending) {
@@ -75,7 +75,7 @@ export function createMigrationWatch(deps: MigrationWatchDeps) {
       if (state.told || now - state.since <= MIGRATION_RETRY.tellAfterMs) continue
       state.told = true
       const what = space.jobs === 1 ? '1 job from before the update has not moved onto its task' : `${space.jobs} jobs from before the update have not moved onto their tasks`
-      deps.log(`[jobs] migration, ${space.name}: its schedules are not firing yet: ${what}; the user is told`)
+      deps.log(`[jobs] migration, space ${space.key ?? 'main'}: its schedules are not firing yet: ${what}; the user is told`)
       deps.notify({
         kind: 'paused', title: space.name, jobId: noticeId(space.key), sessionId: null, spaceId: space.key,
         body: `The schedules of this space are not firing yet: ${what}. The cockpit tries again every 15 minutes; its log says why.`,

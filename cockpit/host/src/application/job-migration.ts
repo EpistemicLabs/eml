@@ -88,6 +88,11 @@ async function scheduledTasks(brain: Pick<EmlApi, 'get'>): Promise<JobMigrationT
 
 const keyOf = (space: BrainSpace): string | null => (space.main ? null : space.id)
 
+/** A space and a planned task in a log line: by their ids, never by their names. */
+const spaceTag = (space: BrainSpace): string => `space ${keyOf(space) ?? 'main'}`
+const taskTag = (task: Pick<TaskMigration, 'taskId' | 'jobs'>): string =>
+  task.taskId ? `task ${task.taskId.slice(0, 8)}` : `job ${task.jobs.map((job) => job.id.slice(0, 8)).join(', ')}`
+
 /** The routine task a job without a task gets, in the project its sessions start in. */
 export const routineTaskOfJob = (me: string) => (job: JobV1): NewRoutineTask | null =>
   routineTask({ id: job.id, name: job.name, prompt: job.prompt }, job.target.type === 'session' ? null : job.target.projectId, me)
@@ -181,6 +186,11 @@ export function createJobMigration(deps: JobMigrationDeps) {
 
   const runOnce = async (): Promise<JobMigrationResult> => {
     const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null }
+    /** What was not done: for the result and the report as the user reads it (names), and for the log (ids). */
+    const failed = (shown: string, logged: string) => {
+      result.failed.push(shown)
+      deps.log(`[jobs] migration: ${logged}`)
+    }
     if (!deps.store.pendingV1()) {
       await confirmRenames()
       return result
@@ -190,13 +200,13 @@ export function createJobMigration(deps: JobMigrationDeps) {
       const waiting = Object.values(deps.store.pendingV1()?.jobs ?? {}).filter((j) => (j.spaceId ?? null) === keyOf(space)).length
       if (waiting === 0) continue
       if (!brain) {
-        result.failed.push(`${space.name}: no brain to ask, its ${waiting} job(s) wait`)
+        failed(`${space.name}: no brain to ask, its ${waiting} job(s) wait`, `${spaceTag(space)}: no brain to ask, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }
       // Whose cockpit fires a task depends on the space's kind: not known, nothing of it is planned, and it waits.
       if (await kindOf(space) === null) {
-        result.failed.push(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
+        failed(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }
@@ -204,7 +214,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
       try {
         planned = await planSpace(space, brain)
       } catch (err) {
-        result.failed.push(`${space.name}: its brain did not answer (${(err as Error).message}), its ${waiting} job(s) wait`)
+        const what = `its brain did not answer (${(err as Error).message}), its ${waiting} job(s) wait`
+        failed(`${space.name}: ${what}`, `${spaceTag(space)}: ${what}`)
         result.jobs.notMoved += waiting
         continue
       }
@@ -216,16 +227,17 @@ export function createJobMigration(deps: JobMigrationDeps) {
       let removed = true
       for (const left of planned.plan.leftovers ?? []) {
         if (!left.remove) {
-          deps.log(`[jobs] migration, ${space.name}: "${left.title}" has a schedule without a job; in a shared space it is left as it is`)
+          deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)} has a schedule without a job; in a shared space it is left as it is`)
           continue
         }
         try {
           await writeTaskSchedule(brain, left.taskId, null, { text: leftoverNote(left.schedule) })
           result.leftovers += 1
-          deps.log(`[jobs] migration, ${space.name}: "${left.title}": a schedule without a job was left on this task; removed`)
+          deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: a schedule without a job was left on this task; removed`)
         } catch (err) {
           removed = false
-          result.failed.push(`${space.name}: "${left.title}": its schedule without a job could not be removed: ${(err as Error).message}`)
+          const what = `its schedule without a job could not be removed: ${(err as Error).message}`
+          failed(`${space.name}: "${left.title}": ${what}`, `${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: ${what}`)
         }
       }
       if (removed && planned.plan.leftovers !== undefined) deps.store.markLeftoversChecked?.(keyOf(space))
@@ -234,7 +246,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
         if (task.outcome === 'left') {
           result.left += 1
           result.jobs.notMoved += fates.waits + fates.lost
-          deps.log(`[jobs] migration, ${space.name}: "${task.title}" left as it is: ${task.why}`)
+          deps.log(`[jobs] migration, ${spaceTag(space)}: ${taskTag(task)} left as it is: ${task.why}`)
           continue
         }
         try {
@@ -243,7 +255,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
           result.jobs.moved += fates.moved
           result.jobs.notMoved += fates.lost + fates.waits
         } catch (err) {
-          result.failed.push(`${space.name}: "${task.title}": ${(err as Error).message}`)
+          failed(`${space.name}: "${task.title}": ${(err as Error).message}`, `${spaceTag(space)}: ${taskTag(task)}: ${(err as Error).message}`)
           // Its jobs stay where they are for the next pass: none of them fires meanwhile.
           result.jobs.notMoved += fates.moved + fates.lost + fates.waits
         }
@@ -252,9 +264,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const rest = Object.values(deps.store.pendingV1()?.jobs ?? {})
     const known = new Set(deps.spaces().map(keyOf))
     const homeless = rest.filter((j) => !known.has(j.spaceId ?? null)).length
-    if (homeless > 0) result.failed.push(`${homeless} job(s) of a space this cockpit no longer has stay as they are`)
+    if (homeless > 0) failed(`${homeless} job(s) of a space this cockpit no longer has stay as they are`, `${homeless} job(s) of a space this cockpit no longer has stay as they are`)
     deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
-    for (const line of result.failed) deps.log(`[jobs] migration: ${line}`)
     await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
     if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped + result.leftovers > 0)) {

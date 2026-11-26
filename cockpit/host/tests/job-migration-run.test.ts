@@ -147,6 +147,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const w = world([v1('j1'), v1('j2', { taskId: 't2' })], [task('t1'), task('t2')], { failOn: ['t1'] })
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 1, failed: ['Main: "t1": Invalid engram: delegation.schedule has an unknown key'] })
+    // what failed is said to the user by name, and in the log by id
+    expect(w.logs).toContain('[jobs] migration: space main: task t1: Invalid engram: delegation.schedule has an unknown key')
     expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j1'])
     expect(w.store.list().map((r) => r.id)).toEqual(['t2'])
     expect(w.moved).toEqual([['j2', 't2']])
@@ -265,7 +267,9 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const w = world([v1('j1', { taskId: null, target: { type: 'session', sessionId: 's1' } })], [])
     expect(await w.migration.run()).toMatchObject({ moved: 0, left: 1, failed: [] })
     expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j1'])
-    expect(w.logs.some((l) => l.includes('"Daily brief" left as it is'))).toBe(true)
+    // the log names the job by its id; its name is for the report
+    expect(w.logs).toContain('[jobs] migration, space main: job j1 left as it is: it has no task and no project of the brain to make one in: it stays as it is, nothing fires it')
+    expect(w.logs.filter((l) => l.includes('Daily brief') || l.includes('Main'))).toEqual([])
   })
 
   it('a home without version 1 jobs has nothing to do', async () => {

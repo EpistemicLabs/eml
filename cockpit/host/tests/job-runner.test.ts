@@ -1288,6 +1288,27 @@ describe('carrying a run out', () => {
   })
 })
 
+describe('the log', () => {
+  it('names a task and a space by their ids, never by their names: a run, a skipped time, a record that goes, a space that is not read', async () => {
+    const logs: string[] = []
+    world.spaces = [MAIN, { key: 'team', name: 'Team', shared: null }]
+    runner = new JobRunner(world.deps({ log: (line) => logs.push(line) }))
+    world.task('aaaa1111-runs', HOURLY)
+    world.task('bbbb2222-busy', HOURLY)
+    world.task('cccc3333-ends', HOURLY)
+    await runner.tick()
+    world.session('bbbb2222-busy', 's-busy', true)
+    world.setSchedule('cccc3333-ends', null)
+    world.now = Date.parse('2026-11-09T01:00:30Z')
+    await runner.tick()
+    expect(logs).toContain('[jobs] task aaaa1111: run 1 is due')
+    expect(logs).toContain('[jobs] task bbbb2222: a time due 2026-11-09T01:00:00.000Z is skipped, a session of the task was working')
+    expect(logs).toContain('[jobs] task cccc3333: its record is removed (no schedule, no channel, no open run)')
+    expect(logs).toContain('[jobs] space team: the brain server has not said yet whether it is shared: nothing fires here until it has')
+    expect(logs.filter((line) => /Task |slug-|Main|Team/.test(line))).toEqual([])
+  })
+})
+
 describe('where a new session of a task starts', () => {
   it('is the record\'s project, which wins over the task\'s own', () => {
     expect(runProjectOf({ projectId: 'bp-ops' }, { scope: 'project.sales' })).toBe('bp-ops')
