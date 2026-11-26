@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
@@ -12,6 +11,7 @@ import {
 import type { ProviderCapabilities } from '../../../domain/agent-provider.js'
 import type { SessionRuntimeFactory } from '../../../domain/session-runtime.js'
 import { createCodexChatRuntimes } from './chat-runtime.js'
+import { CodexSignIn, readCodexAccount, type CodexAccount } from './account.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -168,22 +168,26 @@ class CodexProvider implements AgentProvider {
   readonly settings = codexSettings
 
   /**
-   * `codex login status` is a process per call, and the UI asks on every pane
-   * title and window focus — so the answer is kept until a Codex session ends
-   * (the sign-in happens inside one) or the user asks for a fresh look.
+   * What `account/read` says (account.ts) is a process per call, and the UI
+   * asks on every pane title and window focus — so the answer is kept until a
+   * sign-in ends, a Codex session ends (it can sign in inside one) or the user
+   * asks for a fresh look.
    */
-  private signedInCache: Promise<boolean> | null = null
+  private accountCache: Promise<CodexAccount | null> | null = null
 
   readonly auth = {
-    signedIn: () => {
-      if (!codexRuntime.currentVersion()) return Promise.resolve(false)
-      this.signedInCache ??= new Promise<boolean>((resolve) => {
-        // `codex login status` exits 0 only when signed in.
-        execFile(codexRuntime.bin, ['login', 'status'], { env: { ...process.env, CODEX_HOME: CODEX_CONFIG_DIR }, timeout: 10_000 }, (err) => resolve(!err))
-      })
-      return this.signedInCache
-    },
-    invalidate: () => { this.signedInCache = null },
+    signedIn: async () => (await this.account())?.signedIn === true,
+    invalidate: () => { this.accountCache = null },
+  }
+
+  /** The device-code sign-in through app-server, from Settings › Models (account.ts). */
+  readonly signIn = new CodexSignIn({ signedIn: () => this.auth.invalidate() })
+
+  /** The account Codex holds; null when it is not set up or could not say. */
+  account(): Promise<CodexAccount | null> {
+    if (!codexRuntime.currentVersion()) return Promise.resolve(null)
+    this.accountCache ??= readCodexAccount().catch(() => null)
+    return this.accountCache
   }
 
   prepare(ctx: IsolationContext): void {

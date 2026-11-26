@@ -106,6 +106,22 @@ describe('Claude Code provider', () => {
     expect(keep(false)).toBe(false)
   })
 
+  it('in token mode runs workers in chat too, and the chat session\'s CLI gets the setup-token', async () => {
+    const { claudeStartOptions } = await import('../src/infrastructure/providers/claude/sdk-runtime.js')
+    const fakeToken = `sk-ant-oat01-${'x'.repeat(40)}`
+    writeFileSync(join(home, 'claude-login'), `${fakeToken}\n`, { mode: 0o600 })
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ loginMode: 'token' }))
+    try {
+      expect(provider.workerRunsInChat(space)).toBe(true)
+      const launch = provider.launch({ sessionId: 'tok-1', address: 'eml-tok1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
+      expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
+      expect(claudeStartOptions({ env: launch.env, launch, space }).env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
+    } finally {
+      rmSync(join(home, 'claude-login'), { force: true })
+      writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
+    }
+  })
+
   it('runs workers in chat and tells the browser so, until the chat view is switched off', () => {
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
     expect(provider.workerRunsInChat(space)).toBe(true)

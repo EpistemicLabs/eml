@@ -24,7 +24,7 @@ import { AGENTS_DIR, CONFIG_DIR, CORE_INDEX, DATA_DIR } from './paths.js'
  *   which follows it into every space that binds it; a new id gets its own agent
  *   brain (agents.ts) and takes the space over. A home from before agent brains
  *   gets the brain from the agent upgrade at the next start.
- *   Start the cockpit afterwards; then run /login once in a session of the space.
+ *   Start the cockpit afterwards; then sign in once with the space active (Settings › Models, or /login).
  *
  * agent status [<id>]
  *   Reads the agent's files only. Never starts `claude`: a short-lived CLI process
@@ -150,7 +150,7 @@ async function createAgent(argv: string[], core: Core & ProvisionCore): Promise<
   say(`agent ${opts.agentId}: created and bound to space ${spaceName} (${opts.mcp.length} MCP servers + the brain, ${opts.skills.length} skills + the managed ones)`)
   if (previous && previous !== opts.agentId) say(`space ${spaceName} was bound to ${previous}; it now runs as ${opts.agentId}. ${previous} keeps its brain.`)
   say(`config folder: ${configDir}`)
-  say('Start the cockpit, then run /login once in a session of this space.')
+  say('Start the cockpit, then sign in once with this space active (Settings › Models › Claude Code › Sign in, or /login in a session of it).')
 }
 
 /** The spaces that bind an agent, by name. */

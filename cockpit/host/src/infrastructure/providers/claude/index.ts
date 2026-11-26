@@ -10,11 +10,12 @@ import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
 import { lastReplyInTranscript } from './last-reply.js'
 import { createClaudeSdkRuntimes } from './sdk-runtime.js'
+import { ClaudeSignIn } from './sign-in.js'
 
 /**
  * Claude Code as an agent provider: the cockpit's own `claude` (runtime.ts,
  * never the user's install) in the app's CLAUDE_CONFIG_DIR (isolation.ts),
- * signed in there or through a setup-token (login.ts).
+ * signed in there (sign-in.ts, or /login in a session) or through a setup-token (login.ts).
  */
 
 // Notification types that mean "Claude stopped and needs the human".
@@ -70,6 +71,18 @@ class ClaudeProvider implements AgentProvider {
     invalidate: () => invalidateAccountCache(),
   }
 
+  /** `claude auth login` driven from the page (sign-in.ts), into the folder the space's sessions use. */
+  readonly signIn = new ClaudeSignIn({
+    configDirFor: (space) => {
+      const problem = space.runtime?.problem('claude')
+      if (problem) throw new Error(problem)
+      const configDir = this.configDirFor(space.runtime)
+      if (!configDir) throw new Error(`Agent "${space.runtime?.id}" has no config folder for Claude Code.`)
+      return configDir
+    },
+    signedIn: () => invalidateAccountCache(),
+  })
+
   /** The chat view switch, read by the browser at start for the view a new session opens in. */
   readonly settings = {
     read: () => ({ chatView: readChatView() }),
@@ -100,9 +113,9 @@ class ClaudeProvider implements AgentProvider {
     if (configDir) ensureProjectTrusted(projectPath, configDir)
   }
 
-  /** The chat runtime passes no login token: token mode stays in the terminal, except for a runtime, which has its own login. */
-  workerRunsInChat(space: SessionSpace): boolean {
-    return readChatView() && (!!space.runtime || !sessionToken())
+  /** The chat runtime gets the launch's environment, setup-token included: a worker runs in chat in either sign-in mode. */
+  workerRunsInChat(): boolean {
+    return readChatView()
   }
 
   launch(req: LaunchRequest): LaunchSpec {

@@ -236,12 +236,48 @@ export interface AgentSettings {
 export interface AgentAuth {
   /**
    * Whether sessions of this provider can talk to their model right now. May
-   * answer from a cache: the UI asks often, the answer changes when a session
-   * of the provider ends (a sign-in happens inside one) — see invalidate.
+   * answer from a cache: the UI asks often, the answer changes when a sign-in
+   * ends (signIn below, or one inside a session) — see invalidate.
    */
   signedIn(): Promise<boolean>
-  /** Forget the cached answer: a session of this provider ended, or the user asked for a fresh look. */
+  /** Forget the cached answer: a sign-in ended, a session of this provider ended, or the user asked for a fresh look. */
   invalidate(): void
+}
+
+/**
+ * A sign-in the host runs with the provider's CLI on the user's behalf, so the
+ * user never needs a terminal for it (Settings › Models, the first-run card).
+ * The page shows `url`; the user signs in there, and either types `userCode`
+ * on that page (a device code) or brings back the code the page shows and
+ * pastes it here (`takesCode`), which the host hands to the CLI.
+ */
+export interface SignInAttempt {
+  id: string
+  /**
+   * waiting: on the user; checking: the CLI has the pasted code; done, failed,
+   * cancelled: over (`error` says why it failed).
+   */
+  state: 'waiting' | 'checking' | 'done' | 'failed' | 'cancelled'
+  /** The page the user signs in on. */
+  url: string
+  /** A code the user enters on that page; null when the flow has none. */
+  userCode: string | null
+  /** The page ends with a code the user pastes back (submitCode). */
+  takesCode: boolean
+  error: string | null
+}
+
+export interface AgentSignIn {
+  /**
+   * Starts a sign-in into the config the space's sessions use, and ends one
+   * still open. Rejects with a message for the UI when the CLI cannot start it.
+   */
+  start(space: SessionSpace): Promise<SignInAttempt>
+  /** The attempt as it stands; null when the host does not know the id (any more). */
+  read(id: string): SignInAttempt | null
+  /** Hands the code the user pasted to the CLI and resolves once the CLI has taken or refused it. */
+  submitCode(id: string, code: string): Promise<SignInAttempt>
+  cancel(id: string): Promise<SignInAttempt | null>
 }
 
 /** Whether a provider has a feature; one without it says why, for the UI and for a refusal. */
@@ -275,6 +311,8 @@ export interface AgentProvider {
   readonly chatRuntime?: SessionRuntimeFactory
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
+  /** A sign-in without a terminal; absent for a provider that signs in some other way (Qwen: an endpoint). */
+  readonly signIn?: AgentSignIn
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */
   readonly settings?: AgentSettings
   /** Write the isolated config: brain MCP, session hooks, EML hooks, skills. Once per boot, before any launch. */

@@ -39,7 +39,7 @@ import {
 } from './project-registry.js'
 import { brainProjectOf, moveProject, planProjectMove } from './project-move.js'
 import { BrainRenameError, type BrainProject } from './brain-projects.js'
-import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER } from './domain/agent-provider.js'
+import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER, type AgentProvider, type SessionSpace } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { applySessionHook } from './application/apply-session-hook.js'
 import { directoryQueryOf } from './application/session-tools.js'
@@ -222,6 +222,42 @@ async function providerViews(deps: HostDeps) {
     settings: provider.settings?.read() ?? null,
     capabilities: provider.capabilities,
   })))
+}
+
+/** The Claude Code folder a space's sessions keep their login in; null for an agent without one. */
+function claudeConfigDirOf(space: BrainSpace): string | null {
+  return space.runtime ? space.runtime.configDirs.claude ?? null : CONFIG_DIR
+}
+
+/**
+ * Settings › Models › Sign in, without a terminal (AgentSignIn): POST starts an
+ * attempt into the space's config, GET <attempt> reads it, POST <attempt>/code
+ * hands the pasted code to the CLI, DELETE <attempt> ends it. The code only
+ * passes through; no answer carries it back.
+ */
+async function handleSignIn(req: http.IncomingMessage, res: http.ServerResponse, provider: AgentProvider, space: SessionSpace, attemptId: string | null, step: string | null, method: string): Promise<void> {
+  const signIn = provider.signIn
+  if (!signIn) { json(res, 404, { error: { code: 'NO_SIGN_IN', message: `${provider.label} does not sign in here` } }); return }
+  const refuse = (err: unknown) => json(res, 400, { error: { code: 'SIGN_IN_FAILED', message: (err as Error).message } })
+  if (!attemptId && method === 'POST') {
+    if (provider.runtime.problem()) { json(res, 409, { error: { code: 'NOT_SET_UP', message: `${provider.label} is not set up yet.` } }); return }
+    try { json(res, 200, await signIn.start(space)) } catch (err) { refuse(err) }
+    return
+  }
+  if (attemptId && step === 'code' && method === 'POST') {
+    const body = await readJson(req)
+    try {
+      json(res, 200, await signIn.submitCode(attemptId, typeof body.code === 'string' ? body.code : ''))
+    } catch (err) { refuse(err) }
+    return
+  }
+  if (attemptId && !step && (method === 'GET' || method === 'DELETE')) {
+    const attempt = method === 'GET' ? signIn.read(attemptId) : await signIn.cancel(attemptId)
+    if (attempt) json(res, 200, attempt)
+    else json(res, 404, { error: { code: 'NOT_FOUND', message: 'This sign-in is no longer open.' } })
+    return
+  }
+  json(res, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'Not a sign-in route' } })
 }
 
 /** A project folder is opened by sessions of any provider — none of them should ask about trust. */
@@ -1175,6 +1211,10 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const provider = id ? deps.providers.get(id) : undefined
       if (id && !provider) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Unknown provider' } }); return true }
       const [, , , section, action] = parts
+      if (provider && section === 'sign-in') {
+        await handleSignIn(req, res, provider, sessionSpaceOf(space), action ?? null, parts[5] ?? null, method)
+        return true
+      }
       let handled = false
       if (!id && method === 'GET') {
         // Settings › Models asks for a fresh look at the sign-ins (?refresh=1); the menus take the cached answer.
@@ -1228,7 +1268,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     if (resource === 'agents' && id === 'login' && !parts[3]) {
       if (method === 'GET') {
         if (url.searchParams.has('refresh')) invalidateAccountCache()
-        json(res, 200, await claudeLoginStatus())
+        json(res, 200, await claudeLoginStatus(claudeConfigDirOf(space)))
         return true
       }
       if (method === 'PUT' || method === 'PATCH') {
@@ -1236,13 +1276,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         const error = method === 'PUT' ? writeClaudeLogin(body?.token) : writeAgentPatch(body)
         if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
         invalidateAccountCache()
-        json(res, 200, await claudeLoginStatus())
+        json(res, 200, await claudeLoginStatus(claudeConfigDirOf(space)))
         return true
       }
       if (method === 'DELETE') {
         clearClaudeLogin()
         invalidateAccountCache()
-        json(res, 200, await claudeLoginStatus())
+        json(res, 200, await claudeLoginStatus(claudeConfigDirOf(space)))
         return true
       }
     }

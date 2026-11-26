@@ -23,8 +23,9 @@ pnpm run cockpit          # builds everything, starts the cockpit, opens a brows
   and brain listen on `127.0.0.1` only.
 - Create a project (sidebar **+**) and click **New Session**. Without a folder of its own, a project's
   sessions run in `~/.eml-cockpit/workspaces/<project>`; point it at a real repo via the folder action.
-  In the first session, sign in with `/login`. The cockpit keeps its own Claude config, so your normal `~/.claude` login and
-  settings are untouched. Settings › Models also takes a `claude setup-token` instead.
+  Sign in to Claude on the first-run card (later: Settings › Models › Claude Code): open Claude's sign-in page and paste
+  the code it shows; the host hands it to `claude auth login`. The cockpit keeps its own Claude config, so your normal
+  `~/.claude` login and settings are untouched. Settings › Models also takes a `claude setup-token` instead.
 - The terminal prints the cockpit URL. The port is random unless you set `COCKPIT_PORT=4317`.
 
 ## Install as an app (with updates)
@@ -247,7 +248,8 @@ skill list. A space without one behaves as described above; the main space keeps
 <home>/agents/<id>/claude-config/     generated files, transcripts, and the login Claude Code keeps there
 ```
 
-Stop the cockpit, then set one up. Start it again and run `/login` once in a session of the space:
+Stop the cockpit, then set one up. Start it again and sign in once with the space active (Settings › Models ›
+Claude Code › Sign in, or `/login` in a session of the space):
 
 ```bash
 eml-cockpit agent create <id> --space <name|brain id> \
@@ -264,8 +266,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   their definition names, plus a few basics (`CLAUDE_CODE_MCP_ALLOWLIST_ENV`).
 - **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
 - **Browser:** an agent's sessions get no Claude in Chrome unless its `agent.json` says `"chrome": true`. Chrome reaches every site the browser is signed in to, so give an agent its own browser profile.
-- **Login:** one `/login` per folder. The cockpit does not store or pass Claude tokens for this, and Settings › Models'
-  setup-token mode does not apply to these sessions.
+- **Login:** one sign-in per folder (Settings › Models with the space active, or `/login`). The cockpit does not store or
+  pass Claude tokens for this, and Settings › Models' setup-token mode does not apply to these sessions.
 - **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A session nobody looks at stops one hour
   after its last activity (Settings › Preferences › Sessions), a worker too; one with a window open after 2 hours, one
   with an open card after 4; never mid-turn or with background work. Opening a chat only shows it: the process starts
@@ -276,7 +278,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
   and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
-  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models › Chat view off
+  joins (`application/start-worker.ts`). Codex, the host's own sessions and Settings › Models › Chat view off
   stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
   chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
@@ -383,7 +385,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   ends at its time or when the task's session reports done, and the host restarts the session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
-  folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
+  folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session; Settings › Models signs in without one.
 - **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
   missing, or the record does not fit, the session does not start and the pane says why. It never falls back to the
   shared folder, and nothing recreates the folder.
@@ -603,6 +605,10 @@ starts a session with either). The cockpit owns its copy the same way
   check.
 - **Own home:** `~/.eml-cockpit/codex-config` (`CODEX_HOME`): sign-in, `config.toml`, hooks, sessions,
   skills — separate from your `~/.codex`. Codex's own update check is off there.
+- **Sign-in:** Settings › Models › Codex › *Sign in with ChatGPT* runs ChatGPT's device-code sign-in through a
+  `codex app-server` of its own in that home (`account/login/start`): the page shows OpenAI's verification link and a
+  one-time code to enter there, and the sign-in finishes by itself. Whether Codex is signed in comes from
+  `account/read`, cached until a sign-in or a Codex session ends (`providers/codex/account.ts`).
 - **One home, every brain space:** nothing in that home names a brain. A session gets its space
   through its environment — `COCKPIT_MCP_TOKEN` and `COCKPIT_SESSION_ID`, which `config.toml` tells
   Codex to send as headers to the host's brain MCP endpoint (`env_http_headers`), and
@@ -641,10 +647,12 @@ rewritten each boot).
 Each brain file also holds its op log: every write since brain schema 21, in order and hash-chained, and
 a snapshot of the brain as it was when the log began (once, roughly a quarter of the brain's size). The log
 is never rewritten — a secret that lands in a brain stays in its history, so rotate the secret.
-Claude sign-in (Settings › Models): by default the regular Claude Code login (`/login` on first start), which
-Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
+Claude sign-in (Settings › Models): by default the regular Claude Code login, which the host runs with
+`claude auth login` from the page (`providers/claude/sign-in.ts`: the page shows the link, the code the user pastes goes
+to the CLI's stdin and nowhere else; `/login` in a session works too), and which Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
 runtimes without a browser: stored as `claude-login` (chmod 600, write-only from the browser) and injected via
-env only when `agents.json` switches sessions to token mode. Sessions keep the input at the bottom
+env only when `agents.json` switches sessions to token mode — into a terminal session's environment and into the
+one the Agent SDK starts Claude Code with for a chat session, never into a file. Sessions keep the input at the bottom
 of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_FLICKER=1`), which `/tui`
 cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
 hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills

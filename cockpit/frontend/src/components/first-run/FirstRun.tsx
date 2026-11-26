@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import AgentSignIn from "@/components/sign-in/AgentSignIn";
 import { FIELD, PRIMARY } from "@/shared/view/ui";
 
 /**
@@ -25,9 +26,11 @@ async function setupNeeded(): Promise<boolean> {
 
 /**
  * Step 2 of the first run, in the real cockpit: right after the setup Claude
- * is not signed in yet (GET /api/setup → signIn). A card with one button opens
- * a session that runs Claude Code's own /login; the host opens the
- * getting-started session once the sign-in is done (onboarding.ts). The card
+ * is not signed in yet (GET /api/setup → signIn). The card runs Claude Code's
+ * own sign-in right here (AgentSignIn: a link, then the code the page shows);
+ * a session with /login in a terminal is the way when that does not work. The
+ * host opens the getting-started session once the sign-in is done
+ * (onboarding.ts). The card
  * is the only way on: no shortcut past the onboarding (the setup-token stays
  * in Settings › Models for later).
  */
@@ -47,7 +50,8 @@ export function FirstRunSignIn() {
   if (!open) return null;
   const ready = runtime.version !== null;
 
-  const signIn = async () => {
+  // The way through a terminal: a session that starts with /login.
+  const signInInTerminal = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -71,8 +75,8 @@ export function FirstRunSignIn() {
           <p className="text-caption text-muted-foreground">Step 2 of 2</p>
           <h1 id="first-run-sign-in" className="text-heading font-semibold">Connect Claude</h1>
           <p className="text-ui text-muted-foreground">
-            Your agent runs on Claude Code with your Claude subscription. Signing in opens a terminal with Claude
-            Code's own sign-in. Once you're signed in, your agent starts and takes you through the rest.
+            Your agent runs on Claude Code with your Claude subscription. Sign in on Claude's page and bring back the
+            code it shows. Once you're signed in, your agent starts and takes you through the rest.
           </p>
         </div>
         <p className="text-caption text-muted-foreground">
@@ -112,15 +116,21 @@ export function FirstRunSignIn() {
           >
             Try again
           </button>
+        ) : ready ? (
+          <div className="space-y-3">
+            <AgentSignIn provider="claude" label="Sign in to Claude" wide onDone={() => setOpen(false)} />
+            <button
+              type="button"
+              onClick={() => void signInInTerminal()}
+              disabled={busy}
+              className="text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring"
+            >
+              {busy ? "Opening…" : "Sign in in a terminal instead"}
+            </button>
+          </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => void signIn()}
-            disabled={busy || !ready}
-            autoFocus
-            className={cn(PRIMARY, 'w-full')}
-          >
-            {busy ? "Opening…" : ready ? "Sign in to Claude" : "Downloading Claude Code to the cockpit…"}
+          <button type="button" disabled className={cn(PRIMARY, 'w-full')}>
+            Downloading Claude Code to the cockpit…
           </button>
         )}
       </div>
