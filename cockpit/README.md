@@ -324,7 +324,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   each with Remove, the wake-up with its reason, the next run, one Pause or Resume, Run now and End for the whole
   schedule, the user's own decisions for this machine (their OK for new channel addresses, send or draft, the Limited
   switch, lent tools) and the last runs (a missed one stands out there). Pause, resume, run now, remove one repeating
-  time and End schedule are commands on the task (`/api/v1/tasks/<id>/…`, `tasks-api.ts`); the user's decisions and
+  time and End schedule are commands on the task (`/api/v1/tasks/<id>/…`, `tasks-api.ts`); Run now is refused when no
+  session could start (the task has no project), and a card or Plan row says when a channel waits for the user's OK. The user's decisions and
   the task's last runs are under `/api/v1/tasks/<id>/record` (`application/task-record.ts`). What a run needs from the
   user shows in the review section on the run's session (Needs you, Check this). A task that could not run, or whose
   schedule the cockpit paused after three failures, has no session saying so, so its newest run session (else whoever
@@ -348,7 +349,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   on the task (Approve in the task panel's Schedule section); adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
   A session a firing starts carries the task's id in its ledger entry (`jobId`, the record's id), so its channel tools
   act for that task on every resume. A shared space's tasks get no mail channel.
-- **Limited tasks and grants:** a task's sessions start with its maker's tools; the user can mark the task's record
+- **Limited tasks and grants:** a task's sessions start with its maker's tools: a session whose own tools are narrowed
+  and that sets something to wake the task (the schedule tool, or a wake-up by ending its turn) narrows the task's
+  record to what it has itself, never wider (`domain/schedule-tool.ts` `narrowedProfile`). The user can mark the task's record
   **limited** (the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
   servers only the brain; web tools stay, and the schedule tool reaches only their own task (next wake-up, goal,
   finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
