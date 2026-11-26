@@ -6,7 +6,7 @@
 import { type ReactNode, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { activeGrants, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
+import { activeGrants, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
 import type { RunTone } from '@/lib/job-run-label';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, HUE, LABEL, LINK, MINI, PRIMARY } from '@/shared/view/ui';
@@ -71,6 +71,8 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
   const grants = activeGrants(record, now);
   const runs = (data?.runs ?? []).slice(0, RUNS_SHOWN);
 
+  const left = runsLeft(record);
+
   const newest = runs[0] ? runLine(runs[0], now, true) : { text: '', tone: 'muted' as const };
 
   let stands: ReactNode = null;
@@ -127,6 +129,7 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
       )}
 
       {stands && <div className="text-ui text-muted-foreground">{stands}</div>}
+      {left !== null && task.hasSchedule && <div className="text-ui text-muted-foreground">{runsLeftText(left)}, then the schedule ends.</div>}
 
       <div className="flex flex-wrap items-center gap-2">
         {task.hasSchedule && (paused

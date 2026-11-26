@@ -504,7 +504,17 @@ export interface TaskRecord {
   pausedReason: string | null;
   runCount?: number;
   lastRunAt?: string | null;
+  /** The schedule ends once the record has run this often (counted over the record's life, so with runCount). */
+  end?: { afterRuns: number } | null;
 }
+
+/** How many runs the schedule still has before it ends by its count; null when it has no such end. */
+export function runsLeft(record: TaskRecord | null | undefined): number | null {
+  const after = record?.end?.afterRuns;
+  return typeof after === 'number' ? Math.max(0, after - (record?.runCount ?? 0)) : null;
+}
+/** "3 more runs", "1 more run", "no more runs". */
+export const runsLeftText = (left: number): string => (left === 0 ? 'no more runs' : `${left} more ${left === 1 ? 'run' : 'runs'}`);
 
 /** A run of the task's schedule (host RunView). number 0: a time that was missed or skipped. */
 export interface TaskRun {

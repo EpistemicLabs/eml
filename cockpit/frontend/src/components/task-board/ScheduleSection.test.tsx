@@ -51,6 +51,20 @@ describe('the schedule section of a task', () => {
     expect(section().queryByLabelText('Wake-up')).toBeNull();
   });
 
+  it('says how many runs are left when the schedule ends after a number of runs (counted over the record\'s life)', async () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    show(task(), { record: record({ runCount: 4, end: { afterRuns: 7 } }) });
+    expect(await section().findByText('3 more runs, then the schedule ends.')).toBeTruthy();
+    cleanup();
+    show(task(), { record: record({ runCount: 6, end: { afterRuns: 7 } }) });
+    expect(await section().findByText('1 more run, then the schedule ends.')).toBeTruthy();
+    cleanup();
+    // no such end: nothing is said
+    show(task(), { record: record({ runCount: 6, end: null, limited: true }) });
+    await section().findByText('On this cockpit');
+    expect(section().queryByText(/more run/)).toBeNull();
+  });
+
   it('names the zone the times are read in when it is not the user\'s, and shows a rule the words do not fit as itself', () => {
     setTimeZoneForTest('Europe/Berlin');
     show(task({ schedule: { crons: ['*/20 * * * *'], time_zone: 'Asia/Bangkok' } }));
