@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { cronInWords, firedText, firedWords, SCHEDULE_TASK_RULE, startedBy } from '../src/domain/run-text.js'
 import type { JobRun } from '../src/domain/job.js'
 
@@ -27,6 +28,14 @@ describe('cronInWords', () => {
     expect(cronInWords('15 * * * *')).toBe('every hour at :15')
     expect(cronInWords('15 * * * 1-5')).toBe('every hour at :15 on weekdays')
     expect(cronInWords('0 8 * * 0-6')).toBe('every day at 08:00')
+  })
+
+  // The page says a repeating time with its own port of this function (frontend lib/task-board.ts cronWords). Both
+  // read the same list, so one cannot change without the other.
+  it('gives the words of the list the page\'s port is held to as well (tests/fixtures/cron-words.json)', () => {
+    const { cases } = JSON.parse(readFileSync(new URL('./fixtures/cron-words.json', import.meta.url), 'utf8')) as { cases: Array<[string, string | null]> }
+    expect(cases.length).toBeGreaterThan(30)
+    expect(cases.map(([cron]) => [cron, cronInWords(cron)])).toEqual(cases)
   })
 
   it('has no words for what these shapes do not fit, or for what is no cron', () => {

@@ -813,15 +813,27 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const two = (n: number) => String(n).padStart(2, '0');
 const listed = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 
-/** The values one cron field names (numbers, lists, ranges, steps), sorted; null when it is not such a field. */
-function cronField(field: string, min: number, max: number): number[] | null {
+const CRON_DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+/**
+ * The values one cron field names (numbers, lists, ranges, steps), sorted; null when it is not such a field.
+ * `names`: the field also takes these words for 0, 1, … (the weekday's SUN to SAT), as the host's parser does.
+ */
+function cronField(field: string, min: number, max: number, names: string[] | null = null): number[] | null {
+  const value = (part: string): number => {
+    const index = names ? names.indexOf(part.toUpperCase()) : -1;
+    return index >= 0 ? index : /^\d+$/.test(part) ? Number(part) : NaN;
+  };
   const values = new Set<number>();
   for (const part of field.split(',')) {
-    const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part);
-    if (!m) return null;
-    const [from, to] = m[1] === '*' ? [min, max] : m[1].includes('-') ? m[1].split('-').map(Number) : [Number(m[1]), m[2] ? max : Number(m[1])];
-    const step = m[2] ? Number(m[2]) : 1;
-    if (from < min || to > max || from > to || step < 1) return null;
+    const pieces = part.split('/');
+    if (pieces.length > 2) return null;
+    const [range, stepText] = pieces;
+    const step = stepText === undefined ? 1 : /^\d+$/.test(stepText) ? Number(stepText) : NaN;
+    const ends = range.split('-');
+    if (ends.length > 2) return null;
+    const [from, to] = range === '*' ? [min, max] : ends.length === 2 ? [value(ends[0]), value(ends[1])] : [value(range), stepText === undefined ? value(range) : max];
+    if (!(from >= min && to <= max && from <= to && step >= 1)) return null;
     for (let v = from; v <= to; v += step) values.add(v);
   }
   return [...values].sort((a, b) => a - b);
@@ -838,7 +850,7 @@ export function cronWords(cron: string): string | null {
   const [minute, hour, day, month, weekday] = fields;
   const minutes = cronField(minute, 0, 59), hours = cronField(hour, 0, 23), days = cronField(day, 1, 31);
   // Sunday is 0 or 7.
-  const weekdays = cronField(weekday, 0, 7)?.map((d) => d % 7);
+  const weekdays = cronField(weekday, 0, 7, CRON_DAYS)?.map((d) => d % 7);
   if (!minutes || !hours || !days || !weekdays || month !== '*' || minutes.length !== 1) return null;
   const everyHour = hour === '*';
   if (!everyHour && hours.length > 6) return null;
