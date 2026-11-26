@@ -13,7 +13,8 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  * host's start, once the brains are at schema 24. Per space it reads the tasks of the version 1 jobs, plans, and
  * writes task by task: the brain first (the schedule, the text, the journal, in one call through
  * application/task-schedule-write.ts), then the store (the record in, the jobs out of the version 1 data), then the
- * sessions of those jobs move to the record in the ledger.
+ * sessions of those jobs move to the record in the ledger, and the channel bridge is told the jobs' new id, since
+ * its own database files their messages, wakes and drafts by job id.
  *
  * The version 1 file is copied next to itself before it is rewritten for the first time (job-store.ts). The report
  * of each real run is appended to a file next to it, and the user is told when a job did not move. The pass is
@@ -27,7 +28,7 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'>
+  store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore<Job>, 'pendingRenames' | 'renameConfirmed'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -46,6 +47,12 @@ export interface JobMigrationDeps {
    * version 1 file, and return that file's path. Without it no report is kept.
    */
   saveReport?(markdown: string): string
+  /**
+   * Tell the channel bridge that a job has a new id (channel-bridge-api.ts renameBridgeJob), so what its own database
+   * holds for the job follows. `off`: the bridge does not run, which is no error: the rename waits for the next
+   * start. `failed`: it runs and did not take it.
+   */
+  renameInBridge?(fromJobId: string, toRecordId: string): Promise<'renamed' | 'off' | 'failed'>
   /** Tell the user (notifications.ts, as the engine tells a paused schedule): a run in which a job did not move. */
   notify?(input: NotificationInput): void
 }
@@ -146,9 +153,34 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (step.record) for (const jobId of task.renamed) deps.moveSessions(jobId, step.record.id)
   }
 
+  /**
+   * The channel bridge follows the ids of the jobs that moved: each one whose new id it has not confirmed is told
+   * again, and forgotten once it has. Asked after the store step, never before: until the record exists the old id
+   * is the one the cockpit answers for.
+   */
+  const confirmRenames = async (): Promise<void> => {
+    const pending = Object.entries(deps.store.pendingRenames?.() ?? {})
+    if (pending.length === 0 || !deps.renameInBridge) return
+    let failed = 0
+    for (const [from, to] of pending) {
+      const outcome = await deps.renameInBridge(from, to).catch(() => 'failed' as const)
+      if (outcome === 'renamed') deps.store.renameConfirmed?.(from)
+      else if (outcome === 'failed') failed += 1
+      // The bridge does not run: nothing more to ask now.
+      else break
+    }
+    const left = Object.keys(deps.store.pendingRenames?.() ?? {}).length
+    if (failed > 0) deps.log(`[jobs] migration: the channel bridge did not take the new id of ${failed} moved job(s); asked again at the next start`)
+    else if (left > 0) deps.log(`[jobs] migration: the channel bridge does not run; it is told the new id of ${left} moved job(s) once it does`)
+    else deps.log(`[jobs] migration: the channel bridge has the new id of ${pending.length} moved job(s)`)
+  }
+
   const runOnce = async (): Promise<JobMigrationResult> => {
     const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null }
-    if (!deps.store.pendingV1()) return result
+    if (!deps.store.pendingV1()) {
+      await confirmRenames()
+      return result
+    }
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
       const waiting = Object.values(deps.store.pendingV1()?.jobs ?? {}).filter((j) => (j.spaceId ?? null) === keyOf(space)).length
@@ -200,6 +232,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (homeless > 0) result.failed.push(`${homeless} job(s) of a space this cockpit no longer has stay as they are`)
     deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
     for (const line of result.failed) deps.log(`[jobs] migration: ${line}`)
+    await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
     if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped > 0)) {
       try {
@@ -226,6 +259,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
       const brain = deps.brain(space)
       return brain ? planSpace(space, brain, true) : null
     },
+    /** The channel bridge runs (again): the renames it has not confirmed are told now. */
+    confirmRenames,
     /** The pass: every space that has jobs to move. A pass under way is joined, not doubled. */
     run(): Promise<JobMigrationResult> {
       if (!running) running = runOnce().finally(() => { running = null })

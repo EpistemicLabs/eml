@@ -485,10 +485,13 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
 }
 
 /** A planned task's part as the store takes it (job-store.ts migrateV1), with the task's id filled in where it was made just now. */
-export function stepOf(plan: TaskMigration, taskId: string | null): { jobIds: string[]; record: Job | null; runs: JobRun[]; keys: Record<string, string>; history: Record<string, JobRun[]> } {
+export function stepOf(plan: TaskMigration, taskId: string | null): { jobIds: string[]; record: Job | null; runs: JobRun[]; keys: Record<string, string>; history: Record<string, JobRun[]>; renames: Record<string, string> } {
   const record = plan.record && taskId ? { ...plan.record, id: taskId, taskId } : null
   return {
     jobIds: plan.settles, record,
+    // Every job that goes on under the record: the channel bridge may hold messages, wakes or drafts under its id,
+    // also when its channel trigger was taken off before.
+    renames: record ? Object.fromEntries(plan.renamed.map((jobId) => [jobId, record.id])) : {},
     runs: record ? plan.runs.map((r) => ({ ...r, jobId: record.id })) : [],
     keys: record ? plan.keys : {},
     history: plan.history,

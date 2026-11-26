@@ -8,6 +8,7 @@ import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
 import { MemoryWakeQueue } from '../src/adapters/memory/memory-wake-queue'
 import { MemoryOutboxStore } from '../src/adapters/memory/memory-outbox-store'
 import { MemoryJobDirectory } from '../src/adapters/memory/memory-job-directory'
+import { MemoryJobIds } from '../src/adapters/memory/memory-job-ids'
 import { FixedClock } from '../src/adapters/memory/fixed-clock'
 import { SequentialIds } from '../src/adapters/memory/sequential-ids'
 import { ScriptedChannel, ScriptedChannels } from '../src/adapters/fake-channel/scripted-channel'
@@ -17,11 +18,11 @@ let tools: ReturnType<typeof jobTools>
 
 beforeEach(async () => {
   const mailbox = new ScriptedChannel('acc-1', 'support')
+  const [store, wakes, outbox] = [new MemoryMessageStore(), new MemoryWakeQueue(), new MemoryOutboxStore()]
   const deps = {
     channels: new ScriptedChannels([mailbox]),
-    store: new MemoryMessageStore(),
-    wakes: new MemoryWakeQueue(),
-    outbox: new MemoryOutboxStore(),
+    store, wakes, outbox,
+    jobIds: new MemoryJobIds(store, wakes, outbox),
     jobs: new MemoryJobDirectory([
       { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
     ]),

@@ -12,7 +12,8 @@ import type { JobV1 } from './domain/job-v1.js'
  * A version 1 file (jobs with their own schedule, before brain schema 24) is not dropped: its jobs, runs and keys
  * are held under `v1` until the migration (application/job-migration.ts) has moved them onto their tasks, space by
  * space, and they survive every rewrite until then. The version 1 file itself is copied next to it
- * (<file>.v1-backup) before the first rewrite.
+ * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
+ * channel bridge has taken the new id.
  */
 
 /** What a version 1 file held, as far as it is not migrated yet. */
@@ -33,6 +34,12 @@ interface JobsFile<J> {
   keys: Record<string, Record<string, string>>
   /** The jobs of a version 1 file that are not on their tasks yet. */
   v1?: JobsV1Data
+  /**
+   * Version 1 job id → the id of the record it became (its task's), for every job that moved to a record: kept until
+   * the channel bridge has confirmed the new id, since its own database still files messages, wakes and drafts under
+   * the old one (application/job-migration.ts). It outlives `v1`.
+   */
+  renames?: Record<string, string>
 }
 
 /** One task's part of the version 1 migration, written in one go. */
@@ -47,6 +54,8 @@ export interface V1Step<J> {
   keys?: Record<string, string>
   /** Runs kept for history under the id of the job they belonged to. */
   history?: Record<string, JobRun[]>
+  /** Job id → record id of the jobs that moved to the record: remembered until the channel bridge has the new id. */
+  renames?: Record<string, string>
 }
 
 const record = <T>(value: unknown): Record<string, T> => (value && typeof value === 'object' ? value as Record<string, T> : {})
@@ -71,6 +80,7 @@ function load<J>(file: string | null): { data: JobsFile<J>; v1OnDisk: boolean } 
       data: {
         version: 2, timeZone, jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys),
         ...(old && typeof old === 'object' ? { v1: { jobs: record(old.jobs), runs: record(old.runs), keys: record(old.keys) } } : {}),
+        ...(Object.keys(record(parsed.renames)).length > 0 ? { renames: record<string>(parsed.renames) } : {}),
       },
       v1OnDisk: false,
     }
@@ -110,11 +120,25 @@ export class JobStore<J extends { id: string; runCount: number } = Job> {
       if (step.keys && Object.keys(step.keys).length) this.data.keys[id] = { ...this.data.keys[id], ...step.keys }
     }
     for (const [id, runs] of Object.entries(step.history ?? {})) if (runs.length) this.data.runs[id] = runs
+    if (step.renames && Object.keys(step.renames).length > 0) this.data.renames = { ...this.data.renames, ...step.renames }
     if (v1 && Object.keys(v1.jobs).length === 0) {
       // Runs whose job was gone already stay as history.
       for (const [id, runs] of Object.entries(v1.runs)) if (runs.length && !this.data.runs[id]) this.data.runs[id] = runs
       delete this.data.v1
     }
+    this.persist()
+  }
+
+  /** The jobs that became a record and whose new id the channel bridge has not confirmed yet: old id → record id. */
+  pendingRenames(): Record<string, string> {
+    return { ...this.data.renames }
+  }
+
+  /** The channel bridge has the new id of this job: its mapping is forgotten. */
+  renameConfirmed(jobId: string): void {
+    if (!this.data.renames || !(jobId in this.data.renames)) return
+    delete this.data.renames[jobId]
+    if (Object.keys(this.data.renames).length === 0) delete this.data.renames
     this.persist()
   }
 

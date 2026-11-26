@@ -66,6 +66,17 @@ export class MemoryMessageStore implements MessageStore {
       .map((stored) => ({ ...stored, read: this.read.has(stored.id) }))
   }
 
+  /** The job's messages go to another job id (MemoryJobIds); how many did. */
+  renameJob(from: string, to: string): number {
+    let moved = 0
+    for (const stored of this.messages) {
+      if (stored.routing.kind !== 'job' || stored.routing.jobId !== from) continue
+      stored.routing = { ...stored.routing, jobId: to }
+      moved += 1
+    }
+    return moved
+  }
+
   async cursor(accountId: string): Promise<string | null> {
     return this.cursors.get(accountId) ?? null
   }

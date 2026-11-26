@@ -9,10 +9,12 @@ import { approveOutboxDraft } from '../application/approve-outbox-draft'
 import { skipOutboxDraft } from '../application/skip-outbox-draft'
 import { listJobDrafts } from '../application/list-job-drafts'
 import { editOutboxDraft } from '../application/edit-outbox-draft'
+import { renameJob } from '../application/rename-job'
+import type { RenameJobDeps } from '../application/rename-job'
 import type { RequestSendDeps } from '../application/request-send'
 import type { ApproveDraftDeps } from '../application/approve-outbox-draft'
 
-export type BridgeApiDeps = RequestSendDeps & ApproveDraftDeps
+export type BridgeApiDeps = RequestSendDeps & ApproveDraftDeps & RenameJobDeps
 
 export type Log = (event: string, fields: Record<string, string | number | boolean>) => void
 
@@ -27,13 +29,15 @@ export interface BridgeApiOptions {
 const MAX_BODY_BYTES = 1_000_000
 const replyBodySchema = z.object({ text: z.string().min(1).max(100_000) })
 const newMailBodySchema = z.object({ to: z.string().min(3).max(320), subject: z.string().min(1).max(500), text: z.string().min(1).max(100_000) })
+const renameBodySchema = z.object({ to: z.string().min(1).max(200) })
 const readBodySchema = z.object({ ack: z.array(z.string()).max(1_000).default([]) })
 
 type Result = { kind: string; reason?: string; retryable?: boolean }
 
 /**
  * The bridge's loopback API, versioned /v1. Job tools read and reply for their job; the cockpit
- * approves and skips drafts. Each side has its own token, and without both the API refuses to start.
+ * approves and skips drafts, and says when a job got a new id. Each side has its own token, and
+ * without both the API refuses to start.
  */
 export function createBridgeApi(deps: BridgeApiDeps, options: BridgeApiOptions): Server {
   if (!options.toolToken || !options.cockpitToken || options.toolToken === options.cockpitToken) {
@@ -80,10 +84,11 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
   const reply = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/([^/]+)\/reply$/)
   const newMail = path.match(/^\/v1\/jobs\/([^/]+)\/messages\/new$/)
   const decide = path.match(/^\/v1\/outbox\/([^/]+)\/(approve|skip|edit)$/)
+  const rename = path.match(/^\/v1\/jobs\/([^/]+)\/rename$/)
 
   if (read?.[1] || reply?.[1] || newMail?.[1]) {
     if (!authorized(req, options.toolToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
-  } else if (decide?.[1]) {
+  } else if (decide?.[1] || rename?.[1]) {
     if (!authorized(req, options.cockpitToken)) return send(res, 401, { kind: 'refused', reason: 'unauthorized', retryable: false })
   } else {
     return send(res, 404, { kind: 'refused', reason: 'unknown_route', retryable: false })
@@ -91,6 +96,19 @@ async function handle(deps: BridgeApiDeps, options: BridgeApiOptions, req: Incom
 
   const body = await readBody(req)
   if (body === null) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
+
+  if (rename?.[1]) {
+    const parsed = renameBodySchema.safeParse(body)
+    if (!parsed.success) return send(res, 400, { kind: 'refused', reason: 'invalid_request', retryable: false })
+    const from = decodeURIComponent(rename[1])
+    const result = await renameJob(deps, { from, to: parsed.data.to })
+    options.log('job.rename', {
+      from, to: parsed.data.to, outcome: result.kind,
+      moved: result.kind === 'renamed' ? result.messages + result.wakeEntries + result.wakeRetries + result.outbox : 0,
+      clashes: result.kind === 'renamed' ? result.clashes.length : 0,
+    })
+    return send(res, statusOf(result), result)
+  }
 
   if (read?.[1]) {
     const parsed = readBodySchema.safeParse(body)

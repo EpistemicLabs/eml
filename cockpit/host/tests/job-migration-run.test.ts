@@ -65,16 +65,19 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
   const spaces = [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }, { id: 'space-2', name: 'Team', main: false, agent: 'motti', shared: opts.team === undefined ? false : opts.team }]
   /** What the brain server says of the team space when it is asked again; the calls are counted. */
   const kind = { answer: null as boolean | null, asked: 0 }
+  /** The channel bridge: whether it runs, and the renames it was asked for. */
+  const bridge = { answer: 'renamed' as 'renamed' | 'off' | 'failed', asked: [] as Array<[string, string]> }
   const saved: string[] = []
   const notices: Array<Record<string, unknown>> = []
   const deps = {
+    renameInBridge: async (from: string, to: string) => { bridge.asked.push([from, to]); return bridge.answer },
     saveReport: (markdown: string) => { saved.push(markdown); return '/home/someone/.eml-cockpit/jobs-migration-report.md' },
     notify: (input: Record<string, unknown>) => { notices.push(input) },
     spaceKind: async (space: { shared: boolean | null }) => { kind.asked += 1; return space.shared ?? kind.answer },
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'lasse', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
-  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, saved, notices, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
+  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, saved, notices, bridge, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
@@ -269,6 +272,49 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(migration.pending()).toBe(false)
     expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
     expect(existsSync(file)).toBe(false)
+  })
+})
+
+describe('the channel bridge follows a moved job\'s id', () => {
+  const mail = { triggers: [{ type: 'mail', match: [{ kind: 'domain', domain: 'customer.example' }] }], nextRunAt: null }
+
+  it('after the store step, tells the bridge the new id of every job that moved to a record, and forgets the mapping once it has confirmed', async () => {
+    const w = world([v1('j1', mail), v1('j2'), v1('j3', { taskId: 'gone' })], [task('t1')])
+    await w.migration.run()
+    // both jobs of the task: a job without a mail trigger now may have had one before
+    expect(w.bridge.asked).toEqual([['j1', 't1'], ['j2', 't1']])
+    expect(w.store.get('t1')).toBeDefined()
+    expect(w.store.pendingRenames()).toEqual({})
+    expect(JSON.parse(readFileSync(w.file, 'utf8'))).not.toHaveProperty('renames')
+  })
+
+  it('a bridge that does not run is not an error: the mapping stays in the file, and the next start asks again', async () => {
+    const w = world([v1('j1', mail)], [task('t1')])
+    w.bridge.answer = 'off'
+    expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.store.pendingV1()).toBeNull()
+    expect(JSON.parse(readFileSync(w.file, 'utf8')).renames).toEqual({ j1: 't1' })
+    // a later pass in the same process, with nothing left to move, asks again
+    await w.migration.run()
+    expect(w.bridge.asked).toEqual([['j1', 't1'], ['j1', 't1']])
+    // the next start: the bridge runs
+    w.bridge.answer = 'renamed'
+    const next = w.restart()
+    expect(next.pending()).toBe(false)
+    await next.run()
+    expect(w.bridge.asked).toHaveLength(3)
+    expect(new JobStore(w.file).pendingRenames()).toEqual({})
+    // confirmed: never asked again
+    await w.restart().run()
+    expect(w.bridge.asked).toHaveLength(3)
+  })
+
+  it('a rename the bridge could not make is kept and said in the log', async () => {
+    const w = world([v1('j1', mail)], [task('t1')])
+    w.bridge.answer = 'failed'
+    await w.migration.run()
+    expect(w.store.pendingRenames()).toEqual({ j1: 't1' })
+    expect(w.logs.some((l) => l.includes('the channel bridge did not take the new id of 1 moved job(s)'))).toBe(true)
   })
 })
 

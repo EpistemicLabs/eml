@@ -37,6 +37,30 @@ export class MemoryWakeQueue implements WakeQueue {
     this.retries.delete(jobId)
   }
 
+  /** The job's entries and retry state go to another job id (MemoryJobIds); what the new id already holds stays. */
+  renameJob(from: string, to: string): { entries: number; retries: number; entryClashes: string[]; retryClash: boolean } {
+    const entryClashes: string[] = []
+    let entries = 0
+    for (const queued of this.entries) {
+      if (queued.jobId !== from) continue
+      const key = wakeEntryKey(queued.entry)
+      // Only live entries are unique per job; a dead one moves whatever the new id holds.
+      const held = !queued.dead && this.entries.some((other) => !other.dead && other.jobId === to && wakeEntryKey(other.entry) === key)
+      if (held) entryClashes.push(key)
+      else {
+        queued.jobId = to
+        entries += 1
+      }
+    }
+    const retry = this.retries.get(from)
+    const retryClash = retry !== undefined && this.retries.has(to)
+    if (retry && !retryClash) {
+      this.retries.delete(from)
+      this.retries.set(to, retry)
+    }
+    return { entries, retries: retry && !retryClash ? 1 : 0, entryClashes, retryClash }
+  }
+
   /** The entries no delivery could place, for a person to see. */
   deadEntries(): WakeEntry[] {
     return this.entries.filter((queued) => queued.dead).map((queued) => queued.entry)

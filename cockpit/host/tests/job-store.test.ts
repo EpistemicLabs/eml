@@ -90,6 +90,24 @@ describe('jobs.json', () => {
     expect(new JobStore(file).pendingV1()).toBeNull()
   })
 
+  it('keeps which job became which record until the channel bridge has confirmed the new id, across restarts', () => {
+    const { file } = v1File()
+    const store = new JobStore(file)
+    expect(store.pendingRenames()).toEqual({})
+    store.migrateV1({ jobIds: ['j1', 'j2'], record: newRecord({ id: 't1', spaceId: null }, '2026-11-25T00:00:00.000Z'), renames: { j1: 't1', j2: 't1' } })
+    // the version 1 jobs are gone; the mapping outlives them
+    expect(store.pendingV1()).toBeNull()
+    expect(new JobStore(file).pendingRenames()).toEqual({ j1: 't1', j2: 't1' })
+    store.renameConfirmed('j1')
+    store.renameConfirmed('j1')
+    expect(new JobStore(file).pendingRenames()).toEqual({ j2: 't1' })
+    store.renameConfirmed('j2')
+    expect(read(file)).not.toHaveProperty('renames')
+    // a record written later does not bring one back
+    store.put(newRecord({ id: 't2', spaceId: null }, '2026-11-25T00:00:00.000Z'))
+    expect(new JobStore(file).pendingRenames()).toEqual({})
+  })
+
   it('a version 1 file without jobs has nothing to wait for; an unreadable or unknown file starts empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
     writeFileSync(join(dir, 'empty.json'), JSON.stringify({ version: 1, timeZone: 'UTC', jobs: {}, runs: {}, keys: {} }))

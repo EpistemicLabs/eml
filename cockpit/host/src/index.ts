@@ -91,7 +91,7 @@ import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { keepRecord } from './application/record-profile.js'
 import { hasSchedule } from './domain/task-schedule.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
-import { bridgeFiles } from './channel-bridge-api.js'
+import { bridgeFiles, renameBridgeJob } from './channel-bridge-api.js'
 import { createClaudeProvider } from './infrastructure/providers/claude/index.js'
 import type { Notifier } from './notifications.js'
 import { PushStore } from './push-store.js'
@@ -884,6 +884,8 @@ async function main() {
   const jobMigration = createJobMigration({
     store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,
     spaceKind: spaceKindOf,
+    // The channel bridge files its messages, wakes and drafts by job id: it follows a moved job's new id.
+    renameInBridge: (from, to) => renameBridgeJob(bridgeFiles(), from, to),
     // Each real run's report is kept, appended to one file in the home; the user is told when a job did not move.
     saveReport: (markdown) => {
       fs.appendFileSync(JOBS_MIGRATION_REPORT_FILE, `${markdown}\n`, { mode: 0o600 })
@@ -915,6 +917,8 @@ async function main() {
       channelBridge?.stop()
       channelBridge = await startChannelBridge(url, log)
       log('[bridge] restarted with its new accounts')
+      // A bridge that was off when jobs moved onto their tasks is told their new ids now.
+      await jobMigration.confirmRenames()
     }).catch((err: Error) => log(`plugins: bridge accounts — ${err.message}`))
   }
   // Notification types that don't mean "waiting" — logged so new ones can be classified.
