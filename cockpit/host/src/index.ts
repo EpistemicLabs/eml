@@ -106,7 +106,7 @@ import { createSplitSession } from './application/split-session.js'
 import { createSplitBrief } from './application/split-brief.js'
 import { createSortSession } from './application/sort-session.js'
 import { claudeOneShot } from './infrastructure/providers/claude/one-shot.js'
-import { EmlApiError, HttpClient } from '@engramprotocol/mcp-server'
+import { HttpClient } from '@engramprotocol/mcp-server'
 import { createTaskBoard } from './application/task-board.js'
 import { createRunRecords, type RunRecords } from './application/run-records.js'
 import { zoneLabel } from './domain/schedule.js'
@@ -824,12 +824,7 @@ async function main() {
       const space = spaces.get(spaceId)
       const brain = space ? taskBrain(space) : null
       if (!brain) throw new Error('its space has no brain to ask')
-      try {
-        return ((await brain.get(`/engram/${encodeURIComponent(taskId)}`)) as { status?: string } | null)?.status ?? null
-      } catch (err) {
-        if (err instanceof EmlApiError && err.status === 404) return null
-        throw err
-      }
+      return (await taskById<{ status?: string }>(brain, taskId))?.status ?? null
     },
     held: (record) => jobRunner.held(record),
     sessionInfo: (sessionId) => {
