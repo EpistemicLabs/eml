@@ -2,7 +2,7 @@
 // background, one container. The model picker sits in the status bar below it,
 // and on a phone, where there is no status bar, behind the context chip.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, Workflow, X } from 'lucide-react';
+import { ArrowUp, Brain, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, Workflow, X } from 'lucide-react';
 
 import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
 import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { FOCUS, POPOVER } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 
-import { backgroundLabel, currentModelOption, matchCommands, sentMessages, withPaneCommands, stepHistory, workflowDetail, type ChatState, type CommandInfo } from './chat-state';
+import { backgroundLabel, currentModelOption, effortChoice, hasFeature, matchCommands, nextCycleMode, sentMessages, withPaneCommands, stepHistory, workflowDetail, type ChatState, type CommandInfo } from './chat-state';
 import { readDraft, writeDraft } from './chat-store';
 import { pasteTextDirectly } from './pasteText';
 import { TARGET } from './tool-icons';
@@ -119,6 +119,33 @@ export function ModelPicker({ chat, onSetModel }: { chat: ChatState; onSetModel:
   );
 }
 
+/** How hard the model thinks, for a runtime that lets the session choose; nothing otherwise. */
+export function EffortPicker({ chat, onSetEffort }: { chat: ChatState; onSetEffort: (effort: string) => boolean }) {
+  const choice = effortChoice(chat);
+  if (!choice) return null;
+  const current = choice.options.find((option) => option.id === choice.current) ?? null;
+  return (
+    <div className="justify-self-center">
+      <ChipMenu
+        label={current?.label ?? 'Effort'}
+        title={`Reasoning effort${choice.isDefault ? ' (the model\'s default)' : ''}`}
+        align="center"
+        icon={<Brain className="size-3 flex-shrink-0" strokeWidth={1.8} />}
+      >
+        {(close) => choice.options.map((option) => (
+          <MenuOption
+            key={option.id}
+            label={option.label}
+            description={option.description}
+            checked={option.id === choice.current}
+            onSelect={() => { onSetEffort(option.id); close(); }}
+          />
+        ))}
+      </ChipMenu>
+    </div>
+  );
+}
+
 /** The phone's short context reading; a tap gives the rest of the desktop status bar. */
 function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: ProjectSession | null; onSetModel: (model: string) => boolean }) {
   const current = currentModelOption(chat);
@@ -162,21 +189,25 @@ function ContextChip({ chat, session, onSetModel }: { chat: ChatState; session: 
 
 /** What runs beside the conversation: workflow runs, subagents and background shells. */
 export function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (taskId: string) => void }) {
+  // A runtime that cannot stop a subagent on its own gets no button for it; workflows and shells keep theirs.
+  const stopsAgents = hasFeature(chat, 'stopAgent');
   const label = backgroundLabel(chat);
   if (!label) return null;
   const workflows = chat.workflows.filter((run) => run.status === 'running');
   const agents = chat.agents.filter((agent) => agent.status === 'running');
   const shells = chat.shells.filter((shell) => shell.status === 'running');
-  const row = (taskId: string, icon: ReactNode, title: string, detail: string | null) => (
+  const row = (taskId: string, icon: ReactNode, title: string, detail: string | null, stoppable = true) => (
     <div key={taskId} className="flex items-center gap-2 px-2 py-1.5">
       {icon}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-foreground" title={title}>{title}</span>
         {detail && <span className="block truncate text-muted-foreground">{detail}</span>}
       </span>
-      <button type="button" aria-label={`Stop ${title}`} onClick={() => onStop(taskId)} className={cn('flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS, TARGET)}>
-        <Square className="size-3.5" strokeWidth={1.8} />
-      </button>
+      {stoppable && (
+        <button type="button" aria-label={`Stop ${title}`} onClick={() => onStop(taskId)} className={cn('flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS, TARGET)}>
+          <Square className="size-3.5" strokeWidth={1.8} />
+        </button>
+      )}
     </div>
   );
   const iconClass = 'size-3.5 flex-shrink-0 text-muted-foreground';
@@ -188,16 +219,22 @@ export function BackgroundChip({ chat, onStop }: { chat: ChatState; onStop: (tas
     >
       {() => [
         ...workflows.map((run) => row(run.taskId, <Workflow className={iconClass} strokeWidth={1.8} />, run.name, workflowDetail(run))),
-        ...agents.map((agent) => row(agent.taskId, <Users className={iconClass} strokeWidth={1.8} />, agent.description, agent.activity)),
+        ...agents.map((agent) => row(agent.taskId, <Users className={iconClass} strokeWidth={1.8} />, agent.description, agent.activity, stopsAgents)),
         ...shells.map((shell) => row(shell.taskId, <Terminal className={iconClass} strokeWidth={1.8} />, shell.description, null)),
       ]}
     </ChipMenu>
   );
 }
 
+/** What the `/` menu says under its list: the agent has no commands of its own, or none matches. */
+export function commandMenuNote(agentCommands: boolean, matches: number): string | null {
+  if (!agentCommands) return matches > 0 ? 'This agent takes no / commands of its own in the chat.' : 'No such command. This agent takes no / commands of its own in the chat; send it as a message.';
+  return null;
+}
+
 function CommandMenu({
-  commands, active, onHover, onPick,
-}: { commands: CommandInfo[]; active: number; onHover: (index: number) => void; onPick: (command: CommandInfo) => void }) {
+  commands, active, note, onHover, onPick,
+}: { commands: CommandInfo[]; active: number; note: string | null; onHover: (index: number) => void; onPick: (command: CommandInfo) => void }) {
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest' }); }, [active]);
   return (
@@ -220,6 +257,7 @@ function CommandMenu({
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{command.description}</span>
         </button>
       ))}
+      {note && <div role="note" className="px-2 py-1 text-muted-foreground">{note}</div>}
     </div>
   );
 }
@@ -280,6 +318,10 @@ export function Composer({
   }, [draft]);
 
   const matches = useMemo(() => (dismissed ? [] : matchCommands(withPaneCommands(chat.commands), draft)), [chat.commands, draft, dismissed]);
+  // A runtime without commands of its own: the menu says so, also when nothing matches what was typed.
+  const agentCommands = hasFeature(chat, 'commands');
+  const askingCommand = !dismissed && /^\/\S*$/.test(draft);
+  const menuNote = askingCommand ? commandMenuNote(agentCommands, matches.length) : null;
   const selected = Math.min(active, Math.max(matches.length - 1, 0));
 
   const change = (text: string) => {
@@ -340,14 +382,14 @@ export function Composer({
 
   const mode = chat.modes.find((option) => option.id === chat.mode) ?? null;
   const cycleMode = () => {
-    if (chat.modes.length === 0) return;
-    const index = chat.modes.findIndex((option) => option.id === chat.mode);
-    onSetMode(chat.modes[(index + 1) % chat.modes.length].id);
+    const next = nextCycleMode(chat.modes, chat.mode);
+    if (next) onSetMode(next);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
     if (event.key === 'Tab' && event.shiftKey) { event.preventDefault(); cycleMode(); return; }
+    if (menuNote && matches.length === 0 && event.key === 'Escape') { event.preventDefault(); setDismissed(true); return; }
     if (matches.length > 0) {
       const command = matches[selected];
       if (event.key === 'ArrowDown') { event.preventDefault(); setActive((selected + 1) % matches.length); return; }
@@ -373,7 +415,7 @@ export function Composer({
   const iconButton = cn("relative flex size-(--size-tab) flex-shrink-0 items-center justify-center rounded-full after:absolute after:-inset-2 after:content-[''] md:after:hidden", FOCUS);
   return (
     <div className="relative">
-      {matches.length > 0 && <CommandMenu commands={matches} active={selected} onHover={setActive} onPick={insert} />}
+      {(matches.length > 0 || menuNote) && <CommandMenu commands={matches} active={selected} note={menuNote} onHover={setActive} onPick={insert} />}
       <div
         className={compact ? 'glass rounded-3xl' : 'glass rounded-2xl transition-shadow focus-within:border-(--glass-line-strong)'}
         onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }}
@@ -408,7 +450,7 @@ export function Composer({
           aria-label="Message"
           rows={1}
           value={draft}
-          placeholder={running ? 'Queue a message…' : 'Message, or / for commands'}
+          placeholder={running ? 'Queue a message…' : agentCommands ? 'Message, or / for commands' : 'Message'}
           onPointerDown={onUse}
           onChange={(event) => {
             if (!draft) onUse();

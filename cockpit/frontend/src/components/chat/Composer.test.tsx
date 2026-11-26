@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { BackgroundChip } from './Composer';
+import { BackgroundChip, commandMenuNote } from './Composer';
 import { EMPTY_CHAT, reduceChat, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[]): ChatState => events.reduce((state, event, index) => reduceChat(state, event, index + 1), EMPTY_CHAT);
@@ -28,5 +28,24 @@ describe('BackgroundChip', () => {
     expect(screen.getByText('Review · 3 running, 4 done')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Stop review-changes' }));
     expect(stopped).toEqual(['w1']);
+  });
+});
+
+describe('the / menu of a runtime without commands', () => {
+  it('says so under the pane\'s own commands, and when nothing matches', () => {
+    expect(commandMenuNote(true, 0)).toBeNull();
+    expect(commandMenuNote(false, 1)).toBe('This agent takes no / commands of its own in the chat.');
+    expect(commandMenuNote(false, 0)).toMatch(/No such command/);
+  });
+
+  it('leaves out the Stop of a subagent where the runtime cannot stop one', () => {
+    const chat = fold([
+      { kind: 'capabilities', models: [], modes: [], features: [] },
+      { kind: 'agent_task', taskId: 'a1', toolId: 't2', description: 'Look', status: 'running', background: true },
+    ]);
+    render(<BackgroundChip chat={chat} onStop={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /1 agent/ }));
+    expect(screen.getByText('Look')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Stop Look' })).toBeNull();
   });
 });

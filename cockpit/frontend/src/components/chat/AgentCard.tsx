@@ -45,7 +45,8 @@ export function AgentCard({
   tools: AgentTool[];
   opened: boolean;
   onToggle: (id: string) => void;
-  onStop: (taskId: string) => void;
+  /** Null: the runtime cannot stop a subagent on its own, and the card offers no Stop. */
+  onStop: ((taskId: string) => void) | null;
 }) {
   const status = cardStatus(tool, agent);
   const live = status === 'running' || status === 'background';
@@ -74,7 +75,7 @@ export function AgentCard({
           </span>
           <StatusMark status={status} />
         </button>
-        {live && agent && (
+        {live && agent && onStop && (
           <button
             type="button"
             onClick={() => onStop(agent.taskId)}

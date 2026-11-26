@@ -18,6 +18,8 @@ export interface ChatSnapshot {
   /** The session's tool servers as last asked for; null until then. */
   toolServers: ToolServer[] | null;
   toolServersError: string | null;
+  /** Sign-ins under way: the page to open, by server name. */
+  toolServerSignIns: Record<string, string>;
   /** What the session may not use, as the host last said; null until it did. */
   limits: SessionLimits | null;
 }
@@ -40,7 +42,7 @@ interface SessionStore {
   listeners: Set<() => void>;
 }
 
-const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, terminalBusy: null, toolServers: null, toolServersError: null, limits: null };
+const INITIAL: ChatSnapshot = { chat: EMPTY_CHAT, connection: 'connecting', switching: null, problem: null, terminalBusy: null, toolServers: null, toolServersError: null, toolServerSignIns: {}, limits: null };
 // requestAnimationFrame stops in a hidden tab; the events must still arrive.
 const HIDDEN_FLUSH_MS = 250;
 
@@ -120,7 +122,16 @@ export function setLimits(sessionId: string, limits: SessionLimits): void {
 }
 
 export function setToolServers(sessionId: string, toolServers: ToolServer[], toolServersError: string | null): void {
-  publish(storeOf(sessionId), { toolServers, toolServersError });
+  const store = storeOf(sessionId);
+  // A server that no longer wants a sign-in has had it.
+  const signIns = Object.fromEntries(Object.entries(store.snapshot.toolServerSignIns)
+    .filter(([name]) => toolServers.some((server) => server.name === name && server.status === 'needs-auth')));
+  publish(store, { toolServers, toolServersError, toolServerSignIns: signIns });
+}
+
+export function setToolServerSignIn(sessionId: string, name: string, url: string): void {
+  const store = storeOf(sessionId);
+  publish(store, { toolServerSignIns: { ...store.snapshot.toolServerSignIns, [name]: url } });
 }
 
 export function setProblem(sessionId: string, problem: string | null): void {

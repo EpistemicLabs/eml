@@ -4,7 +4,7 @@ import * as paneStore from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import { chatInitFrame, clearChatStart, peekChatStart, rememberModels } from './chat-start';
 
-import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
+import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServerSignIn, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
 
 // Reasons the host closes with on purpose: the session went elsewhere, so
@@ -15,10 +15,11 @@ const RECONNECT_MAX_MS = 5_000;
 export type PermissionReply =
   | { decision: 'allow' }
   | { decision: 'always' }
-  | { decision: 'deny' }
+  /** `message`: why, for the agent; `interrupt`: stop the turn too. */
+  | { decision: 'deny'; message?: string; interrupt?: boolean }
   | { decision: 'answer'; answers: Record<string, string> };
 
-export type ToolServerAction = 'enable' | 'disable' | 'reconnect';
+export type ToolServerAction = 'enable' | 'disable' | 'reconnect' | 'sign_in';
 
 async function mintNonce(): Promise<string | null> {
   try {
@@ -95,7 +96,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       };
       socket.onmessage = (message) => {
         if (disposed || typeof message.data !== 'string') return;
-        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null } & Partial<SessionLimits>;
+        const frame = JSON.parse(message.data) as { type: string; state?: 'working' | 'waiting'; seq?: number; event?: ChatEvent; epoch?: number; reason?: string; message?: string; servers?: ToolServer[]; error?: string | null; name?: string; url?: string } & Partial<SessionLimits>;
         if (frame.type === 'joined') {
           joinedRef.current = true;
           clearChatStart(sessionId);
@@ -118,6 +119,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         }
         else if (frame.type === 'switching') setSwitching(sessionId, frame.reason ?? 'Switching…');
         else if (frame.type === 'tool_servers') setToolServers(sessionId, frame.servers ?? [], frame.error ?? null);
+        else if (frame.type === 'tool_server_sign_in' && frame.name && frame.url) setToolServerSignIn(sessionId, frame.name, frame.url);
         else if (frame.type === 'limits') setLimits(sessionId, { deniedTools: frame.deniedTools ?? [], mcpServers: frame.mcpServers ?? null, job: frame.job ?? null, liftable: frame.liftable === true });
         else if (frame.type === 'error') setProblem(sessionId, frame.message ?? 'Something went wrong');
       };
@@ -179,6 +181,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
     answer: useCallback((requestId: string, answer: PermissionReply) => sendFrame({ type: 'answer', requestId, answer }), [sendFrame]),
     setMode: useCallback((mode: string) => sendFrame({ type: 'set_mode', mode }), [sendFrame]),
     setModel: useCallback((model: string) => sendFrame({ type: 'set_model', model }), [sendFrame]),
+    setEffort: useCallback((effort: string) => sendFrame({ type: 'set_effort', effort }), [sendFrame]),
     stopAgent: useCallback((taskId: string) => sendFrame({ type: 'stop_agent', taskId }), [sendFrame]),
     restart: useCallback(() => sendFrame({ type: 'restart' }), [sendFrame]),
     askToolServers: useCallback(() => sendFrame({ type: 'tool_servers' }), [sendFrame]),

@@ -625,6 +625,12 @@ starts a session with either). The cockpit owns its copy the same way
   in Auto.
 - **Hook trust:** Codex runs the cockpit's hooks only after you confirmed them once ("Trust all") in
   the first session.
+- **Chat view (beta):** on `codex app-server` (`chat-runtime.ts`). What a chat runtime offers beside the
+  basics it names in `capabilities.features` (domain `RuntimeFeature`), and the view shows only those controls.
+  A Codex chat has no `/` commands, stops a subagent by interrupting its thread's turn, takes a reasoning effort
+  per session (Settings › Models › Codex: the default), reconnects its tool servers by reloading their
+  configuration (no per-server on/off) and signs in to a web tool server over OAuth from the MCP panel. A
+  subagent's thread is kept apart from the session's: its calls show on its agent card.
 - **Workers and task runs:** a Codex session can request a worker and run a task like a Claude Code
   session. Its sandbox has no network, so `cockpit-spawn` hands the request over as a file in
   `~/.eml-cockpit/spawn-inbox` (owner-only; the request carries the same per-boot token as the HTTP

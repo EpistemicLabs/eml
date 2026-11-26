@@ -210,7 +210,7 @@ describe('Codex provider', () => {
   it('follows the user\'s permission settings — except where nobody is watching', () => {
     const sandboxed = ['--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write']
     const network = ['--config', 'sandbox_workspace_write.network_access=true']
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false, chatView: false })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false, chatView: false, reasoningEffort: 'default' })
 
     expect(provider.settings?.write({ permissionMode: 'ask' })).toBeNull()
     expect(launchArgs(false)).toEqual([...sandboxed, '--config', 'approvals_reviewer="user"'])

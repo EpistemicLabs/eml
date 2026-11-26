@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { backgroundLabel, latestUserMessageId, wasAtBottom, workflowDetail, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
+import { backgroundLabel, effortChoice, hasFeature, nextCycleMode, latestUserMessageId, wasAtBottom, workflowDetail, EMPTY_CHAT, currentModelOption, editDiff, foldSummary, groupItems, outputPreview, keysToReveal, latestToolId, matchCommands, reduceChat, searchItems, sentMessages, statusLine, stepHistory, type ChatEvent, type ChatState } from './chat-state';
 
 const fold = (events: ChatEvent[], from: ChatState = EMPTY_CHAT): ChatState =>
   events.reduce((state, event, index) => reduceChat(state, event, index + 1), from);
@@ -414,5 +414,58 @@ describe('the call that ends a turn', () => {
 
   it('a call the host refused stays a failed tool row', () => {
     expect(kinds([tool('e', 'mcp__cockpit__end_turn', { result: 'x', next: { who: 'me', what: 'check', when: 'soon' } }, 'failed'), reply('a1')])).toEqual(['tools', 'a1']);
+  });
+});
+
+describe('what a runtime offers', () => {
+  it('reads a capabilities event without features as what the chat offered before they were named', () => {
+    const old = fold([{ kind: 'capabilities', models: [], modes: [] }]);
+    expect(hasFeature(old, 'stopAgent')).toBe(true);
+    expect(hasFeature(old, 'commands')).toBe(true);
+    expect(hasFeature(old, 'toolServerSignIn')).toBe(false);
+    const named = fold([{ kind: 'capabilities', models: [], modes: [], features: ['reasoningEffort'] }]);
+    expect(hasFeature(named, 'stopAgent')).toBe(false);
+    expect(hasFeature(named, 'reasoningEffort')).toBe(true);
+  });
+
+  it('cycles past a mode that is not in the cycle, and stays put when nothing else is', () => {
+    const modes = [{ id: 'auto', label: 'Auto', description: '' }, { id: 'ask', label: 'Ask', description: '' }, { id: 'off', label: 'Off', description: '', cycle: false }];
+    expect(nextCycleMode(modes, 'auto')).toBe('ask');
+    expect(nextCycleMode(modes, 'ask')).toBe('auto');
+    // Picked from the list, it cycles back into the others.
+    expect(nextCycleMode(modes, 'off')).toBe('auto');
+    expect(nextCycleMode(modes, null)).toBe('auto');
+    expect(nextCycleMode([modes[0], modes[2]], 'auto')).toBeNull();
+    expect(nextCycleMode([], null)).toBeNull();
+  });
+
+  it('offers the efforts of the model in use, with its default until one is chosen', () => {
+    const efforts = [{ id: 'low', label: 'Low', description: '' }, { id: 'high', label: 'High', description: '' }];
+    const models = [{ id: 'm1', label: 'M1', description: '', resolved: 'm1', efforts, defaultEffort: 'low' }, { id: 'm2', label: 'M2', description: '', resolved: 'm2' }];
+    const chat = fold([{ kind: 'capabilities', models, modes: [], features: ['reasoningEffort'] }, { kind: 'settings', model: 'm1', effort: null }]);
+    expect(effortChoice(chat)).toEqual({ options: efforts, current: 'low', isDefault: true });
+    expect(effortChoice(fold([{ kind: 'settings', effort: 'high' }], chat))).toEqual({ options: efforts, current: 'high', isDefault: false });
+    expect(effortChoice(fold([{ kind: 'settings', model: 'm2' }], chat))).toBeNull();
+    // A runtime that takes none offers none, whatever its models say.
+    expect(effortChoice(fold([{ kind: 'capabilities', models, modes: [] }, { kind: 'settings', model: 'm1' }]))).toBeNull();
+  });
+});
+
+describe('streamed tool output', () => {
+  it('grows a running call\'s output, and its result replaces it', () => {
+    const running = fold([
+      { kind: 'tool_call', toolId: 'c1', name: 'Shell', toolKind: 'execute', title: 'Run make', input: {} },
+      { kind: 'tool_output_delta', toolId: 'c1', delta: 'one\n' },
+      { kind: 'tool_output_delta', toolId: 'c1', delta: 'two\n' },
+      { kind: 'tool_output_delta', toolId: 'nobody', delta: 'lost' },
+    ]);
+    expect(running.items).toMatchObject([{ type: 'tool', status: 'running', output: 'one\ntwo\n' }]);
+    const done = fold([{ kind: 'tool_result', toolId: 'c1', status: 'completed', output: 'one\ntwo\nthree\n' }, { kind: 'tool_output_delta', toolId: 'c1', delta: 'late' }], running);
+    expect(done.items).toMatchObject([{ type: 'tool', status: 'completed', output: 'one\ntwo\nthree\n' }]);
+  });
+
+  it('keeps on a permission card that refusing ends the turn', () => {
+    const chat = fold([{ kind: 'permission_request', requestId: 'r1', toolId: null, toolName: 'Shell', title: 'Run x', input: {}, reason: null, alwaysScope: null, denyStopsTurn: true }]);
+    expect(chat.items[0]).toMatchObject({ type: 'permission', denyStopsTurn: true });
   });
 });

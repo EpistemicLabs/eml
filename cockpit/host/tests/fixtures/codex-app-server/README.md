@@ -11,6 +11,7 @@ The tests of the Codex chat runtime play them (`codex-app-server-client.test.ts`
 | `handshake.jsonl` | `initialize`, `initialized`, `model/list` |
 | `turn-approval.jsonl` | A new thread and one turn: commentary, a command that asks for approval and is accepted, the final answer |
 | `interrupt.jsonl` | A turn stopped with `turn/interrupt` while its answer streams |
+| `subagent.jsonl` | One turn on a thread with a tool server of its own (`fake`, a process): a command whose output streams (`item/commandExecution/outputDelta`), a subagent (`subAgentActivity`, its own thread's turn and command, a `collabAgentToolCall` "wait"), the final answer; then `config/mcpServer/reload`, `mcpServerStatus/list` and two refused `mcpServer/oauth/login` |
 | `history.jsonl` | `thread/turns/list` with `itemsView: "full"` for a thread of four turns, newest first |
 
 They are cut down and scrubbed, not raw recordings:
@@ -25,5 +26,8 @@ They are cut down and scrubbed, not raw recordings:
 - A run of `item/agentMessage/delta` keeps its first three, so the deltas of a message do not add
   up to its complete text.
 - `model/list` keeps two models.
+- In `subagent.jsonl` a tool server's entry of `mcpServerStatus/list` keeps the fields the runtime reads
+  (`serverInfo`, `serverCapabilities`, `toolListMeta` set to null, resources and all but three tools left
+  out), the process id is a placeholder and file owners in command output are `user`.
 
 Thread, turn and item ids are the random ones of the recording.

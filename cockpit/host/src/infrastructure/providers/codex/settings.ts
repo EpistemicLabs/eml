@@ -19,6 +19,11 @@ import { readAgentSettings, writeAgentSettings } from '../../../provider-setting
  *                     on: they can run in the chat view too, through
  *                     `codex app-server` (chat-runtime.ts). Workers stay in
  *                     the terminal either way.
+ *   reasoningEffort   default (default): each model thinks as hard as it does
+ *                     by default. Otherwise an effort id ("low", "high", …):
+ *                     what a chat session starts with, unless it chose its own
+ *                     (chat-runtime.ts). A model that does not take it runs
+ *                     with its default.
  *
  * Unattended sessions (workers, task runs) ignore permissionMode and always
  * run in auto: nobody is watching them, and nobody chose to run them without
@@ -32,11 +37,17 @@ export interface CodexSettings {
   permissionMode: CodexPermissionMode
   sandboxNetwork: boolean
   chatView: boolean
+  reasoningEffort: string
 }
+
+/** The model's own default effort; any other value is an effort id as `model/list` names them. */
+export const DEFAULT_EFFORT = 'default'
+const EFFORT_ID = /^[a-z][a-z0-9_-]{0,31}$/
 
 const MODE_KEY = 'codexPermissionMode'
 const NETWORK_KEY = 'codexSandboxNetwork'
 const CHAT_KEY = 'codexChatView'
+const EFFORT_KEY = 'codexReasoningEffort'
 
 const isMode = (value: unknown): value is CodexPermissionMode =>
   (CODEX_PERMISSION_MODES as readonly unknown[]).includes(value)
@@ -47,6 +58,7 @@ export function readCodexSettings(): CodexSettings {
     permissionMode: isMode(stored[MODE_KEY]) ? stored[MODE_KEY] : 'auto',
     sandboxNetwork: stored[NETWORK_KEY] === true,
     chatView: stored[CHAT_KEY] === true,
+    reasoningEffort: typeof stored[EFFORT_KEY] === 'string' && EFFORT_ID.test(stored[EFFORT_KEY]) ? stored[EFFORT_KEY] : DEFAULT_EFFORT,
   }
 }
 
@@ -64,6 +76,9 @@ export const codexSettings: AgentSettings = {
       } else if (key === 'chatView') {
         if (typeof value !== 'boolean') return 'chatView must be true or false'
         next[CHAT_KEY] = value
+      } else if (key === 'reasoningEffort') {
+        if (typeof value !== 'string' || !EFFORT_ID.test(value)) return 'reasoningEffort must be "default" or an effort id such as "low" or "high"'
+        next[EFFORT_KEY] = value
       } else {
         return `unknown setting "${key}"`
       }

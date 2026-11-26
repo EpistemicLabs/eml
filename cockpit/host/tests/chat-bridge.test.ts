@@ -11,7 +11,7 @@ import { SessionHandoff } from '../src/application/session-handoff.js'
 import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import { deriveTurn, reminder, type EndTurn } from '../src/domain/turn-end.js'
-import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
+import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, ToolServerSignIn, WorkflowWait } from '../src/domain/session-runtime.js'
 import { claudeStartOptions, type ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 /**
@@ -43,6 +43,15 @@ class FakeRuntime implements SessionRuntime {
     this.emit({ kind: 'settings', mode })
   }
   async setModel(model: string): Promise<void> { this.models.push(model) }
+  efforts: string[] = []
+  async setEffort(effort: string): Promise<void> {
+    if (effort === 'ultra') throw new Error('not for this model')
+    this.efforts.push(effort)
+  }
+  async signInToolServer(name: string): Promise<ToolServerSignIn> {
+    if (name === 'tools') throw new Error('OAuth login is only supported for streamable HTTP servers.')
+    return { url: `https://auth.example.com/${name}` }
+  }
   async stopAgent(taskId: string): Promise<void> { this.stopped.push(taskId) }
   async toolServers(): Promise<ToolServer[]> { return this.servers }
   async setToolServerEnabled(name: string, enabled: boolean): Promise<void> { this.serverCalls.push(`${name}:${enabled}`) }
@@ -75,7 +84,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
-  const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; conversation?: string }>()
+  const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; chatEffort?: string; conversation?: string }>()
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
     id: opts.provider ?? 'claude',
@@ -101,11 +110,12 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
       has: (id: string) => ledgerEntries.has(id),
       get: (id: string) => ledgerEntries.get(id),
       ref: (id: string) => ({ sessionId: 's1', providerSessionId: ledgerEntries.get(id)?.conversation ?? null, projectPath: null, greeted: null }),
-      setChatSettings: (id: string, patch: { mode?: string; model?: string }) => {
+      setChatSettings: (id: string, patch: { mode?: string; model?: string; effort?: string }) => {
         const entry = ledgerEntries.get(id)
         if (!entry) return
         if (patch.mode) entry.chatMode = patch.mode
         if (patch.model) entry.chatModel = patch.model
+        if (patch.effort) entry.chatEffort = patch.effort
       },
       bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
       recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, _task?: unknown, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false, ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
@@ -1604,6 +1614,21 @@ describe('ChatBridge', () => {
     expect(runtimes[1].start).toMatchObject({ mode: 'auto', model: 'opus[1m]' })
   })
 
+  it('a chosen effort is remembered and starts the next run; a refused one is not', async () => {
+    const { bridge, runtimes, ledgerEntries } = setup({ transcript: true })
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'set_effort', effort: 'high' })
+    ws.client({ type: 'set_effort', effort: 'ultra' })
+    await flush()
+    expect(runtimes[0].efforts).toEqual(['high'])
+    expect(ledgerEntries.get('s1')).toMatchObject({ chatEffort: 'high' })
+    expect(ws.events().at(-1)).toEqual({ kind: 'error', message: 'not for this model' })
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'send', text: 'go on' })
+    expect(runtimes[1].start).toMatchObject({ effort: 'high' })
+  })
+
   it('a refused mode is not remembered and shows in the conversation', async () => {
     const { bridge, ledgerEntries } = setup()
     const ws = connect(bridge)
@@ -1667,6 +1692,21 @@ describe('ChatBridge', () => {
     await flush()
     expect(runtimes[0].serverCalls).toEqual(['tools:false', 'tools:true', 'tools:reconnect'])
     expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers' })
+  })
+
+  it('sends the page to sign in on to the client that asked, then the servers', async () => {
+    const { bridge } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'tool_server', name: 'notion', action: 'sign_in' })
+    await flush()
+    expect(ws.frames.slice(-2)).toMatchObject([
+      { type: 'tool_server_sign_in', name: 'notion', url: 'https://auth.example.com/notion' },
+      { type: 'tool_servers', error: null },
+    ])
+    ws.client({ type: 'tool_server', name: 'tools', action: 'sign_in' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: 'tools: OAuth login is only supported for streamable HTTP servers.' })
   })
 
   it('reports a failed change next to the current servers', async () => {
@@ -1794,6 +1834,8 @@ describe('parseAnswer', () => {
   it('takes known decisions and drops the rest', async () => {
     expect(parseAnswer({ decision: 'allow' })).toEqual({ decision: 'allow' })
     expect(parseAnswer({ decision: 'answer', answers: { a: 'b', c: 1 } })).toEqual({ decision: 'answer', answers: { a: 'b' } })
+    expect(parseAnswer({ decision: 'deny', message: '  Not now ', interrupt: true })).toEqual({ decision: 'deny', message: 'Not now', interrupt: true })
+    expect(parseAnswer({ decision: 'deny', message: ' ', interrupt: 'yes' })).toEqual({ decision: 'deny' })
     expect(parseAnswer({ decision: 'yolo' })).toBeNull()
     expect(parseAnswer(null)).toBeNull()
   })

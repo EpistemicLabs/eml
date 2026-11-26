@@ -274,6 +274,7 @@ type ClientMessage = {
   answer?: unknown
   mode?: unknown
   model?: unknown
+  effort?: unknown
   taskId?: unknown
   name?: unknown
   action?: unknown
@@ -306,10 +307,13 @@ function parseImageNames(value: unknown): string[] {
 
 export function parseAnswer(value: unknown): PermissionAnswer | null {
   if (!value || typeof value !== 'object') return null
-  const answer = value as { decision?: unknown; message?: unknown; answers?: unknown }
+  const answer = value as { decision?: unknown; message?: unknown; interrupt?: unknown; answers?: unknown }
   if (answer.decision === 'allow') return { decision: 'allow' }
   if (answer.decision === 'always') return { decision: 'always' }
-  if (answer.decision === 'deny') return { decision: 'deny', ...(typeof answer.message === 'string' ? { message: answer.message } : {}) }
+  if (answer.decision === 'deny') {
+    const message = typeof answer.message === 'string' ? answer.message.trim() : ''
+    return { decision: 'deny', ...(message ? { message } : {}), ...(answer.interrupt === true ? { interrupt: true } : {}) }
+  }
   if (answer.decision === 'answer' && answer.answers && typeof answer.answers === 'object') {
     const answers: Record<string, string> = {}
     for (const [question, chosen] of Object.entries(answer.answers)) {
@@ -531,6 +535,12 @@ export class ChatBridge {
           this.control(entry, async (runtime) => {
             await runtime.setModel(model)
             this.ctx.ledger.setChatSettings(entry.sessionId, { model })
+          })
+        } else if (data.type === 'set_effort' && SAFE_ID.test(text(data.effort))) {
+          const effort = text(data.effort)
+          this.control(entry, async (runtime) => {
+            await runtime.setEffort(effort)
+            this.ctx.ledger.setChatSettings(entry.sessionId, { effort })
           })
         } else if (data.type === 'stop_agent' && SAFE_ID.test(text(data.taskId))) {
           this.control(entry, (runtime) => runtime.stopAgent(text(data.taskId)))
@@ -908,7 +918,7 @@ export class ChatBridge {
     const stored = this.ctx.ledger.get(sessionId)
     this.emit(entry, { kind: 'process', state: 'starting' })
     entry.runtime = runtimes.start({
-      sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
+      sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null, effort: stored?.chatEffort ?? null,
       cwd: projectPath, env, address,
       // The provider decides what the session is limited to and whether it gets a browser; its runtime reads it from these.
       launch, space: sessionSpace,
@@ -1259,6 +1269,11 @@ export class ChatBridge {
     try {
       if (action === 'enable' || action === 'disable') await entry.runtime?.setToolServerEnabled(name, action === 'enable')
       else if (action === 'reconnect') await entry.runtime?.reconnectToolServer(name)
+      else if (action === 'sign_in' && entry.runtime) {
+        // The page to open goes to the client that asked; the rest hear of it through the list.
+        const { url } = await entry.runtime.signInToolServer(name)
+        send(ws, { type: 'tool_server_sign_in', name, url })
+      }
     } catch (error) {
       // A server that wants a sign-in throws here though it did what was asked; the
       // list says so and the panel says where to sign in. Anything else is a failure.

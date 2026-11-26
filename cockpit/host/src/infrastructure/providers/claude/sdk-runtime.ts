@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createSdkMcpServer, query, getSessionMessages, tool, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
-  ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolKind, ToolServer,
+  ImageInput, CommandInfo, ModeOption, PermissionAnswer, Question, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, RuntimeFeature, ToolKind, ToolServer, ToolServerSignIn,
 } from '../../../domain/session-runtime.js'
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
@@ -40,6 +40,9 @@ const TOOL_KINDS: Record<string, ToolKind> = {
 
 // The mode a worker runs in, as in the terminal (index.ts launch, unattended).
 const WORKER_MODE = 'auto'
+
+/** What Claude Code offers in the chat beyond the basics (domain RuntimeFeature); no sign-in to a tool server yet. */
+const FEATURES: RuntimeFeature[] = ['commands', 'stopAgent', 'toolServerToggle', 'toolServerReconnect']
 
 const MODES: ModeOption[] = [
   { id: 'default', label: 'Ask first', description: 'Asks before edits and commands' },
@@ -620,6 +623,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
       this.emit({
         kind: 'capabilities',
         modes: MODES,
+        features: FEATURES,
         models: init.models.map((model) => ({
           id: model.value, label: model.displayName, description: model.description, resolved: model.resolvedModel ?? null,
         })),
@@ -789,6 +793,14 @@ class ClaudeSdkRuntime implements SessionRuntime {
     await this.refreshContext()
   }
 
+  async setEffort(): Promise<void> {
+    throw new Error('Claude Code sessions in the chat take no reasoning effort.')
+  }
+
+  async signInToolServer(): Promise<ToolServerSignIn> {
+    throw new Error('To sign in, switch this pane to the terminal and run /mcp.')
+  }
+
   async stopAgent(taskId: string): Promise<void> {
     await this.query.stopTask(taskId)
   }
@@ -798,7 +810,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
     if (!open) return
     this.requests.delete(requestId)
     if (answer.decision === 'deny') {
-      open.resolve({ behavior: 'deny', message: answer.message ?? 'The user declined this.' })
+      open.resolve({ behavior: 'deny', message: answer.message ?? 'The user declined this.', ...(answer.interrupt ? { interrupt: true } : {}) })
       this.emit({ kind: 'request_settled', requestId, outcome: 'denied' })
     } else if (answer.decision === 'answer') {
       open.resolve({ behavior: 'allow', updatedInput: { questions: open.input.questions, answers: answer.answers } })

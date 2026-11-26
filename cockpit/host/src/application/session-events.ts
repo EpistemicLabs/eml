@@ -32,6 +32,10 @@ export class InMemoryEventStore implements EventStore {
       const delta = event.kind === 'text' ? 'text_delta' : 'thinking_delta'
       log.events = log.events.filter(({ event: e }) => !(e.kind === delta && e.blockId === event.blockId))
     }
+    // A call's complete output replaces what streamed of it.
+    if (event.kind === 'tool_result') {
+      log.events = log.events.filter(({ event: e }) => !(e.kind === 'tool_output_delta' && e.toolId === event.toolId))
+    }
     const stored = { seq: log.nextSeq++, event }
     log.events.push(stored)
     if (log.events.length > MAX_EVENTS_PER_SESSION) log.events.splice(0, log.events.length - MAX_EVENTS_PER_SESSION)

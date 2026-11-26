@@ -20,9 +20,9 @@ import { activatePane, getDeskOfPane, openInPane, paneHoldingSession, removePane
 import { useSpaces } from '@/stores/useSpaceStore';
 
 import { AgentCard } from './AgentCard';
-import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, createdTaskName, keepItHereMessage, SORT_LATER_MESSAGE, isPaneCommand, type Question, type RequestOutcome } from './chat-state';
+import { latestUserMessageId, wasAtBottom, editDiff, foldSummary, groupItems, keysToReveal, outputPreview, type DiffLine, latestToolId, statusLine, type AgentTask, type AgentTool, type FoldedItem, type ChatItem, type SortProposal, type SplitOffer, createdTaskName, keepItHereMessage, SORT_LATER_MESSAGE, isPaneCommand, hasFeature, type Question, type RequestOutcome } from './chat-state';
 import { useChatSession } from './chat-store';
-import { Composer, ModelPicker } from './Composer';
+import { Composer, EffortPicker, ModelPicker } from './Composer';
 import { TARGET, TOOL_ICONS } from './tool-icons';
 import { LimitsBadge } from './LimitsBadge';
 import { RestartButton } from './RestartButton';
@@ -248,20 +248,46 @@ function SettledRow({ label, outcome }: { label: string; outcome: RequestOutcome
 }
 
 function PermissionCard({ item, onAnswer }: { item: PermissionItem; onAnswer: (id: string, reply: PermissionReply) => void }) {
+  // Why not, for the agent: opened on demand, sent with either refusal.
+  const [note, setNote] = useState<string | null>(null);
   if (item.outcome) return <SettledRow label={item.title} outcome={item.outcome} />;
   const button = CARD_BUTTON;
+  const deny = (interrupt: boolean) => onAnswer(item.id, { decision: 'deny', ...(note?.trim() ? { message: note.trim() } : {}), ...(interrupt ? { interrupt: true } : {}) });
   return (
     <div className="space-y-2 rounded-xl border border-status-you/40 bg-card p-3">
       {/* Plain text: tool and server names come from configuration. */}
       <div className="font-code font-medium break-words">{item.title}</div>
       {item.reason && <div className="text-muted-foreground">{item.reason}</div>}
       <PermissionPreview item={item} />
+      {note !== null && (
+        <input
+          type="text"
+          aria-label="Why not, for the agent"
+          placeholder="Why not? (optional, sent with Deny)"
+          value={note}
+          autoFocus
+          onChange={(event) => setNote(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); deny(!!item.denyStopsTurn); } }}
+          className={FIELD}
+        />
+      )}
       <div className="flex flex-col gap-2 md:flex-row md:flex-wrap">
         <button type="button" className={button} onClick={() => onAnswer(item.id, { decision: 'allow' })}>Allow once</button>
         {item.alwaysScope && (
           <button type="button" className={button} title={item.alwaysScope} onClick={() => onAnswer(item.id, { decision: 'always' })}>Always</button>
         )}
-        <button type="button" className={button} onClick={() => onAnswer(item.id, { decision: 'deny' })}>Deny</button>
+        {/* Where refusing ends the turn anyway, one button says so; elsewhere the agent goes on, or stops too. */}
+        {item.denyStopsTurn ? (
+          <button type="button" className={button} title="Refuses this call; the turn ends with it" onClick={() => deny(true)}>Deny and stop</button>
+        ) : (
+          <>
+            <button type="button" className={button} title="Refuses this call; the agent goes on without it" onClick={() => deny(false)}>Deny</button>
+            <button type="button" className={button} title="Refuses this call and stops the turn" onClick={() => deny(true)}>Deny and stop</button>
+          </>
+        )}
+        {note === null && (
+          <button type="button" className={cn(buttonVariants({ variant: 'ghost' }), 'max-md:min-h-(--target-touch)')} onClick={() => setNote('')}>Say why…</button>
+        )}
       </div>
       {item.alwaysScope && <div className="text-muted-foreground">Always: {item.alwaysScope}</div>}
     </div>
@@ -295,9 +321,10 @@ function QuestionBlock({ question, chosen, onChange }: { question: Question; cho
         ))}
       </div>
       <input
-        type="text"
+        type={question.secret ? 'password' : 'text'}
+        autoComplete="off"
         aria-label="Your own answer"
-        placeholder="Or your own answer"
+        placeholder={question.options.length > 0 ? 'Or your own answer' : 'Your answer'}
         value={question.options.some((option) => picked.includes(option.label)) ? '' : chosen}
         onChange={(event) => onChange(event.target.value)}
         className={FIELD}
@@ -421,7 +448,8 @@ const Messages = memo(function Messages({
   opened: Set<string>;
   onToggle: (id: string) => void;
   onAnswer: (id: string, reply: PermissionReply) => void;
-  onStopAgent: (taskId: string) => void;
+  /** Null: the runtime cannot stop a subagent on its own. */
+  onStopAgent: ((taskId: string) => void) | null;
   /** Split the topic off from this message on (SplitDialog). */
   onSplit: (itemId: string) => void;
   marks: SplitMark[];
@@ -545,8 +573,8 @@ export function ChatPane({
    */
   composer?: React.ReactNode;
 }) {
-  const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError } = useChatSession(sessionId);
-  const { start, send, interrupt, answer, setMode, setModel, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
+  const { chat, connection, switching, problem, terminalBusy, toolServers, toolServersError, toolServerSignIns } = useChatSession(sessionId);
+  const { start, send, interrupt, answer, setMode, setModel, setEffort, stopAgent, reconnect, takeOver, restart, askToolServers, changeToolServer } = useChatSocket(paneId, projectId, sessionId, whenIdle, spaceId);
   const pinRef = useRef<(() => void) | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [serversOpen, setServersOpen] = useState(false);
@@ -692,7 +720,7 @@ export function ChatPane({
       <StickToBottom className="relative min-h-0 flex-1 overflow-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content>
           <div style={compact ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-chat-compact-top))', paddingBottom: 'calc(var(--composer-offset) + var(--spacing) * 3)' } : undefined}>
-          <Messages sessionId={sessionId} items={chat.items} owner={board?.viewer || null} agent={agent} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={stopAgent} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
+          <Messages sessionId={sessionId} items={chat.items} owner={board?.viewer || null} agent={agent} agents={chat.agents} agentTools={chat.agentTools} opened={opened} onToggle={toggle} onAnswer={answer} onStopAgent={hasFeature(chat, 'stopAgent') ? stopAgent : null} onSplit={openSplit} marks={marks} renderMark={renderMark} offers={offers} onOffer={openOffer} onKeep={keepOffer} sorts={sorts} onSort={openSort} onLater={sortLater} renderCreated={renderCreated} />
           {chat.items.length === 0 && chat.process === 'unknown' && connection !== 'superseded' && !problem && !terminalBusy && (
             <div role="status" className={cn(COLUMN, 'py-6 text-center text-muted-foreground')}>Loading conversation…</div>
           )}
@@ -765,6 +793,12 @@ export function ChatPane({
           <ToolServersPanel
             servers={toolServers}
             error={toolServersError}
+            signIns={toolServerSignIns}
+            can={{
+              toggle: hasFeature(chat, 'toolServerToggle'),
+              reconnect: hasFeature(chat, 'toolServerReconnect'),
+              signIn: hasFeature(chat, 'toolServerSignIn'),
+            }}
             onAsk={askToolServers}
             onChange={changeToolServer}
             onRestart={restart}
@@ -799,7 +833,7 @@ export function ChatPane({
         {!compact && <TerminalStatusBar
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
-          modelSlot={<div><ModelPicker chat={chat} onSetModel={setModel} /></div>}
+          modelSlot={<div className="flex items-center gap-1"><ModelPicker chat={chat} onSetModel={setModel} /><EffortPicker chat={chat} onSetEffort={setEffort} /></div>}
           endSlot={<RestartButton running={running} onRestart={restart} />}
           className="mt-0 border-t-0 px-1 pt-0.5 text-muted-foreground"
         />}

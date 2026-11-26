@@ -1,8 +1,9 @@
-import type { AgentActivity, PermissionAnswer, RuntimeEvent, ToolKind } from '../../../domain/session-runtime.js'
+import type { AgentActivity, AgentTaskStatus, PermissionAnswer, Question, RuntimeEvent, ToolKind } from '../../../domain/session-runtime.js'
 import type {
-  ApprovalResponse, CommandExecutionApprovalDecision, CommandExecutionItem, CommandExecutionRequestApprovalParams, FileChangeItem,
+  ApprovalResponse, CollabAgentToolCallItem, CommandExecutionApprovalDecision, CommandExecutionItem, CommandExecutionRequestApprovalParams, FileChangeItem,
   FileChangeRequestApprovalParams, McpToolCallItem, PermissionsRequestApprovalParams, PermissionsRequestApprovalResponse, RequestId,
-  ServerNotifications, ThreadItem, Turn, UserMessageItem, WebSearchItem,
+  ServerNotifications, ServerRequestResponse, SubAgentActivityItem, ThreadItem, ToolRequestUserInputParams, ToolRequestUserInputResponse, Turn,
+  UserMessageItem, WebSearchItem,
 } from './protocol.js'
 
 /**
@@ -30,6 +31,13 @@ const SHELL = 'Shell'
 const EDIT = 'Edit'
 const WEB_SEARCH = 'WebSearch'
 const PERMISSIONS = 'Permissions'
+const AGENT = 'Agent'
+
+/** A subagent's tool calls other than starting one, as a tool row says them. */
+const COLLAB_TITLES: Record<string, string> = {
+  sendInput: 'Message agent', sendMessage: 'Message agent', followupTask: 'Give agent a follow-up task', resumeAgent: 'Resume agent',
+  wait: 'Wait for agents', closeAgent: 'Close agent', interruptAgent: 'Interrupt agent', listAgents: 'List agents',
+}
 
 const VERBS: Record<ToolKind, string> = {
   read: 'Read', edit: 'Edit', execute: 'Run', search: 'Search', fetch: 'Fetch', agent: 'Agent', other: '',
@@ -60,6 +68,17 @@ function stringField(input: Fields, ...keys: string[]): string | null {
 
 function cut(output: string): string {
   return output.length > MAX_TOOL_OUTPUT ? `${output.slice(0, MAX_TOOL_OUTPUT)}\n… (cut off)` : output
+}
+
+/** A subagent's name from its path, as words: "/root/list_entries" is "list entries". */
+function agentName(agentPath: string): string {
+  const last = agentPath.split('/').filter(Boolean).pop() ?? ''
+  return last.replace(/[_-]+/g, ' ').trim()
+}
+
+function firstLine(value: string, max = 120): string {
+  const line = value.trim().split('\n')[0] ?? ''
+  return line.length > max ? `${line.slice(0, max)}…` : line
 }
 
 /** One line for a tool row: verb and target. */
@@ -180,19 +199,53 @@ function sameDecision(a: CommandExecutionApprovalDecision, b: CommandExecutionAp
   return typeof a === 'string' || typeof b === 'string' ? a === b : Object.keys(a)[0] === Object.keys(b)[0]
 }
 
-/** An approval the server waits on: its answers in the protocol's words. `always` null: no such grant is offered. */
-interface OpenRequest {
+/**
+ * An approval the server waits on: its answers in the protocol's words. `always` null: no such grant is offered.
+ * `cancel`: the refusal that ends the turn; null when the request has none, and the runtime interrupts the turn itself.
+ */
+interface OpenApproval {
+  type: 'approval'
   id: RequestId
+  title: string
   allow: ApprovalResponse
   always: ApprovalResponse | null
   deny: ApprovalResponse
+  cancel: ApprovalResponse | null
 }
 
-/** The answer to an approval request: what to respond with under `id`, and what the chat is told. */
+/** Questions of `item/tool/requestUserInput`: the chat knows them by their text, the server by their ids. */
+interface OpenQuestions {
+  type: 'questions'
+  id: RequestId
+  ids: Map<string, string>
+}
+
+type OpenRequest = OpenApproval | OpenQuestions
+
+/**
+ * The answer to a request: what to respond with under `id`, and what the chat is told. `stopTurn`: the user
+ * also stopped the turn and the answer cannot say so; the runtime interrupts it. `note`: what the user wrote
+ * with a refusal that the answer cannot carry, for the agent to read another way.
+ */
 export interface ApprovalAnswer {
   id: RequestId
-  result: ApprovalResponse
+  result: ServerRequestResponse
   events: RuntimeEvent[]
+  stopTurn?: boolean
+  /** The response itself ends the turn (Codex's "cancel"): a note cannot go into it any more. */
+  endsTurn?: boolean
+  note?: string
+}
+
+/** A subagent: a thread of its own, shown on the tool row (`toolId`) of the call that started it. */
+interface Child {
+  toolId: string
+  status: AgentTaskStatus
+  /** The turn it runs, for stopping it. */
+  turnId: string | null
+  /** Its latest message: what it reports when it is done. */
+  report: string
+  toolUses: number
 }
 
 /**
@@ -213,10 +266,29 @@ export class CodexEventMapper {
   private failedServers = new Set<string>()
   // The error reported for the running turn, for a turn that ends failed without naming one.
   private turnError: string | null = null
+  // The session's own thread. Unknown: every notification is taken as its own.
+  private threadId: string | null = null
+  // Subagents by their thread id, and which of their tool items run.
+  private children = new Map<string, Child>()
+  private childTools = new Map<string, Set<string>>()
+  // A stored thread: no live subagent data, the cards show their calls and results only.
+  private replaying = false
+
+  /** The session's own thread: notifications of another thread are its subagents'. */
+  setThread(threadId: string): void {
+    this.threadId = threadId
+  }
+
+  /** A running subagent's thread and turn, by the task id its agent_task carries; null when it does not run. */
+  runningChild(taskId: string): { threadId: string; turnId: string } | null {
+    const child = this.children.get(taskId)
+    return child && child.status === 'running' && child.turnId ? { threadId: taskId, turnId: child.turnId } : null
+  }
 
   /** A notification of the server. */
   notification(method: string, params: unknown): RuntimeEvent[] {
     const p = fields(params)
+    if (typeof p.threadId === 'string' && this.threadId && p.threadId !== this.threadId) return this.childNotification(p.threadId, method, p)
     switch (method) {
       case 'turn/started':
         this.turnError = null
@@ -225,6 +297,21 @@ export class CodexEventMapper {
       case 'thread/status/changed': return this.status(fields(p.status))
       case 'item/started': return this.itemStarted(fields(p.item) as Partial<ThreadItem>)
       case 'item/completed': return this.itemCompleted(fields(p.item) as Partial<ThreadItem>)
+      case 'item/commandExecution/outputDelta': {
+        const { itemId, delta } = p as Partial<ServerNotifications['item/commandExecution/outputDelta']>
+        return typeof itemId === 'string' && this.running.has(itemId) && typeof delta === 'string' && delta
+          ? [{ kind: 'tool_output_delta', toolId: itemId, delta }]
+          : []
+      }
+      case 'mcpServer/oauthLogin/completed': {
+        const { name, success, error } = p as Partial<ServerNotifications['mcpServer/oauthLogin/completed']>
+        if (typeof name !== 'string' || !name) return []
+        if (success === true) {
+          this.failedServers.delete(name)
+          return [{ kind: 'notice', text: `Signed in to the tool server "${name}". It connects again with the next message.` }]
+        }
+        return [{ kind: 'notice', text: `Signing in to the tool server "${name}" did not work${text(error) ? `: ${text(error)}` : '.'}` }]
+      }
       case 'item/agentMessage/delta': {
         const { itemId, delta } = p as Partial<ServerNotifications['item/agentMessage/delta']>
         return typeof itemId === 'string' && typeof delta === 'string' && delta ? [{ kind: 'text_delta', blockId: itemId, delta }] : []
@@ -255,9 +342,14 @@ export class CodexEventMapper {
     const itemId = text(p.itemId)
     const requestId = `req-${id}-${itemId}`
     const reason = text(p.reason) || null
-    const ask = (open: Omit<OpenRequest, 'id'>, card: { toolName: string; title: string; input: Record<string, unknown>; alwaysScope: string | null }): RuntimeEvent[] => {
-      this.requests.set(requestId, { id, ...open })
-      return [{ kind: 'permission_request', requestId, toolId: itemId || null, ...card, reason }]
+    const ask = (
+      open: Omit<OpenApproval, 'id' | 'type' | 'title'>,
+      card: { toolName: string; title: string; input: Record<string, unknown>; alwaysScope: string | null },
+    ): RuntimeEvent[] => {
+      this.requests.set(requestId, { type: 'approval', id, title: card.title, ...open })
+      // Refused without a "decline", the turn ends too: the card says so.
+      const stops = 'decision' in open.deny && open.deny.decision === 'cancel'
+      return [{ kind: 'permission_request', requestId, toolId: itemId || null, ...card, reason, ...(stops ? { denyStopsTurn: true } : {}) }]
     }
     switch (method) {
       case 'item/commandExecution/requestApproval': {
@@ -270,22 +362,26 @@ export class CodexEventMapper {
           ? request.availableDecisions.filter((one) => typeof one === 'string' || (!!one && typeof one === 'object'))
           : ['accept', 'acceptForSession', 'decline', 'cancel']
         const offers = (decision: CommandExecutionApprovalDecision) => offered.find((one) => sameDecision(one, decision)) ?? null
-        // The grant that ends with the session before the one that stays.
+        // The grant that ends with the session before the one that stays (an exec-policy rule Codex keeps
+        // for every session after this one too); a rule without a command prefix is no grant one could name.
         const forSession = offers('acceptForSession')
-        const always = forSession ?? offers({ acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } })
-        const prefix = always && typeof always === 'object' && 'acceptWithExecpolicyAmendment' in always
-          ? list(fields(always.acceptWithExecpolicyAmendment).execpolicy_amendment).map(text).join(' ')
+        const rule = offers({ acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } })
+        const prefix = rule && typeof rule === 'object' && 'acceptWithExecpolicyAmendment' in rule
+          ? list(fields(rule.acceptWithExecpolicyAmendment).execpolicy_amendment).map(text).filter(Boolean).join(' ')
           : ''
+        const always = forSession ?? (prefix ? rule : null)
+        const cancel = offers('cancel')
         return ask({
           allow: { decision: 'accept' },
           always: always ? { decision: always } : null,
           // Declined, the turn goes on without the command; a request that only offers "cancel" ends the turn.
           deny: { decision: offers('decline') ?? 'cancel' },
+          cancel: cancel ? { decision: cancel } : null,
         }, {
           toolName: call.name,
           title: call.title,
           input: call.input,
-          alwaysScope: !always ? null : forSession ? 'This command, for the rest of this session' : `Commands starting with \`${prefix}\`, from now on`,
+          alwaysScope: !always ? null : forSession ? 'This command, for the rest of this session' : `Commands starting with \`${prefix}\`, in this and later sessions`,
         })
       }
       case 'item/fileChange/requestApproval': {
@@ -293,7 +389,7 @@ export class CodexEventMapper {
         const item = this.running.get(text(request.itemId)) as Partial<FileChangeItem> | undefined
         const call = fileChangeCall(list(item?.changes))
         return ask(
-          { allow: { decision: 'accept' }, always: { decision: 'acceptForSession' }, deny: { decision: 'decline' } },
+          { allow: { decision: 'accept' }, always: { decision: 'acceptForSession' }, deny: { decision: 'decline' }, cancel: { decision: 'cancel' } },
           { toolName: call.name, title: call.title, input: call.input, alwaysScope: 'These files, for the rest of this session' },
         )
       }
@@ -310,12 +406,29 @@ export class CodexEventMapper {
           allow: { permissions: granted, scope: 'turn' },
           always: { permissions: granted, scope: 'session' },
           deny: { permissions: {}, scope: 'turn' },
+          cancel: null,
         }, {
           toolName: PERMISSIONS,
           title: wanted.length > 0 ? `Allow ${wanted.join(', ')}` : 'Allow more access',
           input: { permissions: fields(p.permissions) },
           alwaysScope: 'The same access, for the rest of this session',
         })
+      }
+      case 'item/tool/requestUserInput': {
+        const asked = list((p as Partial<ToolRequestUserInputParams>).questions).map(fields)
+        const ids = new Map<string, string>()
+        const questions: Question[] = asked.flatMap((one) => {
+          const question = text(one.question) || text(one.header)
+          if (!question || !text(one.id)) return []
+          ids.set(question, text(one.id))
+          const options = list(one.options).map(fields).filter((option) => text(option.label))
+            .map((option) => ({ label: text(option.label), description: text(option.description) }))
+          return [{ question, header: text(one.header), multiSelect: false, options, ...(one.isSecret === true ? { secret: true } : {}) }]
+        })
+        // Nothing to ask: answered empty at once, the agent goes on.
+        if (questions.length === 0) return null
+        this.requests.set(requestId, { type: 'questions', id, ids })
+        return [{ kind: 'question', requestId, questions }]
       }
       default: return null
     }
@@ -328,12 +441,33 @@ export class CodexEventMapper {
    */
   answer(requestId: string, answer: PermissionAnswer): ApprovalAnswer | null {
     const open = this.requests.get(requestId)
-    if (!open || answer.decision === 'answer') return null
+    if (!open) return null
+    if (open.type === 'questions') {
+      // Skipped: answered with nothing, and the agent goes on without.
+      if (answer.decision !== 'answer' && answer.decision !== 'deny') return null
+      this.requests.delete(requestId)
+      const answers: ToolRequestUserInputResponse['answers'] = {}
+      if (answer.decision === 'answer') {
+        for (const [question, chosen] of Object.entries(answer.answers)) {
+          const id = open.ids.get(question)
+          if (id && chosen.trim()) answers[id] = { answers: [chosen] }
+        }
+      }
+      const outcome = answer.decision === 'answer' ? 'answered' : 'denied'
+      return { id: open.id, result: { answers }, events: [{ kind: 'request_settled', requestId, outcome }], ...(answer.decision === 'deny' && answer.interrupt ? { stopTurn: true } : {}) }
+    }
+    if (answer.decision === 'answer') return null
     this.requests.delete(requestId)
-    const settled = (result: ApprovalResponse, outcome: 'allowed' | 'always' | 'denied'): ApprovalAnswer => (
-      { id: open.id, result, events: [{ kind: 'request_settled', requestId, outcome }] }
+    const settled = (result: ApprovalResponse, outcome: 'allowed' | 'always' | 'denied', extra: Partial<ApprovalAnswer> = {}): ApprovalAnswer => (
+      { id: open.id, result, events: [{ kind: 'request_settled', requestId, outcome }], ...('decision' in result && result.decision === 'cancel' ? { endsTurn: true } : {}), ...extra }
     )
-    if (answer.decision === 'deny') return settled(open.deny, 'denied')
+    if (answer.decision === 'deny') {
+      // Codex's refusals carry no words: the runtime passes them on (`note`).
+      const note = answer.message ? `The user declined ${open.title}: ${answer.message}` : undefined
+      if (!answer.interrupt) return settled(open.deny, 'denied', note ? { note } : {})
+      const ends = open.cancel ?? ('decision' in open.deny && open.deny.decision === 'cancel' ? open.deny : null)
+      return settled(ends ?? open.deny, 'denied', { ...(ends ? {} : { stopTurn: true }), ...(note ? { note } : {}) })
+    }
     if (answer.decision === 'always' && open.always) return settled(open.always, 'always')
     return settled(open.allow, 'allowed')
   }
@@ -384,6 +518,8 @@ export class CodexEventMapper {
   }
 
   private itemStarted(item: Partial<ThreadItem>): RuntimeEvent[] {
+    if (item.type === 'subAgentActivity') return this.subAgentActivity(item)
+    if (item.type === 'collabAgentToolCall') return this.collabCall(item, false)
     if (!isToolItem(item) || typeof item.id !== 'string') return []
     this.running.set(item.id, item)
     return [{ kind: 'tool_call', toolId: item.id, ...toolCall(item) }]
@@ -401,6 +537,8 @@ export class CodexEventMapper {
         return thought ? [{ kind: 'thinking', blockId: item.id, text: thought }] : []
       }
       case 'contextCompaction': return [{ kind: 'compaction' }]
+      case 'subAgentActivity': return this.subAgentActivity(item)
+      case 'collabAgentToolCall': return this.collabCall(item, true)
       default: {
         if (!isToolItem(item)) return []
         // Not announced (a stored turn): the call comes with its result.
@@ -409,6 +547,140 @@ export class CodexEventMapper {
         if (result) events.push({ kind: 'tool_result', toolId: item.id, ...result })
         return events
       }
+    }
+  }
+
+  /** A subagent appears: its tool row (an agent card) and, live, its task. Said once per thread. */
+  private startChild(threadId: string, toolId: string, description: string, input: Record<string, unknown>): RuntimeEvent[] {
+    if (!threadId || this.children.has(threadId)) return []
+    this.children.set(threadId, { toolId, status: 'running', turnId: null, report: '', toolUses: 0 })
+    const title = description || 'Subagent'
+    const events: RuntimeEvent[] = [{ kind: 'tool_call', toolId, name: AGENT, toolKind: 'agent', title, input }]
+    if (!this.replaying) events.push({ kind: 'agent_task', taskId: threadId, toolId, description: title, status: 'running', background: false })
+    return events
+  }
+
+  /** A subagent is done, or stopped: its card shows its last message. Said once; a later word changes nothing. */
+  private endChild(threadId: string, status: Exclude<AgentTaskStatus, 'running'>, report?: string | null): RuntimeEvent[] {
+    const child = this.children.get(threadId)
+    if (!child || child.status !== 'running') return []
+    child.status = status
+    child.turnId = null
+    if (report) child.report = report
+    this.childTools.delete(threadId)
+    const events: RuntimeEvent[] = []
+    if (!this.replaying) events.push({ kind: 'agent_task', taskId: threadId, status })
+    const output = cut(child.report) || (status === 'stopped' ? 'Stopped.' : '')
+    events.push({ kind: 'tool_result', toolId: child.toolId, status: status === 'completed' ? 'completed' : 'failed', output })
+    return events
+  }
+
+  /** What happened to a subagent, as its parent's thread tells it (multi-agent v1). */
+  private subAgentActivity(item: Partial<SubAgentActivityItem>): RuntimeEvent[] {
+    const threadId = text(item.agentThreadId)
+    if (typeof item.id !== 'string' || !threadId) return []
+    switch (item.kind) {
+      case 'started': return this.startChild(threadId, item.id, agentName(text(item.agentPath)), {
+        ...(text(item.agentPath) ? { agentPath: text(item.agentPath) } : {}), ...(text(item.model) ? { model: text(item.model) } : {}),
+      })
+      case 'completed': return this.endChild(threadId, 'completed')
+      case 'interrupted': return this.endChild(threadId, 'stopped')
+      default: return []
+    }
+  }
+
+  /**
+   * A call of the agent's tools for its subagents. Starting one makes its card, once the new thread is
+   * known; any other call is a tool row of its own, and what it learnt of its agents' states ends theirs.
+   */
+  private collabCall(item: Partial<CollabAgentToolCallItem>, done: boolean): RuntimeEvent[] {
+    if (typeof item.id !== 'string') return []
+    const receivers = list(item.receiverThreadIds).map(text).filter(Boolean)
+    const events: RuntimeEvent[] = []
+    if (item.tool === 'spawnAgent') {
+      const prompt = text(item.prompt)
+      for (const threadId of receivers) {
+        events.push(...this.startChild(threadId, item.id, firstLine(prompt), { ...(prompt ? { prompt } : {}), ...(text(item.model) ? { model: text(item.model) } : {}) }))
+      }
+      if (done && item.status === 'failed' && receivers.length === 0) {
+        events.push({ kind: 'tool_call', toolId: item.id, name: AGENT, toolKind: 'agent', title: firstLine(prompt) || 'Subagent', input: prompt ? { prompt } : {} })
+        events.push({ kind: 'tool_result', toolId: item.id, status: 'failed', output: 'The subagent did not start.' })
+      }
+      return events
+    }
+    const title = COLLAB_TITLES[text(item.tool)] ?? `${AGENT} ${text(item.tool)}`.trim()
+    const prompt = text(item.prompt)
+    if (!done) {
+      this.running.set(item.id, item as Partial<ToolItem>)
+      return [{ kind: 'tool_call', toolId: item.id, name: AGENT, toolKind: 'other', title, input: { tool: text(item.tool), ...(prompt ? { prompt } : {}) } }]
+    }
+    if (!this.running.delete(item.id)) events.push({ kind: 'tool_call', toolId: item.id, name: AGENT, toolKind: 'other', title, input: { tool: text(item.tool), ...(prompt ? { prompt } : {}) } })
+    const states = Object.entries(fields(item.agentsStates)).map(([threadId, state]) => [threadId, fields(state)] as const)
+    events.push({
+      kind: 'tool_result',
+      toolId: item.id,
+      status: item.status === 'completed' ? 'completed' : 'failed',
+      output: states.map(([, state]) => text(state.message)).filter(Boolean).join('\n\n'),
+    })
+    for (const [threadId, state] of states) {
+      const status = state.status === 'completed' ? 'completed' : state.status === 'errored' ? 'failed'
+        : state.status === 'interrupted' || state.status === 'shutdown' ? 'stopped' : null
+      if (status) events.push(...this.endChild(threadId, status, text(state.message)))
+    }
+    return events
+  }
+
+  /** A subagent's own thread: its tool calls go on its card, its turns run and end it. Anything else of it stays out. */
+  private childNotification(threadId: string, method: string, p: Fields): RuntimeEvent[] {
+    const child = this.children.get(threadId)
+    if (!child) return []
+    const tools = this.childTools.get(threadId) ?? new Set<string>()
+    this.childTools.set(threadId, tools)
+    const live = (events: RuntimeEvent[]) => (this.replaying ? [] : events)
+    switch (method) {
+      case 'turn/started': {
+        child.turnId = text(fields(p.turn).id) || null
+        // Woken again (a message, a follow-up task): it runs once more.
+        if (child.status === 'running') return []
+        child.status = 'running'
+        return live([{ kind: 'agent_task', taskId: threadId, status: 'running' }])
+      }
+      case 'turn/completed': {
+        const status = text(fields(p.turn).status)
+        return this.endChild(threadId, status === 'interrupted' ? 'stopped' : status === 'failed' ? 'failed' : 'completed')
+      }
+      case 'item/started': {
+        const item = fields(p.item) as Partial<ThreadItem>
+        if (!isToolItem(item) || typeof item.id !== 'string' || tools.has(item.id)) return []
+        tools.add(item.id)
+        child.toolUses += 1
+        const call = toolCall(item)
+        return live([
+          { kind: 'agent_tool', parentToolId: child.toolId, toolId: item.id, toolKind: call.toolKind, title: call.title, status: 'running' },
+          { kind: 'agent_task', taskId: threadId, toolUses: child.toolUses, activity: call.title },
+        ])
+      }
+      case 'item/completed': {
+        const item = fields(p.item) as Partial<ThreadItem>
+        if (item.type === 'agentMessage') {
+          child.report = text(item.text)
+          return child.report ? live([{ kind: 'agent_task', taskId: threadId, activity: firstLine(child.report) }]) : []
+        }
+        if (!isToolItem(item) || typeof item.id !== 'string') return []
+        const result = toolResult(item)
+        if (!result) return []
+        const announced = tools.delete(item.id)
+        const call = toolCall(item)
+        return live([{
+          kind: 'agent_tool', parentToolId: child.toolId, toolId: item.id, status: result.status,
+          ...(announced ? {} : { toolKind: call.toolKind, title: call.title }),
+        }])
+      }
+      case 'thread/tokenUsage/updated': {
+        const total = fields(fields(p.tokenUsage).total).totalTokens
+        return typeof total === 'number' ? live([{ kind: 'agent_task', taskId: threadId, tokens: total }]) : []
+      }
+      default: return []
     }
   }
 
@@ -446,6 +718,7 @@ export class CodexEventMapper {
 
   /** A stored turn's items, as they would have run. */
   stored(turn: Partial<Turn>): RuntimeEvent[] {
+    this.replaying = true
     const events: RuntimeEvent[] = []
     for (const stored of list(turn.items)) {
       const item = fields(stored) as Partial<ThreadItem>
