@@ -23,7 +23,8 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  * safe to run again: a job that moved is no longer in the version 1 data, so a second start finds nothing; a task
  * whose write failed, and a space whose brain did not answer, keep their jobs there for the next start. A crash
  * between a task's brain write and its store write plans that one task again: its schedule and text are found as
- * they should be and are not written twice; only its journal lines repeat.
+ * they should be and are not written twice; only its journal lines repeat. A task made for a job without one is
+ * named on the job in the store as soon as it exists, so it is made once.
  *
  * Every write is checked against what was planned: a task's schedule and text go with the rev the plan read the task
  * at, so a task that changed in between is not written in this pass and is planned again in the next one; a
@@ -42,7 +43,7 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'get'>>
+  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'setV1Task'>> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -219,7 +220,13 @@ export function createJobMigration(deps: JobMigrationDeps) {
    */
   const applyTask = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>, task: TaskMigration, read: JobMigrationTask | null): Promise<void> => {
     let taskId = task.taskId
-    if (task.create) taskId = (await makeRoutineTask(brain, task.create)).id
+    if (task.create) {
+      // Found again by its title when an earlier try made it and was cut off before the next line.
+      taskId = (await makeRoutineTask(brain, task.create)).id
+      // The job names its task at once, before anything is written to it: a retry plans it there and makes no
+      // second task, and the engine waits for the task until the job has moved.
+      for (const jobId of task.settles) deps.store.setV1Task?.(jobId, taskId)
+    }
     if (task.brain && taskId) {
       const text = task.brain.journal.join(' ')
       const fields = { ...(task.brain.content !== null ? { content: task.brain.content } : {}), ...(task.brain.goal ? { goal: task.brain.goal } : {}) }

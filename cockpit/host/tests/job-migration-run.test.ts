@@ -18,7 +18,7 @@ const v1 = (id: string, patch: Record<string, unknown> = {}) => ({
 const openRun = (jobId: string) => ({ id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt: '2026-11-26T08:00:00.000Z', createdAt: '2026-11-26T08:00:00.000Z', status: 'started', attempts: 1, nextAttemptAt: null, sessionId: 's1', startedAt: '2026-11-26T08:00:05.000Z', finishedAt: null, outcome: null, note: null })
 const task = (id: string, properties: Record<string, unknown> = {}, status = 'active'): Task => ({ id, type: 'task', status, title: id, content: 'Keep the customer informed.', properties: { assignee_ids: ['member'], ...properties } })
 
-function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null; schema?: Record<string, number | null>; onRead?: (id: string, nth: number) => void } = {}) {
+function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null; schema?: Record<string, number | null>; titleBlind?: boolean; onRead?: (id: string, nth: number) => void } = {}) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
   const original = JSON.stringify({ version: 1, timeZone: 'UTC', jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), runs: opts.runs ?? {}, keys: {} })
   writeFileSync(file, original)
@@ -30,7 +30,8 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
     async get(path: string, query?: Record<string, unknown>) {
       if (opts.down?.includes(space)) throw new Error('connect ECONNREFUSED')
       if (path === '/list' && query?.title === undefined) return { engrams: structuredClone([...byId.values()].filter((t) => t.status === query?.status)) }
-      if (path === '/list') return { engrams: [...byId.values()].filter((t) => t.title === query?.title) }
+      // `titleBlind`: a brain whose list by title does not find a task made a moment ago
+      if (path === '/list') return { engrams: opts.titleBlind ? [] : [...byId.values()].filter((t) => t.title === query?.title) }
       if (path === '/object/user') {
         if (opts.members === null) throw new Error('the users did not come')
         return { objects: (opts.members ?? ['member', 'other']).map((id) => ({ id })) }
@@ -287,6 +288,35 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
     expect(w.store.get('made-0')).toMatchObject({ id: 'made-0', taskId: 'made-0', projectId: 'bp-ops' })
     expect(w.moved).toEqual([['job-12345678-loose', 'made-0']])
+  })
+
+  it('a job without a task never gets two: the task it got is in the store before its schedule is written, so a retry after a failed write makes none', async () => {
+    const w = world([v1('job-12345678-loose', { taskId: null })], [], { failOn: ['made-0'], titleBlind: true })
+    w.spaces.pop()
+    expect((await w.migration.run()).failed).toEqual(['Main: "Daily brief": Invalid engram: delegation.schedule has an unknown key'])
+    // the job names its task from now on: the engine waits for it there, and the next pass plans it on that task
+    expect(new JobStore(w.file).pendingV1()!.jobs['job-12345678-loose'].taskId).toBe('made-0')
+    expect(new JobStore(w.file).v1TaskIds()).toEqual(new Set(['made-0']))
+    w.opts.failOn = []
+    expect(await w.restart().run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
+    expect(w.posts.at(-1)).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
+    expect(new JobStore(w.file).get('made-0')).toMatchObject({ id: 'made-0', projectId: 'bp-ops' })
+  })
+
+  it('a job without a task, cut off after its schedule was written: the next start finds the task, makes the record and writes nothing twice; meanwhile the engine waits for it', async () => {
+    const w = world([v1('job-12345678-loose', { taskId: null, triggers: [{ type: 'schedule', at: '2026-11-26T09:00:00.000Z', timeZone: 'UTC' }], runCount: 0, nextRunAt: null })], [])
+    w.spaces.pop()
+    w.store.migrateV1 = () => { throw new Error('host stopped') }
+    expect((await w.migration.run()).failed).toEqual(['Main: "Daily brief": host stopped'])
+    expect(w.byId.get('made-0')!.properties.delegation).toEqual({ agent: 'atlas', schedule: { at: '2026-11-26T09:00:00.000Z', why: 'Write the brief.', time_zone: 'UTC' } })
+    // the engine holds the task while its job waits: the past wake-up does not fire before the record exists
+    expect(new JobStore(w.file).v1TaskIds()).toEqual(new Set(['made-0']))
+    const posts = w.posts.length
+    expect(await w.restart().run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.posts).toHaveLength(posts)
+    expect(new JobStore(w.file).get('made-0')).toMatchObject({ id: 'made-0', firedWake: null })
+    expect(new JobStore(w.file).pendingV1()).toBeNull()
   })
 
   it('a job without a task and with a long prompt: the task it gets holds the whole prompt, nothing is cut', async () => {

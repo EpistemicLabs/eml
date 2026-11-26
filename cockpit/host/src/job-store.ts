@@ -198,6 +198,18 @@ export class JobStore {
     return new Set(Object.values(this.data.v1?.jobs ?? {}).flatMap((job) => (job.taskId ? [job.taskId] : [])))
   }
 
+  /**
+   * A version 1 job without a task got one (the migration made it): the job names it from now on, kept at once, before
+   * anything else is written to the task. A later pass plans the job on that task and makes no second one, and the
+   * engine waits for the task while the job has not moved (hasV1Jobs).
+   */
+  setV1Task(jobId: string, taskId: string): void {
+    const job = this.data.v1?.jobs[jobId]
+    if (!job || job.taskId === taskId) return
+    this.data.v1!.jobs[jobId] = { ...job, taskId }
+    this.persist()
+  }
+
   /** Write one task's part of the version 1 migration: its jobs leave `v1`, its record and runs are in. */
   migrateV1(step: V1Step): void {
     const v1 = this.data.v1
