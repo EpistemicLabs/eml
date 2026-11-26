@@ -701,6 +701,52 @@ describe('the four-line order', () => {
     expect(statuses('once')).toEqual(['started'])
   })
 
+  it('a wake-up held back by a working session does not wait unseen: one log line in the first pass, one notice once it has waited an hour, and both forgotten when it fires', async () => {
+    const logs: string[] = []
+    runner = new JobRunner(world.deps({ log: (line) => logs.push(line) }))
+    const held = () => logs.filter((line) => line.includes('its wake-up'))
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
+    world.session('once', 's-work', true)
+    await firstSeenThen('2026-11-09T02:05:00Z')
+    expect(held()).toEqual(['[jobs] task once: its wake-up, due 5 min ago, is held back: a session of the task is working; it stays due'])
+    // pass after pass: nothing more is said, and no row is written
+    for (let pass = 0; pass < 5; pass++) {
+      world.now += 10 * MIN
+      await runner.tick()
+    }
+    expect(held()).toHaveLength(1)
+    expect(world.alerts).toEqual([])
+    // an hour after it was due: the user is told, once
+    world.now = Date.parse('2026-11-09T03:01:00Z')
+    await runner.tick()
+    expect(world.alerts).toEqual(['question: Task once: Its wake-up has waited an hour because a session of the task is still working.'])
+    world.now += 30 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.alerts).toHaveLength(1)
+    expect(held()).toHaveLength(1)
+    expect(runs('once')).toEqual([])
+    // the session stops: the wake-up fires, and what was said of it is forgotten
+    world.sessions[0].working = false
+    world.states.set('s-work', 'idle')
+    world.now += MIN
+    await runner.tick()
+    expect(world.delivered).toHaveLength(1)
+    // a later wake-up that is held back is said anew
+    world.setSchedule('once', { at: '2026-11-09T06:00:00.000Z', why: 'Check again.' })
+    world.sessions[0].working = true
+    world.states.set('s-work', 'working')
+    world.now = Date.parse('2026-11-09T06:02:00Z')
+    await runner.tick()
+    expect(held().at(-1)).toBe('[jobs] task once: its wake-up, due 2 min ago, is held back: a session of the task is working; it stays due')
+    expect(held()).toHaveLength(2)
+    // it leaves the task before the hour is over: nothing is told
+    world.setSchedule('once', { crons: ['0 8 * * 1-5'], time_zone: ZONE })
+    world.now += 2 * 60 * MIN
+    await runner.tick()
+    expect(world.alerts).toHaveLength(1)
+  })
+
   it('a wake-up that waited for hours gets its hour to start from when its run was made, not from the time it was set for', async () => {
     world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
     world.session('once', 's-work', true)

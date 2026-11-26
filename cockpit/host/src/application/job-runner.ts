@@ -43,7 +43,8 @@ import { stepPrompt } from './task-runner.js'
  * What a firing does follows the four-line order (domain/firing-order.ts): a repeating time is skipped and recorded
  * while a session of the task works, else it goes to the session that waits on an answer, else to the session that set
  * the wake-up, else to a new session. The wake-up is never skipped: while a session works it stays due and fires in
- * the first read where the order can give it to a session; while a run of the task waits to start it joins that run.
+ * the first read where the order can give it to a session (said once in the log, and to the user once it has waited
+ * an hour); while a run of the task waits to start it joins that run.
  * A repeating time that comes due while the task's previous run has not started is skipped and recorded. A new session reads the prompt built from its task and a line naming what fired; a session that continues
  * reads that line alone (domain/run-text.ts).
  *
@@ -194,6 +195,8 @@ const SETTLE_MS = 90_000
 const QUEUED_LIMIT_MS = 24 * 60 * 60_000
 // How long a channel event's key keeps the same event from waking the task again.
 const KEY_MEMORY_MS = 7 * 24 * 60 * 60_000
+/** A wake-up that has been due this long while a session of its task still works is told to the user, once. */
+export const WAKE_WAIT_NOTICE_MS = 60 * 60_000
 const NO_ROOM = 'no room: too little free memory, or the running cap with every session busy'
 /** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
 const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
@@ -214,6 +217,12 @@ export class JobRunner {
   private facts = new Map<string, { name: string; paused: boolean }>()
   /** Spaces whose kind was not known at the last read: said once in the log, not every minute. */
   private kindless = new Set<string | null>()
+  /**
+   * The wake-ups held back because a session of their task works (by task id): the wake-up it was said of in the
+   * log, and whether the user was told. In memory only, nothing per pass: forgotten when the wake-up fires or leaves
+   * the task; after a restart a wake-up still held back is said once more.
+   */
+  private heldWakes = new Map<string, { at: string; told: boolean }>()
   /** Brain writes under way that the next pass waits for (a pause after failures). */
   private writes: Array<Promise<void>> = []
 
@@ -459,6 +468,7 @@ export class JobRunner {
   /** A record whose task has no schedule this cockpit fires: it stops listening when the task is closed, and goes when nothing holds it. */
   private keep(record: Job, standing: 'open' | 'closed', now: number): void {
     const { store } = this.deps
+    this.heldWakes.delete(record.id)
     // Just made or changed: the schedule that came with it may be newer than this pass's read of the tasks.
     if (standing === 'open' && isNewRecord(record, now)) return
     if (recordKeeping(record, standing, store.runs(record.id)).stopListening) {
@@ -485,6 +495,8 @@ export class JobRunner {
     const schedule = scheduleOf(task)!
     const name = nameOfTask(task)
     this.facts.set(task.id, { name, paused: schedule.paused === true })
+    // A wake-up that was held back and is off the task by now (cleared, or replaced by another) is forgotten.
+    if (this.heldWakes.has(task.id) && !sameInstant(this.heldWakes.get(task.id)!.at, schedule.at)) this.heldWakes.delete(task.id)
     const stored = store.get(task.id)
     let record = stored ?? newRecord({ id: task.id, spaceId: space.key }, at)
     const save = () => {
@@ -572,11 +584,29 @@ export class JobRunner {
     const facts = await this.factsOf(space, task, { times: true, wake: wake ? { bySession: wake.bySession } : null, message: false }, new Set())
     if (decideFiring(facts).kind === 'skip') {
       skipCrons(SKIPPED_WORKING)
+      if (wake) this.wakeHeldBack(record, name, wake.at, now)
       return
     }
     const fired: RunFired = { ...(wake ? { wake } : {}), ...(crons ? { crons } : {}), ...zoned }
     const run = this.addRun(task.id, 'schedule', Date.parse(firing.dueAt), { fired })
     this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} is due`)
+  }
+
+  /**
+   * A due wake-up is held back because a session of the task works: it stays due, and that is not left unseen. The
+   * first pass says so in the log, once; when it has been due for more than an hour the user is told, once.
+   */
+  private wakeHeldBack(record: Job, name: string, at: string, now: number): void {
+    let held = this.heldWakes.get(record.id)
+    const waited = now - Date.parse(at)
+    if (!held || !sameInstant(held.at, at)) {
+      held = { at, told: false }
+      this.heldWakes.set(record.id, held)
+      this.deps.log(`[jobs] ${tagOf(record.id)}: its wake-up, due ${formatDuration(waited)} ago, is held back: a session of the task is working; it stays due`)
+    }
+    if (held.told || waited <= WAKE_WAIT_NOTICE_MS) return
+    held.told = true
+    this.deps.notify({ kind: 'question', title: name, body: 'Its wake-up has waited an hour because a session of the task is still working.', jobId: `wake-waits:${record.id}`, sessionId: null, spaceId: record.spaceId })
   }
 
   /**
@@ -587,6 +617,7 @@ export class JobRunner {
     const at = run.fired?.wake?.at
     const record = this.deps.store.get(run.jobId)
     const space = record ? this.spaceOf(record) : null
+    if (at) this.heldWakes.delete(run.jobId)
     if (!at || !record || !space) return
     if (!sameInstant(record.firedWake, at)) this.deps.store.put({ ...record, firedWake: at })
     this.clearFiredWake(space, record.id, at)
