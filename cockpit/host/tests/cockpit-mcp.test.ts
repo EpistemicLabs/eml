@@ -58,6 +58,8 @@ const checks: Array<[string, string | null]> = []
 /** The session's task has a next run from its schedule (application/turn-wake.ts settle). */
 let taskHasNextRun = false
 const ended: Ended[] = []
+/** The sessions a message sent back would reach, as their providers say (index.ts receives). */
+const receivable = new Set(['chat-codex'])
 
 const listen = (server: http.Server) =>
   new Promise<number>((resolve) => server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port)))
@@ -113,6 +115,8 @@ beforeAll(async () => {
     directory: () => [entry('eml-aaaa', 'Catalogue import')],
     addressOf: (sessionId) => `eml-${sessionId}`,
     deliver: async (request) => { delivered.push(request); return 'delivered' },
+    // As index.ts: whether the session's provider lets a message reach it where it runs (sessionMessaging).
+    receives: (sessionId) => receivable.has(sessionId),
     timeZone: () => ZONE,
   })
   closeRuled = ruled.close
@@ -326,6 +330,18 @@ describe('a chat session whose agent CLI gets the tools here', () => {
     await call(client, 'send_message', { to: 'eml-aaaa', text: 'The notes are ready.' })
     expect(delivered).toEqual([{ target: 'eml-aaaa', text: 'The notes are ready.', from: 'eml-chat-codex', caller: 'session' }])
     await client.close()
+  })
+
+  it('cannot be answered once its provider no longer lets a message reach it (Codex with its chat view off)', async () => {
+    receivable.delete('chat-codex')
+    try {
+      const { client } = await connect('chat-codex', TOKEN_A, ruledUrl)
+      await call(client, 'send_message', { to: 'eml-aaaa', text: 'The notes are ready.' })
+      expect(delivered).toEqual([{ target: 'eml-aaaa', text: 'The notes are ready.', from: 'eml-chat-codex', caller: 'session', noReply: true }])
+      await client.close()
+    } finally {
+      receivable.add('chat-codex')
+    }
   })
 })
 
