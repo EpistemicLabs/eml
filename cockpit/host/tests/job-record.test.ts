@@ -68,6 +68,14 @@ describe('what a record says of its task\'s schedule', () => {
     expect(scheduleFactsOf(record({ pendingApproval: true }), [])).toMatchObject({ needsOk: true })
     expect(scheduleFactsOf(record(), [])).not.toHaveProperty('needsOk')
   })
+
+  it('while the record waits for the user\'s OK, a waiting run of a repeating time is no run coming up (it is skipped); one that carries the wake-up is', () => {
+    const cron = { ...run('waiting'), trigger: 'schedule' as const, fired: { crons: [{ cron: '0 8 * * *', dueAt: '2026-11-26T08:00:00.000Z' }] } }
+    expect(scheduleFactsOf(record({ pendingApproval: true }), [cron]).waitingRunDueAt).toBeNull()
+    expect(scheduleFactsOf(record(), [cron]).waitingRunDueAt).toBe('2026-11-26T08:00:00.000Z')
+    const wake = { ...cron, fired: { ...cron.fired, wake: { at: '2026-11-26T08:00:00.000Z', why: null, bySession: null } } }
+    expect(scheduleFactsOf(record({ pendingApproval: true }), [wake]).waitingRunDueAt).toBe('2026-11-26T08:00:00.000Z')
+  })
 })
 
 describe('a record that was just made or changed', () => {

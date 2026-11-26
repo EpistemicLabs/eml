@@ -204,6 +204,20 @@ describe('task runner', () => {
     expect(started.map((s) => s.id)).toEqual(['fired-wake', 'paused-wake'])
   })
 
+  it('is not held off a task by a repeating time its record holds for the user\'s OK; a wake-up ahead still holds it off', async () => {
+    const now = Date.now()
+    const hourly = { crons: ['0 * * * *'], time_zone: 'UTC' }
+    const facts: Record<string, { cursor?: string | null; needsOk?: boolean }> = {
+      held: { cursor: new Date(now).toISOString(), needsOk: true },
+      'held-wake': { cursor: new Date(now).toISOString(), needsOk: true },
+    }
+    const { started } = await run([
+      { id: 'held', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: hourly },
+      { id: 'held-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: { ...hourly, at: new Date(now + 3_600_000).toISOString() } },
+    ], undefined, () => null, () => false, { scheduleFacts: (id: string) => facts[id] ?? {} } as never)
+    expect(started.map((s) => s.id)).toEqual(['held'])
+  })
+
   it('starts a standalone task with a checkpoint, at most five at a time, and none a session already works on', async () => {
     const { started } = await run([
       { id: 'running-1', status: 'active', checkpoint: 'after', delegate: 'atlas' },

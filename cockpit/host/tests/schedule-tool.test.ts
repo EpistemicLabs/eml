@@ -178,6 +178,13 @@ describe('a task\'s schedule as the agent reads it', () => {
   it('says when its channel waits for the user, when its end has passed and when the task is closed', () => {
     const mail = { ...newRecord({ id: 'a', spaceId: null }, ''), triggers: [{ type: 'mail' as const, match: [{ kind: 'domain', domain: 'acme.example' }] }], pendingApproval: true }
     expect(describeTask(task('aaaaaaaa', 'Acme mail'), mail, [], NOW, ZONE)).toBe('"Acme mail" (aaaaaaaa): on mail from acme.example\n  state: waiting for the user\'s OK on the task')
+    // its repeating times wait for the OK too: they are named as held, not as coming; the wake-up still comes
+    expect(describeTask(task('aaaaaaaa', 'Acme mail', { ...WEEKDAYS, at: '2026-11-13T02:00:00.000Z' }), mail, [], NOW, ZONE).split('\n')).toEqual([
+      '"Acme mail" (aaaaaaaa): cron "0 8 * * 1-5" + once, Fri 13 Nov 10:00 (Asia/Makassar) + on mail from acme.example',
+      '  state: waiting for the user\'s OK on the task',
+      '  next: Fri 13 Nov 10:00',
+      '  held until the user approves: Tue 10 Nov 08:00, Wed 11 Nov 08:00, Thu 12 Nov 08:00',
+    ])
     expect(describeTask(task('aaaaaaaa', 'Old', { ...WEEKDAYS, ends_at: '2026-11-01T00:00:00.000Z' }), undefined, [], NOW, ZONE)).toContain('state: past its end: nothing fires')
     expect(describeTask(task('aaaaaaaa', 'Done', WEEKDAYS, { status: 'resolved' }), undefined, [], NOW, ZONE)).toContain('state: the task is closed: nothing fires')
   })

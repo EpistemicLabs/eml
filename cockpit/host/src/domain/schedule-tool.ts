@@ -1,7 +1,7 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, type ChannelTrigger, type Job, type JobRun } from './job.js'
 import { formatInZone, parseAt } from './schedule.js'
-import { hasSchedule, nextRunOfSchedule, scheduleOf } from './task-schedule.js'
+import { clearWake, hasSchedule, nextRunOfSchedule, scheduleOf, whileHeldForOk } from './task-schedule.js'
 import type { ToolProfile } from './tool-profile.js'
 
 /**
@@ -190,7 +190,7 @@ function describeRun(run: JobRun, zone: string): string {
 }
 
 /** What the answer of create and update says while new mail addresses wait for the user. */
-export const APPROVAL_NOTE = "It reacts to mail only after the user's OK on the task in the cockpit; until then mail for it waits. Replies are drafts the user approves."
+export const APPROVAL_NOTE = "It reacts to mail only after the user's OK on the task in the cockpit; until then mail for it waits, and so do the task's repeating times and Run now (its wake-up still fires). Replies are drafts the user approves."
 
 /**
  * One task's schedule in a few lines, as the agent reads it: what wakes it, how it stands, its goal, its next runs
@@ -213,8 +213,12 @@ export function describeTask(task: ToolTask, record: Job | undefined, runs: read
     lines.push(`  limited: no shell, no messages to sessions, only the brain MCP; the schedule tool reaches only this task${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
   }
   const left = record?.end ? record.end.afterRuns - record.runCount : null
-  const next = nextRuns(schedule, now, 3, left)
+  // While the record waits for the user's OK the repeating times are held: named as held, never as coming.
+  const held = record?.pendingApproval === true
+  const next = nextRuns(held ? whileHeldForOk(schedule) : schedule, now, 3, left)
   if (next.length > 0) lines.push(`  next: ${next.map((at) => formatInZone(at, tz)).join(', ')}`)
+  const heldTimes = held && schedule?.crons?.length ? nextRuns(clearWake(schedule), now, 3, left) : []
+  if (heldTimes.length > 0) lines.push(`  held until the user approves: ${heldTimes.map((at) => formatInZone(at, tz)).join(', ')}`)
   if (schedule?.at && schedule.by_session) lines.push('  the wake-up continues the session that set it')
   const ends = [...(left !== null ? [`after ${Math.max(left, 0)} more run${left === 1 ? '' : 's'}`] : []), ...(schedule?.ends_at ? [`at ${formatInZone(Date.parse(schedule.ends_at), tz)}`] : [])]
   if (ends.length > 0) lines.push(`  ends: ${ends.join(', ')}`)

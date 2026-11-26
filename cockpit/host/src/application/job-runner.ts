@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
-  activeGrants, CLOSED_BEFORE_START, isHeld, isNewRecord, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
+  activeGrants, CLOSED_BEFORE_START, isHeld, isNewRecord, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, HELD_FOR_OK, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
   type GrantTool, type Job, type JobRun, type ReplyChannel, type RunFired, type RunNowRefusal,
 } from '../domain/job.js'
 import { delegationOf, type DelegationFields } from '../domain/delegation.js'
@@ -742,6 +742,25 @@ export class JobRunner {
     const wait = (why: string, counted = false): Attempt => {
       if (!once) this.retry(this.current(run), why, counted)
       return 'retry'
+    }
+    // Waiting for the user's OK holds the repeating times (derive takes them off what is due): a run of one that
+    // waited already when the hold was set is not started. Its time is kept as skipped and its number given back, as
+    // a repeating time that never ran. A wake-up it carries still fires: the run starts for it alone.
+    const crons = run.trigger === 'schedule' ? run.fired?.crons : undefined
+    if ((this.deps.store.get(record.id) ?? record).pendingApproval === true && crons?.length) {
+      const { crons: _held, ...rest } = this.current(run).fired ?? {}
+      this.record(record.id, run.dueAt, 'skipped', HELD_FOR_OK, { crons, ...(rest.timeZone ? { timeZone: rest.timeZone } : {}) })
+      if (!rest.wake) {
+        this.drop(this.current(run))
+        this.deps.log(`[jobs] ${tagOf(record.id)}: a time due ${run.dueAt} is skipped, ${HELD_FOR_OK}`)
+        return 'skipped'
+      }
+      this.update(run, { fired: rest })
+      // A run of the wake-up alone does not count toward an end after so many runs: the end moves along with it.
+      const kept = this.deps.store.get(record.id)
+      if (kept?.end) this.deps.store.put({ ...kept, end: { afterRuns: kept.end.afterRuns + 1 } })
+      this.deps.log(`[jobs] ${tagOf(record.id)}: run ${run.number} goes on for its wake-up alone; its repeating time is skipped, ${HELD_FOR_OK}`)
+      run = this.current(run)
     }
     // The hour to start in counts from when the run was due, or from when it was made if that was later: a wake-up
     // that waited for a working session, or one that fires late, is made long after its time and still gets its hour.

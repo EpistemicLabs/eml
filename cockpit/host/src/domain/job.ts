@@ -215,7 +215,10 @@ export const isHeld = (job: Pick<Job, 'pendingApproval' | 'pausedReason'>): bool
  */
 export function scheduleFactsOf(record: Pick<Job, 'cursor' | 'firedWake' | 'pendingApproval'> | undefined, runs: readonly JobRun[]): ScheduleFacts {
   if (!record) return {}
-  const waiting = runs.find((run) => run.status === 'waiting' || run.status === 'starting')
+  // While the record waits for the user's OK a waiting run of a repeating time alone is skipped, not started
+  // (application/job-runner.ts attempt): it is no run coming up.
+  const held = (run: JobRun) => record.pendingApproval === true && run.status === 'waiting' && run.trigger === 'schedule' && !run.fired?.wake
+  const waiting = runs.find((run) => (run.status === 'waiting' || run.status === 'starting') && !held(run))
   return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
 }
 
@@ -286,3 +289,5 @@ export const CLOSED_BEFORE_START = 'its task was closed before it started'
 export const SKIPPED_WORKING = 'a session of the task was working'
 /** The note of a time that came due while the task's previous run still waited to start. */
 export const SKIPPED_NOT_STARTED = 'the previous run had not started yet'
+/** The note of a repeating time whose run still waited to start when the record came to wait for the user's OK. */
+export const HELD_FOR_OK = 'the task waits for the user\'s OK: its repeating times do not run until it is given'

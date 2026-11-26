@@ -305,6 +305,14 @@ describe('when a task is started next for its schedule, as this cockpit knows it
     expect(runComingAt({ at: '2026-11-25T12:00:00.000Z' }, {}, NOW, LATE)).toBe('2026-11-25T12:00:00.000Z')
   })
 
+  it('while the record waits for the user\'s OK, is never a repeating time (it is held), only the wake-up', () => {
+    expect(runComingAt(daily, { cursor: '2026-11-25T09:00:00.000Z', needsOk: true }, NOW, LATE)).toBeNull()
+    // one due after the cursor is held too
+    expect(runComingAt(daily, { cursor: '2026-11-25T07:00:00.000Z', needsOk: true }, NOW, LATE)).toBeNull()
+    expect(runComingAt({ ...daily, at: '2026-11-25T12:00:00.000Z' }, { cursor: '2026-11-25T09:00:00.000Z', needsOk: true }, NOW, LATE)).toBe('2026-11-25T12:00:00.000Z')
+    expect(runComingAt({ ...daily, at: '2026-11-25T09:30:00.000Z' }, { cursor: '2026-11-25T07:00:00.000Z', needsOk: true }, NOW, LATE)).toBe('2026-11-25T09:30:00.000Z')
+  })
+
   it('is the time that is due and not fired yet: a wake-up that has passed, a repeating time after the cursor', () => {
     expect(runComingAt({ at: '2026-11-25T09:30:00.000Z' }, {}, NOW, LATE)).toBe('2026-11-25T09:30:00.000Z')
     expect(runComingAt(daily, { cursor: '2026-11-25T07:00:00.000Z' }, NOW, LATE)).toBe('2026-11-25T08:00:00.000Z')

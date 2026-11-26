@@ -416,6 +416,40 @@ describe('deriving what is due', () => {
     expect(runs('mail').at(-1)!.fired?.crons).toEqual([{ cron: '0 18,22 * * 1-5', dueAt: '2026-11-09T14:00:00.000Z' }])
   })
 
+  it('a run of a repeating time that waits when the record comes to wait for the user\'s OK is skipped, with a note, and is no run', async () => {
+    world.task('mail', HOURLY)
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(statuses('mail')).toEqual(['waiting'])
+    world.store.put({ ...world.store.get('mail')!, pendingApproval: true })
+    world.room = true
+    world.now = Date.parse('2026-11-09T01:10:10Z')
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toMatchObject([{ number: 0, status: 'skipped', note: 'the task waits for the user\'s OK: its repeating times do not run until it is given', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }] } }])
+    expect(world.store.get('mail')!.runCount).toBe(0)
+  })
+
+  it('a waiting run that carries the wake-up and a repeating time starts while the record waits for the user\'s OK, for its wake-up alone', async () => {
+    world.task('both', { ...HOURLY, at: '2026-11-09T01:00:00.000Z', why: 'Check the reply.' })
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(runs('both')).toMatchObject([{ status: 'waiting', fired: { crons: [{ cron: '0 * * * *' }], wake: { at: '2026-11-09T01:00:00.000Z' } } }])
+    world.store.put({ ...world.store.get('both')!, pendingApproval: true })
+    world.room = true
+    world.now = Date.parse('2026-11-09T01:10:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    const [started, skipped] = runs('both')
+    expect(started).toMatchObject({ status: 'started', number: 1 })
+    expect(started.fired).not.toHaveProperty('crons')
+    expect(skipped).toMatchObject({ number: 0, status: 'skipped', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }] } })
+  })
+
   it('the reviewer\'s case: a mail routine and a job that waited for the OK on one task, moved at 13:30: the held job is not moved, the others are not held, and there is no 09:00 run, no second 13:00 and no missed time', async () => {
     const now = Date.parse('2026-11-09T05:30:00Z') // Monday 13:30 in Asia/Makassar
     const v1 = (id: string, cron: string, nextRunAt: string, patch: Record<string, unknown> = {}) => ({

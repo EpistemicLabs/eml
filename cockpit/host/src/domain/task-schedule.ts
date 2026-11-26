@@ -196,20 +196,32 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
 export interface ScheduleFacts extends ScheduleState {
   /** The due time of a run that waits to start (no room yet, a busy session); null or absent: none. */
   waitingRunDueAt?: string | null
-  /** New channel addresses of the task wait for the user's OK (the record's pendingApproval): the board shows it. */
+  /**
+   * The record waits for the user's OK (its pendingApproval): the board shows it, and the task's repeating times are
+   * held meanwhile (runComingAt).
+   */
   needsOk?: boolean
 }
 
 /**
+ * What of a schedule fires while the task's record waits for the user's OK (its pendingApproval): the wake-up alone.
+ * The OK holds the channel, Run now and the repeating times; the wake-up was set by a session, not an outside sender.
+ * Null when the schedule has no wake-up.
+ */
+export const whileHeldForOk = (schedule: ScheduleFields | null | undefined): ScheduleFields | null => setCrons(schedule, [])
+
+/**
  * When the task is started next for its schedule, as this cockpit knows it (ISO), or null when nothing is coming: a
  * run that waits to start (its due time), else a time that is due now and not fired yet (the wake-up, a repeating
- * time after the cursor), else the schedule's next time ahead. What holds the task runner off a task, what the
- * next-step check counts as a next trigger, and what the board shows as the next run. A time already due lies in the
- * past.
+ * time after the cursor), else the schedule's next time ahead. Only what will really fire: while the record waits for
+ * the user's OK (`needsOk`) no repeating time counts, only the wake-up (whileHeldForOk). The one answer to "the next
+ * run" for what holds the task runner off a task, what the next-step check counts as a next trigger, and what the
+ * board shows as the next run. A time already due lies in the past.
  */
 export function runComingAt(schedule: ScheduleFields | null | undefined, facts: ScheduleFacts, now: number, lateLimitMs: number): string | null {
   if (facts.waitingRunDueAt) return facts.waitingRunDueAt
-  return dueOf(schedule, facts, now, lateLimitMs).firing?.dueAt ?? nextRunOfSchedule(schedule, now)
+  const firing = facts.needsOk ? whileHeldForOk(schedule) : schedule
+  return dueOf(firing, facts, now, lateLimitMs).firing?.dueAt ?? nextRunOfSchedule(firing, now)
 }
 
 /**

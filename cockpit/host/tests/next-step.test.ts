@@ -95,7 +95,7 @@ describe('next-step check', () => {
     tool?: boolean
     delivers?: boolean
     /** What this cockpit's record of the task says of its schedule. */
-    scheduleFacts?: { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null }
+    scheduleFacts?: { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }
   } = {}) => {
     const ledger = new SessionLedger()
     // The ledger file outlives a test: earlier tests' sessions are put away.
@@ -153,6 +153,17 @@ describe('next-step check', () => {
     expect(await check('w-s6', { at: '2026-11-19T09:00:00.000Z' }, { firedWake: '2026-11-19T09:00:00.000Z' })).toBe(1)
     // a paused schedule's passed wake-up fires nothing
     expect(await check('w-s7', { at: '2026-11-19T09:00:00.000Z', paused: true })).toBe(1)
+  })
+
+  it('a repeating time held for the user\'s OK is no next step; the wake-up still is', async () => {
+    const check = async (id: string, schedule: Record<string, unknown>) => {
+      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule } } } }, { scheduleFacts: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true } })
+      w.ledger.recordSpawn(id, null, 'bp-eml', 'claude', true, 't1')
+      await w.check.turnEnded(id)
+      return w.delivered.length
+    }
+    expect(await check('w-h1', { crons: ['0 8 * * *'], time_zone: 'UTC' })).toBe(1)
+    expect(await check('w-h2', { crons: ['0 8 * * *'], time_zone: 'UTC', at: '2026-11-19T12:00:00.000Z' })).toBe(0)
   })
 
   it('flags at once when the prompt does not arrive', async () => {

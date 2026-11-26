@@ -623,7 +623,7 @@ describe('mail', () => {
       pendingApproval: true, reply: { mail: 'draft' },
       triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'boss@partner.example' }, { kind: 'domain', domain: 'acme.example' }] }],
     })
-    expect(answer.text).toBe(`Made task "Acme mail" (${answer.taskId!.slice(0, 8)}) with its schedule.\n"Acme mail" (${answer.taskId!.slice(0, 8)}): on mail from boss@partner.example, acme.example\n  state: waiting for the user's OK on the task\nIt reacts to mail only after the user's OK on the task in the cockpit; until then mail for it waits. Replies are drafts the user approves.`)
+    expect(answer.text).toBe(`Made task "Acme mail" (${answer.taskId!.slice(0, 8)}) with its schedule.\n"Acme mail" (${answer.taskId!.slice(0, 8)}): on mail from boss@partner.example, acme.example\n  state: waiting for the user's OK on the task\nIt reacts to mail only after the user's OK on the task in the cockpit; until then mail for it waits, and so do the task's repeating times and Run now (its wake-up still fires). Replies are drafts the user approves.`)
     expect((await createMail({ domains: ['@acme.example'] }, { name: 'x' })).text).toMatch(/not a mail address or domain: @acme.example/)
   })
 

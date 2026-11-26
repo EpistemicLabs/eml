@@ -207,6 +207,24 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'due-wake')).toMatchObject({ turn: 'agent_scheduled' })
   })
 
+  it('shows no repeating time of a record that waits for the user\'s OK as its next run: they are held; its wake-up still is', async () => {
+    const hourly = { crons: ['0 * * * *'], time_zone: 'UTC' }
+    const scheduled = (id: string, schedule: Record<string, unknown>) => mine(id, { delegate: 'atlas', delegation: { agent: 'atlas', schedule } })
+    const { board } = setup({
+      main: [scheduled('held', hourly), scheduled('held-due', hourly), scheduled('held-wake', { ...hourly, at: '2026-11-19T12:30:00.000Z' })],
+      scheduleFacts: {
+        held: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true },
+        'held-due': { cursor: '2026-11-19T09:59:30.000Z', needsOk: true },
+        'held-wake': { cursor: '2026-11-19T10:00:00.000Z', needsOk: true },
+      },
+    })
+    const model = await board.refresh()
+    const next = (id: string) => model.tasks.find((t) => t.id === id)?.nextRunAt
+    expect(next('held')).toBeNull()
+    expect(next('held-due')).toBeNull()
+    expect(next('held-wake')).toBe('2026-11-19T12:30:00.000Z')
+  })
+
   it('says which open tasks wait for the user\'s OK on a channel, from this cockpit\'s record', async () => {
     const { board } = setup({
       main: [
