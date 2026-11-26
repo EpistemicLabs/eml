@@ -1,6 +1,6 @@
 // Now: every moving task by whose turn it is, starting with what needs the viewer; the Owner and
 // Space picks (shared with Plan) narrow every column and its counts.
-import { type Board, type BoardTask, columns, dueLabel, GROUP_META, inFilter, originName, readable, resolveFilter, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
+import { type Board, type BoardTask, columns, dueLabel, GROUP_META, inFilter, NEEDS_OK, originName, readable, resolveFilter, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { commandsNote } from '@/lib/working-now';
 import { Chip, Dot, Empty, FOCUS, HUE, LABEL } from '@/shared/view/ui';
@@ -68,8 +68,9 @@ function Card({ task, now, viewer, from, onOpen, moved }: { task: BoardTask; now
       {task.turn === 'agent_working' && (
         <span aria-hidden className="block h-1 overflow-hidden rounded-full bg-muted"><span className="block h-full w-2/5 bg-status-agent" /></span>
       )}
-      {!done && (task.due || task.priority === 'high') && (
+      {!done && (task.due || task.priority === 'high' || task.needsOk) && (
         <span className="flex flex-wrap gap-1">
+          {task.needsOk && <Chip hue="you">{NEEDS_OK}</Chip>}
           {task.due && <Chip hue="mark">due {dueLabel(task.due, now)}</Chip>}
           {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
         </span>

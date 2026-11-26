@@ -83,6 +83,11 @@ export interface BoardTask {
    * approves one run, and it closes with End schedule. Not the runner's `scheduled`, which is a run coming up.
    */
   hasSchedule: boolean
+  /**
+   * New channel addresses of the task wait for the user's OK on this cockpit (its record's pendingApproval): until
+   * then the channel does not wake it. The card and the Plan row say so; the OK is given in the panel's Schedule section.
+   */
+  needsOk?: true
   /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
   handTo?: string
   /**
@@ -647,6 +652,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           nextRunAt: live.nextRunAt,
           hasSchedule: schedule !== null,
           ...(schedule ? { schedule } : {}),
+          ...(!CLOSED_STATUSES.has(row.status) && deps.scheduleFacts?.(row.id).needsOk ? { needsOk: true as const } : {}),
           ...(props.goal ? { goal: props.goal } : {}),
           // Its open runs, on this cockpit and the other members', for the panel and the card (domain/runs.ts).
           ...(() => {

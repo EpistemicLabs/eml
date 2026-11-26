@@ -6,7 +6,7 @@
 import { type ReactNode, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { activeGrants, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
+import { activeGrants, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, NEEDS_OK, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
 import type { RunTone } from '@/lib/job-run-label';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, HUE, LABEL, LINK, MINI, PRIMARY } from '@/shared/view/ui';
@@ -85,7 +85,7 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
       <div className="flex flex-wrap items-center gap-2">
         <span className={LABEL}>Schedule</span>
         {paused && <Chip>paused</Chip>}
-        {record?.pendingApproval && <Chip hue="you">waiting for your OK</Chip>}
+        {record?.pendingApproval && <Chip hue="you">{NEEDS_OK}</Chip>}
       </div>
 
       {record?.pendingApproval && (

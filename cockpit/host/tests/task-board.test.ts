@@ -43,7 +43,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null }> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }> } ) {
   const main = { id: 'main', name: 'Main', shared: false, main: true }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -205,6 +205,25 @@ describe('the task board', () => {
     // nothing fires on a closed task
     expect(next('closed') ?? null).toBeNull()
     expect(model.tasks.find((t) => t.id === 'due-wake')).toMatchObject({ turn: 'agent_scheduled' })
+  })
+
+  it('says which open tasks wait for the user\'s OK on a channel, from this cockpit\'s record', async () => {
+    const { board } = setup({
+      main: [
+        mine('mail', { delegate: 'atlas' }), mine('plain', { delegate: 'atlas' }),
+        mine('scheduled', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 * * * *'], time_zone: 'UTC' } } }),
+        mine('closed', { delegate: 'atlas' }, 'resolved'),
+      ],
+      scheduleFacts: { mail: { needsOk: true }, scheduled: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true }, plain: { cursor: null }, closed: { needsOk: true } },
+    })
+    const model = await board.refresh()
+    const task = (id: string) => [...model.tasks, ...(model.closed ?? [])].find((t) => t.id === id)!
+    expect(task('mail').needsOk).toBe(true)
+    expect(task('scheduled').needsOk).toBe(true)
+    // absent, not false: most tasks have nothing waiting
+    expect(task('plain')).not.toHaveProperty('needsOk')
+    // a closed task's record stops listening: nothing waits for an OK
+    expect(task('closed')).not.toHaveProperty('needsOk')
   })
 
   it('offers "Hand to <agent>" for a delegated task that was never handed over, in Needs you', async () => {

@@ -29,6 +29,14 @@ describe('the Now card', () => {
     expect(screen.getByText('A command is still running (Run the tests, 12 min); the session continues when it finishes.')).toBeTruthy();
   });
 
+  it('says that a channel of the task waits for the user\'s OK, without the panel being open', () => {
+    render(<NowBoard board={board(task({ needsOk: true }))} now={now} onOpen={noop} movedId={null} />);
+    expect(screen.getByText('waiting for your OK')).toBeTruthy();
+    cleanup();
+    render(<NowBoard board={board(task())} now={now} onOpen={noop} movedId={null} />);
+    expect(screen.queryByText('waiting for your OK')).toBeNull();
+  });
+
   it('has no such line while none runs', () => {
     render(<NowBoard board={board(task())} now={now} onOpen={noop} movedId={null} />);
     expect(screen.getByText('Rescue Acme')).toBeTruthy();

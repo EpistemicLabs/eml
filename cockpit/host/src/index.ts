@@ -714,7 +714,7 @@ async function main() {
     const record = jobStore.get(taskId)
     if (!record) return {}
     const waiting = jobStore.runs(taskId).find((run) => run.status === 'waiting' || run.status === 'starting')
-    return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null }
+    return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
   }
   // The engine: it fires the schedules of the tasks this member owns (application/job-runner.ts).
   const runnerSpaceOf = (space: BrainSpace): RunnerSpace => ({ key: space.main ? null : space.id, name: space.name, shared: space.shared })

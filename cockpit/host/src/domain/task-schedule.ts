@@ -187,6 +187,8 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
 export interface ScheduleFacts extends ScheduleState {
   /** The due time of a run that waits to start (no room yet, a busy session); null or absent: none. */
   waitingRunDueAt?: string | null
+  /** New channel addresses of the task wait for the user's OK (the record's pendingApproval): the board shows it. */
+  needsOk?: boolean
 }
 
 /**

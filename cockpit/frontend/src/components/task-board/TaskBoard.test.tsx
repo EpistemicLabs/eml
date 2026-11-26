@@ -723,6 +723,15 @@ describe('the Unread fold', () => {
       await waitFor(() => expect(status.textContent).toContain('Schedule ended, task closed.'));
     });
 
+    it('Plan says on its row that a channel of the task waits for the user\'s OK', async () => {
+      const waits = withRoutine();
+      serve({ ...waits, tasks: waits.tasks.map((t) => (t.id === 'daily' ? { ...t, needsOk: true } : t)) });
+      setTaskView('plan');
+      mount();
+      fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+      expect(screen.getAllByText('waiting for your OK')).toHaveLength(1);
+    });
+
     it('shows the host\'s refusal when Close reaches a scheduled task after all', async () => {
       serve(board(), { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.' });
       setTaskView('plan');

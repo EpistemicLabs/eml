@@ -94,6 +94,8 @@ export interface BoardTask {
    * fires). Not the same as a next run: a paused schedule has none.
    */
   hasSchedule: boolean;
+  /** New channel addresses of the task wait for the user's OK on this cockpit; given in the panel's Schedule section. */
+  needsOk?: boolean;
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
   /**
@@ -617,6 +619,9 @@ export function runLine(run: TaskRun, now: number, current = false): { text: str
   const by = run.trigger === 'manual' ? 'run by hand' : run.trigger === 'schedule' ? null : `on ${run.trigger}`;
   return { text: [when(run.startedAt ?? run.finishedAt ?? run.dueAt, now), by, label.text, run.note].filter(Boolean).join(' · '), tone: label.tone };
 }
+
+/** What a task whose channel waits for the user's OK says on its card, its Plan row and in its panel. */
+export const NEEDS_OK = 'waiting for your OK';
 
 // ---- names and colours ----
 

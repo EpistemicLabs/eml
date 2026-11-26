@@ -2,7 +2,7 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, isScheduled, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, isScheduled, NEEDS_OK, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
@@ -159,6 +159,7 @@ function PlanTask({ task, step, viewer, now, onOpen, onClose, onEndSchedule }: {
         <span className="min-w-0 truncate max-md:whitespace-normal">{step && <span className="text-ui text-muted-foreground">↳ </span>}{taskName(task)}</span>
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted-foreground max-md:col-start-2">
           <Chip hue={hue}>{state}</Chip>
+          {task.needsOk && <Chip hue="you">{NEEDS_OK}</Chip>}
           {task.priority === 'high' && <Chip hue="stopped">high</Chip>}
           {task.due && <Chip hue="mark">{dueLabel(task.due, now)}</Chip>}
           <Who task={task} viewer={viewer} />
