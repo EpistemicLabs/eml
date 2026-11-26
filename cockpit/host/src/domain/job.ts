@@ -214,11 +214,12 @@ export function mailKeys(job: { triggers: ReadonlyArray<{ type: string; match?: 
   return keys
 }
 
-/** Where a record's task stands for this cockpit: it fires its schedule, it is open without one it fires, or it is closed (or gone). */
-export type TaskStanding = 'fires' | 'open' | 'closed'
+/** Where the task of a record stands when this cockpit fires no schedule of it: open, or closed (or gone). */
+export type TaskStanding = 'open' | 'closed'
 
 /**
- * What a pass does with a task's record (application/job-runner.ts).
+ * What a pass does with the record of a task whose schedule it does not fire (application/job-runner.ts); the
+ * record of one it fires is kept.
  *
  *   - `stopListening`: the task is closed, so nothing wakes it any more: its channel triggers, lent tools and a
  *     pending approval go, and a run that waits to start is skipped (application/end-task-record.ts).
@@ -230,7 +231,6 @@ export type TaskStanding = 'fires' | 'open' | 'closed'
 export function recordKeeping(
   record: Pick<Job, 'triggers' | 'grants' | 'pendingApproval' | 'limited' | 'toolProfile'>, standing: TaskStanding, runs: readonly JobRun[],
 ): { stopListening: boolean; remove: boolean } {
-  if (standing === 'fires') return { stopListening: false, remove: false }
   if (standing === 'closed') {
     const listens = record.triggers.length > 0 || (record.grants?.length ?? 0) > 0 || record.pendingApproval === true
     // A waiting run is skipped with the listening; one a session has goes on and keeps the record until it ends.

@@ -13,11 +13,6 @@ const mail: Job['triggers'] = [{ type: 'mail', match: [] }]
 const keep = (r: Job, standing: TaskStanding, runs: JobRun[] = []) => recordKeeping(r, standing, runs)
 
 describe('recordKeeping', () => {
-  it('keeps the record of a task whose schedule this cockpit fires, whatever else', () => {
-    expect(keep(record(), 'fires')).toEqual({ stopListening: false, remove: false })
-    expect(keep(record({ triggers: mail }), 'fires', [run('waiting')])).toEqual({ stopListening: false, remove: false })
-  })
-
   it('removes the record of an open task that has no schedule here, no channel trigger and no open run', () => {
     expect(keep(record(), 'open')).toEqual({ stopListening: false, remove: true })
     expect(keep(record({ runCount: 4, failures: 1, notify: 'always' }), 'open', [run('finished'), run('failed'), run('skipped'), run('missed')])).toEqual({ stopListening: false, remove: true })
