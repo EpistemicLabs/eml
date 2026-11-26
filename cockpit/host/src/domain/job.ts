@@ -156,6 +156,11 @@ export interface JobRun {
   message?: string
   /** For a run the schedule fired: the times that came due, so the run's text names them whenever it starts. */
   fired?: RunFired
+  /**
+   * The wake-up (its at) the text named that its session was given, set when the text is built for a start. Only that
+   * wake-up has fired once the run has started: one that joined the run after the text was built is not in it.
+   */
+  saidWake?: string
 }
 
 /** What of a task's schedule one firing names (domain/task-schedule.ts dueOf): the wake-up and every repeating time due. */

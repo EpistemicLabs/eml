@@ -126,11 +126,28 @@ describe('what of a schedule is due', () => {
     expect(dueOf({ ...hourly, ends_at: '2026-11-25T09:59:59.000Z' }, before, late, LATE)).toEqual({ firing: null, missed: [], cursor: '2026-11-25T10:00:20.000Z' })
     // one that was due before the end, longer ago than the late limit, is missed like any other
     expect(dueOf({ ...hourly, ends_at: '2026-11-25T10:00:00.000Z' }, before, late + 7 * 60 * 60_000, LATE)).toMatchObject({ firing: null, missed: [{ dueAt: '2026-11-25T10:00:00.000Z' }] })
-    // the wake-up alike: set for before the end it still fires, set for after it never
+    // the wake-up is not the end's: it fires at its time, set for before the end or for after it
     expect(dueOf({ at: '2026-11-25T09:59:00.000Z', ends_at: '2026-11-25T10:00:00.000Z' }, {}, late, LATE).firing?.wake?.at).toBe('2026-11-25T09:59:00.000Z')
-    expect(dueOf({ at: '2026-11-25T10:00:10.000Z', ends_at: '2026-11-25T10:00:00.000Z' }, {}, late, LATE).firing).toBeNull()
+    expect(dueOf({ at: '2026-11-25T10:00:10.000Z', ends_at: '2026-11-25T10:00:00.000Z' }, {}, late, LATE).firing?.wake?.at).toBe('2026-11-25T10:00:10.000Z')
     // at its end it still fires
     expect(dueOf({ ...daily, at: '2026-11-25T09:00:00.000Z', ends_at: '2026-11-25T10:00:00.000Z' }, { cursor }, NOW, LATE).firing).not.toBeNull()
+  })
+  it('ends_at ends the repeating times only: a wake-up later than it still fires, is the next run until then, and keeps the schedule on', () => {
+    const ended: ScheduleFields = { ...daily, at: '2026-11-27T02:00:00.000Z', why: 'Look again', ends_at: '2026-11-25T07:30:00.000Z' }
+    // ahead: it is the next run, though the repeating times have ended
+    expect(nextRunOfSchedule(ended, NOW)).toBe('2026-11-27T02:00:00.000Z')
+    expect(dueOf(ended, { cursor }, NOW, LATE)).toMatchObject({ firing: null, missed: [] })
+    expect(runComingAt(ended, {}, NOW, LATE)).toBe('2026-11-27T02:00:00.000Z')
+    // its time has come, long after the end: it fires, alone
+    const then = Date.parse('2026-11-27T02:00:30.000Z')
+    expect(dueOf(ended, { cursor }, then, LATE).firing).toEqual({ dueAt: '2026-11-27T02:00:00.000Z', wake: { at: '2026-11-27T02:00:00.000Z', why: 'Look again', bySession: null }, crons: [] })
+    // fired and off the task: nothing is left
+    expect(nextRunOfSchedule({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, then)).toBeNull()
+    // "off" speaks of the repeating times: past the end they are, with a wake-up still to fire or without
+    expect([scheduleIsOff(ended, NOW), scheduleIsOff({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, then)]).toEqual([true, true])
+    // a pause holds the wake-up too
+    expect(nextRunOfSchedule({ ...ended, paused: true }, NOW)).toBeNull()
+    expect(dueOf({ ...ended, paused: true }, { cursor }, then, LATE).firing).toBeNull()
   })
   it('no schedule, and a cron that is none, are never due', () => {
     expect(dueOf(null, { cursor }, NOW, LATE).firing).toBeNull()

@@ -4,8 +4,9 @@ import type { DelegationFields, ScheduleFields } from './delegation.js'
 /**
  * A task's schedule (decision task-schedules-live-in-the-brain; brain schema 24): delegation.schedule is the only place
  * a schedule lives. It holds repeating times (crons, read in time_zone) and at most one wake-up (at, with its reason
- * why and the session that set it, by_session); paused and ends_at hold for the whole schedule. The next run is
- * computed from it, never stored, and the task's text says what each time is for.
+ * why and the session that set it, by_session). paused holds for the whole schedule; ends_at ends the repeating times
+ * and leaves the wake-up alone, which fires at its own time. The next run is computed from it, never stored, and the
+ * task's text says what each time is for.
  *
  * The cockpit of the task's owner fires it. What only that machine needs it keeps in a local record per task
  * (domain/job.ts): among it the cursor the crons are due after and the wake-up it fired last.
@@ -86,13 +87,16 @@ function nextOf(cron: string, zone: string, after: number): number | null {
   }
 }
 
-/** The schedule fires nothing now: paused, or past its end. */
+/** The repeating times fire nothing now: the schedule is paused, or past its end. */
 const isOff = (schedule: ScheduleFields, now: number): boolean => {
   const ends = time(schedule.ends_at)
   return Boolean(schedule.paused) || (ends !== null && now > ends)
 }
 
-/** The schedule fires nothing at `now`: there is none, it is paused, or its end has passed. */
+/**
+ * The schedule's repeating times fire nothing at `now`: there is none, it is paused, or its end has passed. The
+ * wake-up is not the end's: a schedule past its end may still hold one that fires at its time (dueOf).
+ */
 export function scheduleIsOff(schedule: ScheduleFields | null | undefined, now: number): boolean {
   const s = tidy(schedule)
   return !s || isOff(s, now)
@@ -106,23 +110,22 @@ export function sameInstant(a: string | null | undefined, b: string | null | und
 
 /**
  * When the schedule fires next after `now` (ISO): the earliest of its wake-up and each repeating time's next one.
- * Null: no schedule, paused, ended (nothing at or before ends_at is left), or no time ahead. A wake-up that has passed
- * is not ahead: it is due (dueOf), not next.
+ * Null: no schedule, paused, or no time ahead (the repeating times have ended: none at or before ends_at is left, and
+ * no wake-up is ahead). ends_at ends the repeating times only: a wake-up ahead is next whatever the end says. A
+ * wake-up that has passed is not ahead: it is due (dueOf), not next.
  */
 export function nextRunOfSchedule(schedule: ScheduleFields | null | undefined, now: number): string | null {
   const s = tidy(schedule)
-  if (!s || isOff(s, now)) return null
+  if (!s || s.paused) return null
   const times: number[] = []
   const at = time(s.at)
   if (at !== null && at > now) times.push(at)
+  const ends = time(s.ends_at)
   for (const cron of s.crons ?? []) {
     const next = nextOf(cron, s.time_zone ?? 'UTC', now)
-    if (next !== null) times.push(next)
+    if (next !== null && (ends === null || next <= ends)) times.push(next)
   }
-  if (times.length === 0) return null
-  const next = Math.min(...times)
-  const ends = time(s.ends_at)
-  return ends !== null && next > ends ? null : iso(next)
+  return times.length === 0 ? null : iso(Math.min(...times))
 }
 
 /** What this cockpit remembers of a task's schedule (the local record, domain/job.ts). */
@@ -152,10 +155,11 @@ export interface ScheduleDue {
  *   - A repeating time is due when its first time after the cursor has come; later than `lateLimitMs` it is missed
  *     instead. Each cron gives at most one time per pass: what else fell due while the cockpit was down is not made up.
  *   - A schedule seen for the first time (no cursor) is due from now on: no repeating time of the past fires.
- *   - A paused schedule is never due. The end (ends_at) is judged at the time a time was due, not when the cockpit
- *     looks: a time due at or before the end still fires when the pass comes just after it (a repeating time within
- *     the late limit, as always), a time due after the end never does. For a paused schedule and one past its end
- *     the cursor moves to now, so nothing from that time is made up afterwards.
+ *   - A paused schedule is never due. The end (ends_at) ends the repeating times, and is judged at the time a time
+ *     was due, not when the cockpit looks: a repeating time due at or before the end still fires when the pass comes
+ *     just after it (within the late limit, as always), one due after the end never does. The wake-up is independent
+ *     of the end: it fires at its time, also after it. For a paused schedule and one past its end the cursor moves
+ *     to now, so nothing from that time is made up afterwards.
  *
  * The caller keeps `cursor` at once. The wake-up has fired only when a run that carries it got to a session: then the
  * caller sets firedWake to its at and clears it on the task; until then it is due again at every pass.
@@ -168,7 +172,7 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
   const inTime = (due: number) => ends === null || due <= ends
 
   const at = time(s.at)
-  const wake: DueWake | null = at !== null && at <= now && inTime(at) && at !== time(state.firedWake)
+  const wake: DueWake | null = at !== null && at <= now && at !== time(state.firedWake)
     ? { at: iso(at), why: s.why ?? null, bySession: s.by_session ?? null }
     : null
 

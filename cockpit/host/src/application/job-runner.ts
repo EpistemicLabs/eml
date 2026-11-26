@@ -267,7 +267,7 @@ export class JobRunner {
       if (run.status !== 'starting') continue
       // Its new session got far enough to exist: it has the prompt.
       if (run.sessionId && run.newSession && this.deps.sessionState(run.sessionId) !== 'queued') {
-        this.wakeFired(run)
+        this.saidWakeFired(run)
         this.update(run, { status: 'started', startedAt: run.startedAt ?? new Date(this.now()).toISOString() })
         continue
       }
@@ -692,7 +692,12 @@ export class JobRunner {
     const before = this.deps.store.get(run.jobId)
     this.deps.store.dropRun(run)
     const after = this.deps.store.get(run.jobId)
-    if (before && after?.end && after.runCount < before.runCount && !countsToEnd(run)) this.deps.store.put({ ...after, end: { afterRuns: after.end.afterRuns - 1 } })
+    if (!before || !after?.end) return
+    const numberBack = after.runCount < before.runCount
+    if (numberBack && !countsToEnd(run)) this.deps.store.put({ ...after, end: { afterRuns: after.end.afterRuns - 1 } })
+    // A run a repeating time fired whose number stays taken (a later run has a higher one): the end moves along
+    // instead, so the run that never happened does not count toward it.
+    else if (!numberBack && countsToEnd(run)) this.deps.store.put({ ...after, end: { afterRuns: after.end.afterRuns + 1 } })
   }
 
   /** A time that never ran: missed or skipped, kept in the history without a run number. */
@@ -742,6 +747,9 @@ export class JobRunner {
       message: run.trigger !== 'schedule' && run.trigger !== 'manual',
     }
     const message = firedText(run, { id: task.id, name }, now, this.deps.timeZone())
+    // The wake-up this text names. Only it has fired once a session has the text: one that joins the run after this
+    // point (while the start is under way) is not in the text, and stays due.
+    const saidWake = run.fired?.wake?.at
     const unwakeable = new Set<string>()
     for (;;) {
       const decision = decideFiring(await this.factsOf(space, task, fired, unwakeable))
@@ -755,6 +763,15 @@ export class JobRunner {
           this.deps.log(`[jobs] ${tagOf(task.id)}: its wake-up stays due, ${SKIPPED_WORKING}`)
           return 'skipped'
         }
+        if (run.trigger === 'schedule') {
+          // A repeating time that never ran is no run: its number is given back and it does not count toward an end
+          // after so many runs. It is kept as a skipped time, like one that was skipped before a run was made.
+          const dropped = this.current(run)
+          this.drop(dropped)
+          this.record(task.id, dropped.dueAt, 'skipped', SKIPPED_WORKING, rest)
+          this.deps.log(`[jobs] ${tagOf(task.id)}: a time due ${dropped.dueAt} is skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
+          return 'skipped'
+        }
         this.update(run, { status: 'skipped', note: SKIPPED_WORKING, finishedAt: new Date(this.now()).toISOString(), ...(wake ? { fired: rest } : {}) })
         this.deps.log(`[jobs] ${tagOf(task.id)}: run ${run.number} skipped, ${SKIPPED_WORKING}${wake ? '; its wake-up stays due' : ''}`)
         return 'skipped'
@@ -764,7 +781,7 @@ export class JobRunner {
         if (!this.deps.hasRoom()) return wait(NO_ROOM)
         // A new session: its id is named before the start, so a restart in between finds it (recover).
         const sessionId = randomUUID()
-        this.update(run, { status: 'starting', attempts: this.current(run).attempts + 1, sessionId, newSession: true })
+        this.update(run, { status: 'starting', attempts: this.current(run).attempts + 1, sessionId, newSession: true, saidWake })
         const checkpoint = delegationOf(task)?.checkpoint ?? 'none'
         const prompt = stepPrompt({ id: task.id, title: name, content: task.content ?? '', startedBy: startedBy(run), ofJob: true }, checkpoint)
         const problem = this.deps.startWorker(this.deps.store.get(record.id) ?? record, task, sessionId, `${prompt}\n\n${message}`)
@@ -779,7 +796,7 @@ export class JobRunner {
       const sessionId = decision.sessionId
       if (!this.deps.sessionRuns(sessionId) && !this.deps.hasRoom()) return wait(NO_ROOM)
       const before = this.current(run)
-      this.update(run, { status: 'starting', attempts: before.attempts + 1, sessionId, newSession: false })
+      this.update(run, { status: 'starting', attempts: before.attempts + 1, sessionId, newSession: false, saidWake })
       const outcome = await this.deps.deliver(sessionId, message)
       if (outcome === 'delivered' || outcome === 'resumed') {
         this.started(run)
@@ -796,11 +813,26 @@ export class JobRunner {
 
   private started(run: JobRun): void {
     const at = new Date(this.now()).toISOString()
-    // The wake-up the run carries has fired now, and not before: remembered before the run counts as started.
-    this.wakeFired(this.current(run))
+    // The wake-up the run's text named has fired now, and not before: remembered before the run counts as started.
+    this.saidWakeFired(run)
     this.update(run, { status: 'started', startedAt: at, note: null })
     const record = this.deps.store.get(run.jobId)
     if (record) this.deps.store.put({ ...record, lastRunAt: at })
+  }
+
+  /**
+   * The run's session has its text: the wake-up the text named has fired. A wake-up the run carries that the text did
+   * not name (it joined while the start was under way) has not: it comes off this run, stays on the task, and is due
+   * again at the next read.
+   */
+  private saidWakeFired(run: JobRun): void {
+    const current = this.current(run)
+    const wake = current.fired?.wake
+    if (!wake) return
+    if (sameInstant(wake.at, current.saidWake)) return this.wakeFired(current)
+    const { wake: _unsaid, ...rest } = current.fired!
+    this.update(run, { fired: rest })
+    this.deps.log(`[jobs] ${tagOf(run.jobId)}: a wake-up joined run ${run.number} after its text was built: it stays due`)
   }
 
   private current(run: JobRun): JobRun {

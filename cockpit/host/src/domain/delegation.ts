@@ -28,7 +28,10 @@ export interface ScheduleFields {
   time_zone?: string
   /** The whole schedule is paused. */
   paused?: boolean
-  /** No firing after this time (ISO). */
+  /**
+   * The end of the repeating times (ISO): none of them fires after it. The wake-up is independent of it and fires at
+   * its own time, before the end or after it (domain/task-schedule.ts dueOf).
+   */
   ends_at?: string
 }
 

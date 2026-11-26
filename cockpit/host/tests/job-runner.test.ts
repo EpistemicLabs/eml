@@ -984,7 +984,75 @@ describe('the four-line order', () => {
     world.session('daily', 's-work', true)
     world.now += 2 * MIN
     await runner.tick()
-    expect(runs('daily').map((r) => [r.status, r.number, r.note])).toEqual([['skipped', 1, 'a session of the task was working']])
+    // skipped like a time that never got a run: without a run number, and its number is free again
+    expect(runs('daily').map((r) => [r.status, r.number, r.note])).toEqual([['skipped', 0, 'a session of the task was working']])
+    expect(runs('daily')[0].fired).toEqual({ crons: [{ cron: '0 8 * * 1-5', dueAt: '2026-11-10T00:00:00.000Z' }], timeZone: ZONE })
+    expect(world.store.get('daily')).toMatchObject({ runCount: 0 })
+  })
+
+  it('a repeating time skipped at its attempt does not count toward max runs: the schedule still gets the runs it was set to have', async () => {
+    world.task('twice', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('twice')!, end: { afterRuns: 2 } })
+    // 01:00: no room, and by the time there is room a session of the task works
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    world.room = true
+    world.session('twice', 's-work', true)
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(runs('twice').map((r) => [r.status, r.number])).toEqual([['skipped', 0]])
+    expect(world.store.get('twice')).toMatchObject({ runCount: 0, end: { afterRuns: 2 } })
+    // 02:00 and 03:00 run: these are its two runs, numbered 1 and 2
+    world.sessions = []
+    for (let hour = 2; hour <= 3; hour++) {
+      world.now = Date.parse('2026-11-09T00:00:10Z') + hour * HOUR
+      await runner.tick()
+      world.statuses.set(world.started.at(-1)!.sessionId, 'done')
+    }
+    expect(runs('twice').map((r) => [r.status, r.number])).toEqual([['skipped', 0], ['finished', 1], ['started', 2]])
+    expect(world.edits).toEqual([])
+    world.now += 2 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its repeating times ended after the runs they were set to have.' }])
+  })
+
+  it('a wake-up that joins a run while its start is under way has fired only if the text the session got named it: unnamed, it stays on the task and fires on its own', async () => {
+    world.task('mail', { at: '2026-11-09T00:30:00.000Z', why: 'Check the reply.' })
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }], cursor: '2026-11-09T00:00:00.000Z' })
+    world.now = Date.parse('2026-11-09T00:30:05Z')
+    // The message's run is being started (its text is built) when a pass finds the wake-up due and joins it to that run.
+    let joined = false
+    runner = new JobRunner(world.deps({
+      workingElsewhere: async () => {
+        const run = runs('mail').find((r) => r.status === 'waiting')
+        if (run && !joined) {
+          joined = true
+          world.store.updateRun({ ...run, fired: { ...run.fired, wake: { at: '2026-11-09T00:30:00.000Z', why: 'Check the reply.', bySession: null } } })
+        }
+        return false
+      },
+    }))
+    expect(await runner.wake(world.store.get('mail')!, 'mail', '1 new message', 'key-1')).toBe('delivered')
+    expect(joined).toBe(true)
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).not.toContain('wake-up')
+    // not named, so not fired: still on the task, not remembered as fired, and off the run that did not bring it
+    expect(world.scheduleOf('mail')?.at).toBe('2026-11-09T00:30:00.000Z')
+    expect(world.store.get('mail')).toMatchObject({ firedWake: null })
+    expect(runs('mail')[0].fired?.wake).toBeUndefined()
+    // the next pass gives it to a session, with its reason
+    world.states.set(world.started[0].sessionId, 'idle')
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += 2 * MIN
+    await runner.tick()
+    await runner.tick()
+    const texts = [...world.started.slice(1).map((s) => s.text), ...world.delivered.map((d) => d.text)]
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('mail')).toBeNull()
   })
 })
 
