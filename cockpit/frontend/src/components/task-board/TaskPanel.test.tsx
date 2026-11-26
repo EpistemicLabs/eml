@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 
@@ -270,7 +270,7 @@ describe('the task panel', () => {
 describe('the task panel on the task state model (v0.23)', () => {
   const show = (t: BoardTask, handlers: { onHandOver?: () => void; onPark?: (task: BoardTask, until: string) => void } = {}) => render(
     <MemoryRouter><QueryClientProvider client={client}>
-      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
+      <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={handlers.onHandOver ?? (() => {})} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onSchedule={async () => true} onReopen={() => {}} onContinue={async () => true} onPark={handlers.onPark} />
     </QueryClientProvider></MemoryRouter>,
   );
 
@@ -316,28 +316,48 @@ describe('the task panel on the task state model (v0.23)', () => {
   });
 
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
-    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Brief sent', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
+    show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Brief sent', nextRunAt: new Date(NOW + DAY_MS).toISOString(), hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'] } }));
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Run Atlas now' })).toBeTruthy();
-    expect(screen.getByText('repeats on weekdays at 08:00')).toBeTruthy();
+    // its times are in the Schedule section, not on the Delegate line
+    expect(within(screen.getByRole('region', { name: 'Schedule' })).getByText('On weekdays at 08:00')).toBeTruthy();
     cleanup();
     show(task({ turn: 'review', group: undefined, delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: done' } }));
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toContain('Looks good, done');
     expect(screen.queryByRole('button', { name: 'Run Atlas now' })).toBeNull();
   });
 
-  it('says a mission works until its goal, offers Change schedule and Park for the viewer\'s wait', () => {
+  it('says a mission works until its goal, shows its wake-up, offers Add a time and Park for the viewer\'s wait', () => {
     const onHandOver = vi.fn();
     const onPark = vi.fn();
-    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', goal: 'Orders sync both ways', nextRunAt: new Date(NOW + DAY_MS).toISOString(),
+    const at = new Date(NOW + DAY_MS).toISOString();
+    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', goal: 'Orders sync both ways', nextRunAt: at, hasSchedule: true, schedule: { at, why: 'Check whether the supplier answered.', by_session: 's1' },
       waitingOn: { who: 'lasse', kind: 'question', why: 'Which warehouse?', since: new Date(NOW - 60_000).toISOString() } }), { onHandOver, onPark });
     expect(screen.getByText('until the goal is reached')).toBeTruthy();
-    expect(screen.getByText(/^· next check /)).toBeTruthy();
+    const section = within(screen.getByRole('region', { name: 'Schedule' }));
+    expect(section.getByLabelText('Wake-up').textContent).toMatch(/^Wake-up tomorrow \d\d:\d\dCheck whether the supplier answered\.$/);
+    expect(section.getByText(/^Next run tomorrow /)).toBeTruthy();
+    expect(section.queryByRole('list', { name: 'Repeating times' })).toBeNull();
     // the goal sits under the title
     expect(screen.getByLabelText('Goal').textContent).toBe('GoalOrders sync both ways');
     expect(screen.getByText(/You · Which warehouse\?/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Change schedule…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a time…' }));
     expect(onHandOver).toHaveBeenCalledWith(expect.objectContaining({ id: 't' }), 'schedule');
     expect(screen.getByRole('button', { name: /Park this task's wait/ })).toBeTruthy();
+  });
+});
+
+describe('a task without a schedule', () => {
+  it('shows no Schedule section, and none on a closed task that had one', () => {
+    const panel = (t: BoardTask) => render(
+      <MemoryRouter><QueryClientProvider client={client}>
+        <TaskPanel task={t} board={board(t)} now={NOW} sessions={[]} spaces={[]} onClose={() => {}} onOpenTask={() => {}} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onSchedule={async () => true} onReopen={() => {}} onContinue={async () => true} />
+      </QueryClientProvider></MemoryRouter>,
+    );
+    panel(task({ goal: 'Shipped' }));
+    expect(screen.queryByRole('region', { name: 'Schedule' })).toBeNull();
+    cleanup();
+    panel(task({ status: 'resolved', turn: null, group: undefined, schedule: { crons: ['0 8 * * 1-5'] } }));
+    expect(screen.queryByRole('region', { name: 'Schedule' })).toBeNull();
   });
 });

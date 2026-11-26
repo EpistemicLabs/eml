@@ -1,6 +1,6 @@
 // The Inbox's Working now: a column left of the list on a wide screen, a strip of cards above it on a
 // narrow one. A row opens in the Inbox split as an Inbox item does. Grey: agents working need nothing.
-import { type BoardTask, taskName, when } from '@/lib/task-board';
+import { type BoardTask, isDue, taskName, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { type WorkingRow, workingFor } from '@/lib/working-now';
 import { Chip, Dot, FOCUS, LABEL, LINK } from '@/shared/view/ui';
@@ -41,7 +41,7 @@ export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, on
       {rows.length === 0 && (
         <p className="m-0 px-3 py-3 text-ui text-muted-foreground">
           <b className="block font-semibold text-foreground">No agent is working</b>
-          {next[0] ? `Next run ${when(next[0].nextRunAt, now)}: ${taskName(next[0])}` : 'Agents you start or schedule show up here.'}
+          {next[0] ? `${isDue(next[0].nextRunAt, now) ? 'Run due since' : 'Next run'} ${when(next[0].nextRunAt, now)}: ${taskName(next[0])}` : 'Agents you start or schedule show up here.'}
         </p>
       )}
       {rows.map((row) => (
@@ -69,7 +69,7 @@ export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, on
           <span className={cn(LABEL, 'px-3 pt-2.5 pb-1')}>Next runs</span>
           {shown.map((t) => (
             <button key={t.id} type="button" onClick={() => onOpenTask(t)} className={cn('grid grid-cols-[auto_minmax(0,1fr)] gap-2 px-3 py-1 text-left text-caption hover:bg-muted', FOCUS)}>
-              <time className="tabular-nums text-scheduled-ink">{when(t.nextRunAt, now)}</time>
+              <time className="tabular-nums text-scheduled-ink">{isDue(t.nextRunAt, now) ? 'due ' : ''}{when(t.nextRunAt, now)}</time>
               <span className="truncate">{taskName(t)}</span>
             </button>
           ))}

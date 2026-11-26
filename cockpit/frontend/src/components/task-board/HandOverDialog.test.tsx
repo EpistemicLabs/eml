@@ -88,4 +88,37 @@ describe('scheduling a hand-over', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     expect(onSubmit.mock.calls[0][0].schedule).toEqual({ at: '2026-11-21T20:15', timeZone: 'Asia/Makassar' });
   });
+
+  it('one time is the task\'s wake-up and Repeat one more repeating time; how a run goes on is not asked', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const onSubmit = schedule();
+    expect(screen.getByText(/Atlas is woken on this task at that time\. Until then/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    // The model decides it: a repeating time starts a new session, a wake-up continues.
+    expect(screen.queryByText('Each run')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continues the same session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Starts a new session' })).toBeNull();
+    expect(screen.getByText(/on that rhythm until you end it, each time in a new session\. The task sits/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'mondays' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[0][0]).toEqual({ mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Bangkok' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Until the goal is reached' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[1][0].schedule).toEqual({ at: '2026-11-21T09:00', timeZone: 'Asia/Bangkok', untilGoal: true });
+  });
+
+  it('says what it does to the schedule the task has: a new wake-up replaces the one set, a repeating time is added', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const has = task({ delegate: 'atlas', hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'], at: '2026-11-23T02:00:00.000Z' } });
+    render(<HandOverDialog task={has} mode="schedule" agents={['atlas']} desks={[]} now={LATE} onClose={() => {}} onAnswerFirst={() => {}} onSubmit={() => {}} />);
+    expect(screen.getByText(/It replaces the wake-up set for Mon 09:00\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    expect(screen.getByText(/The time is added to those the task repeats at\. The task sits/)).toBeTruthy();
+    cleanup();
+    // The task's repeating times are read in one zone: one more joins it, and the dialog says so.
+    const elsewhere = task({ delegate: 'atlas', hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Asia/Makassar' } });
+    render(<HandOverDialog task={elsewhere} mode="schedule" agents={['atlas']} desks={[]} now={LATE} onClose={() => {}} onAnswerFirst={() => {}} onSubmit={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    expect(screen.getByText(/added to those the task repeats at, and read in their time zone \(Asia\/Makassar\), not yours\./)).toBeTruthy();
+  });
 });

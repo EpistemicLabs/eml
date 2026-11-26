@@ -2,7 +2,8 @@
 // the one thing to do here, so answering comes first; Delegate (a task with you) or Take over (one the agent works on
 // alone), Hand over and Looks good are the direct actions,
 // Done and Not needed sit in the ⋯ menu. A task whose schedule is still on is not closed that way: Looks good
-// approves the run, and the menu has End schedule and close instead. A closed task keeps its chat: writing there reopens it or starts
+// approves the run, and the menu has End schedule and close instead; its schedule and the schedule's controls are a
+// section of their own (ScheduleSection). A closed task keeps its chat: writing there reopens it or starts
 // a follow-up (decision task-closing-and-continuation-rules), and Reopen still reopens without a message.
 import { useEffect, useState } from 'react';
 
@@ -13,7 +14,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, isScheduled, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, isScheduled, type ScheduleAction, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
@@ -21,6 +22,7 @@ import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
 
 import { ContinueComposer } from './ContinueComposer';
 import { AgentBadge, FromOrigin } from './parts';
+import { ScheduleSection } from './ScheduleSection';
 import { TaskRelated } from './TaskRelated';
 
 export const TASK_TITLE_ID = 'task-board-title';
@@ -53,7 +55,7 @@ export function focusReply(): void {
 /** How a closed task ended, in a word. */
 const ENDED: Record<string, string> = { resolved: 'Done', invalidated: 'Dropped', superseded: 'Replaced' };
 
-export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onTakeOver, onReview, onDrop, onEndSchedule, onReopen, onContinue, onPark }: {
+export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClose, onOpenTask, onHandOver, onTakeOver, onReview, onDrop, onEndSchedule, onSchedule, onReopen, onContinue, onPark }: {
   task: BoardTask;
   board: Board;
   now: number;
@@ -73,6 +75,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   onDrop: (task: BoardTask) => void;
   /** End a scheduled task's schedule and close it as done (the ⋯ menu's only entry on a scheduled task). */
   onEndSchedule: (task: BoardTask) => void;
+  /** The schedule's controls and this cockpit's settings for the task: each applies at once, without Undo. True once done. */
+  onSchedule?: (task: BoardTask, action: ScheduleAction) => Promise<boolean>;
   /** Reopen a closed task (owner only), with an optional reason for its journal. */
   onReopen: (task: BoardTask, reason: string) => void;
   /** Writing in a closed task's chat: reopen it with the message, or start a follow-up. False: the text stays in the input. */
@@ -230,9 +234,6 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <dd className="m-0 flex flex-wrap items-center gap-2">
                 {task.delegate ? <AgentBadge handle={task.delegate} /> : <span className="text-muted-foreground">not delegated</span>}
                 {task.group === 'mission' && <span className="text-ui text-muted-foreground">until the goal is reached</span>}
-                {task.group === 'routine' && <span className="text-ui text-muted-foreground">{repeatsText(task.schedule).toLowerCase()}</span>}
-                {task.nextRunAt && <span className="text-ui text-muted-foreground">· {task.group === 'mission' ? 'next check' : 'next'} {when(task.nextRunAt, now)}</span>}
-                {!closed && (task.nextRunAt || task.schedule) && <button type="button" className={LINK} onClick={() => onHandOver(task, 'schedule')}>Change schedule…</button>}
               </dd>
               {task.waitingOn && !closed && (
                 <>
@@ -251,6 +252,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
                 </>
               )}
             </dl>
+
+            {!closed && onSchedule && <ScheduleSection task={task} now={now} onAct={onSchedule} onEndSchedule={onEndSchedule} onAddTime={(t) => onHandOver(t, 'schedule')} />}
 
             {!closed && !asked && task.group !== 'own' && !review ? (
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>
