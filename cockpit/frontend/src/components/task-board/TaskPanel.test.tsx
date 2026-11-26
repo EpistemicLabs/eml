@@ -325,6 +325,19 @@ describe('the task panel on the task state model (v0.23)', () => {
     expect(screen.queryByText(/still running/)).toBeNull();
   });
 
+  it('shows that line on its own when the task has no state box, and not on a closed task', () => {
+    const commands = [{ description: 'Run the tests', since: new Date(NOW - 12 * 60_000).toISOString() }];
+    const line = 'A command is still running (Run the tests, 12 min); the session continues when it finishes.';
+    show(task({ turn: 'review', group: undefined, delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'review', why: 'Review: done' }, commands }));
+    expect(screen.getByText(line)).toBeTruthy();
+    cleanup();
+    show(task({ group: 'own', commands }));
+    expect(screen.getByText(line)).toBeTruthy();
+    cleanup();
+    show(task({ status: 'resolved', turn: 'done', group: undefined, commands }));
+    expect(screen.queryByText(/still running/)).toBeNull();
+  });
+
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
     show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Brief sent', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
