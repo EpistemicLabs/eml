@@ -289,31 +289,45 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   last status reason and project (`domain/session-directory.ts`); a `PostToolUse` hook (`list-agents-hook.ts`) adds
   pinned and desk main sessions, then the most recent, to `ListAgents`, as many as fit under Claude Code's 10,000-character cap. An outside
   service on this machine reads `<home>/message-token` and only reaches workers started with `--wakeable`.
-- **Jobs:** a session schedules work for later with the `schedule` tool (in the chat view's `cockpit` MCP server, next to
-  the status tool) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`): a repeating job (cron) or a one-time task (a date), read
-  in the user's time zone (the page tells the host its browser's zone). At the time the host wakes a fresh worker, the
-  job's own session, or a session that exists, with the job's prompt behind a line saying the cockpit sent it
-  (`domain/job.ts`, `application/job-runner.ts`). Jobs and their last 100 runs live in `<home>/jobs.json`, not in the
-  brain; a job runs in its maker's space with at most its maker's tools. Runs start a few at a time and only with room
-  (the worker check above); a busy target is tried again for up to an hour; a repeating run due more than 6 hours ago
-  (the cockpit was down) is recorded as missed, a one-time run still runs late; a run is skipped while the job's
-  previous one still works; three failures in a row pause the job. A schedule is one
-  trigger of a job; the channel bridge adds mail, Slack and WhatsApp triggers to the same jobs. It reaches the host at
+- **Schedules:** a schedule belongs to a task and lives in the brain (`delegation.schedule`, brain schema 24): repeating
+  times (crons, read in one time zone) and at most one wake-up (a time, its reason, the session that set it); one pause
+  and one end for the whole schedule (`domain/task-schedule.ts`, written only through
+  `application/task-schedule-write.ts`). An agent sets it in two ways. Ending a turn with a time (`end_turn`,
+  `next.when`) sets the wake-up of the session's task and replaces the one it had; a turn without a time clears the
+  wake-up only when that session set it, a hand-over to the owner clears it whoever did, and a task that has a next run
+  needs no time (`application/turn-wake.ts`, `domain/turn-end.ts`). The `schedule` tool (in the chat view's `cockpit`
+  MCP server, next to `end_turn`) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`) adds a repeating time, sets the wake-up,
+  pauses, resumes, ends or runs a task's schedule; the task is `task_id`, the caller's own (`target self`), or a new one
+  made from name and prompt (`application/jobs.ts`, `domain/schedule-tool.ts`). What a time is for stands in the task's
+  text. The cockpit of the task's owner fires it (`application/job-runner.ts`): a session of the task that works skips
+  a due time, one that waits on the owner's answer gets it as a message, a due wake-up continues the session that set
+  it, anything else starts a new session; its prompt is built from the task, behind a line saying the cockpit sent it and
+  what fired (`domain/firing-order.ts`, `domain/run-text.ts`). What only this machine needs sits in one record per
+  task in `<home>/jobs.json` (`domain/job.ts`), with its last 100 runs: where the schedule stands, who hears of a run,
+  the tools of the task's sessions (never more than its maker's), an end after so many runs, the channels. Runs start a
+  few at a time and only with room (the worker check above); a busy session is tried again for up to an hour; a
+  repeating time due more than 6 hours ago (the cockpit was down) is recorded as missed, a wake-up still fires late;
+  three failures in a row pause the schedule. At most 100 open tasks of a space hold a schedule. The channel bridge
+  wakes the same tasks for mail, Slack and WhatsApp. It reaches the host at
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
-  space), reads the jobs listening on a channel (paused ones marked, so their mail still waits for them), and wakes one with a short text and an idempotency key; the host
-  decides which session that reaches and answers delivered, retry or refused.
+  space), reads the tasks listening on a channel (held ones marked, so their mail still waits for them), and wakes one
+  with a short text and an idempotency key; a message is never skipped: the host decides which session it reaches and
+  answers delivered, retry or refused.
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
-  (`infrastructure/channel-bridge/`). A channel job's session gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
+  (`infrastructure/channel-bridge/`). A session started for a task that listens on a channel gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
   `msg_reply` (`dist/channel-bridge-mcp.cjs`), no Bash and of its space's MCP servers only the brain
   (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
   skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
   cockpit token in the host.
-- **Jobs view:** the header's **Jobs** shows every space's jobs with their next and last runs (a missed run stands
-  out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
-  run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
-  session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
-  the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
+- **A schedule's controls:** pause, resume, run now, remove one repeating time and End schedule are commands on the
+  task (`/api/v1/tasks/<id>/…`, `tasks-api.ts`); the user's own decisions for this machine (their OK for new channel
+  addresses, send or draft, the Limited switch, lent tools) and the task's last runs are under
+  `/api/v1/tasks/<id>/record` (`application/task-record.ts`). What a run needs from the user shows in the review
+  section on the run's session (Needs you, Check this). A task that could not run, or whose schedule the cockpit paused
+  after three failures, has no session saying so, so its newest run session (else whoever set it up) shows it as
+  "Needs you". Everything that tells the user outside the cockpit goes through a `Notifier` (`notifications.ts`),
+  which web push implements.
 - **Notifications (web push):** Settings › Notifications turns push on per device; on an iPhone only in the cockpit
   added to the home screen, and only over HTTPS (`tailscale serve`). Needs you, Check this and a new result reach every
   subscribed device with the session's name, its project and what it said; a tap opens that session. While the user
@@ -323,20 +337,20 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   service, outbound only: Apple or Google see the size and time of a message, not its text. The key pair and the
   devices live in `<home>/push.json` (owner-only); the page's routes are in `push-api.ts`, the service worker in
   `frontend/public/sw.js`.
-- **Goal and wake-ups:** a job carries the goal its agent set (`goal`); every run's first line states it and asks
-  the session to report done only once it is reached, and until then to set its next wake-up (`update` with `at`)
-  unless a repeating schedule continues it. `finish` ends a job whose goal is reached. Nothing wakes a job on its own
-  beyond its triggers.
-- **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
-  mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
-  clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
-  view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
-  channel tools act for that job on every resume.
-- **Limited jobs and grants:** every job starts with its maker's tools; the user can mark one **limited** (the Jobs
-  view's switch, the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
-  servers only the brain; web tools stay, and the schedule tool reaches only their own job (next wake-up, goal,
+- **Goal and wake-ups:** the task's goal says when the work is done. Until it is reached a run sets its next wake-up
+  before it stops (ending its turn with a time, or the schedule tool's `update` with `at`), unless a repeating time
+  brings it back; once it is reached it ends the schedule (`finish`) and hands the result over. A task that has a
+  schedule is never closed by a run: its owner ends the schedule and closes it. Nothing fires on a closed task.
+- **Mail:** the schedule tool's `mail: { domains, addresses }` puts a mail channel on the task's record: the channel
+  bridge then wakes the task when such mail arrives. Replies are drafts, and it reacts only once the user gave their OK
+  on the task; adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
+  A session a firing starts carries the task's id in its ledger entry (`jobId`, the record's id), so its channel tools
+  act for that task on every resume. A shared space's tasks get no mail channel.
+- **Limited tasks and grants:** a task's sessions start with its maker's tools; the user can mark the task's record
+  **limited** (the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
+  servers only the brain; web tools stay, and the schedule tool reaches only their own task (next wake-up, goal,
   finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
-  ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.
+  ends at its time or when the task's session reports done, and the host restarts the session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
 - **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
   folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session.
