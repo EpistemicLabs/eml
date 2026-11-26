@@ -3,6 +3,7 @@ import { changedMeanwhile, jobMigrationReport, MIGRATED_AWAY, planJobMigration, 
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
+import { formatInZone } from '../src/domain/schedule.js'
 
 // Thursday 26 November 2026, 10:00 UTC.
 const NOW = Date.parse('2026-11-26T10:00:00.000Z')
@@ -403,15 +404,55 @@ describe('planning jobs onto their tasks', () => {
     expect(report).toContain('2 jobs on 1 task: 1 moved, 0 dropped, 0 left as they are. Of the jobs, 1 moved and 1 did not.')
   })
 
-  it('a prompt the task\'s text says already is not appended: the same words, or a prompt a scheduled hand-over built from the task', () => {
-    const said = task('t1', { content: 'Every morning: Write the brief. Then send it.' })
+  it('a prompt the task\'s text says already is not appended: the whole paragraph the migration would add, or a prompt a scheduled hand-over built from the task', () => {
+    const said = task('t1', { content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' })
     expect(plan([cron('0 8 * * 1-5')], [said]).tasks[0].brain).toEqual({ setSchedule: true, content: null, appended: [], journal: [] })
+    // the bare prompt somewhere in the text is not that paragraph: a short prompt such as "Continue" is not taken as said
+    const short = plan([cron('0 8 * * 1-5', { prompt: 'Continue' })], [task('t1', { content: 'Continue reading the docs, then write the brief.' })]).tasks[0]
+    expect(short.brain).toMatchObject({ appended: ['Every 0 8 * * 1-5: Continue'], content: 'Continue reading the docs, then write the brief.\n\nEvery 0 8 * * 1-5: Continue' })
+    expect(plan([cron('0 8 * * 1-5')], [task('t1', { content: 'Every morning: Write the brief. Then send it.' })]).tasks[0].brain?.appended).toEqual(['Every 0 8 * * 1-5: Write the brief.'])
     const built = cron('0 8 * * 1-5', { prompt: 'A scheduled job started you for "task-t1" (task t1).\nKeep the customer informed.\n\nNo checkpoint: do this run to the end on your own; ask only when you cannot go on.' })
     const [t] = plan([built]).tasks
     expect(t.brain).toMatchObject({ content: null, appended: [] })
     expect(t.jobs[0].what).toContain('its prompt is in the task\'s text already')
     // a task without text gets the paragraph as its text
     expect(plan([cron('0 8 * * 1-5')], [task('t1', { content: '' })]).tasks[0].brain?.content).toBe('Every 0 8 * * 1-5: Write the brief.')
+  })
+
+  it('a one-time job whose prompt is longer than a wake-up\'s reason holds loses nothing: the whole prompt is its own paragraph of the task\'s text, and the reason points to it', () => {
+    const long = `Check the three invoices. ${'Then look at the next one. '.repeat(90)}The last word is zebra.`
+    expect(long.length).toBeGreaterThan(2000)
+    const when = `${formatInZone(Date.parse(AHEAD), 'Europe/Berlin')} (Europe/Berlin)`
+    const [t] = plan([once(AHEAD, { prompt: long })]).tasks
+    expect(t.schedule).toMatchObject({ at: AHEAD, why: `See the task's text: the paragraph that starts 'At ${when}'.` })
+    expect(t.brain).toMatchObject({ appended: [`At ${when}: ${long}`], content: `Keep the customer informed.\n\nAt ${when}: ${long}` })
+    expect(t.brain!.content!.endsWith('The last word is zebra.')).toBe(true)
+    expect(t.brain!.journal).toEqual(['Schedules moved onto tasks: what its one-time job was to do is longer than a wake-up\'s reason holds, so it was added to the task\'s text in full, as "At <time>: …".'])
+    expect(t.jobs[0].what).toBe(`once at ${AHEAD} → the task's wake-up, set by session sess-123; its prompt is longer than a wake-up's reason holds (2000 characters): it is appended to the task's text in full, and the reason points to it`)
+    // planned again against what it wrote: nothing more
+    const again = plan([once(AHEAD, { prompt: long })], [task('t1', { content: t.brain!.content! }, { delegation: { agent: 'atlas', schedule: t.schedule! } })]).tasks[0]
+    expect(again.brain).toBeNull()
+    // a prompt that fits is the reason itself, as before
+    expect(plan([once(AHEAD)]).tasks[0]).toMatchObject({ schedule: { why: 'Look whether the reply came.' }, brain: { appended: [] } })
+  })
+
+  it('a job\'s goal is carried: it becomes the task\'s goal when the task has none; a task that has one keeps it, and the journal quotes the job\'s', () => {
+    const j = cron('0 8 * * 1-5', { goal: 'The customer hears from us every morning.', createdAt: '2026-11-01T00:00:00.000Z' })
+    const [none] = plan([j]).tasks
+    expect(none.brain).toMatchObject({ goal: 'The customer hears from us every morning.' })
+    expect(none.brain!.journal.join(' ')).not.toContain('goal')
+    expect(jobMigrationReport({ tasks: [none], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: true })).toContain('- The task gets the goal of job "Daily brief": "The customer hears from us every morning."')
+    const [has] = plan([j], [task('t1', {}, { goal: 'Keep the customer.' })]).tasks
+    expect(has.brain!.goal).toBeUndefined()
+    expect(has.brain!.journal).toContain('The job "Daily brief" had a goal of its own when schedules moved onto tasks; the task keeps its goal, so the job\'s is noted here: "The customer hears from us every morning."')
+    // two jobs with a goal: the older one's is the task's, the other's is quoted
+    const second = cron('0 9 * * *', { name: 'Second', goal: 'Nothing is left open.', createdAt: '2026-11-02T00:00:00.000Z' })
+    const [two] = plan([j, second]).tasks
+    expect(two.brain).toMatchObject({ goal: 'The customer hears from us every morning.' })
+    expect(two.brain!.journal).toContain('The job "Second" had a goal of its own when schedules moved onto tasks; the task keeps its goal, so the job\'s is noted here: "Nothing is left open."')
+    // a goal alone is a reason to write the task
+    const mirrored = task('t1', { content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' }, { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } } })
+    expect(plan([j], [mirrored]).tasks[0].brain).toEqual({ setSchedule: false, content: null, appended: [], journal: [], goal: 'The customer hears from us every morning.', goalOf: 'Daily brief' })
   })
 
   it('a job that has ended leaves only its runs, as history under its id', () => {

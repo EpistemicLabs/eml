@@ -120,8 +120,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     await w.migration.run()
     const posts = w.posts.length
     const file = readFileSync(w.file, 'utf8')
-    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
-    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
+    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 })
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 })
     expect(w.posts).toHaveLength(posts)
     expect(readFileSync(w.file, 'utf8')).toBe(file)
     expect(w.moved).toEqual([['j1', 't1']])
@@ -301,7 +301,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a home without version 1 jobs has nothing to do', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
     const migration = createJobMigration({ store: new JobStore(file), spaces: () => { throw new Error('not asked') }, brain: () => null, me: 'member', moveSessions: () => {}, now: () => NOW, log: () => {} })
-    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
+    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 })
     expect(existsSync(file)).toBe(false)
   })
 })
@@ -530,7 +530,7 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     const w = world([], [task('later', stale)])
     writeFileSync(w.file, JSON.stringify({ version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }))
     expect(new JobStore(w.file).awaitsLeftoverLook(null)).toBe(false)
-    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 })
     expect(w.posts).toEqual([])
     expect(w.byId.get('later')!.properties.delegation).toEqual(stale.delegation)
   })
@@ -614,6 +614,24 @@ describe('the report of a real run is kept, and the user is told of what did not
     expect((await w.migration.run()).jobs).toEqual({ moved: 1, notMoved: 0 })
     expect(w.saved).toHaveLength(2)
     expect(w.notices).toHaveLength(1)
+  })
+
+  it('tells the user of a schedule that arrived paused because one of its repeating jobs was, though every job moved', async () => {
+    const w = world([v1('j1'), v1('j2', { name: 'Evening', triggers: [{ type: 'schedule', cron: '0 18 * * *', timeZone: 'UTC' }], paused: true })], [task('t1')])
+    w.spaces.pop()
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ jobs: { moved: 2, notMoved: 0 }, arrivedPaused: 1 })
+    expect(w.byId.get('t1')!.properties.delegation).toMatchObject({ schedule: { crons: ['0 8 * * 1-5', '0 18 * * *'], paused: true } })
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 2 moved, 0 not moved, 1 schedule arrived paused — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
+  })
+
+  it('writes a job\'s goal onto a task that has none, in the same call as its schedule', async () => {
+    const w = world([v1('j1', { goal: 'The customer hears from us every morning.' })], [task('t1')])
+    w.spaces.pop()
+    await w.migration.run()
+    expect(w.posts).toHaveLength(1)
+    expect(w.posts[0].body).toMatchObject({ goal: 'The customer hears from us every morning.', delegation: { schedule: { crons: ['0 8 * * 1-5'] } } })
+    expect(w.notices).toEqual([])
   })
 
   it('a report that cannot be written does not stop the migration', async () => {

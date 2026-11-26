@@ -1,7 +1,7 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
-import { everyParagraph, isOpenTask, nameOfTask, narrowedProfile, withParagraph } from './schedule-tool.js'
+import { atParagraph, atReason, everyParagraph, isOpenTask, nameOfTask, narrowedProfile, withParagraph } from './schedule-tool.js'
 import { firesHere, firingOf, ownerOf } from './task-owner.js'
 import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
@@ -16,10 +16,14 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  * that have not ended give:
  *
  *   - a repeating job → its cron into the task's crons, read in the zone of the task's first repeating job; its
- *     prompt appended to the task's text as "Every <cron>: <prompt>" unless the text says it already (or the prompt
- *     was built from the task itself, as a scheduled hand-over's is);
+ *     prompt appended to the task's text as "Every <cron>: <prompt>" unless the text holds that very paragraph
+ *     already (the schedule tool's check, domain/schedule-tool.ts withParagraph), or the prompt was built from the
+ *     task itself, as a scheduled hand-over's is;
  *   - a one-time job still ahead → the task's wake-up: at, why (its prompt) and by_session (the session it wakes).
- *     A task has one wake-up: of two, the earlier one is it, the later one's time and prompt go into the journal;
+ *     A task has one wake-up: of two, the earlier one is it, the later one's time and prompt go into the journal.
+ *     A prompt longer than the reason holds is not cut: it is appended to the task's text as "At <time>: <prompt>",
+ *     and the reason points to that paragraph;
+ *   - a job's goal → the task's goal when it has none; otherwise the journal quotes it;
  *   - a one-time job whose time has passed and that never ran → not dropped: it is the task's wake-up with its past
  *     time, which the engine fires late; when the task gets its wake-up from another job, its prompt goes into the
  *     journal, and the report says so. One that has run has nothing to carry over;
@@ -94,7 +98,7 @@ export interface JobMigrationTask {
   content?: string
   /** The task's author: its owner when nobody is assigned (domain/task-owner.ts ownerOf). */
   ingested_by?: string | null
-  properties?: { delegation?: DelegationFields | null; assignee_ids?: string[]; display_title?: string } | null
+  properties?: { delegation?: DelegationFields | null; assignee_ids?: string[]; display_title?: string; goal?: string } | null
 }
 
 /** A task to make for a job without one (application/task-state-migration.ts routineTask). */
@@ -153,6 +157,9 @@ export interface TaskMigration {
     content: string | null
     appended: string[]
     journal: string[]
+    /** The goal the task gets: a job's, on a task that has none. `goalOf`: that job's name. */
+    goal?: string
+    goalOf?: string
   } | null
   /** The task's local record; its id and taskId are '' until the task exists (stepOf fills them in). */
   record: Job | null
@@ -279,6 +286,8 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const lines: TaskMigration['jobs'] = ended.map((j) => ({ id: j.id, name: j.name, what: 'had ended: its runs stay as history', kind: 'history' }))
   const journal: string[] = []
   const appended: string[] = []
+  let appendedCrons = 0
+  let appendedWake = false
   const say = (job: JobV1, what: string, kind: JobFate = 'moved') => lines.push({ id: job.id, name: job.name, what, kind })
 
   const repeating = live.filter((j) => scheduleTriggerOf(j)?.cron !== undefined)
@@ -326,11 +335,14 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     }
     kept.push(job)
     // The schedule tool's paragraph and its way of adding it: what either wrote, the other finds in the text.
+    // "Says it already" is the tool's check: the whole paragraph, never the bare prompt.
     const paragraph = everyParagraph(cron, job.prompt)
-    const said = create !== null || content.includes(paragraph) || content.includes(job.prompt.trim()) || builtFromTask(job.prompt, task.id)
+    const added = withParagraph(content, paragraph)
+    const said = create !== null || added === null || builtFromTask(job.prompt, task.id)
     if (!said) {
-      content = withParagraph(content, paragraph) ?? content
+      content = added
       appended.push(paragraph)
+      appendedCrons += 1
     }
     say(job, `cron "${cron}" (${zone}) → a repeating time of the task${has ? ' (it has that time already)' : ''}${job.paused && pausedCrons.includes(job) ? '; it was paused, so the task\'s whole schedule is paused' : ''}; its prompt ${said ? 'is in the task\'s text already' : 'is appended to the task\'s text'}`)
   }
@@ -357,12 +369,28 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     }
     wake = job
     const bySession = sessionOf(job)
-    schedule = setWake(schedule, { at, why: job.prompt, bySession, timeZone: scheduleTriggerOf(job)!.timeZone })
+    const trigger = scheduleTriggerOf(job)!
+    // A prompt longer than a wake-up's reason holds is not cut: it is a paragraph of the task's text, in full, and
+    // the reason points to it. Its time is worded in the zone the task's times are read in.
+    const long = job.prompt.trim().length > SCHEDULE_LIMITS.whyChars
+    let why = job.prompt
+    if (long) {
+      const zone = schedule?.crons?.length ? schedule.time_zone ?? 'UTC' : trigger.timeZone
+      const paragraph = atParagraph(at, zone, job.prompt)
+      const added = withParagraph(content, paragraph)
+      if (added !== null) {
+        content = added
+        appended.push(paragraph)
+        appendedWake = true
+      }
+      why = atReason(at, zone)
+    }
+    schedule = setWake(schedule, { at, why, bySession, timeZone: trigger.timeZone })
     kept.push(job)
-    const cutNote = job.prompt.trim().length > SCHEDULE_LIMITS.whyChars ? ` (cut to ${SCHEDULE_LIMITS.whyChars} characters)` : ''
+    const reason = long ? `its prompt is longer than a wake-up's reason holds (${SCHEDULE_LIMITS.whyChars} characters): it is ${appendedWake ? 'appended to the task\'s text in full' : 'in the task\'s text in full already'}, and the reason points to it` : 'its prompt is the reason'
     say(job, late
-      ? `once at ${at} → the task's wake-up, though its time has passed: it never ran, so it fires late, at the cockpit's next look${bySession ? `; set by session ${bySession.slice(0, 8)}` : ''}; its prompt is the reason${cutNote}`
-      : `once at ${at} → the task's wake-up${bySession ? `, set by session ${bySession.slice(0, 8)}` : ''}; its prompt is the reason${cutNote}`)
+      ? `once at ${at} → the task's wake-up, though its time has passed: it never ran, so it fires late, at the cockpit's next look${bySession ? `; set by session ${bySession.slice(0, 8)}` : ''}; ${reason}`
+      : `once at ${at} → the task's wake-up${bySession ? `, set by session ${bySession.slice(0, 8)}` : ''}; ${reason}`)
   }
   for (const job of once.filter((j) => !ahead.includes(j) && !overdueOnce.includes(j))) say(job, `once at ${scheduleTriggerOf(job)!.at!} → it has run: no time to carry over`, 'history')
   for (const job of live.filter((j) => !scheduleTriggerOf(j))) say(job, `${describe(job)} → its channel wakes the task`)
@@ -381,9 +409,18 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
 
   const setSchedule = create !== null ? schedule !== null : !sameSchedule(current, schedule)
   // The brain takes a rewrite of a task's text only with a line that says what happened.
-  if (appended.length > 0) journal.unshift(`Schedules moved onto tasks: what ${appended.length === 1 ? 'its repeating job did was' : `its ${appended.length} repeating jobs did was`} added to the task's text, as "Every <cron>: …".`)
-  const brain: TaskMigration['brain'] = setSchedule || appended.length > 0 || journal.length > 0
-    ? { setSchedule, content: appended.length > 0 ? content : null, appended, journal }
+  if (appendedWake) journal.unshift('Schedules moved onto tasks: what its one-time job was to do is longer than a wake-up\'s reason holds, so it was added to the task\'s text in full, as "At <time>: …".')
+  if (appendedCrons > 0) journal.unshift(`Schedules moved onto tasks: what ${appendedCrons === 1 ? 'its repeating job did was' : `its ${appendedCrons} repeating jobs did was`} added to the task's text, as "Every <cron>: …".`)
+  // A job's goal: the task's when it has none (the oldest job's, of several); any other is quoted in the journal.
+  let goal: { text: string; job: string } | null = null
+  for (const job of live) {
+    const text = job.goal?.trim()
+    if (!text) continue
+    if (!task.properties?.goal && !goal) goal = { text, job: job.name }
+    else if (text !== (goal?.text ?? task.properties?.goal)) journal.push(`The job "${job.name}" had a goal of its own when schedules moved onto tasks; the task keeps its goal, so the job's is noted here: "${text}"`)
+  }
+  const brain: TaskMigration['brain'] = setSchedule || appended.length > 0 || journal.length > 0 || goal
+    ? { setSchedule, content: appended.length > 0 ? content : null, appended, journal, ...(goal ? { goal: goal.text, goalOf: goal.job } : {}) }
     : null
 
   // The record: what this machine keeps for the task. Of several jobs the strictest wins: the tools are the narrowest
@@ -589,6 +626,7 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
       } else out.push(t.brain?.setSchedule ? '- No time moves onto the task; the schedule it still shows is cleared.' : '- No time moves onto the task: it has no schedule.')
     } else if (t.brain?.setSchedule) out.push('- The schedule the task still shows is cleared.')
     else if (t.schedule) out.push(`- The task's schedule stays as it is: ${scheduleText(t.schedule)}.`)
+    if (t.brain?.goal) out.push(`- The task gets the goal of job "${t.brain.goalOf}": "${cut(flat(t.brain.goal), 400)}"`)
     for (const text of t.brain?.appended ?? []) out.push(`- Appended to the task's text: "${cut(flat(text), 400)}"`)
     for (const line of t.brain?.journal ?? []) out.push(`- Journal: ${cut(line, 400)}`)
     for (const job of t.jobs) if (job.what) out.push(`- Job "${job.name}" (${job.id.slice(0, 8)}): ${job.what}`)

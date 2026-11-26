@@ -88,6 +88,8 @@ export interface JobMigrationResult {
   jobs: { moved: number; notMoved: number }
   /** Schedules the old mirror had left on tasks without a job, removed in this run. */
   leftovers: number
+  /** Schedules that arrived paused as a whole because one of their repeating jobs was paused, while others ran. */
+  arrivedPaused: number
   /** Where this run's report was kept; null: none was written (nothing was planned, nothing changed since the last one, or it failed). */
   reportFile: string | null
   /** Spaces this run could not look through yet for schedules left without a job: a later pass tries again. */
@@ -217,7 +219,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (task.create) taskId = (await makeRoutineTask(brain, task.create)).id
     if (task.brain && taskId) {
       const text = task.brain.journal.join(' ')
-      const fields = task.brain.content !== null ? { content: task.brain.content } : {}
+      const fields = { ...(task.brain.content !== null ? { content: task.brain.content } : {}), ...(task.brain.goal ? { goal: task.brain.goal } : {}) }
       const schedule = task.schedule
       await editTaskSchedule(brain, taskId, task.brain.setSchedule ? () => schedule : (current) => current, {
         agent: space.agent, ...(text ? { text } : {}), fields, ...(typeof read?.rev === 'number' ? { baseRev: read.rev } : {}),
@@ -251,7 +253,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   const runOnce = async (): Promise<JobMigrationResult> => {
-    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 }
+    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, reportFile: null, unlooked: 0 }
     /** What was not done: for the result and the report as the user reads it (names), and for the log (ids). */
     const failed = (shown: string, logged: string) => {
       result.failed.push(shown)
@@ -326,6 +328,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
         try {
           await applyTask(space, brain, task, task.taskId ? planned.tasks[task.taskId] ?? null : null)
           result[task.outcome] += 1
+          if (task.pausedByJob) result.arrivedPaused += 1
           result.jobs.moved += fates.moved
           result.jobs.notMoved += fates.lost + fates.waits
         } catch (err) {
@@ -364,7 +367,9 @@ export function createJobMigration(deps: JobMigrationDeps) {
         deps.log(`[jobs] migration: the report of this run is in ${result.reportFile}`)
         // Nothing is left out silently: a job that does not fire any more, or not yet, is told with where to read why.
         const stale = result.leftovers > 0 ? `, ${result.leftovers} schedule${result.leftovers === 1 ? '' : 's'} without a job removed` : ''
-        if (result.jobs.notMoved + result.leftovers > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)}${stale} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
+        // A routine that ran before and is paused now is a change the user did not make: said too.
+        const paused = result.arrivedPaused > 0 ? `, ${result.arrivedPaused} schedule${result.arrivedPaused === 1 ? '' : 's'} arrived paused` : ''
+        if (result.jobs.notMoved + result.leftovers + result.arrivedPaused > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)}${stale}${paused} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
       } catch (err) {
         deps.log(`[jobs] migration: its report could not be written: ${(err as Error).message}`)
       }

@@ -76,10 +76,26 @@ export function readAt(text: string, zone: string, now: number, maxAheadMs: numb
 /** The paragraph a repeating time's prompt becomes in the task's text. */
 export const everyParagraph = (cron: string, prompt: string): string => `Every ${cron.trim()}: ${prompt.trim()}`
 
+/** How the paragraph of a wake-up's prompt begins: "At Fri 27 Nov 03:00 (Europe/Berlin)", the time as the page words it, in `zone`. */
+export const atLead = (at: string, zone: string): string => `At ${formatInZone(Date.parse(at), zone)} (${zone})`
+
+/**
+ * The paragraph a wake-up's prompt becomes in the task's text when it is longer than the wake-up's reason holds
+ * (domain/task-schedule.ts SCHEDULE_LIMITS.whyChars): nothing of it is cut, and the reason points here (atReason).
+ */
+export const atParagraph = (at: string, zone: string, prompt: string): string => `${atLead(at, zone)}: ${prompt.trim()}`
+
+/** The reason of a wake-up whose prompt is a paragraph of the task's text. */
+export const atReason = (at: string, zone: string): string => `See the task's text: the paragraph that starts '${atLead(at, zone)}'.`
+
 /** The paragraph the prompt of a mail channel becomes in the text of a task that existed before. */
 export const mailParagraph = (prompt: string): string => `On mail: ${prompt.trim()}`
 
-/** The task's text with the paragraph added as its own; null when the text holds it already (nothing to write). */
+/**
+ * The task's text with the paragraph added as its own; null when the text holds it already (nothing to write). The
+ * one check for "the text says it already", for the schedule tool and the jobs migration: the whole paragraph (its
+ * lead-in and the prompt), never the bare prompt, which a short one such as "Continue" would match anywhere.
+ */
 export function withParagraph(content: string | null | undefined, paragraph: string): string | null {
   const text = (content ?? '').trimEnd()
   if (text.includes(paragraph)) return null
