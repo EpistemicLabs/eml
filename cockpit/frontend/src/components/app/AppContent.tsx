@@ -139,6 +139,7 @@ function AppContentInner() {
     seenTaskSessionsRef.current = taskSessions;
   }, [taskSessions]);
   const { data: providers } = useProviders();
+  paneStore.setProviders(providers);
   paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
   const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;
   React.useEffect(() => {

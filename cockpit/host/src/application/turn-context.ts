@@ -1,5 +1,6 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
+import type { AgentProvider } from '../domain/agent-provider.js'
 import type { TurnContext } from '../domain/turn-end.js'
 import type { SessionLedger } from '../session-ledger.js'
 
@@ -20,10 +21,10 @@ const HANDLES_MS = 5 * 60_000
 
 /**
  * Whether a session can call end_turn: it runs in the chat, and its provider's
- * chat sessions have the tool (domain/agent-provider.ts endTurnTool).
+ * chat sessions have the tool (domain/agent-provider.ts, capability endTurnTool).
  */
-export function hasEndTurnTool(session: { runtime: string } | undefined, provider: { endTurnTool: boolean }): boolean {
-  return session?.runtime === 'sdk' && provider.endTurnTool
+export function hasEndTurnTool(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>): boolean {
+  return session?.runtime === 'sdk' && provider.capabilities.endTurnTool.supported
 }
 
 /**

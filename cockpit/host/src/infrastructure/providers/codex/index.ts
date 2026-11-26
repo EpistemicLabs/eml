@@ -7,7 +7,7 @@ import type {
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
   EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
@@ -137,8 +137,7 @@ class CodexProvider implements AgentProvider {
   readonly label = 'Codex'
   /** Codex assigns the session id itself and reports it with the first hook. */
   readonly adoptsSessionId = false
-  readonly messaging = false
-  readonly endTurnTool = false
+  readonly capabilities = terminalOnly(this.label)
 
   readonly runtime = asAgentRuntime(codexRuntime, 'Settings › Models › Codex › "Set up now" installs it; then reopen this pane.')
   readonly settings = codexSettings
@@ -321,6 +320,10 @@ class CodexProvider implements AgentProvider {
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       default: return null
     }
+  }
+
+  lastReply(payload: Record<string, unknown>): string {
+    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
   }
 
   summary(session: SessionRef): SessionSummary {

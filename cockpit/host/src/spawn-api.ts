@@ -146,7 +146,7 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   if (stepOf) deps.ledger.expectTaskParent(request.id, stepOf)
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
-  const messaging = (provider ?? deps.providers.default()).messaging
+  const messaging = (provider ?? deps.providers.default()).capabilities.messaging.supported
   return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}), ...(givenTask ? { taskId: givenTask } : {}) } }
 }
 

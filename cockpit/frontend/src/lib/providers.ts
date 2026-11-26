@@ -22,6 +22,16 @@ export interface RuntimeState {
   lastResult: RuntimeResult | null;
 }
 
+/** Whether a provider can do something; when not, why (the host's wording). */
+export type Capability = { supported: true } | { supported: false; reason: string };
+
+export interface ProviderCapabilities {
+  /** Sessions can run in the chat view. */
+  chat: Capability;
+  endTurnTool: Capability;
+  messaging: Capability;
+}
+
 export interface AgentProviderInfo {
   id: LLMProvider;
   /** Product name, e.g. "Claude Code". */
@@ -37,6 +47,8 @@ export interface AgentProviderInfo {
   isDefault: boolean;
   /** The provider's own switches; null when it has none here. */
   settings: Record<string, boolean | string> | null;
+  /** What sessions of this provider can do. Missing from a host older than this frontend. */
+  capabilities?: ProviderCapabilities;
 }
 
 const providersKey = ['agent-providers'] as const;
@@ -61,6 +73,16 @@ const send = (method: 'PATCH' | 'POST', body?: unknown): RequestInit => ({
  */
 export function useProviders(options: { refresh?: boolean } = {}) {
   return useQuery({ queryKey: providersKey, queryFn: () => request(options.refresh ? '?refresh=1' : ''), staleTime: 15_000 });
+}
+
+/**
+ * Whether sessions of this provider can run in the chat view. Without the
+ * host's answer (list not loaded, a host that does not send capabilities yet)
+ * only Claude has a chat.
+ */
+export function providerCanChat(providers: AgentProviderInfo[] | undefined, id: string | null | undefined): boolean {
+  const capabilities = providers?.find((provider) => provider.id === id)?.capabilities;
+  return capabilities ? capabilities.chat.supported : id === 'claude';
 }
 
 /**

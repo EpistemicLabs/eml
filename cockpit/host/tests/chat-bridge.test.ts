@@ -65,7 +65,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker; zone?: string; checkSaved?: ChatContext['checkSaved'] } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker; zone?: string; checkSaved?: ChatContext['checkSaved'] } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
@@ -74,7 +74,8 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; conversation?: string }>()
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
-    id: 'claude',
+    id: opts.provider ?? 'claude',
+    capabilities: { chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true } },
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},
@@ -1653,6 +1654,14 @@ describe('ChatBridge', () => {
     bridge.attach(ws as unknown as WebSocket)
     ws.client({ type: 'init', paneId: 'pane', projectId: 'p1', sessionId: 'bad id!' })
     expect(ws.frames[0]).toMatchObject({ type: 'error' })
+  })
+
+  it('refuses a session of a provider without a chat, in the words it always had', async () => {
+    const { bridge, runtimes } = setup({ provider: 'codex', runtimeOf: 'terminal' })
+    const ws = connect(bridge)
+    await flush()
+    expect(ws.frames[0]).toEqual({ type: 'error', message: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' })
+    expect(runtimes).toEqual([])
   })
 
   it('refuses a session the ledger keeps in another space, and starts nothing', async () => {
