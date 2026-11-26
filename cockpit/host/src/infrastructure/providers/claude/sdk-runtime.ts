@@ -50,7 +50,7 @@ const MODES: ModeOption[] = [
 
 /** What a start request means for the CLI. */
 export interface ClaudeStartOptions {
-  /** The session's environment without a login token. */
+  /** The session's environment, with the setup-token in token mode (index.ts launch). */
   env: Record<string, string>
   /** The session's brain space, as the CLI takes it: its own MCP file when its tool profile limits the servers. */
   files: { mcpConfig: string; settings: string }
@@ -64,10 +64,10 @@ export interface ClaudeStartOptions {
 
 /** Reads a start request as Claude Code takes it: from the provider's launch and the session's space. */
 export function claudeStartOptions({ env, launch, space }: Pick<SessionRuntimeStart, 'env' | 'launch' | 'space'>): ClaudeStartOptions {
-  // The SDK never carries a login token: token mode stays in the terminal (index.ts workerRunsInChat).
-  const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...withoutToken } = env
+  // In token mode the launch carries the setup-token (CLAUDE_CODE_OAUTH_TOKEN), as for a
+  // terminal: the CLI under the SDK reads it from its own environment, this session's only.
   return {
-    env: withoutToken,
+    env,
     files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
     strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
     chrome: launch.chrome === true,

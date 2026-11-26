@@ -113,9 +113,9 @@ class ClaudeProvider implements AgentProvider {
     if (configDir) ensureProjectTrusted(projectPath, configDir)
   }
 
-  /** The chat runtime passes no login token: token mode stays in the terminal, except for a runtime, which has its own login. */
-  workerRunsInChat(space: SessionSpace): boolean {
-    return readChatView() && (!!space.runtime || !sessionToken())
+  /** The chat runtime gets the launch's environment, setup-token included: a worker runs in chat in either sign-in mode. */
+  workerRunsInChat(): boolean {
+    return readChatView()
   }
 
   launch(req: LaunchRequest): LaunchSpec {

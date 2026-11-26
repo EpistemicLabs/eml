@@ -84,7 +84,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},
-    launch: () => ({ bin: 'x', args: [], keepRunning: false, env: { PROVIDER_VAR: '1', CLAUDE_CODE_OAUTH_TOKEN: 'never-passed' } }),
+    launch: () => ({ bin: 'x', args: [], keepRunning: false, env: { PROVIDER_VAR: '1', CLAUDE_CODE_OAUTH_TOKEN: 'fake-setup-token' } }),
   }
   const space = {
     id: 'main', url: 'u', token: 't', ledgerKey: null, agent: opts.agent ?? null,
@@ -1285,7 +1285,7 @@ describe('ChatBridge', () => {
     expect(failing.bridge.isRunning('s1')).toBe(false)
   })
 
-  it('starts a new session under its id with the session environment and no login token', async () => {
+  it('starts a new session under its id with the session environment, the launch\'s setup-token included', async () => {
     const { bridge, runtimes, ledgerEntries } = setup()
     connect(bridge)
     await flush()
@@ -1293,7 +1293,8 @@ describe('ChatBridge', () => {
     expect(start.resume).toBe(false)
     expect(start.cwd).toBe('/work')
     expect(start.env).toMatchObject({ PROVIDER_VAR: '1', COCKPIT_URL: 'http://host', COCKPIT_SESSION_ID: 's1' })
-    expect(start.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    // Token mode (Settings › Models): the launch carries it, and the CLI under the SDK signs in with it.
+    expect(start.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('fake-setup-token')
     expect(ledgerEntries.get('s1')?.runtime).toBe('sdk')
   })
 

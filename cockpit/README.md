@@ -276,7 +276,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
   and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
-  joins (`application/start-worker.ts`). Codex, token mode, the host's own sessions and Settings › Models › Chat view off
+  joins (`application/start-worker.ts`). Codex, the host's own sessions and Settings › Models › Chat view off
   stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
   chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
@@ -600,7 +600,8 @@ is never rewritten — a secret that lands in a brain stays in its history, so r
 Claude sign-in (Settings › Models): by default the regular Claude Code login (`/login` on first start), which
 Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
 runtimes without a browser: stored as `claude-login` (chmod 600, write-only from the browser) and injected via
-env only when `agents.json` switches sessions to token mode. Sessions keep the input at the bottom
+env only when `agents.json` switches sessions to token mode — into a terminal session's environment and into the
+one the Agent SDK starts Claude Code with for a chat session, never into a file. Sessions keep the input at the bottom
 of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_FLICKER=1`), which `/tui`
 cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
 hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills
