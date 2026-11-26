@@ -9,6 +9,7 @@ import { SORT_PICKS, type SortPick, type SortRow } from './domain/sort.js'
 import { HAND_OVER_MODES, readScheduleSpec, type HandOverMode } from './domain/hand-over.js'
 import { GRANT_TOOLS, JOB_LIMITS, type GrantTool } from './domain/job.js'
 import { CHANNELS } from './domain/job-contract.js'
+import { SCHEDULE_LIMITS } from './domain/task-schedule.js'
 import { GRANT_MINUTES, type RecordAnswer, type RecordRefusal, type TaskRecords } from './application/task-record.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
 import type { TaskStateMigration } from './application/task-state-migration.js'
@@ -96,7 +97,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   checkpoint_required: 'Pick a checkpoint: before, after or none.',
   not_ready: 'Give the task a name and a goal first: an agent working on it alone needs to know what done means.',
   schedule_required: 'Pick when the agent starts.',
-  schedule_invalid: 'That time cannot be added to its schedule: a task holds at most 10 repeating times.',
+  schedule_invalid: `That time cannot be added to its schedule: a task holds at most ${SCHEDULE_LIMITS.crons} repeating times.`,
   schedule_zone: 'The task\'s repeating times are read in another time zone: give the new one in theirs.',
   no_session: 'The task has no open session to take over: pick a desk to start one.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
