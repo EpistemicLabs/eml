@@ -44,6 +44,8 @@ export interface ClaudeAccount {
 
 export interface ClaudeLoginStatus {
   mode: LoginMode
+  /** The space's own agent keeps its own login: the setup-token mode does not reach its sessions. */
+  ownLogin: boolean
   permissionMode: PermissionMode
   renderer: Renderer
   remoteControl: boolean
@@ -216,19 +218,22 @@ export function sessionToken(): string | null {
   return readLoginMode() === 'token' ? readClaudeLogin() : null
 }
 
-// --- account (what Claude Code itself reports for the app's config dir) -------
+// --- account (what Claude Code itself reports for a config dir) ---------------
 
-let accountCache: { at: number; value: ClaudeAccount | null } | null = null
+// Per config dir: the shared one, or the folder of a space's own agent.
+const accountCache = new Map<string, { at: number; value: ClaudeAccount | null }>()
 const ACCOUNT_TTL_MS = 5000
 
-function readAccount(mode: LoginMode): Promise<ClaudeAccount | null> {
-  if (accountCache && Date.now() - accountCache.at < ACCOUNT_TTL_MS) return Promise.resolve(accountCache.value)
-  const env: Record<string, string> = { CLAUDE_CONFIG_DIR: CONFIG_DIR, DISABLE_AUTOUPDATER: '1' }
+function readAccount(mode: LoginMode, configDir: string): Promise<ClaudeAccount | null> {
+  const cached = accountCache.get(configDir)
+  if (cached && Date.now() - cached.at < ACCOUNT_TTL_MS) return Promise.resolve(cached.value)
+  const env: Record<string, string> = { CLAUDE_CONFIG_DIR: configDir, DISABLE_AUTOUPDATER: '1' }
   for (const key of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG']) {
     const value = process.env[key]
     if (value !== undefined) env[key] = value
   }
-  const token = mode === 'token' ? readClaudeLogin() : null
+  // The setup-token is the shared folder's alternative; a space's own agent always uses its login.
+  const token = mode === 'token' && configDir === CONFIG_DIR ? readClaudeLogin() : null
   if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token
   return new Promise((resolve) => {
     execFile(CLAUDE_BIN, ['auth', 'status'], { env, timeout: 10_000 }, (_err, stdout) => {
@@ -243,26 +248,33 @@ function readAccount(mode: LoginMode): Promise<ClaudeAccount | null> {
           email: str(parsed.email),
         }
       } catch { /* claude missing or unexpected output — status unknown */ }
-      accountCache = { at: Date.now(), value }
+      accountCache.set(configDir, { at: Date.now(), value })
       resolve(value)
     })
   })
 }
 
 export function invalidateAccountCache(): void {
-  accountCache = null
+  accountCache.clear()
 }
 
-export async function claudeLoginStatus(): Promise<ClaudeLoginStatus> {
+/**
+ * Settings › Models' Claude sign-in. `configDir`: the folder whose login is
+ * reported — the shared one by default, a space's own agent's folder for that
+ * space (`ownLogin`; the setup-token does not apply there); null for an agent
+ * without a Claude Code folder.
+ */
+export async function claudeLoginStatus(configDir: string | null = CONFIG_DIR): Promise<ClaudeLoginStatus> {
   const token = readClaudeLogin()
   const mode = readLoginMode()
   return {
     mode,
+    ownLogin: configDir !== CONFIG_DIR,
     permissionMode: readPermissionMode(),
     renderer: readRenderer(),
     remoteControl: readRemoteControl(),
     chatView: readChatView(),
     token: { set: token !== null, prefix: token ? `${token.slice(0, 16)}…` : null },
-    account: await readAccount(mode),
+    account: configDir ? await readAccount(mode, configDir) : null,
   }
 }
