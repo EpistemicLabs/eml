@@ -102,9 +102,11 @@ describe('scheduling a hand-over', () => {
     fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'mondays' } });
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     expect(onSubmit.mock.calls[0][0]).toEqual({ mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Bangkok' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Until the goal is reached' }));
+    // The host reads a time and its zone only: there is no "until the goal is reached" to choose.
+    expect(screen.queryByRole('button', { name: 'Until the goal is reached' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Once' }));
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
-    expect(onSubmit.mock.calls[1][0].schedule).toEqual({ at: '2026-11-21T09:00', timeZone: 'Asia/Bangkok', untilGoal: true });
+    expect(onSubmit.mock.calls[1][0].schedule).toEqual({ at: '2026-11-21T09:00', timeZone: 'Asia/Bangkok' });
   });
 
   it('says what it does to the schedule the task has: a new wake-up replaces the one set, a repeating time is added', () => {

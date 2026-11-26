@@ -398,8 +398,8 @@ export interface HandOverInput {
   mode: HandOverMode;
   delegate: string;
   checkpoint: 'before' | 'after' | 'none';
-  /** at: the task's wake-up (it replaces the one it has); cron: one more repeating time. untilGoal: the agent keeps at it until the goal is reached. */
-  schedule?: { at?: string; cron?: string; timeZone: string; untilGoal?: boolean };
+  /** at: the task's wake-up (it replaces the one it has); cron: one more repeating time. */
+  schedule?: { at?: string; cron?: string; timeZone: string };
   desk?: string;
   /** Delegate now: start a new session even when the task has its own session to continue (Start fresh). */
   fresh?: boolean;

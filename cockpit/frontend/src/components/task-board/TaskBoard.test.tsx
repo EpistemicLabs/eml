@@ -176,7 +176,7 @@ describe('the task board', () => {
     expect(within(sheet).getByRole('button', { name: 'Work on it now' })).toBeTruthy();
   });
 
-  it('schedules an agent until the goal is reached (a wake-up), or as a routine (a repeating time); how a run goes on is the model\'s, not asked', async () => {
+  it('schedules an agent once (a wake-up), or as a routine (a repeating time); how a run goes on is the model\'s, not asked', async () => {
     const withGoal = (): Board => ({ ...board(), tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, goal: 'The meeting deck is ready' } : t)) });
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(withGoal()), { status: 200 });
@@ -187,12 +187,13 @@ describe('the task board', () => {
     fireEvent.click(await screen.findByText('Demo meeting prep'));
     const sheet = await screen.findByRole('dialog');
     fireEvent.click(within(sheet).getAllByRole('button', { name: 'Schedule…' })[0]);
-    fireEvent.click(await screen.findByRole('button', { name: 'Until the goal is reached' }));
+    // The host takes a time and its zone, nothing else: no "until the goal is reached", no session choice.
+    expect(await screen.findByRole('button', { name: 'Once' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Until the goal is reached' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Continues the same session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/hand-over'));
-    expect(posts[0].body).toMatchObject({ mode: 'schedule', schedule: { untilGoal: true } });
-    expect((posts[0].body as { schedule: Record<string, unknown> }).schedule).not.toHaveProperty('session');
+    expect(Object.keys((posts[0].body as { schedule: Record<string, unknown> }).schedule).sort()).toEqual(['at', 'timeZone']);
     expect((posts[0].body as { schedule: { at: string } }).schedule.at).toMatch(/T09:00$/);
 
     // a routine: Repeat… adds a repeating time, no goal
@@ -201,7 +202,6 @@ describe('the task board', () => {
     expect(screen.queryByRole('button', { name: 'Starts a new session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     await waitFor(() => expect((posts[1]?.body as { schedule?: unknown } | undefined)?.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: expect.any(String) }));
-    expect((posts[1].body as { schedule: Record<string, unknown> }).schedule).not.toHaveProperty('untilGoal');
   });
 
   it('keeps a working card in Agent working next to the Stale group, before it', async () => {

@@ -14,8 +14,8 @@ import { cn } from '@/lib/utils';
 
 type When = 'tomorrow' | 'monday' | 'pick';
 type Repeat = 'weekdays' | 'mondays';
-/** What happens after the first run: nothing more, the agent keeps checking until the goal is reached, or it repeats. */
-type Then = 'once' | 'goal' | 'repeat';
+/** What happens after the first run: nothing more, or it repeats. */
+type Then = 'once' | 'repeat';
 
 const CHECKPOINTS = {
   after: 'the agent does it, then hands you the result to review',
@@ -70,7 +70,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
 
   const schedule = (): HandOverInput['schedule'] => {
     const at = when === 'pick' ? `${picked.date}T${picked.time}` : (() => { const s = localStamp(when === 'tomorrow' ? times.tomorrow : times.monday); return `${s.date}T${s.time}`; })();
-    if (then !== 'repeat') return { at, timeZone, ...(then === 'goal' ? { untilGoal: true } : {}) };
+    if (then !== 'repeat') return { at, timeZone };
     const [hour, minute] = at.slice(11, 16).split(':').map(Number);
     return { cron: `${minute} ${hour} * * ${repeat === 'weekdays' ? '1-5' : '1'}`, timeZone };
   };
@@ -139,7 +139,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                   <div className="flex flex-col gap-1.5">
                     <span className={LABEL}>Then</span>
                     <div className="flex flex-wrap gap-1.5">
-                      {([['once', 'Once'], ['goal', 'Until the goal is reached'], ['repeat', 'Repeat…']] as Array<[Then, string]>).map(([k, label]) => (
+                      {([['once', 'Once'], ['repeat', 'Repeat…']] as Array<[Then, string]>).map(([k, label]) => (
                         <button key={k} type="button" aria-pressed={then === k} onClick={() => setThen(k)} className={PILL}>{label}</button>
                       ))}
                     </div>
@@ -147,13 +147,6 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                       <select aria-label="Repeat" value={repeat} onChange={(e) => setRepeat(e.target.value as Repeat)} className={FIELD}>
                         <option value="weekdays">Every weekday</option><option value="mondays">Every Monday</option>
                       </select>
-                    )}
-                    {then === 'goal' && (
-                      <p className="m-0 text-caption text-muted-foreground">
-                        {task.goal
-                          ? <>Goal: {task.goal} {agentName(agent)} checks the goal each time it wakes up. If it isn't reached, it sets its own next check and says why.</>
-                          : <>The task has no goal yet: set one first (say in the chat what has to be true), then schedule it until the goal is reached.</>}
-                      </p>
                     )}
                   </div>
                 </>
@@ -187,11 +180,9 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                   ? `${continuable && !fresh
                     ? `${agentName(agent)} carries on in the task's session, with what was said there, once the few seconds to undo are over.`
                     : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in a terminal' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
-                  : then === 'goal'
-                    ? `${agentName(agent)} starts then and keeps going until the goal is reached. Until then the task sits in Agent scheduled under Missions, on every device and for every member. You're asked only for a question, a review or a failed run.`
-                    : then === 'repeat'
-                      ? `${agentName(agent)} works on it on that rhythm until you end it, each time in a new session.${task.schedule?.crons?.length ? ` The time is added to those the task repeats at${otherZone ? `, and read in their time zone (${otherZone}), not yours` : ''}.` : ''} The task sits in Agent scheduled under Routines, on every device and for every member.`
-                      : `${agentName(agent)} is woken on this task at that time.${task.schedule?.at ? ` It replaces the wake-up set for ${whenText(task.schedule.at, now)}.` : ''} Until then the card sits in Agent scheduled, with the date.`}
+                  : then === 'repeat'
+                    ? `${agentName(agent)} works on it on that rhythm until you end it, each time in a new session.${task.schedule?.crons?.length ? ` The time is added to those the task repeats at${otherZone ? `, and read in their time zone (${otherZone}), not yours` : ''}.` : ''} The task sits in Agent scheduled under Routines, on every device and for every member.`
+                    : `${agentName(agent)} is woken on this task at that time.${task.schedule?.at ? ` It replaces the wake-up set for ${whenText(task.schedule.at, now)}.` : ''} Until then the card sits in Agent scheduled, with the date.`}
               </p>
             </>
           ) : (
@@ -216,7 +207,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
         </div>
         <footer className="flex justify-end gap-2 border-t border-border px-5 pb-4 pt-3">
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
-          <button type="button" className={PRIMARY} onClick={submit} disabled={(!agent && mode !== 'together') || (mode === 'schedule' && then === 'goal' && !task.goal)}>{go}</button>
+          <button type="button" className={PRIMARY} onClick={submit} disabled={!agent && mode !== 'together'}>{go}</button>
         </footer>
       </DialogContent>
     </Dialog>
