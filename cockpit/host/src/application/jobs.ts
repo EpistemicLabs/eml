@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
+import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool, type RunNowRefusal } from '../domain/job.js'
 import { isTimeZone, parseAt, unknownTimeZone } from '../domain/schedule.js'
@@ -14,6 +14,7 @@ import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
 import { endTaskRecord } from './end-task-record.js'
 import { limitedJobRefusal } from './limited-job-scope.js'
+import { openTasks, taskById } from './task-read.js'
 import { editTaskSchedule, ScheduleWriteError, writeTaskSchedule } from './task-schedule-write.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
 
@@ -113,7 +114,6 @@ const SHARED_NO_CHANNEL = 'a task in a shared space cannot watch mail for now; s
 const ONE_TIME = 'give exactly one of cron (repeating) or at (one time)'
 const TARGET_SESSION = 'a schedule belongs to a task, not to a session: name the task instead (task_id); target self means the task this session works on'
 const NO_BRAIN: JobAnswer = { status: 503, text: 'this space has no brain to hold a schedule right now; try again' }
-const OPEN_TASKS_LIMIT = 500
 /** What update may not change: said by the brain's task tools, or by a new create. */
 const NOT_UPDATED = ['name', 'task_id', 'target', 'session'] as const
 
@@ -145,7 +145,7 @@ export class Jobs {
     if (!JOB_ACTIONS.includes(action as never)) return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
     const brain = this.deps.brain(caller.spaceId)
     if (!brain) return NO_BRAIN
-    const tasks = await this.openTasks(brain)
+    const tasks = await openTasks<ToolTask>(brain)
     // Its own task, looked up as a task: the record of a task with only a wake-up comes and goes, the task stays.
     const own = caller.limited && caller.jobId ? tasks.find((task) => task.id === caller.jobId) : undefined
     // A limited record stays while its task is open (domain/job.ts recordKeeping): an open task without a record was
@@ -174,23 +174,6 @@ export class Jobs {
 
   // ── Reading ────────────────────────────────────────────────────────────────
 
-  /** The space's open tasks, as the engine lists them: two reads, none per task. */
-  private async openTasks(brain: Pick<EmlApi, 'get'>): Promise<ToolTask[]> {
-    const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: OPEN_TASKS_LIMIT }) as Promise<{ engrams?: ToolTask[] }>))
-    return lists.flatMap((list) => list.engrams ?? [])
-  }
-
-  /** One task by its id, also a closed one; null when the brain has none. */
-  private async taskById(brain: Pick<EmlApi, 'get'>, id: string): Promise<ToolTask | null> {
-    try {
-      const found = await brain.get(`/engram/${encodeURIComponent(id)}`) as ToolTask | null
-      return found?.id && (found.type === undefined || found.type === 'task') ? found : null
-    } catch (err) {
-      if (err instanceof EmlApiError && err.status === 404) return null
-      throw err
-    }
-  }
-
   /** The tool lists it: it has a schedule, or this cockpit's record of it listens on a channel. */
   private listed(task: ToolTask): boolean {
     return hasSchedule(task) || (this.deps.store.get(task.id)?.triggers.length ?? 0) > 0
@@ -204,7 +187,7 @@ export class Jobs {
     if ('id' in found) return found
     if ('many' in found) return refuse(`"${key}" fits ${found.many} tasks; use the id`)
     // Not among the open tasks: a closed one is named by its whole id, so the answer can say it is closed.
-    const closed = /^[\w-]{16,}$/.test(key) ? await this.taskById(brain, key) : null
+    const closed = /^[\w-]{16,}$/.test(key) ? await taskById<ToolTask>(brain, key) : null
     if (closed) return closed
     return refuse(`No task "${key}" in this space. The list action shows the ones with a schedule.`, 404)
   }
@@ -262,7 +245,7 @@ export class Jobs {
       if (!this.deps.agent(caller.spaceId)) return bad('this space has no agent to hold a schedule')
       const draft = routineTask({ id: randomUUID(), name: name!, prompt }, settings.projectId ?? caller.projectId, this.deps.me)
       if (!draft) return bad('a new task needs a project of the brain: pass project, or put the time on a task that exists (task_id)')
-      task = (await this.taskById(brain, (await makeRoutineTask(brain, draft)).id)) ?? refuse('the new task could not be read back; try again', 502)
+      task = (await taskById<ToolTask>(brain, (await makeRoutineTask(brain, draft)).id)) ?? refuse('the new task could not be read back; try again', 502)
     }
     // What the time is for goes into the task's text: a new task has the prompt as its text already.
     const paragraph = made ? null : cron ? everyParagraph(cron, prompt) : !at ? mailParagraph(prompt) : null

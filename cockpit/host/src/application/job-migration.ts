@@ -1,9 +1,10 @@
-import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
+import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { JobV1 } from '../domain/job-v1.js'
 import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
 import type { NotificationInput } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
+import { openTasks, taskById } from './task-read.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
 import { writeTaskSchedule } from './task-schedule-write.js'
 
@@ -80,12 +81,9 @@ export function runReport(result: Pick<JobMigrationResult, 'jobs' | 'failed' | '
 
 const MOVED_LINE = (jobs: JobMigrationResult['jobs']) => `Schedules moved onto their tasks: ${jobs.moved} moved, ${jobs.notMoved} not moved`
 
-const OPEN_TASKS_LIMIT = 500
-
 /** The space's open tasks that have a schedule, as the engine lists them: two reads, none per task. */
 async function scheduledTasks(brain: Pick<EmlApi, 'get'>): Promise<JobMigrationTask[]> {
-  const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: OPEN_TASKS_LIMIT }) as Promise<{ engrams?: JobMigrationTask[] }>))
-  return lists.flatMap((list) => list.engrams ?? []).filter((task) => task.properties?.delegation?.schedule)
+  return (await openTasks<JobMigrationTask>(brain)).filter((task) => task.properties?.delegation?.schedule)
 }
 
 const keyOf = (space: BrainSpace): string | null => (space.main ? null : space.id)
@@ -97,15 +95,7 @@ export const routineTaskOfJob = (me: string) => (job: JobV1): NewRoutineTask | n
 /** The tasks the space's jobs name, as its brain has them; null for one the brain does not have. Any other failure throws. */
 export async function tasksOfJobs(brain: Pick<EmlApi, 'get'>, jobs: readonly JobV1[]): Promise<Record<string, JobMigrationTask | null>> {
   const tasks: Record<string, JobMigrationTask | null> = {}
-  for (const id of new Set(jobs.flatMap((j) => (j.taskId ? [j.taskId] : [])))) {
-    try {
-      const found = await brain.get(`/engram/${encodeURIComponent(id)}`) as JobMigrationTask & { type?: string }
-      tasks[id] = found && (found.type === undefined || found.type === 'task') ? found : null
-    } catch (err) {
-      if (err instanceof EmlApiError && err.status === 404) tasks[id] = null
-      else throw err
-    }
-  }
+  for (const id of new Set(jobs.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = await taskById<JobMigrationTask>(brain, id)
   return tasks
 }
 

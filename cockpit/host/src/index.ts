@@ -86,6 +86,7 @@ import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
+import { openTasks, taskById } from './application/task-read.js'
 import { createMigrationWatch } from './application/job-migration-watch.js'
 import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { keepRecord } from './application/record-profile.js'
@@ -741,8 +742,7 @@ async function main() {
     openTasks: async (space) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) return null
-      const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: OPEN_TASKS_LIMIT }) as Promise<{ engrams?: RunnerTask[] }>))
-      return lists.flatMap((list) => list.engrams ?? [])
+      return openTasks<RunnerTask>(brain)
     },
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
     waitsForMigration: (taskId) => jobStore.hasV1Jobs(taskId),
@@ -751,13 +751,7 @@ async function main() {
     task: async (space, taskId) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error(`space ${space.name} has no agent`)
-      try {
-        const found = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as RunnerTask & { type?: string }
-        return found && (found.type === undefined || found.type === 'task') ? found : null
-      } catch (err) {
-        if (err instanceof EmlApiError && err.status === 404) return null
-        throw err
-      }
+      return taskById<RunnerTask>(brain, taskId)
     },
     // Another member's session works on it: only a shared space has one (domain/runs.ts).
     workingElsewhere: async (space, taskId) => {
@@ -1285,8 +1279,6 @@ async function main() {
 const UNROUTED_FIRST_MS = 20_000
 const UNROUTED_TICK_MS = 60_000
 // Between two workers resumed after a restart: each one's start (agent CLI, MCP servers) settles first.
-// How many open tasks of one status the engine reads per space to find the scheduled ones (the board's limit too).
-const OPEN_TASKS_LIMIT = 500
 // How often the task runner looks for plan steps that are ready, besides after every turn.
 const RUNNER_TICK_MS = 60_000
 // How often the next-step check looks at sessions it put off (an answer not seen yet, a pane still open).
