@@ -26,7 +26,7 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
-import { StartWorker } from './application/start-worker.js'
+import { StartWorker, workerInChat } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
 import { shutDownOnSignal } from './application/shut-down.js'
@@ -88,7 +88,8 @@ import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { recordOfSession, sessionJobFacts } from './application/limited-job-scope.js'
 import { repairSessionJobIds } from './application/session-job-repair.js'
-import type { ProviderId } from './domain/agent-provider.js'
+import { sessionMessaging, type ProviderId } from './domain/agent-provider.js'
+import { replyTool } from './domain/session-tools.js'
 import { isHeld, scheduleFactsOf, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
@@ -386,10 +387,13 @@ async function main() {
       const found = ledger.list().find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)
       return found ? { sessionId: found.sessionId, wakeable: found.wakeable } : null
     },
+    canReceive: (sessionId) => sessionMessaging(providers.forSession(sessionId), ledger.get(sessionId)).supported,
     terminalRuns: (sessionId) => bridge.isRunning(sessionId),
     runsInChat: (sessionId) => providers.forSession(sessionId)
       .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
     chatRuns: (sessionId) => chat.isRunning(sessionId),
+    // A session that gets the cockpit's tools from its MCP server (Codex) answers with send_message from there.
+    replyTool: (sessionId) => replyTool(providers.forSession(sessionId).capabilities.terminalTools.supported ? COCKPIT_MCP_SERVER : null),
     sameReach: (fromSessionId, sessionId) => {
       const agentOf = (id: string) => spaces.resolve(ledger.get(id)?.spaceId ?? null).agent
       return ledger.get(fromSessionId) !== undefined && agentOf(fromSessionId) === agentOf(sessionId)
@@ -634,6 +638,7 @@ async function main() {
     },
     clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
     jobs: scheduleFor,
+    endTurnTool,
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -654,8 +659,7 @@ async function main() {
   })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
-    runsInChat: (request) => (providers.get(request.provider ?? '') ?? providers.default())
-      .workerRunsInChat(sessionSpaceOf(spaces.resolve(request.spaceId ?? null))),
+    runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), sessionSpaceOf(spaces.resolve(request.spaceId ?? null)), request),
     freeMemory: () => platform.freeMemory(),
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
@@ -1209,6 +1213,7 @@ async function main() {
       return entry ? sessionAddress(sessionId, entry.projectId) : null
     },
     deliver,
+    receives: (sessionId) => sessionMessaging(providers.forSession(sessionId), ledger.get(sessionId)).supported,
     timeZone: () => zoneLabel(userTimeZone()),
     serverVersion: ABOUT.version,
   })

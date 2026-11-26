@@ -103,6 +103,12 @@ const SCHEDULE_TOOL_INPUT = {
 export const SEND_MESSAGE_TOOL = 'send_message'
 export const LIST_SESSIONS_TOOL = 'list_sessions'
 
+/**
+ * The tool a session answers another session's message with, as its agent CLI lists it: send_message from the MCP
+ * server that serves it the cockpit's tools (Codex), else Claude Code's own SendMessage.
+ */
+export const replyTool = (mcpServer: string | null) => (mcpServer ? `mcp__${mcpServer}__${SEND_MESSAGE_TOOL}` : 'SendMessage')
+
 const SEND_MESSAGE_TOOL_DESCRIPTION = 'Send a message to another cockpit session of your agent: it reads the message as a prompt and acts on it, even when nobody has the cockpit open. A stopped session is resumed first. '
   + 'Use it to hand another session work, a result or a question that belongs to it, not to reach your user. '
   + `to: the session's address, exactly as ${LIST_SESSIONS_TOOL} shows it. If more than one session could be the one your user means, ask them to pick before sending: a message to the wrong session wakes it and hands it your text. `

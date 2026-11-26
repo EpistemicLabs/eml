@@ -6,10 +6,11 @@ import type {
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
   COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig, type HookCommand,
+  emlHookCommand, ensureHookNode, installManagedSkills, noMessageInTerminal, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig,
+  type HookCommand,
 } from '../shared.js'
-import type { ProviderCapabilities } from '../../../domain/agent-provider.js'
-import type { SessionRuntimeFactory } from '../../../domain/session-runtime.js'
+import type { Capability, ProviderCapabilities } from '../../../domain/agent-provider.js'
+import type { SessionRuntimeFactory, SessionRuntimeKind } from '../../../domain/session-runtime.js'
 import { createCodexChatRuntimes } from './chat-runtime.js'
 import { CodexSignIn, readCodexAccount, type CodexAccount } from './account.js'
 import { platform } from '../../platform/index.js'
@@ -61,7 +62,8 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *
  * A session runs in a terminal, or, once the user switches the chat view on
  * (settings.ts chatView), in the chat through `codex app-server`
- * (chat-runtime.ts): the same home, hooks and MCP servers either way.
+ * (chat-runtime.ts): the same home, hooks and MCP servers either way. With it on,
+ * workers run in the chat too, and a session there can be sent a message.
  *
  * The binary is the cockpit's own (runtime.ts), installed when the user sets
  * Codex up; sign-in is Codex's own screen in the pane. What a session may do
@@ -317,8 +319,22 @@ class CodexProvider implements AgentProvider {
     }
   }
 
+  /**
+   * With the chat view on, a worker runs through app-server like a chat session the user opened (chat-runtime.ts),
+   * in the mode workers run in (workerMode); without it, in a terminal as before.
+   */
   workerRunsInChat(): boolean {
-    return false
+    return readCodexSettings().chatView
+  }
+
+  /**
+   * Only a session in the chat can be handed a message: the chat bridge sends it in, or resumes the thread for it.
+   * One that ran in a terminal is never typed into, and is not moved to the chat for a message either.
+   */
+  messagingOf(session: { runtime: SessionRuntimeKind } | undefined): Capability {
+    const messaging = this.capabilities.messaging
+    if (!messaging.supported || session?.runtime !== 'terminal') return messaging
+    return { supported: false, reason: noMessageInTerminal(this.label) }
   }
 
   canResume(session: SessionRef): boolean {

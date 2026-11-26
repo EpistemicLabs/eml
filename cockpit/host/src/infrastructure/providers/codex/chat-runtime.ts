@@ -244,6 +244,7 @@ class CodexChatRuntime implements SessionRuntime {
       this.emit({ kind: 'settings', model: thread.model ?? this.model, mode: this.mode, effort: thread.reasoningEffort ?? this.effort })
       this.ready = true
       this.pump()
+      void this.checkHookTrust(client, thread.thread.id)
     } catch (error) {
       // A closing session has no answers, and a process that died says so itself.
       if (this.closing || this.exitReported) return
@@ -270,6 +271,20 @@ class CodexChatRuntime implements SessionRuntime {
       }
     }
     return client.request('thread/start', this.threadSettings())
+  }
+
+  /**
+   * app-server runs the cockpit's hooks (index.ts hooks.json) only once the user trusted them, and never asks: until
+   * then the session goes without its brain boot, project block, task context and reminder. Said once in the
+   * conversation, with what to do. A server that cannot tell says nothing.
+   */
+  private async checkHookTrust(client: AppServerClient, threadId: string): Promise<void> {
+    const listed = await client.request('hooks/list', { threadId }).catch(() => null)
+    if (!listed || this.closing || this.exitReported) return
+    const own = path.join(CODEX_CONFIG_DIR, 'hooks.json')
+    const hooks = (Array.isArray(listed.data) ? listed.data : []).flatMap((entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []))
+    const untrusted = hooks.filter((hook) => hook?.sourcePath === own && hook.trustStatus !== 'trusted' && hook.trustStatus !== 'managed')
+    if (untrusted.length > 0) this.emit({ kind: 'notice', text: HOOKS_UNTRUSTED })
   }
 
   /** A model the chat lists, by its id or the model it stands for. */
@@ -546,11 +561,16 @@ const notStored = (error: AppServerError) => NOT_STORED.test(error.message)
 
 /** Another process writes to the thread: "thread … already has an active writer". */
 const ACTIVE_WRITER = /already has an active writer/i
+
+export const HOOKS_UNTRUSTED = 'Codex skips the cockpit\'s hooks until you trust them, so this session started without its brain boot, project and task context. Open a Codex session in a terminal once and choose "Trust all"; sessions started after that get them.'
 export const OPEN_ELSEWHERE = 'this conversation is still open in another process (a terminal pane of this session, or a Codex that did not exit). Close it there, then send your message again.'
 
 export function createCodexChatRuntimes(spawnProcess: SpawnAppServer = spawnAppServer, host: CodexChatHost = {}): SessionRuntimeFactory {
   return {
     workerMode: WORKER_MODE,
+    // app-server runs the cockpit's hooks only once the user trusted them (hooks.state in config.toml): its own turns
+    // say when the session works.
+    reportsTurns: true,
     start: (request) => new CodexChatRuntime(request, spawnProcess, host),
     // Every Codex session keeps its conversation in the one Codex home (index.ts launch).
     async history({ providerSessionId }: SessionRef) {

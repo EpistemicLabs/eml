@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
-import type { AgentProvider, ProviderId, TurnState } from './domain/agent-provider.js'
+import { sessionMessaging, type AgentProvider, type ProviderId, type TurnState } from './domain/agent-provider.js'
 import type {
   EventStore, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
@@ -18,7 +18,7 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type EndTurn, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
+import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type EndTurn, type EndTurnAccess, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
 import type { WakeSettled } from './application/turn-wake.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
@@ -192,6 +192,8 @@ interface ChatEntry {
   pid: number | null
   /** Limits the user lifted that the agent has not been told of yet: it goes with its next prompt. */
   liftNote?: string | null
+  /** Its runtime reports its turns (SessionRuntimeFactory.reportsTurns): the bridge says working and done, not its hooks. */
+  ownTurns?: boolean
 }
 
 export interface ChatContext {
@@ -251,6 +253,11 @@ export interface ChatContext {
   clearJobProfile?: (jobId: string) => void
   /** The schedule tool's actions, for the session that calls it (application/jobs.ts); absent: no tool. */
   jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
+  /**
+   * How the session has end_turn (application/turn-context.ts endTurnAccess), for the reminder that asks for the
+   * call: one that gets it from an MCP server (Codex) is told its name there. Absent: built in.
+   */
+  endTurnTool?: (sessionId: string) => EndTurnAccess
 }
 
 type ClientMessage = {
@@ -376,10 +383,20 @@ export class ChatBridge {
    * and no turn follows, or the session stops.
    */
   holdTurnOpen(sessionId: string): boolean {
+    // Its turn state is the bridge's own (reportsTurns): a hook's done is not applied anyway.
+    if (this.reportsTurns(sessionId)) return false
     const entry = this.entries.get(sessionId)
     if (!entry || !this.waitsOnHelpers(sessionId)) return false
     entry.held = true
     return true
+  }
+
+  /**
+   * Whether the bridge reports this session's turn state itself (its runtime's reportsTurns): the hooks' working and
+   * done are left out for it (application/apply-session-hook.ts). False for a session the bridge does not run.
+   */
+  reportsTurns(sessionId: string): boolean {
+    return this.entries.get(sessionId)?.ownTurns === true
   }
 
   sessionState(sessionId: string): SessionState {
@@ -824,8 +841,9 @@ export class ChatBridge {
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
         if (request.jobId) this.ctx.ledger.setJobId(sessionId, request.jobId)
         this.startRuntime(entry, provider, space, false)
-        // Working from here on: its first hook comes only once the agent CLI has booted.
-        this.ctx.onTurn(sessionId, 'working')
+        // Working from here on: its first hook comes only once the agent CLI has booted. A runtime that reports its
+        // turns says it with the message below.
+        if (!entry.ownTurns) this.ctx.onTurn(sessionId, 'working')
         this.sendMessage(entry, request.prompt)
         this.log(`starting worker ${sessionId} in ${path}`)
       } catch (error) {
@@ -917,9 +935,13 @@ export class ChatBridge {
       ...merged,
       ...(this.ctx.limits && this.ctx.memory?.unavailable === null ? heapCapEnv(this.ctx.limits().session, merged.NODE_OPTIONS) : {}),
       COCKPIT_SESSION_ID: sessionId,
+      // A session another one can message knows its own address: a worker it spawns is told where to answer (skill
+      // spawn-session). Claude Code's launch sets it too; a Codex session has it only here, in the chat.
+      ...(sessionMessaging(provider, { runtime: 'sdk' }).supported ? { COCKPIT_SESSION_ADDRESS: address } : {}),
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
     const stored = this.ctx.ledger.get(sessionId)
+    entry.ownTurns = runtimes.reportsTurns === true
     this.emit(entry, { kind: 'process', state: 'starting' })
     entry.runtime = runtimes.start({
       sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null, effort: stored?.chatEffort ?? null,
@@ -1006,7 +1028,7 @@ export class ChatBridge {
         // One reminder per turn, naming everything it lacks: no call and unasked questions only while nobody has the session open, no reply always.
         if (entry.reminded || missing.length === 0) return null
         entry.reminded = true
-        return reminder(missing)
+        return reminder(missing, this.ctx.endTurnTool ? { tool: this.ctx.endTurnTool(entry.sessionId) } : {})
       },
     }
   }
@@ -1097,9 +1119,13 @@ export class ChatBridge {
       case 'conversation_reset':
         this.ctx.ledger.bindProviderSession(entry.sessionId, event.conversationId)
         break
-      case 'activity':
+      case 'activity': {
+        const was = entry.active
         entry.active = event.state !== 'idle'
+        // A turn started that no message of the bridge started: working, unless a card waits for the user.
+        if (entry.ownTurns && !was && entry.active && entry.openRequests.size === 0) this.ctx.onTurn(entry.sessionId, 'working')
         break
+      }
       case 'permission_request':
       case 'question':
         entry.openRequests.add(event.requestId)
@@ -1162,7 +1188,9 @@ export class ChatBridge {
           const held = entry.held
           this.releaseHeld(entry)
           // A stop brings no Stop hook: its turn state ends here. Done without a result, so nothing is new to look at.
-          if (event.reason === 'interrupted' && !held) this.ctx.onTurn(entry.sessionId, 'done')
+          // A runtime that reports its turns ends every turn's state here, the one a follow-up was sent for never
+          // (the runtime says no end for it), so no done shows in between.
+          if ((event.reason === 'interrupted' || entry.ownTurns) && !held) this.ctx.onTurn(entry.sessionId, 'done')
         }
         const attention = attentionAfterTurn({
           // A turn that ended without its Stop hook (an error) goes by how the session was started.
@@ -1248,6 +1276,8 @@ export class ChatBridge {
     this.ctx.ledger.setResult(entry.sessionId, false)
     this.ctx.ledger.unarchive(entry.sessionId)
     this.ctx.ledger.setTurnInFlight(entry.sessionId, true)
+    // What the agent CLI's UserPromptSubmit hook says for another runtime.
+    if (entry.ownTurns && entry.openRequests.size === 0) this.ctx.onTurn(entry.sessionId, 'working')
     if (!entry.active) {
       entry.active = true
       this.emit(entry, { kind: 'activity', state: 'working' })

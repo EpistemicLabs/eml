@@ -139,6 +139,10 @@ describe('the session directory endpoint', () => {
     ledger.recordSpawn('shared-space', null, 'p1', 'claude', false, null, 'shared-brain')
     ledger.recordSpawn('other-agent', null, 'p1', 'claude', false, null, 'agent-brain')
     ledger.recordSpawn('codex-session', null, 'p1', 'codex')
+    // Codex with its chat view on: a mixed ledger, an old terminal session beside a chat one.
+    ledger.recordSpawn('codex-chat', null, 'p1', 'codex')
+    ledger.setRuntime('codex-chat', 'sdk')
+    ledger.recordSpawn('codex-terminal', null, 'p1', 'codex')
     const space = (id: string, agentId: string | null) => ({
       id, name: id, main: id === 'main', agent: agentId ?? null, ledgerKey: id === 'main' ? null : id,
       url: 'http://127.0.0.1:1', token: 'secret',
@@ -155,10 +159,12 @@ describe('the session directory endpoint', () => {
     })
     const claude = provider('claude', true)
     const codex = provider('codex', false)
+    const codexInChat = { ...provider('codex', true), messagingOf: (session?: { runtime: string }) => (session?.runtime === 'terminal' ? { supported: false, reason: 'in a terminal' } : { supported: true }) }
+    const providerOf = (sessionId: string) => (sessionId === 'codex-session' ? codex : sessionId.startsWith('codex-') ? codexInChat : claude)
     const deps = {
       spaces,
       turns: new TurnTracker(),
-      providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex], default: () => claude },
+      providers: { forSession: providerOf, all: () => [claude, codex], default: () => claude },
       bridge: { ledger, sessionRef: (sessionId: string, projectPath: string | null) => ({ sessionId, projectPath }), sessionState: () => 'ended' },
       chat: { isRunning: () => false, backgroundTasks: () => 0 },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
@@ -209,6 +215,13 @@ describe('the session directory endpoint', () => {
     expect(text).not.toContain(sessionAddress('other-agent', 'p1'))
     expect(text).not.toContain(sessionAddress('codex-session', 'p1'))
     expect(text).not.toContain('secret')
+  })
+
+  it('lists a Codex session in the chat, and not one that ran in a terminal', async () => {
+    const { text } = await (await get('?list=recent')).json() as { text: string }
+    const { sessionAddress } = await import('../src/session-address.js')
+    expect(text).toContain(sessionAddress('codex-chat', 'p1'))
+    expect(text).not.toContain(sessionAddress('codex-terminal', 'p1'))
   })
 })
 

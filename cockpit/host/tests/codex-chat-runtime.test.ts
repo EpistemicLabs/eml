@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import './setup-home.js'
 import type { RuntimeEvent, SessionRuntime, SessionRuntimeStart } from '../src/domain/session-runtime.js'
-import { createCodexChatRuntimes, startingMode, threadPermissions, type CodexChatHost, OPEN_ELSEWHERE } from '../src/infrastructure/providers/codex/chat-runtime.js'
+import { createCodexChatRuntimes, startingMode, threadPermissions, type CodexChatHost, HOOKS_UNTRUSTED, OPEN_ELSEWHERE } from '../src/infrastructure/providers/codex/chat-runtime.js'
 import { historyEvents } from '../src/infrastructure/providers/codex/event-mapper.js'
 import type { Turn } from '../src/infrastructure/providers/codex/protocol.js'
 import { codexRuntime } from '../src/infrastructure/providers/codex/runtime.js'
@@ -57,7 +58,7 @@ describe('the Codex chat runtime, a start', () => {
   it('opens a new thread in the user\'s mode, binds its id, and then says what can be chosen and what it runs with', async () => {
     const { runtime, events, server } = start()
     await flush()
-    expect(methods(server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/start'])
+    expect(methods(server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/start', 'hooks/list'])
     expect(server.requestsOf('initialize')[0]).toMatchObject({ clientInfo: { name: 'eml_cockpit' } })
     // Auto, the setting's default: what the terminal's arguments say for the same mode.
     expect(server.requestsOf('thread/start')).toEqual([{ cwd: '/work', approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review' }])
@@ -83,7 +84,7 @@ describe('the Codex chat runtime, a start', () => {
   it('continues the stored thread, and starts a new one when the server no longer has it', async () => {
     const resumed = start({ resume: true, conversationId: 'thread-9', model: 'gpt-5.6-terra' })
     await flush()
-    expect(methods(resumed.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume'])
+    expect(methods(resumed.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume', 'hooks/list'])
     expect(resumed.server.requestsOf('thread/resume')).toEqual([{
       threadId: 'thread-9', cwd: '/work', approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review', model: 'gpt-5.6-terra', excludeTurns: true,
     }])
@@ -94,7 +95,7 @@ describe('the Codex chat runtime, a start', () => {
       server.answer('thread/resume', () => { throw new RefusedRequest(-32600, 'no rollout found for thread id thread-9') })
     })
     await flush()
-    expect(methods(gone.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume', 'thread/start'])
+    expect(methods(gone.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume', 'thread/start', 'hooks/list'])
     expect(kinds(gone.events)).toEqual(['notice', 'conversation', 'capabilities', 'commands', 'settings'])
     expect(gone.events[1]).toEqual({ kind: 'conversation', conversationId: gone.server.threadId })
     await gone.runtime.close()
@@ -142,6 +143,23 @@ describe('the Codex chat runtime, a start', () => {
       await off.runtime.close()
     } finally {
       codexSettings.write({ permissionMode: 'auto', sandboxNetwork: false })
+    }
+  })
+
+  it('says once when Codex skips the cockpit\'s hooks because the user has not trusted them, and nothing when they are trusted', async () => {
+    const own = join(CODEX_CONFIG_DIR, 'hooks.json')
+    const hook = (trustStatus: string, sourcePath = own) => ({ key: `${sourcePath}:stop:0:0`, eventName: 'stop', sourcePath, enabled: true, trustStatus })
+    const untrusted = start({}, (server) => { server.answer('hooks/list', () => ({ data: [{ cwd: '/work', hooks: [hook('trusted'), hook('untrusted'), hook('modified')] }] })) })
+    await flush()
+    expect(untrusted.server.requestsOf('hooks/list')).toEqual([{ threadId: untrusted.server.threadId }])
+    expect(untrusted.events.filter((event) => event.kind === 'notice')).toEqual([{ kind: 'notice', text: HOOKS_UNTRUSTED }])
+    await untrusted.runtime.close()
+    // Trusted, or someone else's hooks (a project's own): nothing to say. Nor when the server cannot tell.
+    for (const answer of [() => ({ data: [{ cwd: '/work', hooks: [hook('trusted'), hook('untrusted', '/work/.codex/hooks.json')] }] }), () => { throw new RefusedRequest(-32601, 'unknown method hooks/list') }]) {
+      const quiet = start({}, (server) => { server.answer('hooks/list', answer) })
+      await flush()
+      expect(quiet.events.filter((event) => event.kind === 'notice')).toEqual([])
+      await quiet.runtime.close()
     }
   })
 

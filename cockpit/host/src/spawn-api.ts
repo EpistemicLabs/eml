@@ -1,8 +1,9 @@
 import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
-import { unattended } from './domain/spawn-request.js'
-import type { StartWorker } from './application/start-worker.js'
+import { ownStart, unattended } from './domain/spawn-request.js'
+import { workerInChat, type StartWorker } from './application/start-worker.js'
+import { sessionMessaging } from './domain/agent-provider.js'
 import type { MessageRequest } from './application/deliver-message.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { brainIdFromProjectId, projectIdForBrain } from './project-registry.js'
@@ -109,8 +110,9 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   const toolProfile = parseToolProfile(body)
   if (toolProfile === 'invalid') return fail(400, 'INVALID_TOOLS', 'deniedTools and mcpServers are lists of names')
   const chosen = provider ?? deps.providers.default()
-  if (toolProfile && !chosen.workerRunsInChat(sessionSpaceOf(space))) {
-    return fail(400, 'TOOLS_NEED_CHAT', 'Tool limits need the chat runtime, which this provider or sign-in does not use')
+  if (toolProfile && !workerInChat(chosen, sessionSpaceOf(space), { toolProfile })) {
+    const limits = chosen.capabilities.toolLimits
+    return fail(400, 'TOOLS_NEED_CHAT', limits.supported ? 'Tool limits need the chat runtime, which this provider or sign-in does not use' : limits.reason)
   }
   // newTask: the task is made before the worker is queued, so it starts on it.
   let givenTask = taskId
@@ -146,7 +148,9 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
   if (stepOf) deps.ledger.expectTaskParent(request.id, stepOf)
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
-  const messaging = (provider ?? deps.providers.default()).capabilities.messaging.supported
+  // Where it will run decides it for a provider that takes messages in the chat only (Codex).
+  const runtime = (unattended(request) || ownStart(request)) && workerInChat(chosen, sessionSpaceOf(space), request) ? 'sdk' : 'terminal'
+  const messaging = sessionMessaging(chosen, { runtime }).supported
   return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}), ...(givenTask ? { taskId: givenTask } : {}) } }
 }
 

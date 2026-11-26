@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import type { AgentProvider, SessionSpace } from '../src/domain/agent-provider.js'
+import { sessionMessaging, type AgentProvider, type SessionSpace } from '../src/domain/agent-provider.js'
 import { hasTable, removeTables, setTopLevelKey, tableKey, tomlString, upsertTables } from '../src/infrastructure/providers/codex/toml.js'
 import { platform } from '../src/infrastructure/platform/index.js'
 
@@ -268,25 +268,46 @@ describe('Codex provider', () => {
       endTurnTool: { supported: true },
       messaging: { supported: false, reason: 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
       terminalTools: { supported: true },
+      toolLimits: { supported: false, reason: 'Codex sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.' },
     })
   })
 
-  it('runs in the chat view too once the user switches it on, and only then has a chat runtime; workers stay in the terminal', () => {
+  it('runs in the chat view too once the user switches it on, and only then has a chat runtime, runs workers there and takes messages', () => {
     const terminal = provider.capabilities
     expect(provider.chatRuntime).toBeUndefined()
+    expect(provider.workerRunsInChat(space)).toBe(false)
     expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/true or false/)
     expect(provider.settings?.write({ chatView: true })).toBeNull()
     try {
       expect(provider.settings?.read()).toMatchObject({ chatView: true })
-      // Everything else as before: the tools from the host's endpoint, in the chat as well.
-      expect(provider.capabilities).toEqual({ ...terminal, chat: { supported: true } })
+      // The tools from the host's endpoint, in the chat as well; still no tool limits.
+      expect(provider.capabilities).toEqual({ ...terminal, chat: { supported: true }, messaging: { supported: true } })
       expect(provider.chatRuntime?.workerMode).toBe('auto')
-      expect(provider.workerRunsInChat(space)).toBe(false)
+      expect(provider.workerRunsInChat(space)).toBe(true)
     } finally {
       expect(provider.settings?.write({ chatView: false })).toBeNull()
     }
     expect(provider.capabilities).toEqual(terminal)
     expect(provider.chatRuntime).toBeUndefined()
+    expect(provider.workerRunsInChat(space)).toBe(false)
+  })
+
+  it('takes a message per session: with the chat view on, a session in the chat or not started yet, never one that ran in a terminal', () => {
+    const reason = 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.'
+    const off = { supported: false, reason }
+    // Chat view off: no session, wherever it ran.
+    for (const session of [undefined, { runtime: 'sdk' as const }, { runtime: 'terminal' as const }]) {
+      expect(sessionMessaging(provider, session)).toEqual(off)
+    }
+    provider.settings?.write({ chatView: true })
+    try {
+      expect(sessionMessaging(provider, { runtime: 'sdk' })).toEqual({ supported: true })
+      expect(sessionMessaging(provider, undefined)).toEqual({ supported: true })
+      // An old terminal session in a mixed ledger keeps the terminal's refusal.
+      expect(sessionMessaging(provider, { runtime: 'terminal' })).toEqual(off)
+    } finally {
+      provider.settings?.write({ chatView: false })
+    }
   })
 
   it('reads the last reply from a Stop hook\'s own field only', () => {

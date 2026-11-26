@@ -278,13 +278,15 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
   and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
-  joins (`application/start-worker.ts`). Codex, the host's own sessions and Settings › Models › Chat view off
-  stay in the terminal. The same switch decides where new Claude sessions open (on by default); a browser can choose
+  joins (`application/start-worker.ts`). The host's own sessions, Settings › Models › Chat view off and Codex with
+  its own chat view off stay in the terminal; a worker with tool limits starts only where its chat holds them
+  (capability `toolLimits`: Claude Code), else it is refused. The same switch decides where new Claude sessions open (on by default); a browser can choose
   chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
   `review`. After a host restart a worker cut off mid-turn gets one message to continue, one at a time as there is room, then is marked `failed`.
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
-  (`application/deliver-message.ts`); a session in a terminal answers busy. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
+  (`application/deliver-message.ts`); a session in a terminal answers busy. Whether a session can be sent a message
+  is read per session (`sessionMessaging`): a Codex session only once it runs in the chat, never one that ran in a terminal. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
   stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
   one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. To find a target by what the user calls it,
   `$COCKPIT_SESSIONS_JS <words>` searches the sessions SendMessage reaches, stopped ones too, by name, first prompt,
@@ -638,7 +640,14 @@ starts a session with either). The cockpit owns its copy the same way
   A Codex chat has no `/` commands, stops a subagent by interrupting its thread's turn, takes a reasoning effort
   per session (Settings › Models › Codex: the default), reconnects its tool servers by reloading their
   configuration (no per-server on/off) and signs in to a web tool server over OAuth from the MCP panel. A
-  subagent's thread is kept apart from the session's: its calls show on its agent card.
+  subagent's thread is kept apart from the session's: its calls show on its agent card. With the chat view on,
+  workers and task runs start in the chat too (in Auto), a session in the chat can be sent a message — a stopped
+  one resumes its thread for it — and answers with `send_message` of the MCP server `cockpit`; a Codex session
+  that ran in a terminal still takes no message. Tool limits cannot be held: a Codex worker given them is refused.
+  The session's turn state comes from app-server's own turns (`reportsTurns`), not from the hooks: app-server
+  runs the cockpit's hooks only once they were trusted in a terminal ("Trust all") and never asks, so a chat
+  whose hooks are not trusted says so in the conversation. It then runs without the brain boot, project and
+  task context.
 - **Workers and task runs:** a Codex session can request a worker and run a task like a Claude Code
   session. Its sandbox has no network, so `cockpit-spawn` hands the request over as a file in
   `~/.eml-cockpit/spawn-inbox` (owner-only; the request carries the same per-boot token as the HTTP

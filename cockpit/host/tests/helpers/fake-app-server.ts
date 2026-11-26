@@ -86,6 +86,8 @@ export class FakeAppServer extends EventEmitter {
       queueMicrotask(() => this.completeTurn('interrupted'))
       return {}
     })
+    // Every hook trusted, or none configured: nothing to say.
+    this.answer('hooks/list', () => ({ data: [] }))
     // As codex-cli 0.172.0 answers for a thread it has nothing stored under.
     this.answer('thread/turns/list', () => { throw new RefusedRequest(-32600, 'thread not loaded: unknown') })
   }

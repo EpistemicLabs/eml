@@ -227,6 +227,18 @@ describe('session identity', () => {
     expect(turns.get('s-helpers')?.state).toBe('done')
   })
 
+  it('leaves the turn state of a session whose chat reports its turns to the chat, and still binds its conversation and folder', () => {
+    const { ledger, providers, turns } = setup(false)
+    ledger.recordSpawn('s-reports-turns', null, 'p1', 'claude', true)
+    ledger.setRuntime('s-reports-turns', 'sdk')
+    const hook = (payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns, reportsTurns: (id) => id === 's-reports-turns' }, 's-reports-turns', payload)
+    hook({ id: 'thread-1', state: 'working', cwd: '/work/tree' })
+    hook({ id: 'thread-1', state: 'done' })
+    expect(turns.get('s-reports-turns')).toBeUndefined()
+    expect(ledger.get('s-reports-turns')).toMatchObject({ providerSessionId: 'thread-1', workdir: '/work/tree' })
+    expect(ledger.get('s-reports-turns')?.turnInFlight).toBeFalsy()
+  })
+
   it('says how many subagents a working session waits for, until its state changes', () => {
     const turns = new TurnTracker()
     const events: Array<{ state: string; since: string; helpers?: number }> = []

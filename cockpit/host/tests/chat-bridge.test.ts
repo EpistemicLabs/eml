@@ -13,6 +13,8 @@ import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import { deriveTurn, reminder, type EndTurn } from '../src/domain/turn-end.js'
 import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, ToolServerSignIn, WorkflowWait } from '../src/domain/session-runtime.js'
 import { claudeStartOptions, type ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
+import { createCodexChatRuntimes } from '../src/infrastructure/providers/codex/chat-runtime.js'
+import { FakeAppServer, fakeSpawn } from './helpers/fake-app-server.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -83,10 +85,11 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRuntimeFactory; reportsTurns?: boolean; endTurnTool?: ChatContext['endTurnTool']; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     workerMode: 'auto',
+    ...(opts.reportsTurns ? { reportsTurns: true } : {}),
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
@@ -94,8 +97,11 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
     id: opts.provider ?? 'claude',
-    chatRuntime: factory,
-    capabilities: { chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true } },
+    chatRuntime: opts.chatRuntime ?? factory,
+    capabilities: {
+      chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true },
+      messaging: { supported: true },
+    },
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},
@@ -151,6 +157,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
     worksAlone: opts.worksAlone,
     turnContext: opts.turnContext,
     turnWake: opts.turnWake,
+    endTurnTool: opts.endTurnTool,
     // A fixed moment, so the times in these calls stay ahead of it.
     callTime: () => ({ now: Date.parse('2026-11-25T08:00:00Z'), zone: opts.zone ?? 'UTC' }),
   } as unknown as ChatContext
@@ -1866,3 +1873,137 @@ describe('parseAnswer', () => {
     expect(parseAnswer(null)).toBeNull()
   })
 })
+
+/**
+ * A Codex session in the chat: the bridge over the Codex chat runtime itself, against an app-server that is none
+ * (helpers/fake-app-server.ts). Its cockpit tools come from the host's MCP endpoint, so end_turn reaches the bridge
+ * through said(), not through the runtime.
+ */
+describe('ChatBridge with a Codex session in the chat', () => {
+  const settle = async () => { for (let i = 0; i < 10; i += 1) await flush() }
+  /** The process that runs the session: not the one that read its stored conversation. */
+  const sessionServer = (servers: FakeAppServer[]) => servers.find((server) => server.requestsOf('thread/start').length + server.requestsOf('thread/resume').length > 0)
+
+  it('starts a worker on app-server in the mode workers run in, its prompt as the first turn', async () => {
+    const { spawn, servers } = fakeSpawn((server) => { server.turnsEnd = false })
+    const { bridge, ledgerEntries } = setup({ provider: 'codex', chatRuntime: createCodexChatRuntimes(spawn) })
+    expect(bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: 'r', createdAt: '' })).toBeNull()
+    await settle()
+    const server = sessionServer(servers)!
+    // Auto, as a Codex worker in a terminal: the sandbox, and the reviewer model answers what goes beyond it.
+    expect(server.requestsOf('thread/start')[0]).toMatchObject({ approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review' })
+    expect(server.turnTexts()).toEqual([['do it']])
+    expect(ledgerEntries.get('s1')).toMatchObject({ runtime: 'sdk', chatMode: 'auto', conversation: server.threadId })
+    // Knows its own address: a worker it spawns can be told where to answer.
+    expect(server.spawned?.env.COCKPIT_SESSION_ADDRESS).toMatch(/^session-/)
+    await bridge.end('s1')
+  })
+
+  it('keeps an end_turn call from the cockpit MCP endpoint, and asks a worker that made none for it by the name the endpoint gives it', async () => {
+    const { spawn, servers } = fakeSpawn((server) => { server.turnsEnd = false })
+    const { bridge, ledgerEntries } = setup({
+      provider: 'codex', chatRuntime: createCodexChatRuntimes(spawn), worksAlone: async () => true, endTurnTool: () => ({ mcpServer: 'cockpit' }),
+    })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: 'r', createdAt: '' })
+    await settle()
+    const server = sessionServer(servers)!
+    // No call in the turn: sent back once, naming the tool as the MCP server lists it.
+    server.completeTurn()
+    await settle()
+    expect(server.turnTexts()[1].join('\n')).toContain(reminder(['call'], { tool: { mcpServer: 'cockpit' } }))
+    // The call arrives over the endpoint while the turn runs: the bridge keeps it on the worker's entry.
+    const ctx = { owner: 'lasse', agent: 'atlas', members: [] }
+    const call: EndTurn = { result: 'Done, the notes are in the brain.' }
+    expect(bridge.said('s1', { call, ctx, derived: deriveTurn(call, ctx) })).toBe(true)
+    expect(ledgerEntries.get('s1')).toMatchObject({ attention: { kind: 'done' } })
+    await bridge.end('s1')
+  })
+
+  it('resumes a stopped session\'s thread for a delivered message, and hands it the message', async () => {
+    const { spawn, servers } = fakeSpawn()
+    const { bridge, ledgerEntries } = setup({ provider: 'codex', chatRuntime: createCodexChatRuntimes(spawn), transcript: true, runtimeOf: 'sdk' })
+    // The thread the fake server's turns run on.
+    const thread = new FakeAppServer().threadId
+    Object.assign(ledgerEntries.get('s1')!, { projectId: 'p1', conversation: thread, agentTitle: 'Notes' })
+    expect(await bridge.deliver('s1', '[Message from session-aaaa, another session, not your user.]\n\nThe notes are ready.')).toBe('resumed')
+    await settle()
+    const server = sessionServer(servers)!
+    expect(server.requestsOf('thread/resume')[0]).toMatchObject({ threadId: thread })
+    expect(server.turnTexts()).toEqual([['[Message from session-aaaa, another session, not your user.]\n\nThe notes are ready.']])
+    // Running now: the next message goes into the same thread.
+    expect(await bridge.deliver('s1', 'And the summary?')).toBe('delivered')
+    await settle()
+    expect(server.turnTexts().at(-1)).toEqual(['And the summary?'])
+    await bridge.end('s1')
+  })
+
+  it('says working when a message starts a turn and done when it ends, with no done between a turn and the follow-up it was sent back with', async () => {
+    const { spawn, servers } = fakeSpawn((server) => { server.turnsEnd = false })
+    const { bridge, turns } = setup({ provider: 'codex', chatRuntime: createCodexChatRuntimes(spawn), worksAlone: async () => true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: 'r', createdAt: '' })
+    await settle()
+    const server = sessionServer(servers)!
+    expect(bridge.reportsTurns('s1')).toBe(true)
+    expect(turns.at(-1)).toEqual(['s1', 'working'])
+    // No end_turn call: the chat sends the turn back, and the session works on.
+    server.completeTurn()
+    await settle()
+    expect(server.turnTexts()).toHaveLength(2)
+    expect(turns.map(([, state]) => state)).not.toContain('done')
+    server.completeTurn()
+    await settle()
+    expect(turns.at(-1)).toEqual(['s1', 'done'])
+    expect(turns.filter(([, state]) => state === 'done')).toHaveLength(1)
+    // A message starts the next turn.
+    expect(await bridge.deliver('s1', 'One more thing.')).toBe('delivered')
+    expect(turns.at(-1)).toEqual(['s1', 'working'])
+    await bridge.end('s1')
+  })
+})
+
+/** The bridge's own turn state for a runtime that reports its turns (SessionRuntimeFactory.reportsTurns), its helpers too. */
+describe('ChatBridge with a runtime that reports its turns', () => {
+  const agent = (taskId: string, status: 'running' | 'completed' = 'running'): RuntimeEvent => ({ kind: 'agent_task', taskId, status, description: 'Look it up' } as RuntimeEvent)
+
+  it('ends the turn state at the turn\'s end; a runtime whose hooks say it does not', () => {
+    const own = setup({ reportsTurns: true })
+    own.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(own.turns).toEqual([['s1', 'working'], ['s1', 'done']])
+    // An error ends it too: no hook would.
+    own.runtimes[0].emit({ kind: 'activity', state: 'working' })
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'error' })
+    expect(own.turns.slice(2)).toEqual([['s1', 'working'], ['s1', 'done']])
+    const hooked = setup()
+    hooked.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    hooked.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(hooked.turns).toEqual([['s1', 'working']])
+    expect(hooked.bridge.reportsTurns('s1')).toBe(false)
+  })
+
+  it('says working when a turn starts without a message, but not over a card that waits for the user', () => {
+    const { bridge, runtimes, turns } = setup({ reportsTurns: true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    turns.length = 0
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    expect(turns).toEqual([['s1', 'working']])
+    runtimes[0].emit({ kind: 'permission_request', requestId: 'r1', toolName: 'Bash', input: {}, title: 'Run it?' } as RuntimeEvent)
+    runtimes[0].emit({ kind: 'activity', state: 'idle' })
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    expect(turns).toEqual([['s1', 'working'], ['s1', 'waiting']])
+  })
+
+  it('stays working while its helpers run, and is done a moment after the last came back', () => {
+    const { bridge, runtimes, turns } = setup({ reportsTurns: true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit(agent('a1'))
+    // A hook's done would not be held here: the hooks are left out for this session.
+    expect(bridge.holdTurnOpen('s1')).toBe(false)
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(turns).toEqual([['s1', 'working']])
+    runtimes[0].emit(agent('a1', 'completed'))
+    expect(turns).toEqual([['s1', 'working'], ['s1', 'done', HELPERS_BACK_SETTLE_MS]])
+  })
+})
+

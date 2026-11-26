@@ -332,6 +332,12 @@ export interface EndTurnRecorded {
 export interface SessionRuntimeFactory {
   /** The mode a worker runs in, one of those its `capabilities` offer: nobody is there to answer. */
   readonly workerMode: string
+  /**
+   * Its turns are the session's turn state: the bridge says working when one starts and done when it ends, and the
+   * host leaves the agent CLI's turn hooks out for it. For a runtime whose hooks may not run at all (Codex's
+   * app-server runs them only once the user trusted them). Absent: the hooks say it (Claude Code).
+   */
+  readonly reportsTurns?: boolean
   start(request: SessionRuntimeStart): SessionRuntime
   /** The session's stored conversation as events, oldest first, ending with `history_end`. */
   history(session: SessionRef): Promise<RuntimeEvent[]>

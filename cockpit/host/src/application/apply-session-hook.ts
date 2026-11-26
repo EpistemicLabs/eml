@@ -23,6 +23,12 @@ export interface SessionHookDeps {
    * the turn state itself once they are back (chat-bridge.ts holdTurnOpen).
    */
   waitsOnHelpers?: (sessionId: string) => boolean
+  /**
+   * The chat reports this session's turn state from its runtime's own turns (chat-bridge.ts reportsTurns): its hooks
+   * still bind the conversation and the folder, but their working and done are left out, or a turn the chat sends
+   * back would show done in between.
+   */
+  reportsTurns?: (sessionId: string) => boolean
 }
 
 /**
@@ -56,6 +62,7 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   deps.ledger.bindProviderSession(sessionId, signal.providerSessionId)
   // Claude Code and Codex send the folder the agent works in with every hook: the Worktrees plugin's session ↔ worktree.
   if (typeof payload.cwd === 'string' && payload.cwd) deps.ledger.setWorkdir(sessionId, payload.cwd)
+  if (deps.reportsTurns?.(sessionId)) return
   // A terminal process dies with the host without a word, so its hooks are all there is to go by.
   if (signal.state === 'working' || signal.state === 'done') deps.ledger.setTurnInFlight(sessionId, signal.state === 'working')
   // A chat session's result comes from its own turn end (chat-bridge.ts); only a terminal has its hooks to go by.

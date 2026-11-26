@@ -39,7 +39,7 @@ import {
 } from './project-registry.js'
 import { brainProjectOf, moveProject, planProjectMove } from './project-move.js'
 import { BrainRenameError, type BrainProject } from './brain-projects.js'
-import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER, type AgentProvider, type SessionSpace } from './domain/agent-provider.js'
+import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER, sessionMessaging, type AgentProvider, type SessionSpace } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { applySessionHook } from './application/apply-session-hook.js'
 import { directoryQueryOf } from './application/session-tools.js'
@@ -453,8 +453,9 @@ export function directoryEntries(deps: HostDeps, callerId: string): DirectoryEnt
   }
   return ledger.list()
     .filter((entry) => entry.sessionId !== callerId && agentOf(entry.spaceId) === agentOf(caller.spaceId))
-    // A session of a provider without messaging has no address to send to.
-    .filter((entry) => deps.providers.forSession(entry.sessionId).capabilities.messaging.supported)
+    // A session that cannot be handed a message has no address to send to: one of a provider without messaging, or
+    // one its provider takes messages for in the chat only that ran in a terminal (Codex).
+    .filter((entry) => sessionMessaging(deps.providers.forSession(entry.sessionId), entry).supported)
     .map((entry) => {
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       const view = sessionView(deps, project, entry)
@@ -1301,6 +1302,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         {
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
           waitsOnHelpers: (sessionId: string) => deps.chat.holdTurnOpen(sessionId),
+          reportsTurns: (sessionId: string) => deps.chat.reportsTurns(sessionId),
           ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, deps.providers.forSession(sessionId).lastReply(payload)) } : {}),
           ...(deps.answered ? { answered: deps.answered } : {}),
           ...(deps.userWrote ? { userWrote: deps.userWrote } : {}),
