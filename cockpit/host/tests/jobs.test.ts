@@ -125,6 +125,23 @@ describe('create: a repeating time', () => {
     expect(world.changed).toBe(1)
   })
 
+  it('writes the schedule to the task first and the record after it, for a new task and for one that exists', async () => {
+    // What the task's schedule was each time the store was written: a record never waits for its schedule.
+    const seen: Array<ScheduleFields | null> = []
+    const put = world.store.put.bind(world.store)
+    world.store.put = (record) => { seen.push(world.main.schedule(record.id)); put(record) }
+    const made = await create({ name: 'Daily brief', cron: WEEKDAYS_8, max_runs: 3, notify: 'always' })
+    expect(seen).toEqual([{ crons: [WEEKDAYS_8], time_zone: ZONE }])
+    expect(world.store.get(made.taskId!)).toMatchObject({ end: { afterRuns: 3 }, notify: 'always' })
+    const task = world.main.add('Follow up')
+    await create({ task_id: task.id, at: '2026-11-10T09:00', max_runs: 2 })
+    expect(seen[1]).toMatchObject({ at: '2026-11-10T01:00:00.000Z' })
+    const plain = world.main.add('Plain')
+    await act({ action: 'update', job: plain.id, cron: WEEKDAYS_8, notify: 'never' })
+    expect(seen[2]).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
+    expect(seen).toHaveLength(3)
+  })
+
   it('answers with the next runs in words', async () => {
     const answer = await create({ name: 'Daily brief', cron: WEEKDAYS_8 })
     expect(answer.text).toBe(`Made task "Daily brief" (${answer.taskId!.slice(0, 8)}) with its schedule.\n"Daily brief" (${answer.taskId!.slice(0, 8)}): cron "0 8 * * 1-5" (Asia/Makassar)\n  next: Tue 10 Nov 08:00, Wed 11 Nov 08:00, Thu 12 Nov 08:00`)

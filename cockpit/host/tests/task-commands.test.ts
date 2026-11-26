@@ -149,7 +149,9 @@ describe('hand over', () => {
   it('a scheduled hand-over is an explicit act on this machine: the cockpit keeps a record for the task; a hand-over now makes none', async () => {
     const w = world([owned('t1'), owned('t2')])
     const kept: string[] = []
-    w.deps.keepRecord = (spaceId, taskId) => { kept.push(`${spaceId}:${taskId}`) }
+    // the record is kept once the schedule is on the task, never before
+    w.deps.keepRecord = (spaceId, taskId) => { kept.push(`${spaceId}:${taskId}`); scheduledAtKeep.push(w.byId.get(taskId)!.properties.delegation?.schedule ?? null) }
+    const scheduledAtKeep: unknown[] = []
     const commands = createTaskCommands(w.deps)
     await commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', timeZone: 'Asia/Singapore' } } })
     await commands.submit({ opId: 'op-n', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
@@ -157,6 +159,7 @@ describe('hand over', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await commands.tick()
     expect(kept).toEqual(['main:t1'])
+    expect(scheduledAtKeep).toEqual([{ at: '2026-11-20T01:00:00.000Z', time_zone: 'Asia/Singapore' }])
   })
 
   it('refuses a repeating time given in another zone than the task\'s repeating times, and says theirs', async () => {
