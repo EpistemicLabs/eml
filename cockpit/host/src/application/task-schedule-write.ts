@@ -18,7 +18,9 @@ import { sameSchedule, withSchedule } from '../domain/task-schedule.js'
  * page's commands. So in this process the writes of one task run one after the other, in the order they were asked
  * for: each reads what the one before wrote, and none is lost. Against a writer outside this process (another
  * cockpit on a shared brain, an agent's own brain tool) the write carries the rev the task was read at (the brain's
- * base_rev precondition); when the task changed in between, it is read again and the edit made once more.
+ * base_rev precondition); when the task changed in between, it is read again and the edit made once more. A caller
+ * that worked its edit out against an earlier read (the jobs migration's plan) names that read's rev instead
+ * (`baseRev`): then a task that changed since is not written at all.
  */
 
 export interface ScheduledTask {
@@ -42,6 +44,13 @@ export interface ScheduleWriteOptions {
   text?: string
   /** Further fields of the same track call (content, goal, status …); never `delegation`. */
   fields?: Record<string, unknown>
+  /** Nothing at all is written (no journal line, no further field) when the edit leaves the schedule as it is. */
+  onlyWithChange?: boolean
+  /**
+   * The rev the caller read the task at and worked its edit out against (a plan made earlier): the write is made only
+   * while the task is still at it. A task that changed since is not written and not tried again: ScheduleChangedError.
+   */
+  baseRev?: number
 }
 
 export interface ScheduleWritten {
@@ -54,6 +63,11 @@ export interface ScheduleWritten {
 
 /** A schedule could not be written; its message says why. */
 export class ScheduleWriteError extends Error {}
+
+/** The task changed since the caller read it (ScheduleWriteOptions.baseRev): nothing was written. */
+export class ScheduleChangedError extends ScheduleWriteError {
+  constructor() { super('the task changed since it was read: nothing was written') }
+}
 
 /** The body of the track call that gives the task this schedule; null when the task's delegation needs no write. */
 export function scheduleWrite(task: ScheduledTask, schedule: ScheduleFields | null, agent?: string | null): { delegation: DelegationFields } | null {
@@ -88,16 +102,19 @@ export function editTaskSchedule(brain: Pick<EmlApi, 'get' | 'post'>, taskId: st
   return inTurn(taskId, async () => {
     for (let attempt = 0; ; attempt++) {
       const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as ScheduledTask
+      if (opts.baseRev !== undefined && task.rev !== opts.baseRev) throw new ScheduleChangedError()
       const current = delegationOf(task)?.schedule ?? null
       const next = edit(current, task)
       const write = scheduleWrite(task, next, opts.agent)
       const { delegation: _never, base_rev: _rev, ...fields } = opts.fields ?? {}
       const body = { ...fields, ...(write ?? {}), ...(opts.text ? { text: opts.text } : {}) }
-      if (Object.keys(body).length === 0) return { task, schedule: current, changed: false }
+      if (Object.keys(body).length === 0 || (opts.onlyWithChange && !write)) return { task, schedule: current, changed: false }
       try {
         await brain.post(`/task/${encodeURIComponent(taskId)}/track`, typeof task.rev === 'number' ? { ...body, base_rev: task.rev } : body)
         return { task, schedule: write ? write.delegation.schedule ?? null : current, changed: write !== null }
       } catch (err) {
+        // The caller's edit was made for the task as it read it: one that changed is the caller's to plan again.
+        if (opts.baseRev !== undefined && isConflict(err)) throw new ScheduleChangedError()
         // The task changed between the read and the write: once more, on the task as it is now.
         if (attempt > 0 || !isConflict(err)) throw err
       }

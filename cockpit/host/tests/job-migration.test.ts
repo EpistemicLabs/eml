@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { jobMigrationReport, MIGRATED_AWAY, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { changedMeanwhile, jobMigrationReport, MIGRATED_AWAY, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
@@ -518,5 +518,27 @@ describe('a stored schedule read as schema 24 holds it', () => {
     const now = { crons: ['0 7 * * *', '0 9 * * *'], at: AHEAD, why: 'Look.', by_session: 's1', time_zone: 'UTC', ends_at: LATER }
     expect(scheduleAtSchema24(now)).toBe(now)
     expect([scheduleAtSchema24(null), scheduleAtSchema24(undefined), scheduleAtSchema24('x')]).toEqual([null, null, null])
+  })
+})
+
+describe('a planned task whose write found the task changed', () => {
+  it('holds nothing of its plan: it is left, its live jobs wait in the version 1 data, and the report says so; a job that was over stays history', () => {
+    const live = cron('0 8 * * 1-5')
+    const over = cron('0 9 * * *', { endedAt: '2026-11-20T00:00:00.000Z' })
+    const p = plan([live, over])
+    const left = changedMeanwhile(p.tasks[0])
+    expect(left).toMatchObject({ outcome: 'left', brain: null, record: null, settles: [], renamed: [], runs: [], settings: [], why: 'the task changed while its jobs were planned: nothing is written in this pass, and it is planned again at the next one' })
+    expect(left.jobs).toEqual([
+      { id: over.id, name: 'Daily brief', what: 'had ended: its runs stay as history', kind: 'history' },
+      { id: live.id, name: 'Daily brief', what: 'waits: its task changed while it was planned', kind: 'waits' },
+    ])
+    const report = jobMigrationReport({ tasks: [left], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: false })
+    expect(report).toContain('2 jobs on 1 task: 0 moved, 0 dropped, 1 left as they are. Of the jobs, 0 moved and 1 did not.')
+    expect(report).not.toContain('Appended')
+  })
+
+  it('a left-over schedule the writer found changed is reported as left alone', () => {
+    const report = jobMigrationReport({ tasks: [], elsewhere: 0, leftovers: [{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, changed: true }] }, { space: 'Main', at: 'now', dryRun: false })
+    expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); changed meanwhile, left alone.')
   })
 })

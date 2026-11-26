@@ -88,6 +88,8 @@ export function scheduleAtSchema24(stored: unknown): ScheduleFields | null {
 export interface JobMigrationTask {
   id: string
   status: string
+  /** The task's revision as the plan read it: its write names it, so a task that changed since is not written (application/job-migration.ts). */
+  rev?: number
   title?: string | null
   content?: string
   /** The task's author: its owner when nobody is assigned (domain/task-owner.ts ownerOf). */
@@ -180,6 +182,8 @@ export interface LeftoverSchedule {
   taskId: string
   title: string
   schedule: ScheduleFields
+  /** Set by the writer: at its removal the task had another schedule than the plan saw, or a record by then. It was left alone. */
+  changed?: boolean
 }
 
 /** The journal line of a left-over schedule that is removed. */
@@ -524,6 +528,17 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
   return { tasks, leftovers, elsewhere: input.jobs.length - mine.length }
 }
 
+/** Why a planned task was not written: it changed between the plan's read and the write (its rev moved). */
+export const CHANGED_MEANWHILE = 'the task changed while its jobs were planned: nothing is written in this pass, and it is planned again at the next one'
+
+/** A planned task whose write found the task changed: nothing of the plan holds, its jobs wait in the version 1 data for the next pass. */
+export function changedMeanwhile(plan: TaskMigration): TaskMigration {
+  return {
+    ...plan, outcome: 'left', why: CHANGED_MEANWHILE, brain: null, record: null, runs: [], keys: {}, history: {}, settles: [], renamed: [], settings: [],
+    jobs: plan.jobs.map((job) => (job.kind === 'history' ? job : { ...job, what: 'waits: its task changed while it was planned', kind: 'waits' as const })),
+  }
+}
+
 /** A planned task's part as the store takes it (job-store.ts migrateV1), with the task's id filled in where it was made just now. */
 export function stepOf(plan: TaskMigration, taskId: string | null): { jobIds: string[]; record: Job | null; runs: JobRun[]; keys: Record<string, string>; history: Record<string, JobRun[]>; renames: Record<string, string> } {
   const record = plan.record && taskId ? { ...plan.record, id: taskId, taskId } : null
@@ -583,7 +598,7 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
   const leftovers = plan.leftovers ?? []
   for (const left of leftovers) {
     out.push(`## ${left.title} (${left.taskId.slice(0, 8)}) — a schedule without a job`, '')
-    out.push(`- A schedule without a job was left on this task (${scheduleText(left.schedule)}); removed.`)
+    out.push(`- A schedule without a job was left on this task (${scheduleText(left.schedule)}); ${left.changed ? 'changed meanwhile, left alone' : 'removed'}.`)
     out.push('')
   }
   if (plan.tasks.length === 0 && leftovers.length === 0) out.push('Nothing to move.', '')

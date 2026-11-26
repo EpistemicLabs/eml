@@ -18,13 +18,14 @@ const v1 = (id: string, patch: Record<string, unknown> = {}) => ({
 const openRun = (jobId: string) => ({ id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt: '2026-11-26T08:00:00.000Z', createdAt: '2026-11-26T08:00:00.000Z', status: 'started', attempts: 1, nextAttemptAt: null, sessionId: 's1', startedAt: '2026-11-26T08:00:05.000Z', finishedAt: null, outcome: null, note: null })
 const task = (id: string, properties: Record<string, unknown> = {}, status = 'active'): Task => ({ id, type: 'task', status, title: id, content: 'Keep the customer informed.', properties: { assignee_ids: ['member'], ...properties } })
 
-function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null; schema?: Record<string, number | null> } = {}) {
+function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null; schema?: Record<string, number | null>; onRead?: (id: string, nth: number) => void } = {}) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
   const original = JSON.stringify({ version: 1, timeZone: 'UTC', jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), runs: opts.runs ?? {}, keys: {} })
   writeFileSync(file, original)
   const store = new JobStore(file)
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const posts: Array<{ space: string; path: string; body: Record<string, unknown> }> = []
+  const reads = new Map<string, number>()
   const brainOf = (space: string) => ({
     async get(path: string, query?: Record<string, unknown>) {
       if (opts.down?.includes(space)) throw new Error('connect ECONNREFUSED')
@@ -34,7 +35,11 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
         if (opts.members === null) throw new Error('the users did not come')
         return { objects: (opts.members ?? ['member', 'other']).map((id) => ({ id })) }
       }
-      const found = byId.get(decodeURIComponent(path.slice('/engram/'.length)))
+      const id = decodeURIComponent(path.slice('/engram/'.length))
+      // A test may change the task between two reads of it: `nth` counts the reads of this task.
+      reads.set(id, (reads.get(id) ?? 0) + 1)
+      opts.onRead?.(id, reads.get(id)!)
+      const found = byId.get(id)
       if (!found) throw new EmlApiError(404, { error: 'NOT_FOUND' }, 'not found')
       return structuredClone(found)
     },
@@ -49,10 +54,13 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
       if (opts.failOn?.includes(id)) throw new Error('Invalid engram: delegation.schedule has an unknown key')
       // as the brain does (packages/core): a rewrite of the text needs a journal line
       if (body.content !== undefined && !body.text) throw new Error('Invalid engram: a content rewrite needs text')
+      const t = byId.get(id)! as Task & { rev?: number }
+      // as the brain does: a write that names another rev than the task's is refused
+      if (typeof body.base_rev === 'number' && body.base_rev !== t.rev) throw new EmlApiError(409, { error: 'CONFLICT' }, 'the engram changed since it was read')
       posts.push({ space, path, body })
-      const t = byId.get(id)!
+      if (typeof t.rev === 'number') t.rev += 1
       for (const [k, v] of Object.entries(body)) {
-        if (k === 'text') continue
+        if (k === 'text' || k === 'base_rev') continue
         if (k === 'content') t.content = v as string
         else t.properties[k] = v
       }
@@ -338,6 +346,54 @@ describe('a schedule the old mirror left on a task without a job', () => {
     expect(w.store.leftoversChecked(null)).toBe(false)
   })
 
+})
+
+describe('the migration writes only onto what it planned against', () => {
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+
+  it('a left-over schedule that changed between the plan and its removal is left alone, and the report says so', async () => {
+    const w = world([], [task('left', stale)], { onRead: (id) => { if (id === 'left') w.byId.get('left')!.properties.delegation = { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 9 * * *'], time_zone: 'UTC' } } } })
+    w.spaces.pop()
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ leftovers: 0, failed: [], unlooked: 0 })
+    expect(w.posts).toEqual([])
+    expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); changed meanwhile, left alone.')
+    expect(w.notices).toEqual([])
+    expect(w.store.awaitsLeftoverLook(null)).toBe(false)
+  })
+
+  it('a left-over schedule whose task got a record between the plan and its removal is left alone: someone set it here meanwhile', async () => {
+    const w = world([], [task('left', stale)], { onRead: (id) => { if (id === 'left') w.store.put({ id: 'left', spaceId: null, taskId: 'left', runCount: 0 } as never) } })
+    w.spaces.pop()
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ leftovers: 0, failed: [] })
+    expect(w.posts).toEqual([])
+    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
+    expect(result.reports[0]).toContain('changed meanwhile, left alone.')
+  })
+
+  it('a task that changed between the plan and its write is not written in this pass: its jobs stay in the version 1 data, the report says so, and the next pass plans it again', async () => {
+    const t1 = { ...task('t1'), rev: 4 }
+    // the second read of the task is the write's own: someone rewrote its text in between
+    const w = world([v1('j1')], [t1], { onRead: (id, nth) => { if (id === 't1' && nth === 2) Object.assign(w.byId.get('t1')!, { rev: 5, content: 'Keep the customer informed, daily.' }) } })
+    w.spaces.pop()
+    const first = await w.migration.run()
+    expect(first).toMatchObject({ moved: 0, left: 1, failed: [], jobs: { moved: 0, notMoved: 1 } })
+    expect(w.posts).toEqual([])
+    expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j1'])
+    expect(w.store.list()).toEqual([])
+    expect(first.reports[0]).toContain('## t1 (t1) — left: the task changed while its jobs were planned: nothing is written in this pass, and it is planned again at the next one')
+    expect(first.reports[0]).toContain('- Job "Daily brief" (j1): waits: its task changed while it was planned')
+    expect(first.reports[0]).not.toContain('Appended to the task\'s text')
+    // the next pass plans against the task as it is now, and its write names that rev
+    const second = await w.migration.run()
+    expect(second).toMatchObject({ moved: 1, left: 0, failed: [] })
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: {
+      content: 'Keep the customer informed, daily.\n\nEvery 0 8 * * 1-5: Write the brief.', delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } },
+      text: 'Schedules moved onto tasks: what its repeating job did was added to the task\'s text, as "Every <cron>: …".', base_rev: 5,
+    } }])
+    expect(w.store.pendingV1()).toBeNull()
+  })
 })
 
 describe('a space without version 1 jobs, in a home that was on version 1', () => {

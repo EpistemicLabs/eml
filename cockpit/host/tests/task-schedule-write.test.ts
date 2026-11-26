@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { editTaskSchedule, scheduleWrite, scheduleWritesQueued, ScheduleWriteError, writeTaskSchedule, type ScheduledTask } from '../src/application/task-schedule-write.js'
+import { editTaskSchedule, ScheduleChangedError, scheduleWrite, scheduleWritesQueued, ScheduleWriteError, writeTaskSchedule, type ScheduledTask } from '../src/application/task-schedule-write.js'
 import { addCron, clearWake, setPaused, setWake } from '../src/domain/task-schedule.js'
 
 function brainWith(task: ScheduledTask) {
@@ -153,5 +153,28 @@ describe('schedule writes of one task never overlap', () => {
     const plain = slowBrain(delegated(daily))
     await editTaskSchedule(plain.brain, 't1', (schedule) => setPaused(schedule, true))
     expect(plain.posts[0]).not.toHaveProperty('base_rev')
+  })
+
+  it('onlyWithChange: an edit that leaves the schedule as it is writes nothing at all, not even its journal line', async () => {
+    const w = brainWith(delegated(daily))
+    const kept = await editTaskSchedule(w.brain, 't1', (schedule) => schedule, { text: 'Its schedule was removed.', fields: { content: 'New text' }, onlyWithChange: true })
+    expect(kept).toMatchObject({ changed: false, schedule: daily })
+    expect(w.posts).toEqual([])
+    await editTaskSchedule(w.brain, 't1', () => null, { text: 'Its schedule was removed.', onlyWithChange: true })
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z' }, text: 'Its schedule was removed.' } }])
+  })
+
+  it('baseRev: the write is made only on the task as it was read by the caller; a task that changed since is not written, and not read again for another try', async () => {
+    const same = slowBrain({ ...delegated(daily), rev: 7 })
+    await editTaskSchedule(same.brain, 't1', (schedule) => setPaused(schedule, true), { baseRev: 7 })
+    expect(same.posts.map((body) => body.base_rev)).toEqual([7])
+    // changed before the write's own read
+    const moved = slowBrain({ ...delegated(daily), rev: 8 })
+    await expect(editTaskSchedule(moved.brain, 't1', (schedule) => setPaused(schedule, true), { baseRev: 7 })).rejects.toThrow(ScheduleChangedError)
+    expect(moved.posts).toEqual([])
+    // changed between that read and the write: the brain refuses it, and no second try is made
+    const late = slowBrain({ ...delegated(daily), rev: 7 }, { conflicts: 1 })
+    await expect(editTaskSchedule(late.brain, 't1', (schedule) => setPaused(schedule, true), { baseRev: 7 })).rejects.toThrow(ScheduleChangedError)
+    expect(late.posts).toHaveLength(1)
   })
 })

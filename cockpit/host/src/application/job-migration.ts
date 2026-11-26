@@ -1,12 +1,14 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
+import type { ScheduleFields } from '../domain/delegation.js'
 import type { JobV1 } from '../domain/job-v1.js'
-import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, SCHEDULES_ON_TASKS_SCHEMA, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
+import { changedMeanwhile, jobFates, jobMigrationReport, leftoverNote, planJobMigration, SCHEDULES_ON_TASKS_SCHEMA, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
 import type { NotificationInput } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
 import { openTasks, taskById } from './task-read.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
-import { writeTaskSchedule } from './task-schedule-write.js'
+import { sameSchedule } from '../domain/task-schedule.js'
+import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js'
 
 /**
  * The migration of jobs.json version 1 to version 2, written (domain/job-migration.ts plans it): one pass at the
@@ -22,6 +24,10 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  * whose write failed, and a space whose brain did not answer, keep their jobs there for the next start. A crash
  * between a task's brain write and its store write plans that one task again: its schedule and text are found as
  * they should be and are not written twice; only its journal lines repeat.
+ *
+ * Every write is checked against what was planned: a task's schedule and text go with the rev the plan read the task
+ * at, so a task that changed in between is not written in this pass and is planned again in the next one; a
+ * left-over schedule is removed only while the task still has that schedule and no record.
  *
  * A space whose brain is not at schema 24 yet (the brain server's control data says which it is at) is neither
  * planned nor looked through: its jobs wait. So does a space the brain server has not said the kind of (shared or
@@ -69,7 +75,8 @@ export interface JobMigrationDeps {
   notify?(input: NotificationInput): void
 }
 
-interface SpacePlan { plan: JobMigrationPlan; report: string }
+/** A space's plan, when it was made, and the tasks it was made against (as read then, with their rev). */
+interface SpacePlan { plan: JobMigrationPlan; at: string; tasks: Record<string, JobMigrationTask | null> }
 export interface JobMigrationResult {
   /** Tasks, by what became of them. */
   moved: number
@@ -189,24 +196,32 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const first = shared !== null && awaitsLook(space)
     if (mine.length === 0 && !first) return null
     const scheduled = first ? await scheduledTasks(brain) : undefined
+    const tasks = await tasksOfJobs(brain, mine)
     const plan = planJobMigration({
       jobs, runs: pending?.runs ?? {}, keys: pending?.keys ?? {}, space: { key: keyOf(space), name: space.name, shared },
       ...(scheduled ? { scheduled, records: new Set(scheduled.filter((task) => deps.store.get?.(task.id) !== undefined).map((task) => task.id)) } : {}),
       // Only a shared space has other members whose tasks are not this cockpit's.
       members: shared === true ? await membersOf(brain) : null,
-      tasks: await tasksOfJobs(brain, mine), me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
+      tasks, me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
     })
-    return { plan, report: jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: false }) }
+    return { plan, at: new Date(now).toISOString(), tasks }
   }
 
-  const applyTask = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>, task: TaskMigration): Promise<void> => {
+  /**
+   * Write one planned task. `read`: the task as the plan read it; its rev goes with the write (the brain's base_rev
+   * precondition), so the schedule and the text are written only onto the task they were planned against. A task that
+   * changed since throws ScheduleChangedError, with nothing written.
+   */
+  const applyTask = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'>, task: TaskMigration, read: JobMigrationTask | null): Promise<void> => {
     let taskId = task.taskId
     if (task.create) taskId = (await makeRoutineTask(brain, task.create)).id
     if (task.brain && taskId) {
       const text = task.brain.journal.join(' ')
       const fields = task.brain.content !== null ? { content: task.brain.content } : {}
-      if (task.brain.setSchedule) await writeTaskSchedule(brain, taskId, task.schedule, { agent: space.agent, text, fields })
-      else if (text || task.brain.content !== null) await brain.post(`/task/${encodeURIComponent(taskId)}/track`, { ...fields, ...(text ? { text } : {}) })
+      const schedule = task.schedule
+      await editTaskSchedule(brain, taskId, task.brain.setSchedule ? () => schedule : (current) => current, {
+        agent: space.agent, ...(text ? { text } : {}), fields, ...(typeof read?.rev === 'number' ? { baseRev: read.rev } : {}),
+      })
     }
     const step = stepOf(task, taskId)
     deps.store.migrateV1(step)
@@ -276,17 +291,23 @@ export function createJobMigration(deps: JobMigrationDeps) {
         continue
       }
       if (!planned) continue
-      // A space that had no job and nothing left over has nothing to report.
-      if (waiting > 0 || (planned.plan.leftovers?.length ?? 0) > 0) result.reports.push(planned.report)
       // The left-over schedules first, before any job of the space moves. One that cannot be removed is tried again:
       // the space counts as looked through only once all are gone, and until then the engine takes up no schedule
       // there by seeing it.
       let removed = true
       for (const left of planned.plan.leftovers ?? []) {
         try {
-          await writeTaskSchedule(brain, left.taskId, null, { text: leftoverNote(left.schedule) })
-          result.leftovers += 1
-          deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: a schedule without a job was left on this task; removed`)
+          // Checked again at the write: it is removed only while the task still has the schedule the plan saw and
+          // still no record. Otherwise someone set it meanwhile, and it is left alone.
+          const still = (current: ScheduleFields | null) => sameSchedule(current, left.schedule) && deps.store.get?.(left.taskId) === undefined
+          const written = await editTaskSchedule(brain, left.taskId, (current) => (still(current) ? null : current), { text: leftoverNote(left.schedule), onlyWithChange: true })
+          if (written.changed) {
+            result.leftovers += 1
+            deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: a schedule without a job was left on this task; removed`)
+          } else {
+            left.changed = true
+            deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: its schedule without a job changed meanwhile; left alone`)
+          }
         } catch (err) {
           removed = false
           const what = `its schedule without a job could not be removed: ${(err as Error).message}`
@@ -294,7 +315,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
         }
       }
       if (removed && planned.plan.leftovers !== undefined) deps.store.markLeftoversChecked?.(keyOf(space))
-      for (const task of planned.plan.tasks) {
+      for (const [index, task] of planned.plan.tasks.entries()) {
         const fates = jobFates({ tasks: [task] })
         if (task.outcome === 'left') {
           result.left += 1
@@ -303,16 +324,27 @@ export function createJobMigration(deps: JobMigrationDeps) {
           continue
         }
         try {
-          await applyTask(space, brain, task)
+          await applyTask(space, brain, task, task.taskId ? planned.tasks[task.taskId] ?? null : null)
           result[task.outcome] += 1
           result.jobs.moved += fates.moved
           result.jobs.notMoved += fates.lost + fates.waits
         } catch (err) {
+          if (err instanceof ScheduleChangedError) {
+            // Not written, and no failure: its jobs stay in the version 1 data, and the next pass plans it again.
+            planned.plan.tasks[index] = changedMeanwhile(task)
+            result.left += 1
+            result.jobs.notMoved += fates.moved + fates.lost + fates.waits
+            deps.log(`[jobs] migration, ${spaceTag(space)}: ${taskTag(task)} changed while its jobs were planned: not written, planned again at the next pass`)
+            continue
+          }
           failed(`${space.name}: "${task.title}": ${(err as Error).message}`, `${spaceTag(space)}: ${taskTag(task)}: ${(err as Error).message}`)
           // Its jobs stay where they are for the next pass: none of them fires meanwhile.
           result.jobs.notMoved += fates.moved + fates.lost + fates.waits
         }
       }
+      // The space's report, made once its writes are through: it says what was left alone because it had changed.
+      // A space that had no job and nothing left over has nothing to report.
+      if (waiting > 0 || (planned.plan.leftovers?.length ?? 0) > 0) result.reports.push(jobMigrationReport(planned.plan, { space: space.name, at: planned.at, dryRun: false }))
     }
     const rest = Object.values(deps.store.pendingV1()?.jobs ?? {})
     const known = new Set(deps.spaces().map(keyOf))
