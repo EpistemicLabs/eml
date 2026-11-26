@@ -195,6 +195,11 @@ export class JobStore {
     return Object.values(this.data.v1?.jobs ?? {}).some((job) => job.taskId === taskId)
   }
 
+  /** The tasks that still have version 1 jobs that have not moved onto them. */
+  v1TaskIds(): Set<string> {
+    return new Set(Object.values(this.data.v1?.jobs ?? {}).flatMap((job) => (job.taskId ? [job.taskId] : [])))
+  }
+
   /** Write one task's part of the version 1 migration: its jobs leave `v1`, its record and runs are in. */
   migrateV1(step: V1Step): void {
     const v1 = this.data.v1

@@ -70,8 +70,10 @@ describe('jobs.json', () => {
     const { file } = v1File()
     const store = new JobStore(file)
     expect([store.hasV1Jobs('t1'), store.hasV1Jobs('t2'), store.hasV1Jobs('t9')]).toEqual([true, true, false])
+    expect([...store.v1TaskIds()].sort()).toEqual(['t1', 't2'])
     store.migrateV1({ jobIds: ['j1'], record: null })
     expect([store.hasV1Jobs('t1'), store.hasV1Jobs('t2')]).toEqual([false, true])
+    expect([...store.v1TaskIds()]).toEqual(['t2'])
     expect(new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')).hasV1Jobs('t1')).toBe(false)
   })
 

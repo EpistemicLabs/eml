@@ -129,6 +129,12 @@ export interface JobRunnerDeps {
    */
   waitsForMigration?(taskId: string): boolean
   /**
+   * The tasks that still have version 1 jobs now (waitsForMigration for all of them at once). A pass takes this before
+   * it reads a space's list: a task that had jobs then is not derived in that pass, also when they moved meanwhile,
+   * since the list may hold the task as it was before the migration wrote it.
+   */
+  migratingTasks?(): ReadonlySet<string>
+  /**
    * The jobs migration has not yet looked through this space for schedules the old mirror left on tasks without a job
    * (application/job-migration.ts). Until it has, no schedule is taken up by being seen: a task without a record is
    * left alone, so a left-over schedule never fires before it is removed. A task with a record goes on firing.
@@ -410,11 +416,16 @@ export class JobRunner {
   /**
    * One space: what is due on the tasks this cockpit fires, and the space's records kept in step with their tasks.
    * A space whose tasks cannot be read, and one whose kind is not known (shared or local), is left as it is: nothing
-   * fires and no record is touched.
+   * fires and no record is touched. A task the list may hold as it was before a write is left for the next pass: one
+   * whose version 1 jobs were still to move when the list was read, and one whose record changed after that.
    */
   private async deriveSpace(space: RunnerSpace, now: number): Promise<void> {
     const shared = await this.kindOf(space)
     if (shared === null) return
+    // What holds before the list is read: a task whose jobs were still to move, or whose record changed after this
+    // moment, may be written since and stand in the list as it was before. It waits for the next pass's list.
+    const listedAt = this.now()
+    const migrating = new Set(this.deps.migratingTasks?.() ?? [])
     const tasks = await this.deps.openTasks(space)
     if (!tasks) return
     const open = new Map(tasks.map((task) => [task.id, task]))
@@ -426,7 +437,11 @@ export class JobRunner {
       if (members === undefined) members = this.deps.members ? await this.deps.members(space).catch(() => null) : null
       return firingOf(shared, task, this.deps.me, members)
     }
-    const waits = (taskId: string) => this.deps.waitsForMigration?.(taskId) === true
+    const newerThanList = (taskId: string) => {
+      const record = this.deps.store.get(taskId)
+      return record !== undefined && Date.parse(record.updatedAt) > listedAt
+    }
+    const waits = (taskId: string) => this.deps.waitsForMigration?.(taskId) === true || migrating.has(taskId) || newerThanList(taskId)
     const fired = new Set<string>()
     // One task that cannot be derived (a brain write that fails) does not hold up the others.
     const derive = async (task: RunnerTask) => {

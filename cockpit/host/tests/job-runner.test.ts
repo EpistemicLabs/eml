@@ -121,6 +121,7 @@ class World {
         return found && found.space === space.key ? structuredClone(found) : null
       },
       waitsForMigration: (taskId) => this.unmoved.has(taskId),
+      migratingTasks: () => new Set(this.unmoved),
       holdsFirstSight: (space) => this.unchecked.has(space.key),
       spaceKind: async (space) => { this.kindAsked += 1; return this.kinds.get(space.key) ?? null },
       members: async () => this.members,
@@ -1190,6 +1191,65 @@ describe('keeping the records in step with their tasks', () => {
     world.now += MIN
     await runner.tick()
     expect(world.store.get('fresh')).toMatchObject({ end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops', createdBy: 's-maker', cursor: '2026-11-09T00:01:00.000Z' })
+  })
+
+  it('a task the jobs migration wrote after the pass read its list is not derived from that list: nothing fires, and the next pass fires from the moved schedule', async () => {
+    // the old mirror's schedule, as the list has it: a past wake-up of a one-time job that ran long ago
+    world.task('routine', { at: '2026-11-08T23:00:00.000Z', why: 'An old check.' })
+    world.unmoved.add('routine')
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // the migration, after this pass read the tasks: the task's schedule from its jobs, then its record (made
+          // at the time of the plan, before this read), and its jobs leave the version 1 data
+          world.setSchedule('routine', WEEKDAYS_8)
+          world.store.put({ ...newRecord({ id: 'routine', spaceId: null }, '2026-11-08T23:59:00.000Z'), cursor: '2026-11-09T00:00:00.000Z' })
+          world.unmoved.delete('routine')
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('routine')).toEqual([])
+    expect(world.edits).toEqual([])
+    expect(world.store.get('routine')).toMatchObject({ cursor: '2026-11-09T00:00:00.000Z', firedWake: null })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('routine')).toMatchObject([{ number: 1, fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: '2026-11-10T00:00:00.000Z' }], timeZone: ZONE } }])
+    expect(runs('routine')[0].fired).not.toHaveProperty('wake')
+  })
+
+  it('a task whose record changed after the pass read its list is not derived from that list in that pass', async () => {
+    world.task('checked', { ...HOURLY, at: '2026-11-08T23:00:00.000Z', why: 'Check the reply.' })
+    world.store.put({ ...newRecord({ id: 'checked', spaceId: null }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-08T23:59:00.000Z' })
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // a turn ended without a time, after this read: the wake-up off the task, then the record
+          world.now += 1000
+          world.setSchedule('checked', HOURLY)
+          world.store.put({ ...world.store.get('checked')!, updatedAt: new Date(world.now).toISOString() })
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('checked')).toEqual([])
+    world.now = Date.parse('2026-11-09T01:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('checked')[0].fired).not.toHaveProperty('wake')
   })
 
   it('a record without anything that keeps it goes once it has not changed for the grace, not before', async () => {

@@ -739,6 +739,7 @@ async function main() {
     },
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
     waitsForMigration: (taskId) => jobStore.hasV1Jobs(taskId),
+    migratingTasks: () => jobStore.v1TaskIds(),
     // In a home that was on version 1, until the migration has looked through a space for left-over schedules, none is taken up there by being seen.
     holdsFirstSight: (space) => jobStore.awaitsLeftoverLook(space.key),
     task: async (space, taskId) => {
