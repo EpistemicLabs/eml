@@ -87,7 +87,7 @@ A limited job's session reaches only its own job: `update` with `--at`,
 
 - A job runs in this session's space, with at most this session's tools.
   You see and change only this space's jobs.
-- 25 jobs per space.
+- 100 jobs per space.
 - Runs start one after another while the machine has room, so a run can
   start a little late.
 - A run that cannot start within an hour fails. After three failed runs in
