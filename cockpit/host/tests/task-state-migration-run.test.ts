@@ -124,6 +124,8 @@ describe('the task state migration run', () => {
     const task = routineTask(routine, 'bp-ops', 'member')!
     expect(task).toEqual({ title: routineTitle(routine), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['member'] })
     expect(task.title).toBe('routine-daily-brief-job-1234')
+    // its text is the whole prompt: the brain sets no limit on a task's text
+    expect(routineTask({ ...routine, prompt: 'x'.repeat(5000) }, 'bp-ops', 'member')!.content).toHaveLength(5000)
     // a task belongs to a project of the brain
     expect(routineTask(routine, null, 'member')).toBeNull()
     expect(routineTask(routine, 'some-folder', 'member')).toBeNull()

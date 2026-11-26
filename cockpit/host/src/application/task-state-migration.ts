@@ -37,14 +37,19 @@ export interface Routine { id: string; name: string; prompt: string }
 export const routineTitle = (routine: Pick<Routine, 'id' | 'name'>) =>
   `routine-${routine.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)}-${routine.id.slice(0, 8)}`
 
-/** The task of a routine as the brain gets it; null when `projectId` is no project of the brain (a task belongs to one). */
+/**
+ * The task of a routine as the brain gets it; null when `projectId` is no project of the brain (a task belongs to one).
+ * Its text is the whole prompt: the brain sets no limit on a task's text (packages/core/src/fields.ts limits a task's
+ * fields, such as display_title, never the content), so nothing of a long prompt of a version 1 job is cut. The
+ * schedule tool limits its own prompt before it comes here (application/jobs.ts).
+ */
 export function routineTask(routine: Routine, projectId: string | null, owner: string): { title: string; display_title: string; content: string; scope: string; status: 'active'; assignee_ids: string[] } | null {
   const brainProject = projectId ? brainIdFromProjectId(projectId) : null
   if (!brainProject) return null
   return {
     title: routineTitle(routine),
     display_title: routine.name.slice(0, 80),
-    content: routine.prompt.slice(0, 2000),
+    content: routine.prompt,
     scope: `project.${brainProject}`,
     status: 'active',
     assignee_ids: [owner],
