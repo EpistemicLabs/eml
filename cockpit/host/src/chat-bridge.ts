@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
-import type { AgentProvider, TurnState } from './domain/agent-provider.js'
+import type { AgentProvider, ProviderId, TurnState } from './domain/agent-provider.js'
 import type {
   EventStore, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
@@ -89,8 +89,8 @@ const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
 // A model id may carry a variant: `opus[1m]`.
 const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
-// The mode a worker runs in, as in the terminal: nobody is there to answer.
-const WORKER_MODE = 'auto'
+// The provider a new chat runs with when its view names none.
+const DEFAULT_CHAT_PROVIDER: ProviderId = 'claude'
 // The calls that say how a turn ends: the reply is what is written after them.
 const END_OF_TURN_TOOLS = [END_TURN_TOOL, LEGACY_STATUS_TOOL]
 
@@ -134,6 +134,8 @@ const CARRY_OVER_NOTICE = 'This chat continues the terminal session. "Allow for 
 
 interface ChatEntry {
   sessionId: string
+  /** The provider its view opened it with: what a session the ledger does not know yet starts with. */
+  provider: ProviderId
   spaceId: string
   projectId: string
   projectPath: string
@@ -194,7 +196,6 @@ export interface ChatContext {
   providers: ProviderRegistry
   spaces: BrainSpaces
   sessionEnv: Record<string, string>
-  runtimes: SessionRuntimeFactory
   events: EventStore
   /** Report a session's turn state where hooks can't: a permission card brings no Notification hook. */
   onTurn: (sessionId: string, state: Exclude<TurnState, 'idle'>, settleMs?: number) => void
@@ -264,6 +265,8 @@ type ClientMessage = {
   projectId?: unknown
   sessionId?: unknown
   spaceId?: unknown
+  /** A new chat for another provider than the default; a session the ledger knows keeps its own. */
+  provider?: unknown
   epoch?: unknown
   after?: unknown
   text?: unknown
@@ -574,8 +577,9 @@ export class ChatBridge {
     if (moved) return refuse(moved)
     const project = this.projectFor(space, projectId)
     if (!project?.path) return refuse('Unknown project, or it has no folder')
-    const provider = this.ctx.ledger.has(sessionId) ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
-    if (!provider) return refuse('The chat view runs Claude Code sessions only. This session stays in the terminal.')
+    const named = text(data.provider)
+    const provider = this.ctx.ledger.has(sessionId) ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get(named || DEFAULT_CHAT_PROVIDER)
+    if (!provider) return refuse(named ? 'This cockpit has no such agent.' : 'The chat view runs Claude Code sessions only. This session stays in the terminal.')
     const chat = provider.capabilities.chat
     if (!chat.supported) return refuse(chat.reason)
     const problem = provider.runtime.problem()
@@ -653,7 +657,7 @@ export class ChatBridge {
     const fromTerminal = this.ctx.ledger.get(sessionId)?.runtime === 'terminal'
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
-      sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
+      sessionId, provider: provider.id, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
       openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
@@ -662,8 +666,7 @@ export class ChatBridge {
     // The view is rebuilt from the transcript, which holds what the terminal added
     // and was never streamed; from here on it renders from this one log.
     if (resume) {
-      const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
-      for (const event of await this.ctx.runtimes.history(conversationId, projectPath, space.runtime)) this.emit(entry, event)
+      for (const event of await this.earlier(entry, provider, space)) this.emit(entry, event)
       if (fromTerminal) this.emit(entry, { kind: 'notice', text: CARRY_OVER_NOTICE })
     }
     const first = resume ? null : opts.firstPrompt ?? opts.greeting
@@ -692,7 +695,7 @@ export class ChatBridge {
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
     // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
     const stored = this.ctx.ledger.get(sessionId)
-    if (stored?.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+    if (stored?.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: this.runtimeOf(provider).workerMode })
     // A terminal session kept for Remote Control is not one any more.
     this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
@@ -766,7 +769,7 @@ export class ChatBridge {
     const space = this.ctx.spaces.get(entry.spaceId)
     if (!space) throw new Error('This session\'s brain space is gone')
     const known = this.ctx.ledger.has(sessionId)
-    const provider = known ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
+    const provider = known ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get(entry.provider)
     if (!provider) throw new Error('This session\'s agent is gone')
     this.startEntry(entry, provider, space, this.ctx.ledger.get(sessionId)?.paneId ?? null, known && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime)))
   }
@@ -790,7 +793,7 @@ export class ChatBridge {
     // A new id has no other side to wait for, so this runs right away.
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
-        sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
+        sessionId, provider: provider.id, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
         openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
@@ -801,7 +804,7 @@ export class ChatBridge {
         const worker = unattended(request)
         this.ctx.ledger.recordSpawn(sessionId, null, projectId, provider.id, worker, request.taskId ?? null, space.ledgerKey)
         this.ctx.ledger.setRuntime(sessionId, 'sdk')
-        if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+        if (worker) this.ctx.ledger.setChatSettings(sessionId, { mode: this.runtimeOf(provider).workerMode })
         if (request.title) this.ctx.ledger.setAgentTitle(sessionId, request.title)
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
@@ -844,20 +847,19 @@ export class ChatBridge {
     if (!path || provider.runtime.problem() || space.runtime?.problem(provider.id)) return 'refused'
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
-        sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
+        sessionId, provider: provider.id, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
         openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
       const resume = provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
       if (resume) {
-        const conversationId = this.ctx.ledger.ref(sessionId, null).providerSessionId ?? sessionId
-        for (const event of await this.ctx.runtimes.history(conversationId, path, space.runtime)) this.emit(entry, event)
+        for (const event of await this.earlier(entry, provider, space)) this.emit(entry, event)
       }
       provider.trustProject(path, sessionSpaceOf(space))
       this.ctx.ledger.recordSpawn(sessionId, stored.paneId, projectId, provider.id, false, null, space.ledgerKey)
       this.ctx.ledger.setRuntime(sessionId, 'sdk')
-      if (stored.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: WORKER_MODE })
+      if (stored.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: this.runtimeOf(provider).workerMode })
       this.startRuntime(entry, provider, space, resume)
       this.sendMessage(entry, text, [], '', opts.reminder === true)
       this.log(`resumed ${sessionId} for a message`)
@@ -865,22 +867,36 @@ export class ChatBridge {
     return 'resumed'
   }
 
+  /** The provider's chat runtime. init() refuses a provider without a chat, so a session that got here has one. */
+  private runtimeOf(provider: AgentProvider): SessionRuntimeFactory {
+    if (!provider.chatRuntime) throw new Error(`${provider.label} sessions do not run in the chat view.`)
+    return provider.chatRuntime
+  }
+
+  /** The session's earlier conversation, as its provider stored it. */
+  private earlier(entry: ChatEntry, provider: AgentProvider, space: BrainSpace): Promise<RuntimeEvent[]> {
+    return this.runtimeOf(provider).history(this.ctx.ledger.ref(entry.sessionId, entry.projectPath, space.runtime))
+  }
+
   private startRuntime(entry: ChatEntry, provider: AgentProvider, space: BrainSpace, resume: boolean): void {
     const { sessionId, projectId, projectPath } = entry
+    const runtimes = this.runtimeOf(provider)
     const address = sessionAddress(sessionId, projectId)
     const { providerSessionId } = this.ctx.ledger.ref(sessionId, null)
+    const sessionSpace = sessionSpaceOf(space)
+    // Never `unattended`, a worker neither: that picks a terminal's arguments (permission mode, Remote Control),
+    // and a worker's mode here is its runtime's (workerMode).
     const launch = provider.launch({
       sessionId, address, providerSessionId, resume, initialPrompt: null, unattended: false,
-      space: sessionSpaceOf(space),
+      space: sessionSpace,
       toolProfile: this.ctx.ledger.get(sessionId)?.toolProfile ?? null,
     })
     const brainId = brainIdFromProjectId(projectId)
-    // The same environment a terminal session gets. The SDK replaces the
-    // environment rather than merging, and it never carries a login token.
-    const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...launchEnv } = launch.env
+    // The same environment a terminal session gets: a runtime replaces the
+    // environment rather than merging, and takes out what its harness must not carry.
     const merged: Record<string, string> = {
       ...baseAgentEnv(),
-      ...launchEnv,
+      ...launch.env,
       ...this.ctx.sessionEnv,
     }
     const env = {
@@ -891,14 +907,11 @@ export class ChatBridge {
     }
     const stored = this.ctx.ledger.get(sessionId)
     this.emit(entry, { kind: 'process', state: 'starting' })
-    entry.runtime = this.ctx.runtimes.start({
+    entry.runtime = runtimes.start({
       sessionId, resume, conversationId: providerSessionId, mode: stored?.chatMode ?? null, model: stored?.chatModel ?? null,
       cwd: projectPath, env, address,
-      files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
-      strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
-      // The provider decides: a runtime's own browser control, or Chrome lent to a limited job.
-      ...(launch.chrome ? { chrome: true } : {}),
-      ...(launch.limits?.deniedTools.length ? { deniedTools: launch.limits.deniedTools } : {}),
+      // The provider decides what the session is limited to and whether it gets a browser; its runtime reads it from these.
+      launch, space: sessionSpace,
       worker: this.reporting(entry),
       ...(this.ctx.jobs ? { jobs: (input: Record<string, unknown>) => this.ctx.jobs!(entry.sessionId, input) } : {}),
       ...(this.ctx.callTime ? { timeZone: zoneLabel(this.ctx.callTime().zone) } : {}),

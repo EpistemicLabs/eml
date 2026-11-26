@@ -1,3 +1,4 @@
+import type { SessionRuntimeFactory } from './session-runtime.js'
 import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
@@ -270,6 +271,8 @@ export interface AgentProvider {
   readonly adoptsSessionId: boolean
   /** What this provider's sessions can do; the host and the UI read it instead of asking which provider it is. */
   readonly capabilities: ProviderCapabilities
+  /** The provider's sessions in the chat view (`capabilities.chat`); absent for a provider without one. */
+  readonly chatRuntime?: SessionRuntimeFactory
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */
