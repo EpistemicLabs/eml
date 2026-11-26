@@ -210,7 +210,7 @@ describe('Codex provider', () => {
   it('follows the user\'s permission settings — except where nobody is watching', () => {
     const sandboxed = ['--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write']
     const network = ['--config', 'sandbox_workspace_write.network_access=true']
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false, chatView: false })
 
     expect(provider.settings?.write({ permissionMode: 'ask' })).toBeNull()
     expect(launchArgs(false)).toEqual([...sandboxed, '--config', 'approvals_reviewer="user"'])
@@ -269,6 +269,24 @@ describe('Codex provider', () => {
       messaging: { supported: false, reason: 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
       terminalTools: { supported: true },
     })
+  })
+
+  it('runs in the chat view too once the user switches it on, and only then has a chat runtime; workers stay in the terminal', () => {
+    const terminal = provider.capabilities
+    expect(provider.chatRuntime).toBeUndefined()
+    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/true or false/)
+    expect(provider.settings?.write({ chatView: true })).toBeNull()
+    try {
+      expect(provider.settings?.read()).toMatchObject({ chatView: true })
+      // Everything else as before: the tools from the host's endpoint, in the chat as well.
+      expect(provider.capabilities).toEqual({ ...terminal, chat: { supported: true } })
+      expect(provider.chatRuntime?.workerMode).toBe('auto')
+      expect(provider.workerRunsInChat(space)).toBe(false)
+    } finally {
+      expect(provider.settings?.write({ chatView: false })).toBeNull()
+    }
+    expect(provider.capabilities).toEqual(terminal)
+    expect(provider.chatRuntime).toBeUndefined()
   })
 
   it('reads the last reply from a Stop hook\'s own field only', () => {

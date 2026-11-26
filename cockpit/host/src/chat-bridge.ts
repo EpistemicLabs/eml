@@ -21,7 +21,7 @@ import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, typ
 import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
-import { recordEndTurn, saidReason } from './application/record-end-turn.js'
+import { recordEndTurn, saidReason, type SaidTurn } from './application/record-end-turn.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
 
@@ -969,18 +969,7 @@ export class ChatBridge {
       endTurn: (call) => recordEndTurn({
         turnOf: () => this.turnOf(entry),
         ...(this.ctx.callTime ? { callTime: () => this.ctx.callTime!() } : {}),
-        keep: (sessionId, { call, ctx, derived }) => {
-          entry.declared = true
-          entry.replyText = ''
-          entry.status = derived.status
-          entry.call = call
-          entry.callCtx = ctx
-          entry.asks = (call.questions?.length ?? 0) > 0
-          // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
-          this.ctx.ledger.setAttention(sessionId, { kind: derived.status, reason: saidReason(call) })
-          // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
-          this.ctx.ledger.setUnrouted(sessionId, { call, ctx })
-        },
+        keep: (sessionId, said) => { this.said(sessionId, said) },
         turnCheck: async (sessionId, check) => await this.ctx.turnCheck?.(sessionId, check) ?? null,
         checkSaved: (sessionId) => this.ctx.checkSaved?.(sessionId) ?? null,
       }, entry.sessionId, call),
@@ -1007,6 +996,29 @@ export class ChatBridge {
         return reminder(missing)
       },
     }
+  }
+
+  /**
+   * A chat session said how its turn ends (end_turn): kept on its entry until the turn's end, and in the ledger.
+   * Both ways a call arrives end here: from the runtime's own process (reporting), and over the cockpit MCP
+   * endpoint for a session whose agent CLI gets the tool there (cockpit-mcp.ts). False: the bridge does not
+   * run the session, and nothing was kept.
+   */
+  said(sessionId: string, { call, ctx, derived }: SaidTurn): boolean {
+    const entry = this.entries.get(sessionId)
+    if (!entry) return false
+    entry.declared = true
+    // The reply is what is written after the call.
+    entry.replyText = ''
+    entry.status = derived.status
+    entry.call = call
+    entry.callCtx = ctx
+    entry.asks = (call.questions?.length ?? 0) > 0
+    // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
+    this.ctx.ledger.setAttention(sessionId, { kind: derived.status, reason: saidReason(call) })
+    // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
+    this.ctx.ledger.setUnrouted(sessionId, { call, ctx })
+    return true
   }
 
   /** Whether the session works on its own now; without the reader (tests), by how it was started. */
@@ -1065,6 +1077,10 @@ export class ChatBridge {
       case 'settings':
         if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
         break
+      case 'conversation':
+        // The ledger's alone: resume and the stored conversation go by it, and no view reads it.
+        this.ctx.ledger.bindProviderSession(entry.sessionId, event.conversationId)
+        return
       case 'conversation_reset':
         this.ctx.ledger.bindProviderSession(entry.sessionId, event.conversationId)
         break

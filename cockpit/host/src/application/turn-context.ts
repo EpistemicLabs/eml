@@ -31,12 +31,14 @@ export function hasEndTurnTool(session: { runtime: string } | undefined, provide
 }
 
 /**
- * How a session has end_turn, for the texts that tell it (domain/turn-end.ts): a chat session has it built in,
- * a terminal session gets it from the MCP server of this name, which may not have connected.
+ * How a session has end_turn, for the texts that tell it (domain/turn-end.ts): a session of a provider whose
+ * sessions get the cockpit's tools from the host's endpoint (capability terminalTools) gets it from the MCP server
+ * of this name, which may not have connected, in a terminal and in the chat alike; another provider's chat
+ * session has it built in.
  */
 export function endTurnAccess(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>, mcpServer: string): EndTurnAccess {
   if (!hasEndTurnTool(session, provider)) return false
-  return session?.runtime === 'terminal' ? { mcpServer } : true
+  return provider.capabilities.terminalTools.supported ? { mcpServer } : true
 }
 
 /**

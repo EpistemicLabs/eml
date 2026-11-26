@@ -9,7 +9,7 @@ import type { ModeOption, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, S
  * adapter the same way and as far as it goes without a model: what a start says and in
  * which order, where a message goes, how a permission is settled, how a run ends, and what
  * the history of a conversation it never stored is. What only one adapter does is in its
- * own test (chat-agent, claude-sdk-mapping).
+ * own test (chat-agent, claude-sdk-mapping, codex-chat-runtime).
  *
  * Two events of a session's log are not a runtime's: the bridge writes `process` before it
  * starts one and `user_message` when it sends (chat-bridge.ts). A runtime that sent them
@@ -137,9 +137,24 @@ async function claudeHarness(): Promise<Harness> {
   }
 }
 
+/** Codex's runtime on an app-server that is none (helpers/fake-app-server.ts), answering from recorded sessions. */
+async function codexHarness(): Promise<Harness> {
+  const { createCodexChatRuntimes } = await import('../src/infrastructure/providers/codex/chat-runtime.js')
+  const { fakeSpawn, recorded } = await import('./helpers/fake-app-server.js')
+  const { spawn, servers } = fakeSpawn()
+  const approval = recorded('turn-approval.jsonl').find((line) => line.msg.method === 'item/commandExecution/requestApproval')?.msg.params
+  return {
+    factory: createCodexChatRuntimes(spawn),
+    received: () => servers.flatMap((server) => server.turnTexts().flat()),
+    ask: () => { servers.at(-1)?.ask('item/commandExecution/requestApproval', approval) },
+    die: () => servers.at(-1)?.exit(1),
+  }
+}
+
 const SUBJECTS: Subject[] = [
   { name: 'a runtime in memory', create: async () => memoryHarness() },
   { name: 'Claude Code (Agent SDK, without its CLI)', create: claudeHarness },
+  { name: 'Codex (app-server, without its CLI)', create: codexHarness },
 ]
 
 const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)) }

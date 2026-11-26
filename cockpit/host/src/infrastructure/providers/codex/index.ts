@@ -7,8 +7,11 @@ import type {
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
   COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
+import type { ProviderCapabilities } from '../../../domain/agent-provider.js'
+import type { SessionRuntimeFactory } from '../../../domain/session-runtime.js'
+import { createCodexChatRuntimes } from './chat-runtime.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -55,6 +58,10 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *     (spawn-session, task-run), refreshed each boot. The folders those two
  *     write to — the spawn inbox, the tasks folder — are extra writable roots
  *     of the sandbox (config.toml, sandbox_workspace_write).
+ *
+ * A session runs in a terminal, or, once the user switches the chat view on
+ * (settings.ts chatView), in the chat through `codex app-server`
+ * (chat-runtime.ts): the same home, hooks and MCP servers either way.
  *
  * The binary is the cockpit's own (runtime.ts), installed when the user sets
  * Codex up; sign-in is Codex's own screen in the pane. What a session may do
@@ -139,7 +146,23 @@ class CodexProvider implements AgentProvider {
   readonly label = 'Codex'
   /** Codex assigns the session id itself and reports it with the first hook. */
   readonly adoptsSessionId = false
-  readonly capabilities = terminalOnly(this.label)
+  private terminal = terminalOnly(this.label)
+  private writableDirs: string[] = []
+  /** Codex through its app-server (chat-runtime.ts). */
+  private runtimes = createCodexChatRuntimes(undefined, {
+    pluginServers: (spaceId) => pluginServerNames[spaceId] ?? [],
+    writableDirs: () => this.writableDirs,
+  })
+
+  /** The chat view is the user's switch (settings.ts chatView), read each time: it holds from the next session on. */
+  get capabilities(): ProviderCapabilities {
+    return readCodexSettings().chatView ? withChat(this.terminal) : this.terminal
+  }
+
+  /** There exactly while the chat view is on. */
+  get chatRuntime(): SessionRuntimeFactory | undefined {
+    return readCodexSettings().chatView ? this.runtimes : undefined
+  }
 
   readonly runtime = asAgentRuntime(codexRuntime, 'Settings › Models › Codex › "Set up now" installs it; then reopen this pane.')
   readonly settings = codexSettings
@@ -164,6 +187,7 @@ class CodexProvider implements AgentProvider {
   }
 
   prepare(ctx: IsolationContext): void {
+    this.writableDirs = ctx.writableDirs
     fs.mkdirSync(CODEX_CONFIG_DIR, { recursive: true, mode: 0o700 })
     fs.chmodSync(CODEX_CONFIG_DIR, 0o700)
     ensureHookNode()

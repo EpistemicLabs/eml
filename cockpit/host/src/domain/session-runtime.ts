@@ -127,6 +127,11 @@ export type RuntimeEvent =
   | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
   /** A tool call inside a subagent; `title` and `toolKind` come with the call, a later `status` updates it. */
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
+  /**
+   * The id the agent itself knows the conversation by, for a runtime whose agent assigns it (AgentProvider.adoptsSessionId
+   * false). For the ledger alone: the bridge binds it and passes nothing on, so no view sees this event.
+   */
+  | { kind: 'conversation'; conversationId: string }
   /** The agent dropped the conversation and goes on in a new one under this id (`/clear`). */
   | { kind: 'conversation_reset'; conversationId: string }
   /** `images`: what came with it; `url` null for one that can only be counted (a stored conversation). */

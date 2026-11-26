@@ -90,10 +90,13 @@ describe('whether a session has the end_turn tool', () => {
     expect(hasEndTurnTool({ runtime: 'terminal' }, capabilities(NO, { supported: true }))).toBe(false)
   })
 
-  it('a chat session has it built in, a terminal session from the MCP server, which the texts then name', () => {
+  it('a session whose provider\'s sessions get the tools from the MCP server has it from there, in a terminal and in the chat; another\'s chat session has it built in', () => {
     const served = capabilities({ supported: true }, { supported: true })
-    expect(endTurnAccess({ runtime: 'sdk' }, served, 'cockpit')).toBe(true)
+    // Codex in the chat: its app-server reaches the tool on the host's endpoint, so the texts name the server.
+    expect(endTurnAccess({ runtime: 'sdk' }, served, 'cockpit')).toEqual({ mcpServer: 'cockpit' })
     expect(endTurnAccess({ runtime: 'terminal' }, served, 'cockpit')).toEqual({ mcpServer: 'cockpit' })
+    // Claude Code in the chat.
+    expect(endTurnAccess({ runtime: 'sdk' }, capabilities({ supported: true }), 'cockpit')).toBe(true)
     expect(endTurnAccess({ runtime: 'terminal' }, capabilities({ supported: true }), 'cockpit')).toBe(false)
     expect(endTurnAccess(undefined, served, 'cockpit')).toBe(false)
   })
