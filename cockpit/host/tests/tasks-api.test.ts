@@ -139,16 +139,15 @@ describe('task board routes', () => {
       .toMatchObject({ code: 'not_ready' })
   })
 
-  it('carries a hand-over\'s schedule: one time or a repeat rule, until the goal or not; the session choice of before is gone; says what is wrong with one', async () => {
+  it('carries a hand-over\'s schedule: one time or a repeat rule; the session choice and until the goal of before are gone; says what is wrong with one', async () => {
     await post('/api/v1/tasks/asked/hand-over', { opId: 'op-goal', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', session: 'resume', untilGoal: true } })
-    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ at: '2026-11-20T09:00:00.000Z', timeZone: 'UTC', untilGoal: true })
+    expect(submitted.at(-1)!.handOver!.schedule).toEqual({ at: '2026-11-20T09:00:00.000Z', timeZone: 'UTC' })
     await post('/api/v1/tasks/asked/hand-over', { opId: 'op-routine', spaceId: 'main', mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1-5', timeZone: 'UTC', session: 'new' } })
     expect(submitted.at(-1)!.handOver!.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'UTC' })
     expect(await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-19T09:00', timeZone: 'UTC' } }))
       .toMatchObject({ status: 400, body: { error: { code: 'invalid', message: expect.stringMatching(/^schedule: at: .* has passed$/) } } })
     expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad1', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { cron: '* * * * *', timeZone: 'UTC' } })).body.error.message)
       .toBe('schedule: that cron fires every 1 min; at most every 15 min')
-    expect((await post('/api/v1/tasks/asked/hand-over', { opId: 'op-bad2', spaceId: 'main', mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: 'yes' } })).status).toBe(400)
   })
 
   it('takes End schedule and close under a kebab-case route like its siblings, and refuses Close on a task whose schedule is on with a code to branch on', async () => {

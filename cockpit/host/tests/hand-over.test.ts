@@ -142,12 +142,6 @@ describe('planning a hand-over', () => {
     expect(plain.plan.patch.delegation).toBeNull()
   })
 
-  it('until the goal on a task with a goal is planned like any schedule', () => {
-    const r = planHandOver(task({ goal: 'Shipped' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T09:00:00.000Z', timeZone: 'UTC', untilGoal: true } }, ctx)
-    if (!r.ok) throw new Error(r.refusal)
-    expect(r.plan.patch.delegation?.schedule).toEqual({ at: '2026-11-25T09:00:00.000Z', time_zone: 'UTC' })
-  })
-
   it('work on it now: a session in the chosen desk, no delegation, a planned task moves to active', () => {
     const r = planHandOver(task(), { mode: 'together', delegate: 'atlas', desk: 'Customers' }, ctx)
     if (!r.ok) throw new Error(r.refusal)
@@ -169,7 +163,6 @@ describe('planning a hand-over', () => {
     ['delegate now on a placeholder task', task({ title: 'session-2026-11-25-2ee4035f' }), { mode: 'now', delegate: 'atlas', checkpoint: 'after' }, ctx, 'not_ready'],
     ['schedule on a task without a goal', task({ goal: '  ' }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC' } }, ctx, 'not_ready'],
     ['work on it now without a desk', task(), { mode: 'together', delegate: 'atlas', checkpoint: 'after' }, ctx, 'no_session'],
-    ['until the goal on a task without a goal', task({ goal: undefined }), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T09:00', timeZone: 'UTC', untilGoal: true } }, ctx, 'goal_required'],
     ['schedule without a checkpoint', task(), { mode: 'schedule', delegate: 'atlas', schedule: { at: '2026-11-20T09:00', timeZone: 'Asia/Singapore' } }, ctx, 'checkpoint_required'],
   ] as const)('refuses %s', (_label, t, req, c, refusal) => {
     expect(planHandOver(t, req as never, c)).toEqual({ ok: false, refusal })
@@ -192,10 +185,10 @@ describe('planning the undo', () => {
 describe('a hand-over\'s schedule as the page sends it', () => {
   const now = Date.parse(NOW)
   const limits = { minGapMs: 15 * 60_000, maxAheadMs: 366 * 24 * 60 * 60_000 }
-  it('reads one time in its zone as an instant, and a repeat rule as it is; until the goal is carried', () => {
+  it('reads one time in its zone as an instant, and a repeat rule as it is; what the page sent before (until the goal, the session choice) is left out', () => {
     expect(readScheduleSpec({ at: '2026-11-25T09:00', timeZone: 'Asia/Singapore' }, now, limits)).toEqual({ at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' })
     expect(readScheduleSpec({ at: '2026-11-25T09:00:00Z', timeZone: 'Asia/Singapore' }, now, limits)).toEqual({ at: '2026-11-25T09:00:00.000Z', timeZone: 'Asia/Singapore' })
-    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: true }, now, limits)).toEqual({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: true })
+    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: true, session: 'resume' }, now, limits)).toEqual({ cron: '0 9 * * 1', timeZone: 'UTC' })
   })
   it('is none without a zone or a time, or with both a time and a rule', () => {
     expect(readScheduleSpec(undefined, now, limits)).toBeUndefined()
@@ -203,13 +196,12 @@ describe('a hand-over\'s schedule as the page sends it', () => {
     expect(readScheduleSpec({ timeZone: 'UTC' }, now, limits)).toBeUndefined()
     expect(readScheduleSpec({ timeZone: 'UTC', at: '2026-11-25T09:00', cron: '0 9 * * 1' }, now, limits)).toBeUndefined()
   })
-  it('says what is wrong with a time, a rule, a zone or until the goal', () => {
+  it('says what is wrong with a time, a rule or a zone', () => {
     expect(readScheduleSpec({ at: 'tomorrow', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'at: "tomorrow" is not a date and time; write it like 2026-11-13T10:00 (read in UTC)' })
     expect(readScheduleSpec({ at: '2026-11-24T09:00', timeZone: 'UTC' }, now, limits)).toMatchObject({ error: expect.stringContaining('has passed') })
     expect(readScheduleSpec({ at: '2028-11-24T09:00', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'at: at most a year ahead' })
     expect(readScheduleSpec({ cron: '0 9 * *', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'cron: cron needs five fields: minute hour day-of-month month day-of-week' })
     expect(readScheduleSpec({ cron: '*/5 * * * *', timeZone: 'UTC' }, now, limits)).toEqual({ error: 'that cron fires every 5 min; at most every 15 min' })
     expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'Mars/Olympus' }, now, limits)).toMatchObject({ error: expect.stringContaining('unknown time zone') })
-    expect(readScheduleSpec({ cron: '0 9 * * 1', timeZone: 'UTC', untilGoal: 'yes' }, now, limits)).toEqual({ error: 'schedule.untilGoal is true or false' })
   })
 })

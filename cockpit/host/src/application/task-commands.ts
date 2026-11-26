@@ -37,7 +37,6 @@ import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '
  * window: Resume undoes a pause, and a removed time is set again by handing the task over with it.
  *
  * Nothing fires on a closed task (application/job-runner.ts): a run that was due when its task closed is skipped.
- * reopenForRun, which reopened the task for such a run before brain schema 24, is no longer called by the engine.
  */
 
 export const UNDO_WINDOW_MS = 8000
@@ -802,37 +801,6 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         return 'reopened'
       } catch (err) {
         deps.log(`[commands] task ${taskId.slice(0, 8)} reopen by writing failed: ${(err as Error).message}`)
-        return 'refused'
-      }
-    },
-
-    /**
-     * Not called since brain schema 24: nothing fires on a closed task (application/job-runner.ts skips the run).
-     * Before it, a job's run came due on a closed task: the task reopens first, by the board's reopen rules. The run is about to
-     * work and ask on it, and a closed task waits on nobody (the router drops its questions). One that can't be
-     * reopened (replaced, gone, under a closed parent, another owner's) stays closed, and the log says why; the run
-     * starts either way. `job` is the job's name, for the task's journal; the log names the job by its id. Never throws.
-     */
-    async reopenForRun(spaceId: string, taskId: string, run: { number: number; jobId: string; job: string }): Promise<'reopened' | 'open' | 'refused'> {
-      const space = deps.space(spaceId)
-      const brain = space ? deps.brain(space) : null
-      const about = `task ${taskId.slice(0, 8)}, run ${run.number} of job ${run.jobId.slice(0, 8)}`
-      if (!brain) {
-        deps.log(`[commands] ${about}: no brain to check whether the task is closed`)
-        return 'refused'
-      }
-      try {
-        const result = await reopenClosed(brain, taskId, `Reopened: run ${run.number} of "${run.job}" came due while the task was closed. End its schedule to stop it.`)
-        if (result === 'open') return 'open'
-        if (result !== 'reopened') {
-          deps.log(`[commands] ${about}: the task stays closed (${result.refused})`)
-          return 'refused'
-        }
-        deps.changed(spaceId)
-        deps.log(`[commands] ${about}: the task was closed and is reopened`)
-        return 'reopened'
-      } catch (err) {
-        deps.log(`[commands] ${about}: reopening the task failed: ${(err as Error).message}`)
         return 'refused'
       }
     },

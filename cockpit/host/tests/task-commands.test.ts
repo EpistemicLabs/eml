@@ -840,37 +840,32 @@ describe('a task whose schedule is still on', () => {
     // Open again with its schedule, it is not closed: End schedule and close is the way.
     expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'board' })).toMatchObject({ ok: false, refusal: 'scheduled' })
 
-    // A run that comes due on a closed task reopens it by the same rules.
-    expect(await w.commands.reopenForRun('main', 'run', { number: 2, jobId: 'run', job: 'Daily brief' })).toBe('reopened')
-    expect(w.byId.get('run')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: mirrored })
-    // Writing in its chat too; a delegation without a request is not written at all.
+    // Writing in its chat reopens it by the same rules; a delegation without a request is not written at all.
     const before = w.posts.length
     expect(await w.commands.reopenByWriting('main', 'written')).toBe('reopened')
     expect(w.posts[before].body).not.toHaveProperty('delegation')
     expect(w.byId.get('written')!.properties.delegation).toEqual({ agent: 'atlas', schedule: mirrored })
   })
 
-  it('a run that comes due on a closed task reopens it, with what a reopen takes off a delegation', async () => {
+  it('writing in the chat of a closed task reopens it, with what a reopen takes off a delegation', async () => {
     const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z' }
     const w = world([owned('closed', { delegation, waits: [review] }, 'resolved'), owned('dropped', {}, 'invalidated'), owned('open', {}, 'active')])
-    const run = { number: 7, jobId: 'job-1234-5678', job: 'Daily brief' }
-    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('reopened')
+    expect(await w.commands.reopenByWriting('main', 'closed')).toBe('reopened')
     expect(w.posts).toEqual([{ path: '/task/closed/track', body: {
       status: 'active', waits: null, delegation: { agent: 'atlas', checkpoint: 'after' },
-      text: 'Reopened: run 7 of "Daily brief" came due while the task was closed. End its schedule to stop it.',
+      text: 'Reopened by writing in its chat.',
     } }])
     expect(w.changed).toContain('main')
-    expect(await w.commands.reopenForRun('main', 'dropped', run)).toBe('reopened')
+    expect(await w.commands.reopenByWriting('main', 'dropped')).toBe('reopened')
     expect(w.byId.get('dropped')!.status).toBe('active')
-    // Open already (the next run, or a retry of this one): nothing is written.
+    // Open already (the next message): nothing is written.
     const before = w.posts.length
-    expect(await w.commands.reopenForRun('main', 'open', run)).toBe('open')
-    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('open')
+    expect(await w.commands.reopenByWriting('main', 'open')).toBe('open')
+    expect(await w.commands.reopenByWriting('main', 'closed')).toBe('open')
     expect(w.posts).toHaveLength(before)
   })
 
-  it('leaves a task another one replaced, one that is gone, one under a closed parent and another owner\'s closed, and logs why by code, without names', async () => {
-    const logs: string[] = []
+  it('leaves a task another one replaced, one that is gone, one under a closed parent and another owner\'s closed', async () => {
     const w = world([
       owned('replaced', {}, 'superseded'),
       { ...owned('old', {}, 'resolved'), relations: [{ source_id: 'new', target_id: 'old', relation: 'supersedes' }] }, owned('new', { display_title: 'The new plan' }, 'active'),
@@ -878,21 +873,12 @@ describe('a task whose schedule is still on', () => {
       { id: 'theirs', status: 'resolved', properties: { assignee_ids: ['dominik'] } },
       owned('closed', {}, 'resolved'),
     ])
-    w.deps.log = (line) => logs.push(line)
-    const run = { number: 2, jobId: 'job-1234-5678', job: 'Check reply' }
-    for (const id of ['replaced', 'old', 'step', 'theirs', 'gone']) expect(await w.commands.reopenForRun('main', id, run)).toBe('refused')
-    expect(await w.commands.reopenForRun('elsewhere', 'old', run)).toBe('refused')
-    expect(await w.commands.reopenForRun('main', 'closed', run)).toBe('reopened')
-    expect(w.posts).toHaveLength(1)
-    expect(logs).toEqual([
-      '[commands] task replaced, run 2 of job job-1234: the task stays closed (superseded)',
-      '[commands] task old, run 2 of job job-1234: the task stays closed (superseded)',
-      '[commands] task step, run 2 of job job-1234: the task stays closed (parent_closed)',
-      '[commands] task theirs, run 2 of job job-1234: the task stays closed (not_owner)',
-      '[commands] task gone, run 2 of job job-1234: the task stays closed (unknown_task)',
-      '[commands] task old, run 2 of job job-1234: no brain to check whether the task is closed',
-      '[commands] task closed, run 2 of job job-1234: the task was closed and is reopened',
-    ])
+    for (const id of ['replaced', 'old', 'step', 'theirs', 'gone']) expect(await w.commands.reopenByWriting('main', id), id).toBe('refused')
+    expect(await w.commands.reopenByWriting('elsewhere', 'old')).toBe('refused')
+    // None of them was reopened: each that exists got only the line saying why it stays closed.
+    expect(w.posts.every((post) => !('status' in post.body))).toBe(true)
+    for (const id of ['replaced', 'old', 'step', 'theirs']) expect(w.byId.get(id)!.status, id).not.toBe('active')
+    expect(await w.commands.reopenByWriting('main', 'closed')).toBe('reopened')
   })
 
   it('a task that stays closed when its chat gets a message has the reason in words in its journal', async () => {
@@ -901,14 +887,14 @@ describe('a task whose schedule is still on', () => {
     expect(w.posts).toEqual([{ path: '/task/old/track', body: { text: 'Its chat got a message, but the task stays closed: "The new plan" replaced this task: go on there.' } }])
   })
 
-  it('a brain that fails while reopening is logged, not thrown: the run starts anyway', async () => {
+  it('a brain that fails while reopening is logged, not thrown', async () => {
     const logs: string[] = []
     const w = world([owned('closed', {}, 'resolved')])
     w.deps.log = (line) => logs.push(line)
     const brain = w.deps.brain({} as never)!
     w.deps.brain = () => ({ get: brain.get, post: async () => { throw new Error('brain is down') } })
-    expect(await w.commands.reopenForRun('main', 'closed', { number: 1, jobId: 'job-1234-5678', job: 'Daily brief' })).toBe('refused')
-    expect(logs.at(-1)).toContain('reopening the task failed: brain is down')
+    expect(await w.commands.reopenByWriting('main', 'closed')).toBe('refused')
+    expect(logs.at(-1)).toBe('[commands] task closed reopen by writing failed: brain is down')
   })
 })
 

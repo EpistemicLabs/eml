@@ -30,17 +30,14 @@ import { PLACEHOLDER_TITLE } from './task-title.js'
 export type HandOverMode = 'now' | 'schedule' | 'together'
 export const HAND_OVER_MODES: readonly HandOverMode[] = ['now', 'schedule', 'together']
 
-/**
- * When a scheduled agent works on the task: one time (at, an instant) or a repeat rule (cron, read in timeZone).
- * untilGoal: the agent keeps at it until the task's goal is reached, so the task needs a goal.
- */
-export type ScheduleSpec = { timeZone: string; untilGoal?: boolean } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
+/** When a scheduled agent works on the task: one time (at, an instant) or a repeat rule (cron, read in timeZone). */
+export type ScheduleSpec = { timeZone: string } & ({ at: string; cron?: undefined } | { cron: string; at?: undefined })
 
 /** What a hand-over's schedule may be (domain/job.ts JOB_LIMITS). */
 export interface ScheduleSpecLimits { minGapMs: number; maxAheadMs: number }
 
 /**
- * A hand-over's schedule as the page sends it ({ timeZone, at | cron, untilGoal? }), checked: `at` is read in the
+ * A hand-over's schedule as the page sends it ({ timeZone, at | cron }), checked: `at` is read in the
  * zone when it names no offset and comes back as an instant. Undefined when none is given; `error` says what is wrong.
  */
 export function readScheduleSpec(input: unknown, now: number, limits: ScheduleSpecLimits): ScheduleSpec | undefined | { error: string } {
@@ -49,19 +46,17 @@ export function readScheduleSpec(input: unknown, now: number, limits: ScheduleSp
   const timeZone = text(s?.timeZone)
   if (!s || !timeZone) return undefined
   if (!isTimeZone(timeZone)) return { error: `unknown time zone "${timeZone}"; use an IANA name such as Europe/Berlin` }
-  if (s.untilGoal !== undefined && typeof s.untilGoal !== 'boolean') return { error: 'schedule.untilGoal is true or false' }
-  const how = s.untilGoal ? { untilGoal: true } : {}
   const at = text(s.at), cron = text(s.cron)
   if (at && !cron) {
     const when = parseAt(at, timeZone)
     if (when === null) return { error: `at: "${at}" is not a date and time; write it like 2026-11-13T10:00 (read in ${timeZone})` }
     if (when <= now) return { error: `at: ${formatInZone(when, timeZone)} (${timeZone}) has passed` }
     if (when - now > limits.maxAheadMs) return { error: 'at: at most a year ahead' }
-    return { at: new Date(when).toISOString(), timeZone, ...how }
+    return { at: new Date(when).toISOString(), timeZone }
   }
   if (cron && !at) {
     const refusal = cronRefusal(cron, timeZone, now, limits.minGapMs)
-    return refusal ? { error: refusal } : { cron, timeZone, ...how }
+    return refusal ? { error: refusal } : { cron, timeZone }
   }
   return undefined
 }
@@ -101,8 +96,6 @@ export type HandOverRefusal =
   | 'schedule_invalid'
   /** Take over without a desk (from the chip or the panel), but the task has no open session of its own (any more). */
   | 'no_session'
-  /** Until the goal is reached, on a task without a goal: set the goal first. */
-  | 'goal_required'
   /** Delegate now or Schedule on a task without a name or a goal: an agent alone needs to know what done means. */
   | 'not_ready'
 
@@ -141,7 +134,6 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   // A new session opens in a desk; Take over opens the task's own session where it is shown (a desk names its pane).
   // Asked for without a desk when there is no own session (it was put away since the page looked): the page offers one.
   if (req.mode === 'together' && !req.desk && !ctx.ownSession) return { ok: false, refusal: 'no_session' }
-  if (req.mode === 'schedule' && req.schedule?.untilGoal && !task.goal?.trim()) return { ok: false, refusal: 'goal_required' }
   // The agent works on it alone: only a task with a name and a goal is handed over (decision session-kind-follows-task-delegate).
   if (req.mode !== 'together' && !readyToDelegate(task)) return { ok: false, refusal: 'not_ready' }
 
