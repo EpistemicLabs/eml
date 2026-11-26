@@ -15,6 +15,7 @@ import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
 import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, repeatsText, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, isScheduled, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { commandsNote } from '@/lib/working-now';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
 import { paneSpaceKey, type SpaceInfo } from '@/stores/useSpaceStore';
 import { markSeen, useTurnStore } from '@/stores/useTurnStateStore';
@@ -101,6 +102,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   const closed = CLOSED_STATUSES.has(task.status);
   const asked = task.group === 'asked';
   const review = task.turn === 'review';
+  // Its session's turn is over while a command it started runs: one line beside the real state.
+  const commandNote = commandsNote(task, now);
   // A task closed in the Done window comes from the board's tasks; when and why it can't reopen are in its closed entry.
   const closedEntry = closed ? board.closed?.find((c) => c.id === task.id && c.spaceId === task.spaceId) : undefined;
   const blocked = task.blocked ?? closedEntry?.blocked;
@@ -256,8 +259,9 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>
                 <div className={cn(LABEL, 'mb-1', HUE[hue].ink)}>{task.group === 'nobody' ? 'Nobody on it' : task.turn ? TURN_META[task.turn].name : task.status}</div>
                 {cardLine(task, now)}
+                {commandNote && <p className="m-0 mt-1 text-ui text-muted-foreground">{commandNote}</p>}
               </div>
-            ) : null}
+            ) : !closed && commandNote ? <p className="m-0 text-ui text-muted-foreground">{commandNote}</p> : null}
 
             {asked && !current && !closed && <p className="m-0 text-ui text-muted-foreground">Its session is gone: work on it now or run {agentName(task.delegate)} again to answer; the question goes along.</p>}
             {handOver}

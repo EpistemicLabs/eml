@@ -117,6 +117,16 @@ describe('the tasks card', () => {
     expect(row(/^Write the report, Working/)).toBeTruthy();
   });
 
+  it('says a session waits for a command once its turn is over while one it started runs, in the working hue', async () => {
+    live.sessions = [...live.sessions, { id: 's-cmd', spaceId: 'main', projectId: 'p-ui', summary: 'Run the suite', state: 'running' }];
+    live.desk = { ...live.desk, panes: [...live.desk.panes, { id: 'p2', projectId: 'p-ui', sessionId: 's-cmd', paneView: 'chat' }] };
+    live.turns = { 's-cmd': { state: 'done', since: '2026-02-01T11:00:00.000Z', commands: [{ description: 'Run the tests', since: '2026-02-01T11:00:00.000Z' }] } };
+    await renderAll();
+    const dot = row(/^Run the suite, Waiting for a command/).querySelector('[aria-hidden].rounded-full');
+    expect(dot?.className).toContain('bg-status-agent');
+    expect(dot?.className).not.toContain('animate-live');
+  });
+
   it('shows the desk\'s project with its task tree, the active pane\'s row marked', async () => {
     await renderAll();
     expect(row(/^Session review ui, Needs you/).getAttribute('aria-selected')).toBe('true');

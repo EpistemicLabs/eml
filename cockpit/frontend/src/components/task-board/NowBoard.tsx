@@ -2,6 +2,7 @@
 // Space picks (shared with Plan) narrow every column and its counts.
 import { type Board, type BoardTask, columns, dueLabel, GROUP_META, inFilter, originName, readable, resolveFilter, statusOrTurn, taskName, TURN_META } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
+import { commandsNote } from '@/lib/working-now';
 import { Chip, Dot, Empty, FOCUS, HUE, LABEL } from '@/shared/view/ui';
 import { setTaskFilter, useTaskFilter } from '@/stores/useTaskFilterStore';
 
@@ -52,6 +53,8 @@ export function NowBoard({ board, now, onOpen, movedId }: { board: Board; now: n
 function Card({ task, now, viewer, from, onOpen, moved }: { task: BoardTask; now: number; viewer: string; from: string | null; onOpen: (task: BoardTask) => void; moved: boolean }) {
   // Content first, metadata last; at most two badges (due and high): the column and group already say the rest.
   const done = task.turn === 'done';
+  // Its session's turn is over while a command it started runs.
+  const note = commandsNote(task, now);
   return (
     <button
       type="button"
@@ -61,6 +64,7 @@ function Card({ task, now, viewer, from, onOpen, moved }: { task: BoardTask; now
     >
       <span className="text-heading font-semibold text-pretty">{taskName(task)}</span>
       <span className="line-clamp-2 text-ui text-muted-foreground">{statusOrTurn(task, now)}</span>
+      {note && <span className="line-clamp-2 text-caption text-muted-foreground">{note}</span>}
       {task.turn === 'agent_working' && (
         <span aria-hidden className="block h-1 overflow-hidden rounded-full bg-muted"><span className="block h-full w-2/5 bg-status-agent" /></span>
       )}

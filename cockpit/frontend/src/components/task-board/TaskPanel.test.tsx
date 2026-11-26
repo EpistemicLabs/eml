@@ -315,6 +315,16 @@ describe('the task panel on the task state model (v0.23)', () => {
     expect(screen.getByTestId('session-chat')).toBeTruthy();
   });
 
+  it('keeps its real state and adds one line while a command of its session still runs', () => {
+    const since = new Date(NOW - 12 * 60_000).toISOString();
+    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString(), commands: [{ description: 'Run the tests', since }] }));
+    expect(screen.getByText(/^Until the goal is reached\. Atlas checks again/)).toBeTruthy();
+    expect(screen.getByText('A command is still running (Run the tests, 12 min); the session continues when it finishes.')).toBeTruthy();
+    cleanup();
+    show(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', nextRunAt: new Date(NOW + DAY_MS).toISOString() }));
+    expect(screen.queryByText(/still running/)).toBeNull();
+  });
+
   it('offers what the state calls for: a scheduled task has no Schedule…, a review only Looks good', () => {
     show(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', goal: 'Brief sent', nextRunAt: new Date(NOW + DAY_MS).toISOString(), schedule: { cron: '0 8 * * 1-5' } }));
     expect(screen.queryByRole('button', { name: 'Schedule…' })).toBeNull();
