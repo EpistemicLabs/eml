@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sessionJobFacts } from '../src/application/limited-job-scope.js'
+import { sessionJobFacts, sessionRecordId } from '../src/application/limited-job-scope.js'
 import { requestJobs } from '../src/jobs-api.js'
 import type { JobCaller } from '../src/application/jobs.js'
 
@@ -16,6 +16,17 @@ describe('sessionJobFacts', () => {
 
   it('counts a session whose record is gone as limited', () => {
     expect(sessionJobFacts('job-1', undefined)).toEqual({ jobId: 'job-1', limited: true })
+  })
+})
+
+describe('sessionRecordId', () => {
+  it('reads a run\'s session by the record of its task: a record\'s id is its task\'s id', () => {
+    expect(sessionRecordId({ jobId: 't1', taskId: 't1' })).toBe('t1')
+    // A session a version 1 job started that did not move onto its task kept that job's id: its task's record counts.
+    expect(sessionRecordId({ jobId: '3414dfd2-old-job', taskId: '917985e0-task' })).toBe('917985e0-task')
+    expect(sessionRecordId({ jobId: 'job-1', taskId: null })).toBe('job-1')
+    // No run started it: no record, whatever task it works on.
+    expect(sessionRecordId({ jobId: null, taskId: 't1' })).toBeNull()
   })
 })
 

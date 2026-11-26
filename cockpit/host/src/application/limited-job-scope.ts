@@ -31,3 +31,13 @@ export function sessionJobFacts(jobId: string | null, job: { limited?: boolean }
   if (!jobId) return { jobId: null, limited: false }
   return { jobId, limited: job ? job.limited === true : true }
 }
+
+/**
+ * The record a run's session is read by, for its limits, its lent tools and its channel: the record of its task (a
+ * record's id is its task's id). A session a version 1 job started keeps that job's id in the ledger when the job did
+ * not move onto its task (the migration dropped it); the session still works on that task. Null: no run started it.
+ */
+export function sessionRecordId(entry: { jobId?: string | null; taskId?: string | null }): string | null {
+  if (!entry.jobId) return null
+  return entry.taskId ?? entry.jobId
+}

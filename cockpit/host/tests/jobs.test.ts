@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { EmlApiError } from '@engramprotocol/mcp-server'
 import { JobStore } from '../src/job-store.js'
 import { Jobs, type JobCaller } from '../src/application/jobs.js'
@@ -79,7 +82,10 @@ const caller: JobCaller = { sessionId: 'maker', spaceId: null, projectId: 'bp-em
 const elsewhere: JobCaller = { sessionId: 'other-caller', spaceId: 'space-b', projectId: 'bp-eml', toolProfile: null }
 
 function setup(opts: { sharedSpaces?: string[] } = {}) {
-  const world = new World()
+  return setupWith(new World(), opts)
+}
+
+function setupWith(world: World, opts: { sharedSpaces?: string[] } = {}) {
   const jobs = new Jobs({
     store: world.store, now: () => world.now, me: 'kim',
     brain: (spaceId) => (spaceId === null ? world.main : spaceId === 'space-b' || spaceId === 'team' ? world.other : null),
@@ -740,5 +746,52 @@ describe('a limited task\'s session looking after its own schedule', () => {
     expect((await act({ action: 'list' }, session)).status).toBe(200)
     expect((await act({ action: 'create', target: 'self', at: '2026-11-13T10:00', prompt: 'Look again.' }, session)).status).toBe(201)
     expect((await act({ action: 'create', name: 'Another', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(201)
+  })
+
+  // A session a version 1 job started keeps that job's id in the ledger when the job was dropped by the migration (its
+  // task was closed then). Its task is found by the session's task id, its limits by the record of that task.
+  const STALE_JOB = '3414dfd2-0000-4000-8000-000000000000'
+
+  it('finds the own task of a session that kept a dropped version 1 job\'s id by its task id: free on its open task', async () => {
+    const task = world.main.add('Reopened')
+    // As the host reads it: no record under the old job id, so sessionJobFacts fails closed (limited).
+    const session: JobCaller = { ...caller, sessionId: 'old-run', jobId: STALE_JOB, taskId: task.id, limited: true }
+    const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'Look again.' }, session)
+    expect(answer.status, answer.text).toBe(201)
+    expect(world.main.schedule(task.id)).toMatchObject({ at: '2026-11-13T02:00:00.000Z' })
+    expect((await act({ action: 'list' }, session)).status).toBe(200)
+  })
+
+  it('still refuses everything to such a session once its task is closed', async () => {
+    const task = world.main.add('Reopened')
+    task.status = 'resolved'
+    const session: JobCaller = { ...caller, sessionId: 'old-run', jobId: STALE_JOB, taskId: task.id, limited: true }
+    const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'Look again.' }, session)
+    expect(answer).toEqual({ status: 403, text: 'this session\'s task is closed or gone' })
+  })
+
+  it('holds such a session to its own task while the record of its task is limited', async () => {
+    const { own, other } = await limitedSetup()
+    const session: JobCaller = { ...caller, sessionId: 'old-run', jobId: STALE_JOB, taskId: own.id, limited: true }
+    expect((await act({ action: 'update', job: own.id, at: '2026-11-11T09:00' }, session)).status).toBe(200)
+    expect((await act({ action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session))).toMatchObject({ status: 403, text: expect.stringContaining('is not its task') })
+  })
+
+  it('holds the session of a limited version 1 job that still waits to move to its own task', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'cockpit-jobs-v1-')), 'jobs.json')
+    const own = world.main.add('Refund')
+    const other = world.main.add('Brief', { crons: ['0 8 * * *'], time_zone: ZONE })
+    const job = {
+      id: 'v1-job', name: 'Refund', kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: own.id,
+      prompt: 'p', target: { type: 'worker', projectId: 'bp-eml' }, triggers: [{ type: 'mail', match: [] }], toolProfile: null, reply: {}, end: null, notify: 'needs-me',
+      paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 1, failures: 0, limited: true,
+    }
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: { 'v1-job': job }, runs: {}, keys: {} }))
+    world.store = new JobStore(file, [null])
+    ;({ jobs } = setupWith(world))
+    const session: JobCaller = { ...caller, sessionId: 'v1-run', jobId: 'v1-job', taskId: own.id, limited: true }
+    expect((await act({ action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session)).status).toBe(403)
   })
 })

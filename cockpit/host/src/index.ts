@@ -86,7 +86,7 @@ import { channelJobFacts, isChannelJob, withChannelTools } from './application/c
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
-import { sessionJobFacts } from './application/limited-job-scope.js'
+import { sessionJobFacts, sessionRecordId } from './application/limited-job-scope.js'
 import type { ProviderId } from './domain/agent-provider.js'
 import { isHeld, scheduleFactsOf, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
@@ -171,8 +171,9 @@ async function main() {
   const ledger = new SessionLedger()
   // A channel job's session gets the bridge's tools and its limits at every launch (channel-job-launch.ts).
   const channelJobOf = (sessionId: string) => {
-    const jobId = ledger.get(sessionId)?.jobId
-    const job = jobId ? jobStore.get(jobId) : undefined
+    const entry = ledger.get(sessionId)
+    const recordId = entry ? sessionRecordId(entry) : null
+    const job = recordId ? jobStore.get(recordId) : undefined
     return job && isChannelJob(job) ? channelJobFacts(job, Date.now()) : null
   }
   const providers = new ProviderRegistry({
@@ -626,8 +627,9 @@ async function main() {
     },
     overCap: (): boolean => cap() > 0 && running() > cap(),
     jobOf: (sessionId) => {
-      const jobId = ledger.get(sessionId)?.jobId
-      const job = jobId ? jobStore.get(jobId) : undefined
+      const entry = ledger.get(sessionId)
+      const recordId = entry ? sessionRecordId(entry) : null
+      const job = recordId ? jobStore.get(recordId) : undefined
       // A record has no name of its own: its task's, as the engine last read it.
       return job ? { id: job.id, name: jobRunner.nameOf(job.id), limited: job.limited === true } : null
     },
@@ -702,14 +704,16 @@ async function main() {
     const entry = ledger.get(sessionId)
     if (!entry) return null
     // A limited task's session reaches only its own task's schedule; one whose record is gone counts as limited (limited-job-scope.ts).
-    const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
+    // Its record is its task's: a session a version 1 job started may still name that job (sessionRecordId).
+    const recordId = sessionRecordId(entry)
+    const facts = sessionJobFacts(entry.jobId ?? null, recordId ? jobStore.get(recordId) : undefined)
     // Target self means the task the session works on.
     return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId: entry.taskId, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
   const sessionRuns = (sessionId: string) => chat.isRunning(sessionId) || bridge.isRunning(sessionId)
   const jobSessions: JobSessions = {
-    sessionsOf: (jobId) => ledger.list().filter((entry) => entry.jobId === jobId)
+    sessionsOf: (jobId) => ledger.list().filter((entry) => sessionRecordId(entry) === jobId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => entry.sessionId),
     runs: sessionRuns,
     turnOver: (sessionId) => new Promise<void>((resolve) => {
