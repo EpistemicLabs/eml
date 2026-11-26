@@ -18,9 +18,10 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
+import { recordEndTurn, saidReason } from './application/record-end-turn.js'
 import { greetingFor } from './session-greeting.js'
 import { toolLabel } from './domain/tool-label.js'
 
@@ -952,35 +953,24 @@ export class ChatBridge {
         entry.liftNote = null
         return [ceiling, lifted, name].filter(Boolean).join('\n\n') || null
       },
-      endTurn: async (call) => {
-        const turn = await this.turnOf(entry)
-        const derived = deriveTurn(call, turn.ctx)
-        // A check at a time that has passed wakes nobody: the call is refused whole, so the agent names another.
-        // A time that sets no check (a step for the user) is not looked at.
-        const time = this.ctx.callTime?.() ?? { now: Date.now(), zone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-        const passed = derived.checkAt ? passedWhen(call, time) : null
-        if (passed) throw new Error(passed)
-        entry.declared = true
-        entry.replyText = ''
-        entry.status = derived.status
-        entry.call = call
-        entry.callCtx = turn.ctx
-        entry.asks = (call.questions?.length ?? 0) > 0
-        // What the lists show under the session: the question it waits on, why it failed, else where the task stands.
-        const reason = call.failed ?? call.questions?.[0] ?? call.result
-        // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
-        this.ctx.ledger.setAttention(entry.sessionId, { kind: derived.status, reason })
-        // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
-        this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx: turn.ctx })
-        const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
-        const saved = derived.checkAt && !problem ? this.ctx.checkSaved?.(entry.sessionId) ?? null : null
-        return {
-          derived,
-          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
-          ...(problem && derived.checkAt ? { checkProblem: problem } : {}),
-          ...(saved ? { checkTime: saved } : {}),
-        }
-      },
+      endTurn: (call) => recordEndTurn({
+        turnOf: () => this.turnOf(entry),
+        ...(this.ctx.callTime ? { callTime: () => this.ctx.callTime!() } : {}),
+        keep: (sessionId, { call, ctx, derived }) => {
+          entry.declared = true
+          entry.replyText = ''
+          entry.status = derived.status
+          entry.call = call
+          entry.callCtx = ctx
+          entry.asks = (call.questions?.length ?? 0) > 0
+          // The flag says what the user is asked; the turn still ends as done (decision desk-dot-until-seen).
+          this.ctx.ledger.setAttention(sessionId, { kind: derived.status, reason: saidReason(call) })
+          // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
+          this.ctx.ledger.setUnrouted(sessionId, { call, ctx })
+        },
+        turnCheck: async (sessionId, check) => await this.ctx.turnCheck?.(sessionId, check) ?? null,
+        checkSaved: (sessionId) => this.ctx.checkSaved?.(sessionId) ?? null,
+      }, entry.sessionId, call),
       report: (status, reason) => {
         entry.declared = true
         entry.replyText = ''

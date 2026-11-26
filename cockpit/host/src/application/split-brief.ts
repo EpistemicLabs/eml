@@ -1,4 +1,4 @@
-import type { SplitRelation } from '../domain/split.js'
+import { BRIEF_TEMPLATE, type SplitRelation } from '../domain/split.js'
 
 /**
  * The brief for a split the user starts (Split from here, /split): one short model call over the last
@@ -12,14 +12,7 @@ export const BRIEF_TURNS = 12
 /** A long message is cut to this many characters: the brief needs the gist, not the whole paste. */
 const TURN_CHARS = 1500
 
-export const BRIEF_TEMPLATE = [
-  'Goal: one checkable sentence.',
-  'Came up in: the task or session, and the date.',
-  'Decided so far: what is settled, one line each.',
-  'Open questions: what the new session has to find out or ask.',
-  'Files, links, ids: what matters, exactly as they appeared.',
-  'Not to redo: what was tried or ruled out.',
-].join('\n')
+export { BRIEF_TEMPLATE }
 
 export interface Turn {
   role: 'user' | 'assistant'
