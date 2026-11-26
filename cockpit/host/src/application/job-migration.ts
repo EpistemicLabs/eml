@@ -1,6 +1,5 @@
 import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
-import type { Job } from '../domain/job.js'
 import type { JobV1 } from '../domain/job-v1.js'
 import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
 import type { NotificationInput } from '../notifications.js'
@@ -28,7 +27,7 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore<Job>, 'pendingRenames' | 'renameConfirmed' | 'leftoversChecked' | 'markLeftoversChecked' | 'get'>>
+  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'leftoversChecked' | 'markLeftoversChecked' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**

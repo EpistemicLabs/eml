@@ -12,7 +12,7 @@ import type { JobStore } from '../job-store.js'
  * task stops listening. `note` then says why a waiting run never started.
  */
 export function endTaskRecord(
-  store: Pick<JobStore<Job>, 'get' | 'put' | 'runs' | 'updateRun'>, taskId: string, now: number, onGrantEnd?: (record: Job, tools: GrantTool[]) => void,
+  store: Pick<JobStore, 'get' | 'put' | 'runs' | 'updateRun'>, taskId: string, now: number, onGrantEnd?: (record: Job, tools: GrantTool[]) => void,
   note: string = ENDED_BEFORE_START,
 ): void {
   const record = store.get(taskId)
@@ -34,7 +34,7 @@ export function endTaskRecord(
  * The task's repeating times ended or were replaced: an end after so many runs (the record's `end`) was theirs and
  * goes with them, so a record that stays (a channel, a limit) never ends a schedule set later. Safe to call again.
  */
-export function endRunCount(store: Pick<JobStore<Job>, 'get' | 'put'>, taskId: string, now: number): void {
+export function endRunCount(store: Pick<JobStore, 'get' | 'put'>, taskId: string, now: number): void {
   const record = store.get(taskId)
   if (record?.end) store.put({ ...record, end: null, updatedAt: new Date(now).toISOString() })
 }

@@ -24,11 +24,11 @@ export interface JobsV1Data {
   keys: Record<string, Record<string, string>>
 }
 
-interface JobsFile<J> {
+interface JobsFile {
   version: 2
   /** The user's time zone (Settings › Preferences; a browser fills it in once); null until a page told the host. */
   timeZone: string | null
-  jobs: Record<string, J>
+  jobs: Record<string, Job>
   runs: Record<string, JobRun[]>
   /** Per record, the channel event keys that woke it and when: the same event never wakes it twice. */
   keys: Record<string, Record<string, string>>
@@ -48,11 +48,11 @@ interface JobsFile<J> {
 }
 
 /** One task's part of the version 1 migration, written in one go. */
-export interface V1Step<J> {
+export interface V1Step {
   /** The version 1 jobs it settles: they leave `v1` with their runs and keys. */
   jobIds: string[]
   /** The task's record, or null when it gets none. */
-  record: J | null
+  record: Job | null
   /** The runs that go on under the record's id. */
   runs?: JobRun[]
   /** The channel event keys that go on under the record's id. */
@@ -65,19 +65,19 @@ export interface V1Step<J> {
 
 const record = <T>(value: unknown): Record<string, T> => (value && typeof value === 'object' ? value as Record<string, T> : {})
 
-function empty<J>(): JobsFile<J> {
+function empty(): JobsFile {
   return { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }
 }
 
 /** The file as it is read, and whether what is on disk is still a version 1 file. */
-function load<J>(file: string | null): { data: JobsFile<J>; v1OnDisk: boolean } {
+function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
   if (!file) return { data: empty(), v1OnDisk: false }
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
     const timeZone = typeof parsed.timeZone === 'string' ? parsed.timeZone : null
     if (parsed.version === 1) {
       const v1: JobsV1Data = { jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys) }
-      return { data: { ...empty<J>(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}) }, v1OnDisk: true }
+      return { data: { ...empty(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}) }, v1OnDisk: true }
     }
     if (parsed.version !== 2) return { data: empty(), v1OnDisk: false }
     const old = parsed.v1 as Partial<JobsV1Data> | undefined
@@ -95,13 +95,13 @@ function load<J>(file: string | null): { data: JobsFile<J>; v1OnDisk: boolean } 
   }
 }
 
-/** `J` is the record's shape: the task's local record. `file` null: nothing is read or written (a store in memory, for tests). */
-export class JobStore<J extends { id: string; runCount: number } = Job> {
-  private data: JobsFile<J>
+/** `file` null: nothing is read or written (a store in memory, for tests). */
+export class JobStore {
+  private data: JobsFile
   private v1OnDisk: boolean
 
   constructor(private file: string | null = JOBS_FILE) {
-    const loaded = load<J>(file)
+    const loaded = load(file)
     this.data = loaded.data
     this.v1OnDisk = loaded.v1OnDisk
   }
@@ -112,7 +112,7 @@ export class JobStore<J extends { id: string; runCount: number } = Job> {
   }
 
   /** Write one task's part of the version 1 migration: its jobs leave `v1`, its record and runs are in. */
-  migrateV1(step: V1Step<J>): void {
+  migrateV1(step: V1Step): void {
     const v1 = this.data.v1
     for (const id of step.jobIds) {
       delete v1?.jobs[id]
@@ -169,15 +169,15 @@ export class JobStore<J extends { id: string; runCount: number } = Job> {
     this.persist()
   }
 
-  list(): J[] {
+  list(): Job[] {
     return Object.values(this.data.jobs)
   }
 
-  get(id: string): J | undefined {
+  get(id: string): Job | undefined {
     return this.data.jobs[id]
   }
 
-  put(job: J): void {
+  put(job: Job): void {
     this.data.jobs[job.id] = job
     this.persist()
   }
