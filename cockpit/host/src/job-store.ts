@@ -15,7 +15,7 @@ import type { NotificationInput } from './notifications.js'
  * space, and they survive every rewrite until then. The version 1 file itself is copied next to it
  * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
  * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`), with the spaces the
- * cockpit had at the conversion (`v1Spaces`): the migration looks through each of those once for schedules left
+ * cockpit had at the conversion (`v1Spaces`, written at the start that takes them): the migration looks through each of those once for schedules left
  * without a job, also one that has no job, and no other space.
  *
  * A file that is there and cannot be parsed (cut off in a write, edited by hand) is never overwritten: the store
@@ -124,10 +124,11 @@ function spacesOfConversion(data: JobsFile, spaces: ReadonlyArray<string | null>
  * The file as the store takes it: as it is read (load), and, for a file that was version 1, the spaces of its
  * conversion when it holds none yet.
  */
-function loadWithSpaces(file: string | null, spaces: ReadonlyArray<string | null>): ReturnType<typeof load> {
+function loadWithSpaces(file: string | null, spaces: ReadonlyArray<string | null>): ReturnType<typeof load> & { spacesTaken: boolean } {
   const loaded = load(file)
-  if (loaded.data.fromV1 && !loaded.data.v1Spaces) loaded.data.v1Spaces = spacesOfConversion(loaded.data, spaces)
-  return loaded
+  const spacesTaken = loaded.data.fromV1 === true && !loaded.data.v1Spaces
+  if (spacesTaken) loaded.data.v1Spaces = spacesOfConversion(loaded.data, spaces)
+  return { ...loaded, spacesTaken }
 }
 
 /** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that is not used (and why). */
@@ -173,7 +174,9 @@ const stamp = (at: Date) => at.toISOString().replace(/[-:]/g, '').replace(/\..+$
 /**
  * `file` null: nothing is read or written (a store in memory, for tests). `spaces`: the keys of the spaces the cockpit
  * has at this start (null: the main space); a version 1 file converted now keeps them as the spaces of the look for
- * left-over schedules (v1Spaces).
+ * left-over schedules (v1Spaces), and the file is written with them at once: a start that changes nothing else must
+ * not leave them to the next start, which may have more spaces. `readOnly` (the dry run by hand): nothing is ever
+ * written, the spaces are taken in memory only.
  */
 export class JobStore {
   private data: JobsFile
@@ -185,12 +188,16 @@ export class JobStore {
   /** Where the file that is not used was set aside; null: there was none, or it is not set aside yet. */
   private aside: string | null = null
 
-  constructor(private file: string | null = JOBS_FILE, spaces: ReadonlyArray<string | null> = []) {
+  private readOnly: boolean
+
+  constructor(private file: string | null = JOBS_FILE, spaces: ReadonlyArray<string | null> = [], opts: { readOnly?: boolean } = {}) {
     const loaded = loadWithSpaces(file, spaces)
     this.data = loaded.data
     this.v1OnDisk = loaded.v1OnDisk
     this.found = loaded.notUsable ?? null
     this.unreadableOnDisk = this.found !== null
+    this.readOnly = opts.readOnly === true
+    if (loaded.spacesTaken) this.persist()
   }
 
   /** Why the jobs.json found on disk is not used (it cannot be parsed, or its version is unknown); null when it was read or there was none. */
@@ -400,7 +407,7 @@ export class JobStore {
   }
 
   private persist(): void {
-    if (!this.file) return
+    if (!this.file || this.readOnly) return
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 })
       // A file that could not be parsed, or of an unknown version, is never overwritten: it is set aside first.

@@ -66,8 +66,8 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
   const config = await home.config()
   if (!config) throw new Error(`no cockpit config in ${home.dir}: this home is not set up`)
   if (!fs.existsSync(home.jobsFile)) { out(`no jobs.json in ${home.dir}: nothing to move\n`); return true }
-  // Read as the host reads it (job-store.ts); the store writes only on a change, and none is made here.
-  const store = new JobStore(home.jobsFile)
+  // Read as the host reads it (job-store.ts), read-only: the dry run writes nothing, not even the spaces of the conversion.
+  const store = new JobStore(home.jobsFile, [], { readOnly: true })
   // A file the host would not use is named as what it is; setting it aside is the host's step, never the dry run's.
   const notUsable = store.notUsable()
   if (notUsable) {

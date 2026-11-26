@@ -42,12 +42,12 @@ describe('jobs.json', () => {
 
   it('reads a version 1 file without losing it: its jobs wait under v1, none of them is a record, the time zone is taken over', () => {
     const { file, content } = v1File()
-    const store = new JobStore(file)
+    const store = new JobStore(file, [], { readOnly: true })
     expect(store.list()).toEqual([])
     expect(store.timeZone()).toBe('Asia/Makassar')
     expect(Object.keys(store.pendingV1()!.jobs)).toEqual(['j1', 'j2'])
     expect(store.pendingV1()!.runs.j1).toHaveLength(1)
-    // reading alone rewrites nothing
+    // reading alone (read-only, as the dry run reads) rewrites nothing; the host's store saves the conversion's spaces at once
     expect(readFileSync(file, 'utf8')).toBe(content)
     expect(existsSync(`${file}.v1-backup`)).toBe(false)
   })
@@ -131,6 +131,24 @@ describe('jobs.json', () => {
     // a home that never had a version 1 file: nothing there can be a leftover
     const fresh = new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json'))
     expect([fresh.awaitsLeftoverLook(null), fresh.awaitsLeftoverLook('space-2')]).toEqual([false, false])
+  })
+
+  it('saves the spaces of the conversion at once: a start that writes nothing else still keeps them for the next', () => {
+    const { file, content } = v1File()
+    // the start that converts the file computes the spaces and writes nothing else during the whole run
+    expect(new JobStore(file, [null, 'space-2']).awaitsLeftoverLook('space-2')).toBe(true)
+    expect(read(file)).toMatchObject({ version: 2, fromV1: true, v1Spaces: ['', 'space-2'] })
+    // the version 1 file is kept as it was before that first rewrite
+    expect(readFileSync(`${file}.v1-backup`, 'utf8')).toBe(content)
+    // a space added before the next start is not one of the conversion's
+    const next = new JobStore(file, [null, 'space-2', 'space-new'])
+    expect([next.awaitsLeftoverLook('space-2'), next.awaitsLeftoverLook('space-new')]).toEqual([true, false])
+    expect(read(file).v1Spaces).toEqual(['', 'space-2'])
+    // a read-only store (the dry run by hand) computes them in memory and writes nothing
+    const dry = v1File()
+    expect(new JobStore(dry.file, [], { readOnly: true }).awaitsLeftoverLook(null)).toBe(true)
+    expect(readFileSync(dry.file, 'utf8')).toBe(dry.content)
+    expect(existsSync(`${dry.file}.v1-backup`)).toBe(false)
   })
 
   it('writes one task\'s part of the migration in one go: its jobs leave v1, its record, runs and keys are in, history stays under the old id', () => {
