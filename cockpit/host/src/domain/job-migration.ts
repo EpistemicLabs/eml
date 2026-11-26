@@ -1,7 +1,7 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
-import { isOpenTask, nameOfTask, narrowedProfile } from './schedule-tool.js'
+import { everyParagraph, isOpenTask, nameOfTask, narrowedProfile, withParagraph } from './schedule-tool.js'
 import { firingOf, ownerOf } from './task-owner.js'
 import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
@@ -182,9 +182,6 @@ const LOUDEST: readonly JobNotify[] = ['always', 'needs-me', 'never']
 /** The note of a run that was open when its job was dropped by the migration. */
 export const MIGRATED_AWAY = 'its job ended when schedules moved onto tasks'
 
-/** A cron job's paragraph in the task's text. */
-export const cronParagraph = (cron: string, prompt: string) => `Every ${cron}: ${prompt.trim()}`
-
 /** The prompt a scheduled hand-over gave its job: built from the task itself (application/task-runner.ts stepPrompt), so the task's text says it already. */
 const builtFromTask = (prompt: string, taskId: string) => prompt.startsWith('A scheduled job started you for "') && prompt.includes(`(task ${taskId})`)
 
@@ -290,10 +287,11 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       continue
     }
     kept.push(job)
-    const paragraph = cronParagraph(cron, job.prompt)
+    // The schedule tool's paragraph and its way of adding it: what either wrote, the other finds in the text.
+    const paragraph = everyParagraph(cron, job.prompt)
     const said = create !== null || content.includes(paragraph) || content.includes(job.prompt.trim()) || builtFromTask(job.prompt, task.id)
     if (!said) {
-      content = content.trim() ? `${content.replace(/\s+$/, '')}\n\n${paragraph}` : paragraph
+      content = withParagraph(content, paragraph) ?? content
       appended.push(paragraph)
     }
     say(job, `cron "${cron}" (${zone}) → a repeating time of the task${has ? ' (it has that time already)' : ''}${job.paused && pausedCrons.includes(job) ? '; it was paused, so the task\'s whole schedule is paused' : ''}; its prompt ${said ? 'is in the task\'s text already' : 'is appended to the task\'s text'}`)

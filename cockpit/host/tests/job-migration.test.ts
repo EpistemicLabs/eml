@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cronParagraph, jobMigrationReport, MIGRATED_AWAY, planJobMigration, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { jobMigrationReport, MIGRATED_AWAY, planJobMigration, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 
@@ -47,7 +47,6 @@ describe('planning jobs onto their tasks', () => {
       triggers: [], projectId: 'bp-ops', toolProfile: null, reply: {}, end: null, notify: 'always', pausedReason: null,
       cursor: '2026-11-26T10:00:00.000Z', firedWake: null, lastRunAt: null, runCount: 4, failures: 1,
     })
-    expect(cronParagraph('0 8 * * 1-5', ' Write the brief.\n')).toBe('Every 0 8 * * 1-5: Write the brief.')
   })
 
   it('two repeating jobs on one task: both crons, each prompt its own paragraph, one record from the older job', () => {
