@@ -66,6 +66,15 @@ describe('jobs.json', () => {
     expect(readFileSync(`${file}.v1-backup`, 'utf8')).toBe(content)
   })
 
+  it('says which tasks still have version 1 jobs to move: one whose jobs moved, and one that never had any, has none', () => {
+    const { file } = v1File()
+    const store = new JobStore(file)
+    expect([store.hasV1Jobs('t1'), store.hasV1Jobs('t2'), store.hasV1Jobs('t9')]).toEqual([true, true, false])
+    store.migrateV1({ jobIds: ['j1'], record: null })
+    expect([store.hasV1Jobs('t1'), store.hasV1Jobs('t2')]).toEqual([false, true])
+    expect(new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')).hasV1Jobs('t1')).toBe(false)
+  })
+
   it('writes one task\'s part of the migration in one go: its jobs leave v1, its record, runs and keys are in, history stays under the old id', () => {
     const { file } = v1File()
     const store = new JobStore(file)

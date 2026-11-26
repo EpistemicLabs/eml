@@ -745,7 +745,7 @@ async function main() {
       return lists.flatMap((list) => list.engrams ?? [])
     },
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
-    waitsForMigration: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
+    waitsForMigration: (taskId) => jobStore.hasV1Jobs(taskId),
     // While a space's jobs wait and the migration has not looked through it for left-over schedules, none is taken up by being seen.
     holdsFirstSight: (space) => !jobStore.leftoversChecked(space.key) && Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => (job.spaceId ?? null) === space.key),
     task: async (space, taskId) => {
@@ -855,7 +855,7 @@ async function main() {
       resumed: (taskId) => jobRunner.resumed(taskId),
     },
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
-    moving: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
+    moving: (taskId) => jobStore.hasV1Jobs(taskId),
     resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
     projectName: (spaceId, projectId) => {
       const project = spaces.resolve(spaceId).registry.get(projectId)
@@ -878,7 +878,7 @@ async function main() {
       return { taskId: entry.taskId ?? null, brain: taskBrain(space), agent: space.agent ?? null, spaceId: entry.spaceId ?? null, toolProfile: entry.toolProfile }
     },
     records: jobStore,
-    moving: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
+    moving: (taskId) => jobStore.hasV1Jobs(taskId),
     zone: userTimeZone, log,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
   })
