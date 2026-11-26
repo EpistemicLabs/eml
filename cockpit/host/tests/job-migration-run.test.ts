@@ -361,6 +361,23 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.filter((p) => p.path === '/task/left/track')).toHaveLength(1)
   })
 
+  it('once every space was looked through the looks are over: a space the cockpit gets later is not held and not looked through', async () => {
+    const w = world([], [task('t1')])
+    expect(await w.migration.run()).toMatchObject({ unlooked: 0 })
+    w.spaces.push({ id: 'space-3', name: 'Later', main: false, agent: 'atlas', shared: false })
+    w.byId.set('theirs', task('theirs', stale))
+    expect(w.store.awaitsLeftoverLook('space-3')).toBe(false)
+    expect(await w.migration.run()).toMatchObject({ leftovers: 0, unlooked: 0 })
+    expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0 })
+    expect(w.posts).toEqual([])
+  })
+
+  it('while a space still waits for its look, the looks are not over', async () => {
+    const w = world([], [task('t1')], { team: null })
+    expect(await w.migration.run()).toMatchObject({ unlooked: 1 })
+    expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([false, true])
+  })
+
   it('a version 1 file that holds no job at all: its spaces are looked through, and the file becomes version 2 with its backup', async () => {
     const w = world([], [task('left', stale), task('kept', stale)])
     w.store.put({ id: 'kept', spaceId: null, taskId: 'kept', runCount: 0 } as never)

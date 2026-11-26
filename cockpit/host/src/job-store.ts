@@ -51,6 +51,8 @@ interface JobsFile {
    * still show a schedule that cockpit's mirror left without a job. A file that started on version 2 never has it.
    */
   fromV1?: true
+  /** Every space the home had was looked through for such schedules: no space waits for a look any more, also one it gets later. */
+  leftoverLooksOver?: true
 }
 
 /** One task's part of the version 1 migration, written in one go. */
@@ -95,6 +97,7 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
         ...(Array.isArray(parsed.leftoversChecked) ? { leftoversChecked: parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') } : {}),
         // What only the migration of a version 1 file writes says so too.
         ...(parsed.fromV1 === true || parsed.v1 !== undefined || parsed.renames !== undefined || parsed.leftoversChecked !== undefined ? { fromV1: true as const } : {}),
+        ...(parsed.leftoverLooksOver === true ? { leftoverLooksOver: true as const } : {}),
       },
       v1OnDisk: false,
     }
@@ -173,10 +176,21 @@ export class JobStore {
 
   /**
    * The space still waits for the migration's one look for schedules left without a job: its home was on version 1,
-   * and the space is not marked as looked through. Until then the engine takes up no schedule there by seeing it.
+   * the looks are not over, and the space is not marked as looked through. Until then the engine takes up no
+   * schedule there by seeing it.
    */
   awaitsLeftoverLook(spaceKey: string | null): boolean {
-    return this.fromV1() && !this.leftoversChecked(spaceKey)
+    return this.fromV1() && this.data.leftoverLooksOver !== true && !this.leftoversChecked(spaceKey)
+  }
+
+  /**
+   * Every space the home has was looked through: the looks are over. A space the cockpit gets later waits for none,
+   * since a schedule on a task of it was never the old mirror's on this machine.
+   */
+  endLeftoverLooks(): void {
+    if (this.data.leftoverLooksOver === true) return
+    this.data.leftoverLooksOver = true
+    this.persist()
   }
 
   markLeftoversChecked(spaceKey: string | null): void {

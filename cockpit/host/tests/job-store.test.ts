@@ -108,6 +108,11 @@ describe('jobs.json', () => {
     expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([false, true])
     const again = new JobStore(file)
     expect([again.awaitsLeftoverLook(null), again.awaitsLeftoverLook('space-2')]).toEqual([false, true])
+    // once every space the home had was looked through, the looks are over: a space it gets later waits for none
+    again.endLeftoverLooks()
+    expect([again.awaitsLeftoverLook('space-2'), again.awaitsLeftoverLook('space-new')]).toEqual([false, false])
+    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(false)
+    expect(new JobStore(file).fromV1()).toBe(true)
     // a home that never had a version 1 file: nothing there can be a leftover
     const fresh = new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json'))
     expect([fresh.awaitsLeftoverLook(null), fresh.awaitsLeftoverLook('space-2')]).toEqual([false, false])

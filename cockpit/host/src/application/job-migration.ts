@@ -34,7 +34,7 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'get'>>
+  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'endLeftoverLooks' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -297,6 +297,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const homeless = rest.filter((j) => !known.has(j.spaceId ?? null)).length
     if (homeless > 0) failed(`${homeless} job(s) of a space this cockpit no longer has stay as they are`, `${homeless} job(s) of a space this cockpit no longer has stay as they are`)
     if (looks) result.unlooked = deps.spaces().filter(awaitsLook).length
+    // Every space this cockpit has was looked through: a space it gets later waits for no look.
+    if (looks && result.unlooked === 0) deps.store.endLeftoverLooks?.()
     if (hadJobs) deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
     await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
