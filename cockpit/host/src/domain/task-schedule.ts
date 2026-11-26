@@ -224,8 +224,10 @@ const checked = (cron: string): string => {
 }
 
 /**
- * Set the wake-up: it replaces the task's wake-up and never touches a repeating time. `at` is an instant (ISO);
- * `timeZone` is kept only when the schedule names none yet.
+ * Set the wake-up: it replaces the task's wake-up and never touches a repeating time. `at` is an instant (ISO).
+ * `timeZone` (where its writer reads it) is kept only on a schedule that names no zone and has no repeating time:
+ * time_zone is the zone the repeating times are read in, and a wake-up never moves them (ones without a zone are
+ * read in UTC, and stay there).
  */
 export function setWake(schedule: ScheduleFields | null | undefined, wake: { at: string; why?: string | null; bySession?: string | null; timeZone?: string }): ScheduleFields {
   const at = time(wake.at)
@@ -235,7 +237,7 @@ export function setWake(schedule: ScheduleFields | null | undefined, wake: { at:
     ...rest, at: iso(at),
     ...(wake.why ? { why: wake.why } : {}),
     ...(wake.bySession ? { by_session: wake.bySession } : {}),
-    ...(rest.time_zone || !wake.timeZone ? {} : { time_zone: wake.timeZone }),
+    ...(rest.time_zone || rest.crons?.length || !wake.timeZone ? {} : { time_zone: wake.timeZone }),
   })!
 }
 
@@ -252,14 +254,16 @@ export function clearWake(schedule: ScheduleFields | null | undefined, opts: { o
 
 /**
  * Add a repeating time; one the task already has is not added twice. `timeZone` is the zone the crons are read in
- * when the schedule has no repeating time yet: all of a task's crons are read in one zone, so a later one joins it.
+ * when the schedule has no repeating time yet: all of a task's crons are read in one zone, so a later one joins it
+ * and never changes it.
  */
 export function addCron(schedule: ScheduleFields | null | undefined, cron: string, timeZone?: string): ScheduleFields {
   const text = checked(cron)
   const crons = schedule?.crons ?? []
   if (crons.map((c) => c.trim()).includes(text)) return tidy(schedule)!
   if (crons.length >= SCHEDULE_LIMITS.crons) throw new ScheduleError(`a task has at most ${SCHEDULE_LIMITS.crons} repeating times; remove one first`)
-  const zone = crons.length > 0 ? schedule?.time_zone ?? timeZone : timeZone ?? schedule?.time_zone
+  // Repeating times that name no zone are read in UTC: the new one joins them there (cronZoneRefusal says so first).
+  const zone = crons.length > 0 ? schedule?.time_zone : timeZone ?? schedule?.time_zone
   return tidy({ ...schedule, crons: [...crons, text], ...(zone ? { time_zone: zone } : {}) })!
 }
 
@@ -270,7 +274,8 @@ export function addCron(schedule: ScheduleFields | null | undefined, cron: strin
  * way a repeating time is added: the schedule tool and the page's hand-over.
  */
 export function cronZoneRefusal(schedule: ScheduleFields | null | undefined, zone: string): string | null {
-  const theirs = schedule?.crons?.length ? schedule.time_zone : undefined
+  // Repeating times that name no zone are read in UTC (nextRunOfSchedule, dueOf).
+  const theirs = schedule?.crons?.length ? schedule.time_zone ?? 'UTC' : undefined
   return theirs && theirs !== zone ? theirs : null
 }
 

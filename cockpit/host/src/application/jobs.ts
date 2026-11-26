@@ -25,6 +25,8 @@ import { makeRoutineTask, routineTask } from './task-state-migration.js'
  *   create   adds a repeating time (cron) to the task, or sets its wake-up (at, which replaces the one it had).
  *            The task is task_id, else the caller's own for target self, else a new task made from name and prompt.
  *   update   replaces the repeating times with one cron, or the wake-up; sets the end, the goal, the settings.
+ *            timezone says how a call's own times are read; only a cron that sets all of a task's repeating times
+ *            brings the zone they are read in.
  *   pause, resume   the task's whole schedule.
  *   delete, finish  end the schedule: it is cleared on the task, which stays open.
  *   run_now  one run now, through the engine (application/job-runner.ts).
@@ -307,8 +309,9 @@ export class Jobs {
     const goal = this.goal(input)
 
     const current = scheduleOf(task)
+    // The call's zone says how its own times are read. It becomes the zone of the task's repeating times only with a
+    // cron, which replaces them all: a wake-up or an end read in another zone never moves when the routine runs.
     const zone = this.zone(input)
-    const explicitZone = str(input.timezone)
     const cron = wantsCron ? this.cron(input, null, zone) : null
     const at = wantsAt ? this.at(input, zone) : null
     const endsAt = this.endsAt(input, zone)
@@ -321,17 +324,17 @@ export class Jobs {
       let next = schedule
       // The one cron replaces the list, so the zone it is written in is the zone the task's repeating times are read in.
       if (cron) next = setCrons(next, [cron], zone)
-      else if (explicitZone && next) next = setCrons(next, next.crons ?? [], explicitZone)
-      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, bySession, timeZone: zone })
+      // Only a task without a schedule takes the wake-up's zone (setWake never gives one to repeating times).
+      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, bySession, ...(next ? {} : { timeZone: zone }) })
       if (endsAt !== undefined) next = next ? setEndsAt(next, endsAt) : next
       return next
     }
     const planned = edit(current)
     if (endsAt && !planned) return bad('the task has no schedule to end at a time: give cron or at')
     if ((cron || at) && planned && !planned.paused && nextRunOfSchedule(planned, this.now()) === null) return bad('that schedule has no run before its end')
-    const changesTask = cron !== null || at !== null || endsAt !== undefined || explicitZone !== undefined || goal !== null
+    const changesTask = cron !== null || at !== null || endsAt !== undefined || goal !== null
     const changesRecord = mail !== undefined || Object.values(settings.given).some(Boolean)
-    if (!changesTask && !changesRecord) return bad('nothing to update: give cron, at, timezone, ends_at, goal, max_runs, notify, mail, deny_tools, project or provider')
+    if (!changesTask && !changesRecord) return bad('nothing to update: give cron, at, ends_at, goal, max_runs, notify, mail, deny_tools, project or provider')
 
     const paragraph = cron && prompt ? everyParagraph(cron, prompt) : null
     const content = paragraph ? withParagraph(task.content, paragraph) : null

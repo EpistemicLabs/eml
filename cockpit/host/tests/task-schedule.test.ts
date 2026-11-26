@@ -132,6 +132,8 @@ describe('editing a schedule', () => {
     // a zone is taken only when the schedule names none
     expect(setWake(null, { at: '2026-11-27T02:00:00Z', timeZone: 'Asia/Makassar' }).time_zone).toBe('Asia/Makassar')
     expect(setWake(full, { at: '2026-11-27T02:00:00Z', timeZone: 'Asia/Makassar' }).time_zone).toBe('Europe/Berlin')
+    // repeating times without a zone are read in UTC: a wake-up never gives them one
+    expect(setWake({ crons: ['0 8 * * *'] }, { at: '2026-11-27T02:00:00Z', timeZone: 'Asia/Makassar' })).toEqual({ crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z' })
     expect(() => setWake(null, { at: 'soon' })).toThrow(ScheduleError)
   })
   it('a reason longer than the brain takes is cut', () => {
@@ -158,15 +160,17 @@ describe('editing a schedule', () => {
   it('all of a task\'s repeating times are read in one zone: the first one sets it, a later one joins it', () => {
     expect(addCron({ at: '2026-11-26T02:00:00.000Z', time_zone: 'UTC' }, '0 8 * * *', 'Asia/Makassar').time_zone).toBe('Asia/Makassar')
     expect(addCron(full, '0 18 * * *', 'Asia/Makassar').time_zone).toBe('Europe/Berlin')
-    expect(addCron({ crons: ['0 8 * * *'] }, '0 18 * * *', 'Asia/Makassar').time_zone).toBe('Asia/Makassar')
+    // repeating times without a zone are read in UTC: a later one never moves them into its writer's zone
+    expect(addCron({ crons: ['0 8 * * *'] }, '0 18 * * *', 'Asia/Makassar')).toEqual({ crons: ['0 8 * * *', '0 18 * * *'] })
+    expect(cronZoneRefusal({ crons: ['0 8 * * *'] }, 'Asia/Makassar')).toBe('UTC')
+    expect(cronZoneRefusal({ crons: ['0 8 * * *'] }, 'UTC')).toBeNull()
   })
   it('a cron written in another zone than the task\'s repeating times does not join them: the rule names their zone', () => {
     expect(cronZoneRefusal(full, 'Asia/Makassar')).toBe('Europe/Berlin')
     expect(cronZoneRefusal(full, 'Europe/Berlin')).toBeNull()
-    // no repeating time yet (none at all, or only a wake-up), or theirs name no zone: any zone is taken
+    // no repeating time yet (none at all, or only a wake-up): any zone is taken
     expect(cronZoneRefusal(null, 'Asia/Makassar')).toBeNull()
     expect(cronZoneRefusal({ at: '2026-11-26T02:00:00.000Z', time_zone: 'UTC' }, 'Asia/Makassar')).toBeNull()
-    expect(cronZoneRefusal({ crons: ['0 8 * * *'] }, 'Asia/Makassar')).toBeNull()
   })
   it('a task holds at most ten repeating times', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `0 ${i} * * *`)

@@ -66,8 +66,8 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   const takeOver = Boolean(task.ownSession);
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
   // A task's repeating times share one zone, and the host refuses one more given in another (domain/task-schedule.ts
-  // cronZoneRefusal). So on a task that has repeating times, a new one is read in THEIR zone, and the dialog says so.
-  const taskZone = task.schedule?.crons?.length ? task.schedule.time_zone ?? null : null;
+  // cronZoneRefusal). So on a task that has repeating times, a new one is read in THEIR zone, and the dialog says so. Repeating times that name no zone are read in UTC.
+  const taskZone = task.schedule?.crons?.length ? task.schedule.time_zone ?? 'UTC' : null;
   const cronZone = taskZone ?? timeZone;
 
   const schedule = (): HandOverInput['schedule'] => {

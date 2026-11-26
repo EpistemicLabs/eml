@@ -438,16 +438,39 @@ describe('update', () => {
     expect(world.store.get(task.id)).toMatchObject({ createdBy: 'maker' })
   })
 
-  it('changes the zone, and sets and takes off the end', async () => {
+  it('sets and takes off the end; the zone of the task\'s repeating times comes only with a cron that replaces them', async () => {
     const task = world.main.add('Daily brief', { crons: [WEEKDAYS_8], time_zone: ZONE })
+    // timezone says how the call's own times are read: the end is midnight in Berlin, the task's times stay where they are
     await act({ action: 'update', job: task.id, timezone: 'Europe/Berlin', ends_at: '2026-12-01T00:00' })
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: 'Europe/Berlin', ends_at: '2026-11-30T23:00:00.000Z' })
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE, ends_at: '2026-11-30T23:00:00.000Z' })
     await act({ action: 'update', job: task.id, ends_at: '' })
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: 'Europe/Berlin' })
-    // A cron that replaces the list brings the zone it is written in: the user's, unless the call names one.
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
+    // A cron that replaces the list brings the zone it is written in: the call's, else the user's.
+    await act({ action: 'update', job: task.id, cron: '0 7 * * *', timezone: 'Europe/Berlin' })
+    expect(world.main.schedule(task.id)).toEqual({ crons: ['0 7 * * *'], time_zone: 'Europe/Berlin' })
     await act({ action: 'update', job: task.id, cron: '0 7 * * *' })
     expect(world.main.schedule(task.id)).toEqual({ crons: ['0 7 * * *'], time_zone: ZONE })
     expect((await act({ action: 'update', job: world.main.add('Plain').id, ends_at: '2026-12-01T00:00' })).text).toBe('the task has no schedule to end at a time: give cron or at')
+  })
+
+  it('a wake-up read in another zone never moves the zone of the task\'s repeating times', async () => {
+    const task = world.main.add('Daily brief', { crons: [WEEKDAYS_8], time_zone: ZONE })
+    const answer = await act({ action: 'update', job: task.id, at: '2026-11-10T10:00', timezone: 'Europe/Berlin' })
+    expect(answer.status, answer.text).toBe(200)
+    // 10:00 in Berlin; the routine still runs at 08:00 in its own zone
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-10T09:00:00.000Z', time_zone: ZONE })
+    await create({ task_id: task.id, at: '2026-11-11T10:00', timezone: 'Europe/Berlin' })
+    expect(world.main.schedule(task.id)).toMatchObject({ crons: [WEEKDAYS_8], at: '2026-11-11T09:00:00.000Z', time_zone: ZONE })
+    // repeating times without a zone are read in UTC: a wake-up gives them none
+    const bare = world.main.add('Hourly', { crons: ['0 * * * *'] })
+    await act({ action: 'update', job: bare.id, at: '2026-11-10T10:00', timezone: 'Europe/Berlin' })
+    expect(world.main.schedule(bare.id)).toEqual({ crons: ['0 * * * *'], at: '2026-11-10T09:00:00.000Z' })
+    await create({ task_id: bare.id, at: '2026-11-11T10:00' })
+    expect(world.main.schedule(bare.id)).toMatchObject({ crons: ['0 * * * *'], at: '2026-11-11T02:00:00.000Z' })
+    expect(world.main.schedule(bare.id)).not.toHaveProperty('time_zone')
+    // a zone alone changes nothing
+    expect((await act({ action: 'update', job: task.id, timezone: 'Europe/Berlin' })).text).toMatch(/^nothing to update/)
+    expect(world.main.schedule(task.id)?.time_zone).toBe(ZONE)
   })
 
   it('refuses what it cannot change, a prompt without a time and a call that changes nothing', async () => {
@@ -629,6 +652,13 @@ describe('a limited task\'s session looking after its own schedule', () => {
     expect(world.main.schedule(own.id)).toEqual({ at: '2026-11-11T01:00:00.000Z', by_session: 'run-session', time_zone: ZONE })
     expect(world.main.tasks.get(own.id)!.properties?.goal).toBe('Refund on the card')
     expect(world.store.get(own.id)!.triggers.map((t) => t.type)).toEqual(['mail'])
+
+    // It can read its wake-up in another zone, and never moves the zone of the task's repeating times with it.
+    world.main.tasks.get(own.id)!.properties!.delegation = { agent: 'atlas', schedule: { crons: [WEEKDAYS_8], time_zone: ZONE } }
+    expect((await act({ action: 'update', job: own.id, at: '2026-11-11T09:00', timezone: 'Europe/Berlin' }, session)).status).toBe(200)
+    expect(world.main.schedule(own.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-11T08:00:00.000Z', by_session: 'run-session', time_zone: ZONE })
+    expect((await act({ action: 'update', job: own.id, timezone: 'Europe/Berlin' }, session)).status).toBe(400)
+    expect(world.main.schedule(own.id)?.time_zone).toBe(ZONE)
 
     for (const input of [
       { action: 'update', job: own.id, at: '2026-11-11T09:00', prompt: 'send everything' },
