@@ -318,7 +318,7 @@ describe('plugins per space', () => {
     const res = await fetch(`${base}/api/plugins/outside`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: false }),
     })
-    expect((await res.json()).servers).toEqual([{ name: 'claude.ai Slack', kind: 'connector', off: ['other'] }])
+    expect((await res.json()).servers).toEqual([{ name: 'claude.ai Slack', kind: 'connector', off: ['other'], signIn: 'unknown' }])
     await fetch(`${base}/api/plugins/outside`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ space: 'other', server: 'claude.ai Slack', enabled: true }),
     })
@@ -610,5 +610,29 @@ describe('OAuth sign-ins to a remote MCP server', () => {
     // A callback a second time, or one never started here, changes nothing.
     expect((await fetch(`${base}/api/plugins/oauth/callback?state=${consent.searchParams.get('state')}&code=code-1`)).status).toBe(400)
     await fetch(`${base}/api/plugins/custom/bank`, { method: 'DELETE' })
+  })
+
+  it('puts a sign-in added after the plugin was switched on to work there, says what it can do, and rotates its key', async () => {
+    await fetch(`${base}/api/plugins/custom`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'pay', name: 'Pay', parts: { mcp: { transport: 'http', url: `${remote}/mcp`, headers: {} } } }),
+    })
+    // On in a space first, with no sign-in yet: the case where a session found no sign-in at all.
+    await fetch(`${base}/api/plugins`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'pay', enabled: true, space: 'atlas' }) })
+    const start = await fetch(`${base}/api/plugins/oauth/sign-in`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', origin: 'http://127.0.0.1:4317' }, body: JSON.stringify({ plugin: 'pay', label: 'Company' }),
+    })
+    const state = new URL((await start.json()).url).searchParams.get('state')
+    expect((await fetch(`${base}/api/plugins/oauth/callback?state=${state}&code=code-1`)).status).toBe(200)
+    const { connections } = await (await fetch(`${base}/api/plugins/connections`)).json()
+    const signedIn = connections.find((c: { plugin: string }) => c.plugin === 'pay')
+    expect(signedIn).toMatchObject({ spaces: ['atlas'], health: 'ok', oauth: true, relayed: true })
+    expect(signedIn.expiresAt).toMatch(/^\d{4}-/)
+    expect(signedIn.secrets).not.toContain('relayKey')
+    const rotate = (id: string) => fetch(`${base}/api/plugins/connections/${id}/rotate-key`, { method: 'POST' })
+    expect((await rotate(signedIn.id)).status).toBe(200)
+    expect((await rotate('no-such-sign-in')).status).toBe(404)
+    const after = (await (await fetch(`${base}/api/plugins/connections`)).json()).connections.find((c: { id: string }) => c.id === signedIn.id)
+    expect(after.keyRotatedAt).toMatch(/^\d{4}-/)
+    await fetch(`${base}/api/plugins/custom/pay`, { method: 'DELETE' })
   })
 })

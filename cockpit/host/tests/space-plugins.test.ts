@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readManifest, type PluginManifest } from '../src/domain/plugin-manifest.js'
-import { deniedFor, emptySpacePlugins, mcpServersFor, setOutsideServer, setPlugin } from '../src/domain/space-plugins.js'
+import { connectionHealth, deniedFor, dueForRenewal, emptySpacePlugins, mcpServersFor, setOutsideServer, setPlugin, SECRET_MAX_AGE_MS, type Connection } from '../src/domain/space-plugins.js'
 import { PluginRegistry } from '../src/infrastructure/plugins/plugin-registry.js'
 import { PluginStore } from '../src/infrastructure/plugins/plugin-store.js'
 import { importMcpServers, splitDefinition } from '../src/infrastructure/plugins/mcp-import.js'
-import { parseMcpList } from '../src/infrastructure/plugins/outside-servers.js'
+import { parseMcpList, readOutsideSignIns } from '../src/infrastructure/plugins/outside-servers.js'
 import { codexPluginArgs, codexPluginTables } from '../src/infrastructure/providers/codex/plugin-servers.js'
 import { SpacePluginService } from '../src/application/space-plugins.js'
 
@@ -352,6 +352,114 @@ describe('switching a plugin on without naming a connection', () => {
       expect(Object.keys((await service.snapshot()).filesFor('a').mcpServers)).toEqual(['lookup', 'lookup-invoice'])
       await service.setPlugin('b', 'lookup', true)
       expect((await store.spaces()).spaces.b.plugins.lookup).toEqual({ connections: [] })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('what a sign-in can do now', () => {
+  const now = Date.parse('2026-06-01T00:00:00Z')
+  const oauth = (values: Record<string, string>, extra: Partial<Connection> = {}): Connection =>
+    ({ id: 'o', plugin: 'p', label: 'o', values: { tokenEndpoint: 't', clientId: 'c', resource: 'r', accessToken: 'a', ...values }, ...extra })
+
+  it('tells a good token, one to renew, a refused one and a static secret that is due for a new one apart', () => {
+    expect(connectionHealth(oauth({ expiresAt: String(now + 60_000) }), now, false)).toBe('ok')
+    expect(connectionHealth(oauth({ expiresAt: String(now - 1), refreshToken: 'r' }), now, false)).toBe('renewing')
+    expect(connectionHealth(oauth({ expiresAt: String(now - 1) }), now, false)).toBe('refused')
+    expect(connectionHealth(oauth({ refreshToken: 'r' }, { signInNeeded: true }), now, false)).toBe('refused')
+    const key = (savedAt?: string): Connection => ({ id: 'k', plugin: 'p', label: 'k', values: { apiKey: 'placeholder' }, ...(savedAt ? { savedAt } : {}) })
+    expect(connectionHealth(key(new Date(now - 1000).toISOString()), now, true)).toBe('ok')
+    expect(connectionHealth(key(new Date(now - SECRET_MAX_AGE_MS - 1).toISOString()), now, true)).toBe('old')
+    expect(connectionHealth(key(), now, true)).toBe('old')
+    expect(connectionHealth(key(), now, false)).toBe('ok')
+  })
+
+  it('picks the renewable sign-ins that run out within ten minutes', () => {
+    const soon = oauth({ expiresAt: String(now + 5 * 60_000), refreshToken: 'r' }, { id: 'soon' })
+    const later = oauth({ expiresAt: String(now + 3600_000), refreshToken: 'r' }, { id: 'later' })
+    const refused = oauth({ expiresAt: String(now - 1), refreshToken: 'r' }, { id: 'refused', signInNeeded: true })
+    const noRefresh = oauth({ expiresAt: String(now - 1) }, { id: 'no-refresh' })
+    expect(dueForRenewal([soon, later, refused, noRefresh], now).map((c) => c.id)).toEqual(['soon'])
+  })
+})
+
+describe('a remote server with a static secret', () => {
+  const keyed = manifest({ id: 'keyed', name: 'Keyed', tier: 'custom', parts: { mcp: { transport: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: { secret: 'header:Authorization' } } } } })
+
+  it('reaches it through the relay once the sign-in has a relay key, so mcp.json holds no secret', () => {
+    const state = setPlugin(emptySpacePlugins(), 'a', 'keyed', { connections: ['k1'] })
+    const vars = { RELAY: 'http://127.0.0.1:4317/mcp-relay' }
+    const bare = [{ id: 'k1', plugin: 'keyed', label: 'x', values: { 'header:Authorization': 'Bearer placeholder' } }]
+    expect(mcpServersFor('a', state, [keyed], bare, vars).servers.keyed).toEqual({ type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer placeholder' } })
+    const relayed = [{ ...bare[0], values: { ...bare[0].values, relayKey: 'relay-placeholder' } }]
+    expect(mcpServersFor('a', state, [keyed], relayed, vars).servers.keyed).toEqual({ type: 'http', url: 'http://127.0.0.1:4317/mcp-relay/k1', headers: { 'x-eml-relay-key': 'relay-placeholder' } })
+  })
+})
+
+describe('sign-ins and the spaces that use them', () => {
+  it('stamps a saved sign-in, gives a remote one a relay key, puts a new one to work where none is picked, and rotates its key', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-sign-ins-'))
+    try {
+      const registry = new PluginRegistry({ officialDir: join(dir, 'none'), customFile: join(dir, 'p', 'custom.json') })
+      await registry.addCustom({ id: 'keyed', name: 'Keyed', parts: { mcp: { transport: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: { secret: 'header:Authorization' } } } } })
+      await registry.addCustom({ id: 'local', name: 'Local', parts: { mcp: { transport: 'stdio', command: 'x', env: { K: { secret: 'k' } } } } })
+      const store = new PluginStore(join(dir, 'p'))
+      const service = new SpacePluginService(registry, store, { RELAY: 'http://127.0.0.1:4317/mcp-relay' })
+      await service.setPlugin('a', 'keyed', true)
+      await service.setPlugin('b', 'keyed', true)
+      await service.saveConnection({ id: 'k1', plugin: 'keyed', label: 'x', values: { 'header:Authorization': 'Bearer placeholder' } }, new Date('2026-06-01T00:00:00Z'))
+      await service.saveConnection({ id: 'l1', plugin: 'local', label: 'y', values: { k: 'placeholder' } })
+      const [k1, l1] = await store.connections()
+      expect(k1.savedAt).toBe('2026-06-01T00:00:00.000Z')
+      expect(k1.values.relayKey).toMatch(/^[\w-]{32}$/)
+      expect(l1.values.relayKey).toBeUndefined()
+
+      expect(await service.attachWhereMissing('keyed', 'k1')).toEqual(['a', 'b'])
+      await service.setPlugin('b', 'keyed', true, [])
+      await service.saveConnection({ id: 'k2', plugin: 'keyed', label: 'z', values: { 'header:Authorization': 'Bearer placeholder-2' } })
+      // Space a has its sign-in already: only b, which has none, takes the new one.
+      expect(await service.attachWhereMissing('keyed', 'k2')).toEqual(['b'])
+      expect((await service.snapshot()).filesFor('a').mcpServers.keyed).toEqual({ type: 'http', url: 'http://127.0.0.1:4317/mcp-relay/k1', headers: { 'x-eml-relay-key': k1.values.relayKey } })
+
+      expect(await service.rotateRelayKey('k1', new Date('2026-07-01T00:00:00Z'))).toBe(true)
+      const rotated = (await store.connections()).find((c) => c.id === 'k1')
+      expect(rotated?.values.relayKey).not.toBe(k1.values.relayKey)
+      expect(rotated?.keyRotatedAt).toBe('2026-07-01T00:00:00.000Z')
+      expect(await service.rotateRelayKey('l1')).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gives sign-ins of remote servers stored before the relay served them a relay key, once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-relay-keys-'))
+    try {
+      const registry = new PluginRegistry({ officialDir: join(dir, 'none'), customFile: join(dir, 'p', 'custom.json') })
+      await registry.addCustom({ id: 'keyed', name: 'Keyed', parts: { mcp: { transport: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: { secret: 'header:Authorization' } } } } })
+      const store = new PluginStore(join(dir, 'p'))
+      await store.updateConnections(() => [{ id: 'old', plugin: 'keyed', label: 'x', values: { 'header:Authorization': 'Bearer placeholder' } }])
+      const service = new SpacePluginService(registry, store)
+      expect(await service.ensureRelayKeys()).toEqual(['old'])
+      expect(await service.ensureRelayKeys()).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Claude Code\'s own sign-ins', () => {
+  it('reads which servers have a token and which asked for a sign-in, never a value', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-outside-sign-ins-'))
+    try {
+      writeFileSync(join(dir, '.credentials.json'), JSON.stringify({ mcpOAuth: {
+        'plugin:x:y|1': { serverName: 'plugin:x:y', accessToken: '' },
+        'plugin:a:b|1': { serverName: 'plugin:a:b', accessToken: 'placeholder' },
+        'plugin:a:b|2': { serverName: 'plugin:a:b', accessToken: '' },
+      } }))
+      writeFileSync(join(dir, 'mcp-needs-auth-cache.json'), JSON.stringify({ 'claude.ai Drive': { timestamp: 1 } }))
+      expect(await readOutsideSignIns(dir)).toEqual({ 'plugin:x:y': 'needs-sign-in', 'plugin:a:b': 'signed-in', 'claude.ai Drive': 'needs-sign-in' })
+      expect(await readOutsideSignIns(join(dir, 'missing'))).toEqual({})
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

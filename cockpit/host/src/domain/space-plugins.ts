@@ -63,11 +63,53 @@ export const connectionSchema = z.object({
   signInNeeded: z.boolean().optional(),
   /** The parts this sign-in serves (a service account for the mcp part only); every part when left out. */
   parts: z.array(z.enum(['pane', 'mcp', 'channel'])).optional(),
+  /** When its secrets were last set by the user: a sign-in or a saved key (ISO time). */
+  savedAt: z.string().optional(),
+  /** When the cockpit last got a new access token for it (ISO time). */
+  renewedAt: z.string().optional(),
+  /** When a session last reached its server through the relay (ISO time, to the minute or so). */
+  usedAt: z.string().optional(),
+  /** When its relay key was last changed (ISO time); the sign-in's own time when never. */
+  keyRotatedAt: z.string().optional(),
 })
 
 /** Whether a connection serves a plugin's part. */
 export const serves = (connection: Connection, part: PluginPartKind): boolean => connection.parts?.includes(part) ?? true
 export type Connection = z.infer<typeof connectionSchema>
+
+/** How long a static secret may stay unchanged before the page asks for a new one. */
+export const SECRET_MAX_AGE_MS = 90 * 24 * 3600_000
+/** An OAuth sign-in that runs out sooner than this is renewed ahead of use. */
+export const RENEW_AHEAD_MS = 10 * 60_000
+
+/**
+ * What a sign-in can do right now, from what the cockpit stores about it (no network call):
+ * - `ok`: an OAuth token that is valid, or a static secret younger than SECRET_MAX_AGE_MS;
+ * - `renewing`: its access token ran out and the cockpit renews it at the next use or sweep;
+ * - `refused`: the server refused to renew it, the user signs in again;
+ * - `old`: a static secret older than SECRET_MAX_AGE_MS (or of unknown age), due for a new one.
+ * `staticSecret` says the sign-in holds a key the user sets by hand (a remote server's header or URL
+ * secret); file references and OAuth sign-ins never get old.
+ */
+export type ConnectionHealth = 'ok' | 'renewing' | 'refused' | 'old'
+
+export function connectionHealth(connection: Connection, now: number, staticSecret: boolean): ConnectionHealth {
+  if (connection.signInNeeded) return 'refused'
+  const { values } = connection
+  if (values.tokenEndpoint && values.accessToken) {
+    if (!values.expiresAt || Number(values.expiresAt) > now) return 'ok'
+    return values.refreshToken ? 'renewing' : 'refused'
+  }
+  if (!staticSecret) return 'ok'
+  const saved = connection.savedAt ? Date.parse(connection.savedAt) : NaN
+  return Number.isFinite(saved) && now - saved < SECRET_MAX_AGE_MS ? 'ok' : 'old'
+}
+
+/** The OAuth sign-ins due for a new access token: running out within RENEW_AHEAD_MS, renewable, not refused. */
+export function dueForRenewal(connections: Connection[], now: number): Connection[] {
+  return connections.filter((c) => !c.signInNeeded && c.values.tokenEndpoint && c.values.refreshToken && c.values.expiresAt
+    && Number(c.values.expiresAt) - RENEW_AHEAD_MS < now)
+}
 
 export function isOn(state: SpacePlugins, spaceId: string, pluginId: string): boolean {
   return state.spaces[spaceId]?.plugins[pluginId] !== undefined
@@ -140,8 +182,10 @@ export function mcpServersFor(
     if (!part || !base || !isOn(state, spaceId, manifest.id) || !partOn(state, manifest.id, 'mcp')) continue
     const picked = connectionsIn(state, spaceId, manifest.id)
     // A remote server the cockpit signs in to: each sign-in the space picked through the relay, which
-    // adds the token. Without one, the session reaches the server itself and Claude signs in there.
-    if (manifest.auth?.kind === 'mcp-oauth' && part.transport !== 'stdio' && vars.RELAY && picked.length > 0) {
+    // adds the token. Without one it stays out: reached directly, the session would find no sign-in
+    // there and fail at the first call, while the page showed the cockpit's sign-in as connected.
+    if (manifest.auth?.kind === 'mcp-oauth' && part.transport !== 'stdio' && vars.RELAY) {
+      if (picked.length === 0) problems.push(`${manifest.name}: no sign-in picked for this space`)
       for (const id of picked) {
         const connection = connections.find((c) => c.id === id && c.plugin === manifest.id)
         if (!connection?.values.relayKey) {
@@ -186,6 +230,11 @@ export function mcpServersFor(
       // A shared server: the session reaches the one process of this sign-in through the relay.
       if (part.transport === 'stdio' && part.shared && connection && vars.RELAY && sharedKey) {
         config = { type: 'http', url: `${vars.RELAY}/${connection.id}`, headers: { 'x-eml-relay-key': sharedKey(connection.id) } }
+      }
+      // A remote server with a stored secret (an API key in a header): the relay adds it, so the
+      // session's mcp.json carries only the relay key, never the secret itself.
+      if (part.transport !== 'stdio' && connection?.values.relayKey && vars.RELAY && missing.length === 0) {
+        config = { type: 'http', url: `${vars.RELAY}/${connection.id}`, headers: { 'x-eml-relay-key': connection.values.relayKey } }
       }
       if (missing.length > 0) {
         problems.push(`${manifest.name}: ${connection ? `the sign-in ${connection.id} lacks ${missing.join(', ')}` : 'no sign-in picked for this space'}`)

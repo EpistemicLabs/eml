@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import * as path from 'node:path'
 
 /** A server that loads in the cockpit's Claude config without being a cockpit plugin. */
 export interface OutsideServer {
@@ -18,6 +20,45 @@ export function parseMcpList(output: string): OutsideServer[] {
   return [...new Map(servers.map((server) => [server.name, server])).values()]
 }
 
+/** Whether Claude Code holds a sign-in for a server: from its own files, without asking the server. */
+export type OutsideSignIn = 'signed-in' | 'needs-sign-in' | 'unknown'
+
+/**
+ * The sign-in state of the servers Claude Code signs in to itself, read from its config folder:
+ * `.credentials.json` (mcpOAuth entries, by server name: a token or none) and
+ * `mcp-needs-auth-cache.json` (servers that asked for a sign-in). Only names and whether a token
+ * is there leave this function, never a value. claude.ai connectors are signed in at claude.ai and
+ * stay `unknown` unless Claude Code noted that one needs a sign-in.
+ */
+export async function readOutsideSignIns(configDir: string): Promise<Record<string, OutsideSignIn>> {
+  const states: Record<string, OutsideSignIn> = {}
+  const credentials = await readJsonFile(path.join(configDir, '.credentials.json'))
+  const oauth = credentials && typeof credentials === 'object' ? (credentials as { mcpOAuth?: unknown }).mcpOAuth : null
+  if (oauth && typeof oauth === 'object') {
+    for (const entry of Object.values(oauth as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue
+      const { serverName, accessToken } = entry as { serverName?: unknown; accessToken?: unknown }
+      if (typeof serverName !== 'string') continue
+      const signedIn = typeof accessToken === 'string' && accessToken.length > 0
+      // Several entries for one name (signed in again): one with a token wins.
+      if (signedIn || states[serverName] !== 'signed-in') states[serverName] = signedIn ? 'signed-in' : 'needs-sign-in'
+    }
+  }
+  const needsAuth = await readJsonFile(path.join(configDir, 'mcp-needs-auth-cache.json'))
+  if (needsAuth && typeof needsAuth === 'object') {
+    for (const name of Object.keys(needsAuth as Record<string, unknown>)) states[name] = 'needs-sign-in'
+  }
+  return states
+}
+
+async function readJsonFile(file: string): Promise<unknown> {
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
 const TTL_MS = 10 * 60_000
 
 /**
@@ -30,6 +71,11 @@ export class OutsideServers {
   private pending: Promise<OutsideServer[]> | null = null
 
   constructor(private readonly options: { bin: string; configDir: string; now?: () => number }) {}
+
+  /** Claude Code's own sign-in state per server name, read fresh each time (two small files). */
+  signIns(): Promise<Record<string, OutsideSignIn>> {
+    return readOutsideSignIns(this.options.configDir)
+  }
 
   list(): Promise<OutsideServer[]> {
     const now = this.options.now?.() ?? Date.now()

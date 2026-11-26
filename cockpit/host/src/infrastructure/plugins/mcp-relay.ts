@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
-import type { Connection } from '../../domain/space-plugins.js'
+import type { ConfigValue, McpPart } from '../../domain/plugin-manifest.js'
+import { dueForRenewal, type Connection } from '../../domain/space-plugins.js'
 import { oauthValuesOf, type McpOAuth, type OAuthValues } from './mcp-oauth.js'
 import type { SharedMcpHost } from './shared-mcp.js'
 
@@ -13,6 +14,8 @@ export const RELAY_KEY_HEADER = 'x-eml-relay-key'
 const FORWARDED = ['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id']
 const RETURNED = ['content-type', 'mcp-session-id', 'cache-control']
 const EARLY_MS = 60_000
+/** How often a sign-in's "last used" time is written: once per this long at most. */
+const USED_EVERY_MS = 5 * 60_000
 
 type Renewal = OAuthValues | 'refused' | 'unreachable'
 
@@ -20,9 +23,12 @@ export interface RelayDeps {
   connections(): Promise<Connection[]>
   /** Writes a connection's new values without rewriting the spaces' session files. */
   update(id: string, change: (connection: Connection) => Connection): Promise<void>
-  /** The server a plugin's mcp part names (its URL), or null when it has none. */
-  serverUrl(pluginId: string): Promise<string | null>
+  /** A plugin's remote mcp part (its URL and headers, either may name a secret), or null when it has none. */
+  server(pluginId: string): Promise<Extract<McpPart, { transport: 'http' | 'sse' }> | null>
   oauth: Pick<McpOAuth, 'refresh'>
+  /** The server refused to renew a sign-in: the user is told to sign in again. */
+  onRefused?: (connection: Connection) => void
+  now?: () => number
   isLocal(req: IncomingMessage): boolean
   /** The servers the cockpit runs once for every session (a stdio part with `shared`). */
   shared?: Pick<SharedMcpHost, 'keyFor' | 'isShared' | 'endpoint' | 'discard'>
@@ -56,8 +62,11 @@ export class McpRelay {
     const key = Buffer.from(connection ? (shared ? shared.keyFor(connection.id) : (connection.values.relayKey ?? '')) : '')
     if (!connection || key.length === 0 || given.length !== key.length || !timingSafeEqual(given, key)) return refuse(403, 'Unknown sign-in or wrong key')
     if (shared) return this.handleShared(req, res, connection, shared, refuse)
-    const upstream = await this.deps.serverUrl(connection.plugin)
+    this.markUsed(connection)
+    const part = await this.deps.server(connection.plugin)
     let values = oauthValuesOf(connection.values)
+    if (part && !values) return this.handleStatic(req, res, connection, part, refuse)
+    const upstream = part && typeof part.url === 'string' ? part.url : null
     if (!upstream || !values) return refuse(404, 'This sign-in names no server it can reach')
 
     const body = await readBody(req)
@@ -115,8 +124,60 @@ export class McpRelay {
     pipeResponse(response, res)
   }
 
-  private forward(req: IncomingMessage, upstream: string, token: string, body: Buffer | null, signal: AbortSignal): Promise<Response> {
-    const headers: Record<string, string> = { authorization: `Bearer ${token}` }
+  /** A server with a stored secret (an API key in a header or the URL): filled in here, never in the session's config. */
+  private async handleStatic(
+    req: IncomingMessage,
+    res: ServerResponse,
+    connection: Connection,
+    part: Extract<McpPart, { transport: 'http' | 'sse' }>,
+    refuse: (status: number, message: string) => void,
+  ): Promise<void> {
+    const fill = (value: ConfigValue): string | null => typeof value === 'string' ? value : (connection.values[value.secret] ?? (value.optional ? '' : null))
+    const upstream = fill(part.url)
+    const headers = Object.entries(part.headers).map(([name, value]) => [name.toLowerCase(), fill(value)] as const)
+    if (!upstream || headers.some(([, value]) => value === null)) return refuse(404, `The sign-in "${connection.label}" lacks a value its server needs: set it again in Settings › Plugins`)
+    const body = await readBody(req)
+    const controller = new AbortController()
+    res.on('close', () => controller.abort())
+    const extra = Object.fromEntries(headers.filter(([, value]) => value !== '')) as Record<string, string>
+    const response = await this.forward(req, upstream, null, body, controller.signal, extra).catch(() => null)
+    if (!response) {
+      if (!res.headersSent) refuse(502, 'The server cannot be reached right now')
+      return
+    }
+    pipeResponse(response, res)
+  }
+
+  /**
+   * Renews every OAuth sign-in that runs out soon, so one no session used for a while is still good
+   * when the next one starts, and a refresh token the server stopped honouring shows up on the page
+   * (and as a notification) before a session needs it. Returns how each one went.
+   */
+  async renewDue(): Promise<Record<string, 'renewed' | 'refused' | 'unreachable'>> {
+    const outcome: Record<string, 'renewed' | 'refused' | 'unreachable'> = {}
+    for (const connection of dueForRenewal(await this.deps.connections(), this.now())) {
+      const values = oauthValuesOf(connection.values)
+      if (!values) continue
+      const answer = await this.renew(connection.id, values)
+      outcome[connection.id] = typeof answer === 'object' ? 'renewed' : answer
+    }
+    return outcome
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now()
+  }
+
+  /** Notes that a session reached the sign-in's server, at most once per USED_EVERY_MS; never in the way of the request. */
+  private markUsed(connection: Connection): void {
+    const last = connection.usedAt ? Date.parse(connection.usedAt) : 0
+    if (this.now() - last < USED_EVERY_MS) return
+    const at = new Date(this.now()).toISOString()
+    void this.deps.update(connection.id, (c) => ({ ...c, usedAt: at })).catch(() => undefined)
+  }
+
+  private forward(req: IncomingMessage, upstream: string, token: string | null, body: Buffer | null, signal: AbortSignal, extra: Record<string, string> = {}): Promise<Response> {
+    const headers: Record<string, string> = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra }
     for (const name of FORWARDED) {
       const value = req.headers[name]
       if (typeof value === 'string') headers[name] = value
@@ -134,10 +195,14 @@ export class McpRelay {
       if (answer.kind === 'unreachable') return 'unreachable' as const
       if (answer.kind === 'refused') {
         this.deps.log?.(`[plugins] the sign-in ${id} was refused on renewal: it needs signing in again`)
-        await this.deps.update(id, (c) => ({ ...c, signInNeeded: true }))
+        let before: Connection | undefined
+        await this.deps.update(id, (c) => { before = c; return { ...c, signInNeeded: true } })
+        // Told once, when it changes: a sweep that finds it refused again stays quiet.
+        if (before && !before.signInNeeded) this.deps.onRefused?.(before)
         return 'refused' as const
       }
-      await this.deps.update(id, (c) => ({ ...c, signInNeeded: false, values: { ...c.values, ...stringValues(answer.values) } }))
+      const at = new Date(this.now()).toISOString()
+      await this.deps.update(id, (c) => ({ ...c, signInNeeded: false, renewedAt: at, values: { ...c.values, ...stringValues(answer.values) } }))
       return answer.values
     })()
     this.renewing.set(id, work)

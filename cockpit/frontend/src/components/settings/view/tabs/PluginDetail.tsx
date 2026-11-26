@@ -7,6 +7,7 @@ import {
   useAddConnection,
   useRemoveConnection,
   useRemoveCustom,
+  useRotateRelayKey,
   useSetPart,
   useSetPlugin,
   type ConnectionView,
@@ -19,7 +20,7 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 import SettingsPanel, { SettingsPanelLine } from '../SettingsPanel';
 import { GoogleSignIn, GoogleSignInAgain } from './GoogleSignIn';
 import { McpOAuthSignIn, McpOAuthSignInAgain, PasteAddress, useRefreshOnReturn } from './McpOAuthSignIn';
-import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, signsInWithOAuth, trustNote } from './PluginShared';
+import { PART_LABEL, PluginIcon, SlugField, TierChip, needsSignIn, signInNote, signsInWithOAuth, trustNote } from './PluginShared';
 import { SignInPicker } from './PluginSpaceCell';
 
 /** The values a gmail sign-in holds for the channel bridge (plugins/gmail/channel). */
@@ -41,7 +42,11 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
   const setPlugin = useSetPlugin();
   const removeConnection = useRemoveConnection();
   const removeCustom = useRemoveCustom();
+  const rotateKey = useRotateRelayKey();
   const [confirmRemove, setConfirmRemove] = useState(false);
+  /** The sign-in whose relay key is about to change, waiting for the user's yes. */
+  const [rotateFor, setRotateFor] = useState<string | null>(null);
+  const spaceName = (id: string) => spaces.find((s) => s.id === id)?.name ?? id;
   /** The sign-in whose "Sign in again" steps are open, under its line. */
   const [againFor, setAgainFor] = useState<string | null>(null);
   const own = connections.filter((c) => c.plugin === plugin.id);
@@ -87,23 +92,34 @@ export default function PluginDetail({ plugin, spaces, connections, onBack }: {
           {!needsSignIn(plugin) && !oauth && <p className="text-body text-muted-foreground">This plugin needs no sign-in.</p>}
           {oauth && !plugin.auth && <p className="text-body text-muted-foreground">Until you sign in here, each Claude config signs in to this server itself.</p>}
           {needsSignIn(plugin) && own.length === 0 && <p className={cn('text-body', HUE.you.ink)}>No sign-in yet: add one to use it in a space.</p>}
-          {own.map((connection) => (
+          {own.map((connection) => {
+            const note = signInNote(plugin, connection, spaceName);
+            return (
             <div key={connection.id} className="border-t border-border first-of-type:border-t-0">
               <SettingsPanelLine
                 label={connection.label}
-                note={connection.signInNeeded
-                  ? 'The server refused to renew this sign-in: sign in again. Sessions using it get no answer until then.'
-                  : `Connected${plugin.mcp ? ` · its tools: ${plugin.id}${connection.slug ? `-${connection.slug}` : ''}` : ''} · ${connection.oauth ? 'renewed by the cockpit' : 'secret stored once'}, owner only, never shown`}
-                noteClassName={connection.signInNeeded ? 'text-stopped-ink' : undefined}
+                note={note.text}
+                noteClassName={note.tone === 'act' ? (connection.signInNeeded || connection.health === 'refused' ? 'text-stopped-ink' : HUE.you.ink) : undefined}
               >
                 {oauth && connection.oauth && <McpOAuthSignInAgain plugin={plugin} connection={connection} onPaste={() => setAgainFor(connection.id)} />}
                 {google && againFor !== connection.id && <Button variant="outline" size="sm" onClick={() => setAgainFor(connection.id)}>Sign in again</Button>}
+                {connection.relayed && rotateFor !== connection.id && (
+                  <Button variant="outline" size="sm" onClick={() => setRotateFor(connection.id)} title="A new key between the sessions and the cockpit; the sign-in itself stays">New relay key…</Button>
+                )}
                 <Button variant="outline" size="sm" onClick={() => removeConnection.mutate(connection.id)} disabled={removeConnection.isPending}>Remove</Button>
               </SettingsPanelLine>
+              {rotateFor === connection.id && (
+                <SettingsPanelLine label="New relay key" note="Sessions already running lose these tools until they restart; new sessions get the new key.">
+                  <Button size="sm" onClick={() => rotateKey.mutate(connection.id, { onSettled: () => setRotateFor(null) })} loading={rotateKey.isPending}>Change key</Button>
+                  <Button variant="outline" size="sm" onClick={() => setRotateFor(null)}>Cancel</Button>
+                </SettingsPanelLine>
+              )}
               {google && againFor === connection.id && <GoogleSignInAgain plugin={plugin} connection={connection} onClose={() => setAgainFor(null)} />}
               {oauth && againFor === connection.id && <div className="pb-2"><PasteAddress onDone={() => setAgainFor(null)} /></div>}
             </div>
-          ))}
+            );
+          })}
+          {rotateKey.isError && <p className="text-ui text-stopped-ink">{rotateKey.error.message}</p>}
           {google && <GoogleSignIn plugin={plugin} another={own.length > 0} />}
           {oauth && <McpOAuthSignIn plugin={plugin} another={own.length > 0} />}
           {needsSignIn(plugin) && !google && !oauth && <AddSignIn plugin={plugin} another={own.length > 0} />}

@@ -15,7 +15,23 @@ export function SignInPicker({ plugin, space, connections }: { plugin: PluginVie
   const picked = plugin.spaces[space.id] ?? [];
   if (!on || !needsSignIn(plugin)) return <span className="text-ui text-muted-foreground">–</span>;
   if (own.length === 0) return <span className={cn('text-ui', HUE.you.ink)}>needs a sign-in</span>;
-  if (own.length === 1) return <span className="text-ui text-foreground">{own[0].label}</span>;
+  if (own.length === 1) {
+    // Its only sign-in, but not picked here: sessions in this space would not reach the server.
+    if (picked.includes(own[0].id)) return <span className="text-ui text-foreground">{own[0].label}</span>;
+    return (
+      <span className="flex flex-wrap items-center gap-2">
+        <span className={cn('text-ui', HUE.you.ink)}>not used here</span>
+        <button
+          type="button"
+          disabled={setPlugin.isPending}
+          onClick={() => setPlugin.mutate({ id: plugin.id, space: space.id, enabled: true, connections: [own[0].id] })}
+          className={cn('min-h-(--target-min) rounded text-ui text-foreground underline underline-offset-2 hover:no-underline', FOCUS)}
+        >
+          Use {own[0].label}
+        </button>
+      </span>
+    );
+  }
   return (
     <span className="flex flex-wrap gap-1">
       {own.map((c) => {

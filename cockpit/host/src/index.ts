@@ -17,7 +17,7 @@ import { ProviderRegistry, defaultProviders } from './infrastructure/providers/r
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
 import { PtyBridge } from './pty-bridge.js'
-import { pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
+import { mcpRelay, onSignInRefused, pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
 import { importBridgeAccounts, ownsBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
 import { bridgeAccountsFor } from './domain/space-plugins.js'
 import { readAgentMcpDefinitions, readAgentRuntime } from './agent-runtime.js'
@@ -263,6 +263,9 @@ async function main() {
     if (accounts.problem) log(`plugins: ${accounts.problem}`)
     if (imported.imported.length > 0) log(`plugins: imported ${imported.imported.map((i) => i.serverName).join(', ')} as custom MCP plugins${imported.backup ? ` (backup ${imported.backup})` : ''}`)
     for (const skipped of imported.skipped) log(`plugins: ${skipped.serverName} not imported — ${skipped.reason}`)
+    // Sign-ins stored before the relay served static secrets get a relay key: their secret leaves the spaces' mcp.json.
+    const keyed = await spacePlugins.ensureRelayKeys()
+    if (keyed.length > 0) log(`plugins: ${keyed.join(', ')} now reached through the relay`)
   } catch (err) {
     log(`plugins: setup failed — ${(err as Error).message}`)
   }
@@ -635,6 +638,23 @@ async function main() {
     now: () => Date.now(),
   })
   const notifier: Notifier = pushNotifier
+  // A server that stops renewing a sign-in: the user hears it once, before a session needs it.
+  onSignInRefused((connection) => pushNotifier.notify({
+    kind: 'failed',
+    title: `${connection.label} (${connection.plugin})`,
+    body: 'The server refused to renew this sign-in. Sign in again in Settings › Plugins; sessions using it get no answer until then.',
+    jobId: null,
+    sessionId: null,
+    spaceId: null,
+  }))
+  // Sign-ins running out soon are renewed ahead of use, also when no session reached them for days.
+  const sweepRenewals = () => {
+    void mcpRelay.renewDue().then((outcome) => {
+      for (const [id, result] of Object.entries(outcome)) if (result !== 'renewed') log(`plugins: renewing ${id} — ${result}`)
+    }).catch((err: Error) => log(`plugins: renewal sweep failed — ${err.message}`))
+  }
+  setInterval(sweepRenewals, 5 * 60_000).unref?.()
+  sweepRenewals()
   const projectName = (spaceId: string | null, projectId: string | null) =>
     projectId ? spaces.resolve(spaceId).registry.get(projectId)?.displayName : undefined
   // Sessions tell what the review section shows: Needs you, Check this, a new result.

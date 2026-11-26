@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { PluginManifest } from '../domain/plugin-manifest.js'
 import {
   connectionsIn,
@@ -140,9 +141,74 @@ export class SpacePluginService {
     return this.store.connections()
   }
 
-  async saveConnection(connection: Connection): Promise<void> {
-    await this.store.updateConnections((all) => [...all.filter((c) => c.id !== connection.id), connection])
+  /**
+   * Keeps a sign-in the user just set up or set again: stamped with the time (the page shows a
+   * static secret's age from it), and with a relay key when its server is remote, so sessions reach
+   * it through the relay and never see the secret.
+   */
+  async saveConnection(connection: Connection, now = new Date()): Promise<void> {
+    const remote = await this.isRemote(connection.plugin)
+    const stamped: Connection = {
+      ...connection,
+      savedAt: now.toISOString(),
+      values: remote && !connection.values.relayKey ? { ...connection.values, relayKey: newRelayKey() } : connection.values,
+    }
+    await this.store.updateConnections((all) => [...all.filter((c) => c.id !== connection.id), stamped])
     await this.refreshAll()
+  }
+
+  /**
+   * A new sign-in goes to work in the spaces that have its plugin on without any: a sign-in added
+   * after the plugin was switched on would otherwise sit unused while the page called it connected.
+   * Returns the spaces it was added to.
+   */
+  async attachWhereMissing(pluginId: string, connectionId: string): Promise<string[]> {
+    const added: string[] = []
+    await this.store.updateSpaces((state) => Object.entries(state.spaces).reduce((next, [spaceId, space]) => {
+      const on = space.plugins[pluginId]
+      if (!on || on.connections.length > 0) return next
+      added.push(spaceId)
+      return setPlugin(next, spaceId, pluginId, { connections: [connectionId] })
+    }, state))
+    if (added.length > 0) await this.refreshAll()
+    return added
+  }
+
+  /**
+   * Once at start: every sign-in of a remote server gets a relay key, so one stored before the relay
+   * served static secrets leaves the spaces' mcp.json at the next rewrite. Returns the ids it changed.
+   */
+  async ensureRelayKeys(): Promise<string[]> {
+    const manifests = await this.registry.list()
+    const remote = new Set(manifests.filter((m) => m.parts.mcp && m.parts.mcp.transport !== 'stdio').map((m) => m.id))
+    const changed: string[] = []
+    await this.store.updateConnections((all) => all.map((c) => {
+      if (!remote.has(c.plugin) || c.values.relayKey) return c
+      changed.push(c.id)
+      return { ...c, values: { ...c.values, relayKey: newRelayKey() } }
+    }))
+    if (changed.length > 0) await this.refreshAll()
+    return changed
+  }
+
+  /**
+   * A new relay key for a sign-in: the spaces' files get it at once; sessions already running keep the
+   * old one and are refused by the relay until they restart. False when there is no such remote sign-in.
+   */
+  async rotateRelayKey(id: string, now = new Date()): Promise<boolean> {
+    let rotated = false
+    await this.store.updateConnections((all) => all.map((c) => {
+      if (c.id !== id || !c.values.relayKey) return c
+      rotated = true
+      return { ...c, keyRotatedAt: now.toISOString(), values: { ...c.values, relayKey: newRelayKey() } }
+    }))
+    if (rotated) await this.refreshAll()
+    return rotated
+  }
+
+  private async isRemote(pluginId: string): Promise<boolean> {
+    const part = (await this.registry.get(pluginId))?.parts.mcp
+    return !!part && part.transport !== 'stdio'
   }
 
   /** Removes a connection; the spaces that used it keep the plugin on with the sign-ins left. */
@@ -186,4 +252,8 @@ export class SpacePluginService {
     const snapshot = await this.snapshot()
     for (const spaceId of Object.keys(snapshot.state.spaces)) this.rewrite(spaceId, snapshot.filesFor(spaceId))
   }
+}
+
+function newRelayKey(): string {
+  return randomBytes(24).toString('base64url')
 }

@@ -202,6 +202,11 @@ function SpacesTable({ plugins, spaces, connections, onOpen }: { plugins: Plugin
                 <th scope="row" className={cn(cell, 'text-left font-semibold')}>
                   {server.name.replace(/^claude\.ai /, '')}
                   <span className="block text-ui font-normal text-muted-foreground">{server.kind === 'connector' ? 'claude.ai connector' : 'Claude Code plugin'}</span>
+                  {server.signIn === 'needs-sign-in' && (
+                    <span className={cn('block text-ui font-normal', HUE.you.ink)}>
+                      Not signed in: its tools fail in every space where it is on. Sign in with /mcp in a session{server.kind === 'connector' ? ' or in claude.ai\'s connector settings' : ''}, or switch it off.
+                    </span>
+                  )}
                 </th>
                 {spaces.map((space) => (
                   <td key={space.id} className={cell}>
