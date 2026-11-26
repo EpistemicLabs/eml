@@ -1073,6 +1073,46 @@ describe('ChatBridge', () => {
     expect((own.ledgerEntries.get('s1') as unknown as { result?: boolean }).result ?? false).toBe(false)
   })
 
+  describe('a turn the user stopped', () => {
+    it('is no longer working, and leaves no result, flag or handoff', async () => {
+      const done: string[] = []
+      const tracker = new TurnTracker()
+      const { bridge, runtimes, ledgerEntries, turns } = setup({ tracker, turnDone: (_id, text) => done.push(text) })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      expect(tracker.get('s1')?.state).toBe('working')
+      runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'Half way.' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
+      expect(tracker.get('s1')?.state).toBe('done')
+      expect(turns.filter(([, state]) => state === 'done')).toEqual([['s1', 'done']])
+      const entry = ledgerEntries.get('s1') as unknown as { result?: boolean; attention?: unknown }
+      expect(entry.result ?? false).toBe(false)
+      expect(entry.attention ?? null).toBeNull()
+      expect(done).toEqual([])
+    })
+
+    it('keeps the commands it still runs, so it shows as waiting for them', async () => {
+      const tracker = new TurnTracker()
+      const { bridge, runtimes } = setup({ tracker })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      runtimes[0].emit({ kind: 'shell_task', taskId: 'sh1', toolId: null, description: 'Run the tests', status: 'running' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
+      expect(tracker.get('s1')).toMatchObject({ state: 'done', commands: [{ description: 'Run the tests' }] })
+    })
+
+    it('a turn that ends on its own still leaves its done to the Stop hook, with a result and a handoff', async () => {
+      const done: string[] = []
+      const tracker = new TurnTracker()
+      const { bridge, runtimes, ledgerEntries, turns } = setup({ tracker, turnDone: (_id, text) => done.push(text) })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'All done.' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+      expect(turns.filter(([, state]) => state === 'done')).toEqual([])
+      expect(tracker.get('s1')?.state).toBe('working')
+      expect((ledgerEntries.get('s1') as unknown as { result?: boolean }).result).toBe(true)
+      expect(done).toEqual(['All done.'])
+    })
+  })
+
   it('a worker keeps its tool profile on the runtime', async () => {
     const { bridge, runtimes } = setup()
     let stored: unknown
