@@ -4,7 +4,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
 
-import type { Board, BoardTask } from './task-board';
+import type { Board, BoardTask, ClosedTask } from './task-board';
 import { commandLine, commandsNote, nextRuns, workingCount, workingFor, workingNow } from './working-now';
 
 const NOW = Date.parse('2026-02-01T12:00:00.000Z');
@@ -66,6 +66,32 @@ describe('workingNow', () => {
     const rows = workingNow([], {}, board([t]), [space]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: 'member', member: 'dominik', sessionId: null, letter: 'M', name: 'Rescue Acme' });
+  });
+
+  describe('a session whose task is closed', () => {
+    const closedAt = '2026-02-01T11:30:00.000Z';
+    const stale = working('2026-02-01T11:00:00.000Z');
+    const closed = (status: string): ClosedTask => ({
+      id: 't', spaceId: 'space', spaceName: 'Main', project: 'acme', title: 'acme-rescue', status, closedAt, parentId: null, originId: null, sessionIds: ['w'],
+    });
+
+    it('leaves with a turn from before the close, whatever its state still says', () => {
+      for (const status of ['resolved', 'invalidated']) {
+        const onBoard = task({ sessionIds: ['w'], status, updatedAt: closedAt });
+        expect(workingNow([session('w', { taskId: 't' })], { w: stale }, board([onBoard]), [space])).toEqual([]);
+        expect(workingNow([session('w', { taskId: 't' })], { w: stale }, { ...board([]), closed: [closed(status)] }, [space])).toEqual([]);
+      }
+    });
+
+    it('stays while the same turn runs on an open task', () => {
+      const rows = workingNow([session('w', { taskId: 't' })], { w: stale }, board([task({ sessionIds: ['w'], updatedAt: closedAt })]), [space]);
+      expect(rows.map((r) => r.key)).toEqual(['w']);
+    });
+
+    it('stays with a turn that started after the close, such as one a message woke', () => {
+      const rows = workingNow([session('w', { taskId: 't' })], { w: working('2026-02-01T11:45:00.000Z') }, { ...board([]), closed: [closed('invalidated')] }, [space]);
+      expect(rows.map((r) => r.key)).toEqual(['w']);
+    });
   });
 });
 
