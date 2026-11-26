@@ -108,6 +108,17 @@ describe('jobs.json', () => {
     expect(new JobStore(file).pendingRenames()).toEqual({})
   })
 
+  it('remembers per space that it was looked through for schedules left without a job, across restarts', () => {
+    const { file } = v1File()
+    const store = new JobStore(file)
+    expect([store.leftoversChecked(null), store.leftoversChecked('space-2')]).toEqual([false, false])
+    store.markLeftoversChecked(null)
+    store.markLeftoversChecked(null)
+    expect([new JobStore(file).leftoversChecked(null), new JobStore(file).leftoversChecked('space-2')]).toEqual([true, false])
+    store.markLeftoversChecked('space-2')
+    expect(new JobStore(file).leftoversChecked('space-2')).toBe(true)
+  })
+
   it('a version 1 file without jobs has nothing to wait for; an unreadable or unknown file starts empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
     writeFileSync(join(dir, 'empty.json'), JSON.stringify({ version: 1, timeZone: 'UTC', jobs: {}, runs: {}, keys: {} }))

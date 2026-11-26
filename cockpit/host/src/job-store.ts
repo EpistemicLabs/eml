@@ -40,6 +40,11 @@ interface JobsFile<J> {
    * the old one (application/job-migration.ts). It outlives `v1`.
    */
   renames?: Record<string, string>
+  /**
+   * The spaces (their record key; '' for the main space) the migration has looked through for schedules the old
+   * mirror left on tasks without a job. It looks once per space: a schedule set on a jobless task afterwards is real.
+   */
+  leftoversChecked?: string[]
 }
 
 /** One task's part of the version 1 migration, written in one go. */
@@ -81,6 +86,7 @@ function load<J>(file: string | null): { data: JobsFile<J>; v1OnDisk: boolean } 
         version: 2, timeZone, jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys),
         ...(old && typeof old === 'object' ? { v1: { jobs: record(old.jobs), runs: record(old.runs), keys: record(old.keys) } } : {}),
         ...(Object.keys(record(parsed.renames)).length > 0 ? { renames: record<string>(parsed.renames) } : {}),
+        ...(Array.isArray(parsed.leftoversChecked) ? { leftoversChecked: parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') } : {}),
       },
       v1OnDisk: false,
     }
@@ -139,6 +145,17 @@ export class JobStore<J extends { id: string; runCount: number } = Job> {
     if (!this.data.renames || !(jobId in this.data.renames)) return
     delete this.data.renames[jobId]
     if (Object.keys(this.data.renames).length === 0) delete this.data.renames
+    this.persist()
+  }
+
+  /** The migration has looked through this space (its record key; null: main) for schedules left without a job. */
+  leftoversChecked(spaceKey: string | null): boolean {
+    return this.data.leftoversChecked?.includes(spaceKey ?? '') === true
+  }
+
+  markLeftoversChecked(spaceKey: string | null): void {
+    if (this.leftoversChecked(spaceKey)) return
+    this.data.leftoversChecked = [...(this.data.leftoversChecked ?? []), spaceKey ?? '']
     this.persist()
   }
 

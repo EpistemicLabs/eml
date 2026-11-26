@@ -290,6 +290,45 @@ describe('planning jobs onto their tasks', () => {
     })
   })
 
+  describe('a schedule the old mirror left on a task without a job', () => {
+    const leftover = (id: string, patch: Partial<JobMigrationTask> = {}, properties: JobMigrationTask['properties'] = {}) =>
+      task(id, patch, { delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }, ...properties })
+
+    it('is removed in the pass that moves the jobs: nothing ran it before, so nothing may start to', () => {
+      const j = cron('0 8 * * 1-5')
+      const stale = leftover('t2')
+      const p = plan([j, cron('0 9 * * *', { taskId: 't3', endedAt: '2026-11-20T00:00:00.000Z' })], [task(), leftover('t3')], { scheduled: [stale, leftover('t1'), leftover('t3'), leftover('t4')], records: new Set(['t4']) })
+      // t1 has a live job and t3 an ended one: they are planned as tasks. t4 has a record: someone set its schedule here since.
+      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, remove: true }])
+      const report = jobMigrationReport(p, { space: 'Main', at: 'now', dryRun: false })
+      expect(report).toContain('## Task t2 (t2) — a schedule without a job')
+      expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+      expect(report).toContain('1 schedule without a job was left on a task.')
+    })
+
+    it('is never looked for in a later pass, and never on a task of another member or one this cockpit does not fire', () => {
+      const j = cron('0 8 * * 1-5')
+      // not the first pass of the space: no list of scheduled tasks is given
+      expect(plan([j], [task()]).leftovers).toEqual([])
+      const shared: Partial<JobMigrationInput> = { space: { key: null, name: 'Team', shared: true }, members: ['lasse', 'dominik'] }
+      const theirs = leftover('t2', {}, { assignee_ids: ['dominik'] })
+      const agents = leftover('t3', { ingested_by: 'atlas' }, { assignee_ids: [] })
+      expect(plan([j], [task()], { ...shared, scheduled: [theirs, agents], records: new Set() }).leftovers).toEqual([])
+      // a closed task is not among the scheduled ones the pass lists; one given all the same is left alone
+      expect(plan([j], [task()], { scheduled: [leftover('t2', { status: 'resolved' })], records: new Set() }).leftovers).toEqual([])
+    })
+
+    it('in a shared space it is not removed: another member\'s cockpit may have written it when its jobs moved; the report says so', () => {
+      const j = cron('0 8 * * 1-5')
+      const mine = leftover('t2')
+      const p = plan([j], [task()], { space: { key: null, name: 'Team', shared: true }, members: ['lasse', 'dominik'], scheduled: [mine], records: new Set() })
+      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, remove: false }])
+      expect(jobMigrationReport(p, { space: 'Team', at: 'now', dryRun: false })).toContain(
+        '- A schedule without a job is on this task (0 7 * * * (UTC)). In a shared space another member\'s cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on: end it on the task if it is not wanted.',
+      )
+    })
+  })
+
   it('planned again against what it wrote, it writes nothing more to the brain', () => {
     const j = cron('0 8 * * 1-5')
     const first = plan([j, once(AHEAD)]).tasks[0]

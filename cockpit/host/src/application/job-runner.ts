@@ -114,6 +114,12 @@ export interface JobRunnerDeps {
    * it and its record is left alone. Only that task waits: a job that never moves (it has no task) holds nothing up.
    */
   waitsForMigration?(taskId: string): boolean
+  /**
+   * The jobs migration has not yet looked through this space for schedules the old mirror left on tasks without a job
+   * (application/job-migration.ts). Until it has, no schedule is taken up by being seen: a task without a record is
+   * left alone, so a left-over schedule never fires before it is removed. A task with a record goes on firing.
+   */
+  holdsFirstSight?(space: RunnerSpace): boolean
   /** One task as the brain has it now; null when it has none. Throws when the brain cannot be asked. */
   task(space: RunnerSpace, taskId: string): Promise<RunnerTask | null>
   /** A session this cockpit does not have works on the task right now (another member's run, domain/runs.ts). */
@@ -410,10 +416,14 @@ export class JobRunner {
         this.deps.log(`[jobs] ${nameOfTask(task)}: its schedule was not derived: ${(err as Error).message}`)
       }
     }
+    const holds = this.deps.holdsFirstSight?.(space) === true
     for (const task of tasks) {
       if (!hasSchedule(task) || waits(task.id)) continue
+      const known = this.deps.store.get(task.id) !== undefined
+      // The migration still has to look through the space for left-over schedules: none is taken up by being seen.
+      if (holds && !known) continue
       // A task no member owns fires only where a record of it is kept: seeing it makes none.
-      if (!firesHere(await firing(task), this.deps.store.get(task.id) !== undefined)) continue
+      if (!firesHere(await firing(task), known)) continue
       fired.add(task.id)
       await derive(task)
     }

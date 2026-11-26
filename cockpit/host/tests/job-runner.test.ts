@@ -37,6 +37,8 @@ class World {
   unreadable = new Set<string | null>()
   /** Tasks whose version 1 jobs have not moved onto them yet. */
   unmoved = new Set<string>()
+  /** Spaces whose first look for schedules left without a job is still to come (the jobs migration). */
+  unchecked = new Set<string | null>()
   /** At most this many tasks come back from a list. */
   listLimit = Infinity
   listReads = 0
@@ -118,6 +120,7 @@ class World {
         return found && found.space === space.key ? structuredClone(found) : null
       },
       waitsForMigration: (taskId) => this.unmoved.has(taskId),
+      holdsFirstSight: (space) => this.unchecked.has(space.key),
       spaceKind: async (space) => { this.kindAsked += 1; return this.kinds.get(space.key) ?? null },
       members: async () => this.members,
       workingElsewhere: async (_space, taskId) => this.elsewhere.has(taskId),
@@ -309,6 +312,26 @@ describe('deriving what is due', () => {
     expect(world.store.get('unmoved')?.cursor).toBe('2026-11-10T00:00:30.000Z')
     expect(world.store.get('old-record')).toBeUndefined()
     expect(world.started).toHaveLength(1)
+  })
+
+  it('while the jobs migration has not looked through a space for left-over schedules, a schedule is not taken up by being seen: only a task with a record fires', async () => {
+    // a schedule the old mirror left on a task without a job: nothing ran it before, and its past wake-up must not fire now
+    world.task('leftover', { ...HOURLY, at: '2026-11-08T00:00:00.000Z', why: 'An old check.' })
+    // a schedule someone set here since the update: its record was made with it
+    world.task('set-here', HOURLY)
+    world.store.put(newRecord({ id: 'set-here', spaceId: null }, '2026-11-09T00:00:00.000Z'))
+    world.unchecked.add(null)
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(world.started.map((s) => s.task.id)).toEqual(['set-here'])
+    expect(world.store.get('leftover')).toBeUndefined()
+    // the migration removed what was left over and is through with the space: from now on a schedule is taken up when seen
+    world.setSchedule('leftover', null)
+    world.task('new', HOURLY)
+    world.unchecked.delete(null)
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('new')).toMatchObject({ cursor: '2026-11-09T01:01:10.000Z' })
+    expect(world.store.get('leftover')).toBeUndefined()
   })
 
   it('a task whose schedule cannot be derived does not hold up the others', async () => {

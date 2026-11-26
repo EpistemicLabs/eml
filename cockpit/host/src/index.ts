@@ -746,6 +746,8 @@ async function main() {
     },
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
     waitsForMigration: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
+    // While a space's jobs wait and the migration has not looked through it for left-over schedules, none is taken up by being seen.
+    holdsFirstSight: (space) => !jobStore.leftoversChecked(space.key) && Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => (job.spaceId ?? null) === space.key),
     task: async (space, taskId) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error(`space ${space.name} has no agent`)

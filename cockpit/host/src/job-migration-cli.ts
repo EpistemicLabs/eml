@@ -20,7 +20,7 @@ import { routineTaskOfJob } from './application/job-migration.js'
  */
 
 const require = createRequire(import.meta.url)
-type Db = { prepare(sql: string): { get(...args: unknown[]): unknown }; close(): void }
+type Db = { prepare(sql: string): { get(...args: unknown[]): unknown; all(...args: unknown[]): unknown[] }; close(): void }
 const Database = require('better-sqlite3') as new (file: string, opts?: { readonly?: boolean; fileMustExist?: boolean }) => Db
 
 interface V1Data { jobs: Record<string, JobV1>; runs: Record<string, JobRun[]>; keys: Record<string, Record<string, string>> }
@@ -34,13 +34,30 @@ export function pendingJobsOf(raw: string): V1Data | null {
   return Object.keys(data.jobs).length > 0 ? data : null
 }
 
-function taskFrom(db: Db, id: string): JobMigrationTask | null {
-  const row = db.prepare("SELECT id, status, title, content, properties, ingested_by FROM engrams WHERE id = ? AND type = 'task'").get(id) as
-    | { id: string; status: string; title: string | null; content: string; properties: string | null; ingested_by: string | null } | undefined
-  if (!row) return null
+type TaskRow = { id: string; status: string; title: string | null; content: string; properties: string | null; ingested_by: string | null }
+
+function taskOfRow(row: TaskRow): JobMigrationTask {
   let properties: JobMigrationTask['properties'] = null
   try { properties = row.properties ? JSON.parse(row.properties) as JobMigrationTask['properties'] : null } catch { /* a task without readable properties has none */ }
   return { id: row.id, status: row.status, title: row.title, content: row.content, ingested_by: row.ingested_by, properties }
+}
+
+function taskFrom(db: Db, id: string): JobMigrationTask | null {
+  const row = db.prepare("SELECT id, status, title, content, properties, ingested_by FROM engrams WHERE id = ? AND type = 'task'").get(id) as TaskRow | undefined
+  return row ? taskOfRow(row) : null
+}
+
+/** The brain's open tasks that have a schedule: among them the pass looks for schedules left without a job. */
+function scheduledFrom(db: Db): JobMigrationTask[] {
+  const rows = db.prepare("SELECT id, status, title, content, properties, ingested_by FROM engrams WHERE type = 'task' AND status IN ('planned', 'active')").all() as TaskRow[]
+  return rows.map(taskOfRow).filter((task) => task.properties?.delegation?.schedule)
+}
+
+/** What a version 2 jobs.json says beside the jobs still to move: the records it holds, and the spaces already looked through for left-over schedules. */
+export function passStateOf(raw: string): { records: Set<string>; leftoversChecked: Set<string> } {
+  const parsed = JSON.parse(raw) as { version?: number; jobs?: unknown; leftoversChecked?: unknown }
+  const records = parsed.version === 2 && parsed.jobs && typeof parsed.jobs === 'object' ? Object.keys(parsed.jobs) : []
+  return { records: new Set(records), leftoversChecked: new Set(Array.isArray(parsed.leftoversChecked) ? parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') : []) }
 }
 
 export async function runMigrateJobsCommand(argv: string[], out: (text: string) => void = (text) => { process.stdout.write(text) }): Promise<boolean> {
@@ -49,7 +66,9 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
   const config = await readCockpitConfig()
   if (!config) throw new Error(`no cockpit config in ${COCKPIT_HOME}: this home is not set up`)
   if (!fs.existsSync(JOBS_FILE)) { out(`no jobs.json in ${COCKPIT_HOME}: nothing to move\n`); return true }
-  const pending = pendingJobsOf(fs.readFileSync(JOBS_FILE, 'utf8'))
+  const raw = fs.readFileSync(JOBS_FILE, 'utf8')
+  const pending = pendingJobsOf(raw)
+  const state = passStateOf(raw)
   if (!pending) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
   const jobs = Object.values(pending.jobs)
   const me = config.handle ?? 'user'
@@ -75,7 +94,12 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
     try {
       const tasks: Record<string, JobMigrationTask | null> = {}
       for (const id of new Set(mine.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = taskFrom(db, id)
-      const plan = planJobMigration({ jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me) })
+      // As the host's first pass of a space: the schedules the old mirror left on tasks without a job are named too.
+      const first = !state.leftoversChecked.has(key ?? '')
+      const plan = planJobMigration({
+        jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me),
+        ...(first ? { scheduled: scheduledFrom(db), records: state.records } : {}),
+      })
       out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
     } finally {
       db.close()

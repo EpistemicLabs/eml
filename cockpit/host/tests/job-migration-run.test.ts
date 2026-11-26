@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EmlApiError } from '@engramprotocol/mcp-server'
 import { createJobMigration } from '../src/application/job-migration.js'
-import { pendingJobsOf } from '../src/job-migration-cli.js'
+import { passStateOf, pendingJobsOf } from '../src/job-migration-cli.js'
 import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-26T10:00:00.000Z')
@@ -29,6 +29,7 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
   const brainOf = (space: string) => ({
     async get(path: string, query?: Record<string, unknown>) {
       if (opts.down?.includes(space)) throw new Error('connect ECONNREFUSED')
+      if (path === '/list' && query?.title === undefined) return { engrams: structuredClone([...byId.values()].filter((t) => t.status === query?.status)) }
       if (path === '/list') return { engrams: [...byId.values()].filter((t) => t.title === query?.title) }
       if (path === '/object/user') {
         if (opts.members === null) throw new Error('the users did not come')
@@ -124,8 +125,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     await w.migration.run()
     const posts = w.posts.length
     const file = readFileSync(w.file, 'utf8')
-    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
-    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
+    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
     expect(w.posts).toHaveLength(posts)
     expect(readFileSync(w.file, 'utf8')).toBe(file)
     expect(w.moved).toEqual([['j1', 't1']])
@@ -270,8 +271,56 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
     const migration = createJobMigration({ store: new JobStore(file), spaces: () => { throw new Error('not asked') }, brain: () => null, me: 'lasse', moveSessions: () => {}, now: () => NOW, log: () => {} })
     expect(migration.pending()).toBe(false)
-    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
+    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
     expect(existsSync(file)).toBe(false)
+  })
+})
+
+describe('a schedule the old mirror left on a task without a job', () => {
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+
+  it('is removed in the first pass of its space, before the jobs move, with a journal line; a second pass looks for none', async () => {
+    const w = world([v1('j1')], [task('t1'), task('left', stale), task('kept', stale)])
+    // someone set this one's schedule here since the update: its record says so
+    w.store.put({ id: 'kept', spaceId: null, taskId: 'kept', runCount: 0 } as never)
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ moved: 1, leftovers: 1, failed: [] })
+    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: {
+      delegation: { agent: 'atlas', checkpoint: 'after' },
+      text: 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.',
+    } })
+    expect(w.byId.get('kept')!.properties.delegation).toEqual(stale.delegation)
+    expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+    expect(w.store.leftoversChecked(null)).toBe(true)
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 1 moved, 0 not moved, 1 schedule without a job removed — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
+  })
+
+  it('once a space was looked through, a schedule set on a jobless task later is never taken for a leftover, also while a job of the space still waits', async () => {
+    // j9 can never move (no task, no project): the space is planned again at every pass
+    const w = world([v1('j1'), v1('j9', { taskId: null, target: { type: 'session', sessionId: 's1' } })], [task('t1'), task('later')])
+    await w.migration.run()
+    expect(w.store.leftoversChecked(null)).toBe(true)
+    // a schedule written to the brain directly, after the space was looked through: no record, no job
+    w.byId.get('later')!.properties.delegation = structuredClone(stale.delegation)
+    const again = await w.restart().run()
+    expect(again).toMatchObject({ leftovers: 0, left: 1 })
+    expect(w.byId.get('later')!.properties.delegation).toEqual(stale.delegation)
+  })
+
+  it('a removal the brain refuses is said and tried again at the next pass: the space is not marked as looked through', async () => {
+    const w = world([v1('j1')], [task('t1'), task('left', stale)], { failOn: ['left'] })
+    const first = await w.migration.run()
+    expect(first.failed).toEqual(['Main: "left": its schedule without a job could not be removed: Invalid engram: delegation.schedule has an unknown key'])
+    expect(first).toMatchObject({ moved: 1, leftovers: 0 })
+    expect(w.store.leftoversChecked(null)).toBe(false)
+  })
+
+  it('the dry run lists it and removes nothing', async () => {
+    const w = world([v1('j1')], [task('t1'), task('left', stale)])
+    const dry = await w.migration.dryRun(w.spaces[0] as never)
+    expect(dry?.plan.leftovers).toMatchObject([{ taskId: 'left', remove: true }])
+    expect(w.posts).toEqual([])
+    expect(w.store.leftoversChecked(null)).toBe(false)
   })
 })
 
@@ -362,7 +411,7 @@ describe('the report of a real run is kept, and the user is told of what did not
   it('a report that cannot be written does not stop the migration', async () => {
     const w = world([v1('j1')], [task('t1')])
     const migration = createJobMigration({
-      store: w.store, spaces: () => [w.spaces[0]] as never, brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async () => ({}) }),
+      store: w.store, spaces: () => [w.spaces[0]] as never, brain: () => ({ get: async (path: string) => (path === '/list' ? { engrams: [] } : structuredClone(w.byId.get(path.slice('/engram/'.length))!)), post: async () => ({}) }),
       me: 'lasse', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') },
     } as never)
     expect(await migration.run()).toMatchObject({ moved: 1, reportFile: null })
@@ -377,5 +426,14 @@ describe('the jobs a dry run by hand reads from jobs.json', () => {
     expect(pendingJobsOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {}, v1: { jobs, runs: {}, keys: {} } }))?.jobs).toEqual(jobs)
     expect(pendingJobsOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {} }))).toBeNull()
     expect(pendingJobsOf(JSON.stringify({ version: 1, jobs: {}, runs: {}, keys: {} }))).toBeNull()
+  })
+
+  it('come with what the host\'s pass knows beside them: the records it holds, and the spaces already looked through for left-over schedules', () => {
+    const state = passStateOf(JSON.stringify({ version: 2, jobs: { t1: {} }, runs: {}, keys: {}, leftoversChecked: ['', 'space-2'] }))
+    expect([...state.records]).toEqual(['t1'])
+    expect([...state.leftoversChecked]).toEqual(['', 'space-2'])
+    // a version 1 file: nothing was looked through yet, and its jobs are no records
+    const fresh = passStateOf(JSON.stringify({ version: 1, jobs: { j1: v1('j1') }, runs: {}, keys: {} }))
+    expect([fresh.records.size, fresh.leftoversChecked.size]).toEqual([0, 0])
   })
 })

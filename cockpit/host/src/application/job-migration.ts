@@ -2,7 +2,7 @@ import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { Job } from '../domain/job.js'
 import type { JobV1 } from '../domain/job-v1.js'
-import { jobFates, jobMigrationReport, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
+import { jobFates, jobMigrationReport, leftoverNote, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
 import type { NotificationInput } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
@@ -28,7 +28,7 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore<Job>, 'pendingRenames' | 'renameConfirmed'>>
+  store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore<Job>, 'pendingRenames' | 'renameConfirmed' | 'leftoversChecked' | 'markLeftoversChecked' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -67,6 +67,8 @@ export interface JobMigrationResult {
   reports: string[]
   /** Jobs: those that go on firing on their task, and those that do not (left out, dropped while live, or still waiting). Jobs that were over do not count. */
   jobs: { moved: number; notMoved: number }
+  /** Schedules the old mirror had left on tasks without a job, removed in this run. */
+  leftovers: number
   /** Where this run's report was kept; null: none was written (nothing was planned, nothing changed since the last one, or it failed). */
   reportFile: string | null
 }
@@ -78,6 +80,14 @@ export function runReport(result: Pick<JobMigrationResult, 'jobs' | 'failed' | '
 }
 
 const MOVED_LINE = (jobs: JobMigrationResult['jobs']) => `Schedules moved onto their tasks: ${jobs.moved} moved, ${jobs.notMoved} not moved`
+
+const OPEN_TASKS_LIMIT = 500
+
+/** The space's open tasks that have a schedule, as the engine lists them: two reads, none per task. */
+async function scheduledTasks(brain: Pick<EmlApi, 'get'>): Promise<JobMigrationTask[]> {
+  const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: OPEN_TASKS_LIMIT }) as Promise<{ engrams?: JobMigrationTask[] }>))
+  return lists.flatMap((list) => list.engrams ?? []).filter((task) => task.properties?.delegation?.schedule)
+}
 
 const keyOf = (space: BrainSpace): string | null => (space.main ? null : space.id)
 
@@ -130,8 +140,13 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (!pending || mine.length === 0) return null
     const now = deps.now()
     const shared = await kindOf(space)
+    // The first look through the space, while all its version 1 jobs are still there: the schedules left without a
+    // job are named too. Once it was looked through, never again: a schedule set on a jobless task later is real.
+    const first = shared !== null && deps.store.leftoversChecked !== undefined && !deps.store.leftoversChecked(keyOf(space))
+    const scheduled = first ? await scheduledTasks(brain) : undefined
     const plan = planJobMigration({
       jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name, shared },
+      ...(scheduled ? { scheduled, records: new Set(scheduled.filter((task) => deps.store.get?.(task.id) !== undefined).map((task) => task.id)) } : {}),
       // Only a shared space has other members whose tasks are not this cockpit's.
       members: shared === true ? await membersOf(brain) : null,
       tasks: await tasksOfJobs(brain, mine), me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
@@ -176,7 +191,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   const runOnce = async (): Promise<JobMigrationResult> => {
-    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null }
+    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null }
     if (!deps.store.pendingV1()) {
       await confirmRenames()
       return result
@@ -206,6 +221,25 @@ export function createJobMigration(deps: JobMigrationDeps) {
       }
       if (!planned) continue
       result.reports.push(planned.report)
+      // The left-over schedules first, before any job of the space moves. One that cannot be removed is tried again:
+      // the space counts as looked through only once all are gone, and until then the engine takes up no schedule
+      // there by seeing it.
+      let removed = true
+      for (const left of planned.plan.leftovers ?? []) {
+        if (!left.remove) {
+          deps.log(`[jobs] migration, ${space.name}: "${left.title}" has a schedule without a job; in a shared space it is left as it is`)
+          continue
+        }
+        try {
+          await writeTaskSchedule(brain, left.taskId, null, { text: leftoverNote(left.schedule) })
+          result.leftovers += 1
+          deps.log(`[jobs] migration, ${space.name}: "${left.title}": a schedule without a job was left on this task; removed`)
+        } catch (err) {
+          removed = false
+          result.failed.push(`${space.name}: "${left.title}": its schedule without a job could not be removed: ${(err as Error).message}`)
+        }
+      }
+      if (removed && planned.plan.leftovers !== undefined) deps.store.markLeftoversChecked?.(keyOf(space))
       for (const task of planned.plan.tasks) {
         const fates = jobFates({ tasks: [task] })
         if (task.outcome === 'left') {
@@ -234,13 +268,14 @@ export function createJobMigration(deps: JobMigrationDeps) {
     for (const line of result.failed) deps.log(`[jobs] migration: ${line}`)
     await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
-    if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped > 0)) {
+    if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped + result.leftovers > 0)) {
       try {
         result.reportFile = deps.saveReport(runReport(result, new Date(deps.now()).toISOString()))
         reported = true
         deps.log(`[jobs] migration: the report of this run is in ${result.reportFile}`)
         // Nothing is left out silently: a job that does not fire any more, or not yet, is told with where to read why.
-        if (result.jobs.notMoved > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
+        const stale = result.leftovers > 0 ? `, ${result.leftovers} schedule${result.leftovers === 1 ? '' : 's'} without a job removed` : ''
+        if (result.jobs.notMoved + result.leftovers > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)}${stale} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
       } catch (err) {
         deps.log(`[jobs] migration: its report could not be written: ${(err as Error).message}`)
       }

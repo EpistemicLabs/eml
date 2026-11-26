@@ -4,7 +4,7 @@ import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js
 import { narrowedProfile } from './schedule-tool.js'
 import { firingOf, ownerOf } from './task-owner.js'
 import type { ToolProfile } from './tool-profile.js'
-import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
+import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
 /**
  * The migration of jobs.json version 1 to version 2 (brain schema 24: a task holds its schedule). Before, a job had
@@ -50,6 +50,12 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, 
  *   - a job without a task: a task is made for it first (application/task-state-migration.ts routineTask); without
  *     a project of the brain it stays as it is, to be looked at.
  *
+ * A schedule the mirror left on a task that has no job at all (not even an ended one) was run by nothing before, and
+ * would start to fire now that the task is the truth. In the first pass of a space such a schedule is removed, with a
+ * journal line: on an open task this cockpit fires, that has no local record (a record means someone set the schedule
+ * here since). Never on another member's task, and not in a shared space, where another member's cockpit may have
+ * written the schedule when its jobs moved: there it is left and reported.
+ *
  * The plan is safe to make and write again: a job that moved is gone from the version 1 data, and a schedule, text
  * or record that is already there is not written twice.
  */
@@ -84,6 +90,13 @@ export interface JobMigrationInput {
   tasks: Readonly<Record<string, JobMigrationTask | null>>
   /** This cockpit's member: whose cockpit fires a task is decided by domain/task-owner.ts firingOf, the engine's rule. */
   me: string
+  /**
+   * The space's open tasks that have a schedule, given only in the first pass of the space (while none of its jobs has
+   * moved): then the plan names the schedules left without a job. Absent: none is looked for.
+   */
+  scheduled?: readonly JobMigrationTask[]
+  /** The tasks this cockpit holds a local record for: their schedule was set here, and is no leftover. */
+  records?: ReadonlySet<string>
   now: number
   /** The task a job without one gets; null when its project is none of the brain's. */
   routineTaskOf(job: JobV1): NewRoutineTask | null
@@ -137,8 +150,23 @@ export interface TaskMigration {
   pausedByJob?: boolean
 }
 
+/** A schedule on an open task of this member's that has no job at all and no record: the old mirror left it. */
+export interface LeftoverSchedule {
+  taskId: string
+  title: string
+  schedule: ScheduleFields
+  /** It is removed. False in a shared space: another member's cockpit may have written it, so it is left and reported. */
+  remove: boolean
+}
+
+/** The journal line of a left-over schedule that is removed. */
+export const leftoverNote = (schedule: ScheduleFields) =>
+  `A schedule without a job was left on this task (${scheduleText(schedule)}) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.`
+
 export interface JobMigrationPlan {
   tasks: TaskMigration[]
+  /** The schedules left without a job; absent or empty when none was looked for or found. */
+  leftovers?: LeftoverSchedule[]
   /** Jobs of other spaces: left for their space's pass. */
   elsewhere: number
 }
@@ -481,7 +509,16 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
     }
     tasks.push(moved({ id: '', status: 'active', title: create.title, content: create.content, properties: { display_title: create.display_title, assignee_ids: create.assignee_ids } }, create, [job], input))
   }
-  return { tasks, elsewhere: input.jobs.length - mine.length }
+  // A schedule on a task no job of the version 1 data names: nothing ran it before, so it must not start to fire.
+  const leftovers: LeftoverSchedule[] = []
+  for (const task of input.scheduled ?? []) {
+    const schedule = scheduleOf(task)
+    if (!schedule || !OPEN.has(task.status) || byTask.has(task.id) || input.records?.has(task.id)) continue
+    // Only a task this cockpit would fire by seeing it: never another member's, nor one no member owns.
+    if (firingOf(input.space.shared, task, input.me, input.members ?? null) !== 'mine') continue
+    leftovers.push({ taskId: task.id, title: nameOf(task), schedule, remove: input.space.shared === false })
+  }
+  return { tasks, leftovers, elsewhere: input.jobs.length - mine.length }
 }
 
 /** A planned task's part as the store takes it (job-store.ts migrateV1), with the task's id filled in where it was made just now. */
@@ -516,7 +553,9 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
   const fate = jobFates(plan)
   // A task counts as moved also when one of its jobs was left out: the count by job says what does not fire any more.
   const byJob = fate.lost + fate.waits > 0 ? ` Of the jobs, ${fate.moved} moved and ${fate.lost + fate.waits} did not.` : ''
-  out.push(`${jobs} job${jobs === 1 ? '' : 's'} on ${plan.tasks.length} task${plan.tasks.length === 1 ? '' : 's'}: ${count('moved')} moved, ${count('dropped')} dropped, ${count('left')} left as they are.${byJob}${plan.elsewhere ? ` ${plan.elsewhere} job${plan.elsewhere === 1 ? '' : 's'} of other spaces wait for their space.` : ''}`, '')
+  const stale = plan.leftovers?.length ?? 0
+  const leftLine = stale > 0 ? ` ${stale} schedule${stale === 1 ? '' : 's'} without a job ${stale === 1 ? 'was' : 'were'} left on ${stale === 1 ? 'a task' : 'tasks'}.` : ''
+  out.push(`${jobs} job${jobs === 1 ? '' : 's'} on ${plan.tasks.length} task${plan.tasks.length === 1 ? '' : 's'}: ${count('moved')} moved, ${count('dropped')} dropped, ${count('left')} left as they are.${byJob}${leftLine}${plan.elsewhere ? ` ${plan.elsewhere} job${plan.elsewhere === 1 ? '' : 's'} of other spaces wait for their space.` : ''}`, '')
   for (const t of plan.tasks) {
     const id = t.taskId ? ` (${t.taskId.slice(0, 8)})` : t.create ? ' (a new task)' : ''
     out.push(`## ${t.title}${id} — ${t.outcome}${t.why ? `: ${t.why}` : ''}`, '')
@@ -538,6 +577,14 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
     if (t.settings.length > 0) out.push(`- On this machine: ${t.settings.join('; ')}.`)
     out.push('')
   }
-  if (plan.tasks.length === 0) out.push('Nothing to move.', '')
+  const leftovers = plan.leftovers ?? []
+  for (const left of leftovers) {
+    out.push(`## ${left.title} (${left.taskId.slice(0, 8)}) — a schedule without a job`, '')
+    out.push(left.remove
+      ? `- A schedule without a job was left on this task (${scheduleText(left.schedule)}); removed.`
+      : `- A schedule without a job is on this task (${scheduleText(left.schedule)}). In a shared space another member's cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on: end it on the task if it is not wanted.`)
+    out.push('')
+  }
+  if (plan.tasks.length === 0 && leftovers.length === 0) out.push('Nothing to move.', '')
   return `${out.join('\n')}`
 }
