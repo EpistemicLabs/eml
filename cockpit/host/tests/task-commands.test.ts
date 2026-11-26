@@ -927,7 +927,7 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     owned(id, { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', schedule }, ...props }, status)
   const scheduleOf = (w: ReturnType<typeof world>, id: string) => (w.byId.get(id)!.properties.delegation as { schedule?: Record<string, unknown> }).schedule
   /** A world whose engine records what the commands tell it. */
-  const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project'; listens?: string[]; held?: string[] } = {}) => {
+  const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project' | 'unknown_space'; listens?: string[]; held?: string[] } = {}) => {
     const w = world(tasks)
     const told: string[] = []
     w.deps.schedule = {
@@ -970,6 +970,11 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     expect(await w.commands.submit({ opId: 'op-1', kind: 'resume_schedule', spaceId: 'main', taskId: 'mail' })).toMatchObject({ ok: true })
     expect(w.told).toEqual(['resumed:mail'])
     expect(await w.commands.submit({ opId: 'op-2', kind: 'resume_schedule', spaceId: 'main', taskId: 'plain' })).toMatchObject({ ok: false, refusal: 'not_scheduled' })
+  })
+
+  it('Run now in a space the engine does not know is refused as an unknown space, not as a run that is still going', async () => {
+    const w = withEngine([scheduled('daily')], { runNow: 'unknown_space' })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })).toEqual({ ok: false, refusal: 'unknown_space' })
   })
 
   it('removes one repeating time and leaves the others, the wake-up and the pause alone', async () => {

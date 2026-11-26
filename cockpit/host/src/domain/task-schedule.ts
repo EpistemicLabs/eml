@@ -152,8 +152,10 @@ export interface ScheduleDue {
  *   - A repeating time is due when its first time after the cursor has come; later than `lateLimitMs` it is missed
  *     instead. Each cron gives at most one time per pass: what else fell due while the cockpit was down is not made up.
  *   - A schedule seen for the first time (no cursor) is due from now on: no repeating time of the past fires.
- *   - A paused schedule and one past ends_at are never due; their cursor moves to now, so nothing from that time is
- *     made up afterwards.
+ *   - A paused schedule is never due. The end (ends_at) is judged at the time a time was due, not when the cockpit
+ *     looks: a time due at or before the end still fires when the pass comes just after it (a repeating time within
+ *     the late limit, as always), a time due after the end never does. For a paused schedule and one past its end
+ *     the cursor moves to now, so nothing from that time is made up afterwards.
  *
  * The caller keeps `cursor` at once. The wake-up has fired only when a run that carries it got to a session: then the
  * caller sets firedWake to its at and clears it on the task; until then it is due again at every pass.
@@ -161,10 +163,12 @@ export interface ScheduleDue {
 export function dueOf(schedule: ScheduleFields | null | undefined, state: ScheduleState, now: number, lateLimitMs: number): ScheduleDue {
   const s = tidy(schedule)
   const cursor = time(state.cursor)
-  if (!s || isOff(s, now)) return { firing: null, missed: [], cursor: iso(now) }
+  if (!s || s.paused) return { firing: null, missed: [], cursor: iso(now) }
+  const ends = time(s.ends_at)
+  const inTime = (due: number) => ends === null || due <= ends
 
   const at = time(s.at)
-  const wake: DueWake | null = at !== null && at <= now && at !== time(state.firedWake)
+  const wake: DueWake | null = at !== null && at <= now && inTime(at) && at !== time(state.firedWake)
     ? { at: iso(at), why: s.why ?? null, bySession: s.by_session ?? null }
     : null
 
@@ -173,11 +177,11 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
   if (cursor !== null) {
     for (const cron of s.crons ?? []) {
       const next = nextOf(cron, s.time_zone ?? 'UTC', cursor)
-      if (next === null || next > now) continue
+      if (next === null || next > now || !inTime(next)) continue
       ;(now - next > lateLimitMs ? missed : due).push({ cron, dueAt: iso(next) })
     }
   }
-  const moved = cursor === null || due.length > 0 || missed.length > 0
+  const moved = cursor === null || due.length > 0 || missed.length > 0 || isOff(s, now)
   const firing = wake || due.length > 0
     ? { dueAt: iso(Math.min(...(wake ? [Date.parse(wake.at)] : []), ...due.map((d) => Date.parse(d.dueAt)))), wake, crons: due }
     : null

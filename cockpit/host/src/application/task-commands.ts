@@ -272,7 +272,7 @@ export interface TaskCommandsDeps {
    */
   schedule?: {
     /** Start a run by hand now; a refusal's code when it cannot. */
-    runNow(spaceId: string, task: { id: string; status: string }): Promise<'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project'>
+    runNow(spaceId: string, task: { id: string; status: string }): Promise<'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project' | 'unknown_space'>
     /** This cockpit's record of the task listens on a channel: Run now works for it without a schedule. */
     listens(taskId: string): boolean
     /** The cockpit paused the task after failures (its record says why): Resume lifts that too. */
@@ -594,6 +594,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         if (!isScheduled(task) && !deps.schedule?.listens(task.id)) return noSchedule
         if (!deps.schedule) return noSchedule
         const result = await deps.schedule.runNow(input.spaceId, task)
+        if (result === 'unknown_space') return { ok: false, refusal: 'unknown_space' }
         if (result === 'run_open') return { ok: false, refusal: 'run_open', message: 'Its last run is still going: wait for it to finish.' }
         if (result === 'task_working') return { ok: false, refusal: 'task_working', message: 'A session of the task is working right now: nothing is started beside it.' }
         if (result === 'needs_approval') return { ok: false, refusal: 'needs_approval', message: 'Its channel waits for your OK first.' }

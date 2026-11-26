@@ -485,12 +485,15 @@ export class JobRunner {
       if (!sameInstant(record.firedWake, schedule.at)) record = { ...record, firedWake: null }
       else this.clearFiredWake(space, task.id, record.firedWake)
     }
-    if (scheduleIsOff(schedule, now)) {
-      // Paused or past its end: nothing is due, and what falls due meanwhile is not made up once it runs again.
+    // Paused, or past its end with nothing left that was due before it: nothing is due, and what falls due meanwhile
+    // is not made up once it runs again. The end is judged at the time a time was due (dueOf): the run due at the
+    // end still starts when this pass comes just after it.
+    const rests = () => {
       if (record.cursor !== null) record = { ...record, cursor: null }
       save()
-      return
     }
+    if (schedule.paused) return rests()
+    const ended = scheduleIsOff(schedule, now)
     const openRuns = store.runs(task.id).filter(isOpenRun)
     // An end after so many runs belongs to the repeating times: without one it counts nothing, and is off.
     if (record.end && !schedule.crons?.length) record = { ...record, end: null }
@@ -514,6 +517,7 @@ export class JobRunner {
       }
     }
     const due = dueOf(timed, record, now, JOB_LIMITS.lateLimitMs)
+    if (ended && !due.firing && due.missed.length === 0) return rests()
     if (!sameInstant(due.cursor, record.cursor)) record = { ...record, cursor: due.cursor }
     const timeZone = schedule.time_zone
     for (const missed of due.missed) {

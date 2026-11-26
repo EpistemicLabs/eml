@@ -388,6 +388,20 @@ describe('deriving what is due', () => {
     expect(statuses('hourly')).toEqual(['started'])
   })
 
+  it('fires a time that was due at the schedule\'s end when the pass comes just after it, once, and nothing after', async () => {
+    world.task('ends', { ...HOURLY, ends_at: '2026-11-09T01:00:00.000Z' })
+    await firstSeenThen('2026-11-09T01:00:25Z')
+    expect(runs('ends')).toMatchObject([{ status: 'started', dueAt: '2026-11-09T01:00:00.000Z' }])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now = Date.parse('2026-11-09T01:01:25Z')
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    // past its end the cursor is forgotten: nothing of that time is made up should the end be taken off
+    expect(world.store.get('ends')?.cursor).toBeNull()
+  })
+
   it('fires a time at the schedule\'s end itself, and nothing after it', async () => {
     world.task('ends', { ...HOURLY, ends_at: '2026-11-09T01:00:00.000Z' })
     await firstSeenThen('2026-11-09T01:00:00Z')

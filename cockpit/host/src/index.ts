@@ -1026,7 +1026,7 @@ async function main() {
     schedule: {
       runNow: async (spaceId, task) => {
         const space = spaces.get(spaceId)
-        if (!space) return 'run_open'
+        if (!space) return 'unknown_space'
         const result = await jobRunner.runNow(runnerSpaceOf(space), task as RunnerTask)
         return typeof result === 'string' ? result : ('started' as const)
       },
