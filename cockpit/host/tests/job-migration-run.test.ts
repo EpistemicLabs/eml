@@ -22,7 +22,9 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
   const original = JSON.stringify({ version: 1, timeZone: 'UTC', jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), runs: opts.runs ?? {}, keys: {} })
   writeFileSync(file, original)
-  const store = new JobStore(file)
+  // The cockpit's spaces at this start (the main space and the team space): a version 1 file converted now keeps them.
+  const keys = () => spaces.map((space) => (space.main ? null : space.id))
+  const store = new JobStore(file, [null, 'space-2'])
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const posts: Array<{ space: string; path: string; body: Record<string, unknown> }> = []
   const reads = new Map<string, number>()
@@ -88,7 +90,7 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'member', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
-  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, saved, notices, bridge, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
+  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, saved, notices, bridge, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file, keys()) } as never) }
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
@@ -459,19 +461,18 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.filter((p) => p.path === '/task/left/track')).toHaveLength(1)
   })
 
-  it('a space the cockpit gets later is held and looked through once, as soon as it can be: each space has its own look', async () => {
+  it('a space the cockpit gets after the conversion is neither held nor looked through: a schedule on a task there is real', async () => {
     const w = world([], [task('t1')])
     expect(await w.migration.run()).toMatchObject({ unlooked: 0 })
     w.spaces.push({ id: 'space-3', name: 'Later', main: false, agent: 'atlas', shared: false })
+    // e.g. a teammate set it on a task assigned to this member
     w.byId.set('left', task('left', stale))
-    expect(w.store.awaitsLeftoverLook('space-3')).toBe(true)
-    expect(await w.migration.run()).toMatchObject({ leftovers: 1, unlooked: 0 })
-    expect(w.posts.map((p) => [p.space, p.path])).toEqual([['space-3', '/task/left/track']])
     expect(w.store.awaitsLeftoverLook('space-3')).toBe(false)
-    // looked through once: never again
-    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
+    expect(await w.migration.run()).toMatchObject({ leftovers: 0, unlooked: 0 })
     expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0 })
-    expect(w.posts).toHaveLength(1)
+    expect(new JobStore(w.file, ['space-3']).awaitsLeftoverLook('space-3')).toBe(false)
+    expect(w.posts).toEqual([])
+    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
   })
 
   it('a space no agent was bound to at the first start is neither looked through nor marked; bound later, it is held and looked through before anything in it fires', async () => {

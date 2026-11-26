@@ -640,8 +640,9 @@ async function main() {
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
   })
-  // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2).
-  const jobStore = new JobStore()
+  // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2). A version 1 file
+  // converted at this start keeps the spaces the cockpit has now: only those get the look for left-over schedules.
+  const jobStore = new JobStore(undefined, spaces.list().map((space) => (space.main ? null : space.id)))
   // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({
@@ -743,9 +744,10 @@ async function main() {
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
     waitsForMigration: (taskId) => jobStore.hasV1Jobs(taskId),
     migratingTasks: () => jobStore.v1TaskIds(),
-    // In a home that was on version 1, until the migration has looked through a space for left-over schedules, none is
-    // taken up there by being seen. Each space has its own look: one bound or added after the start's passes asks for
-    // a pass of the migration here (at most every few minutes), so it is not held until the next start.
+    // In a home that was on version 1, until the migration has looked through a space the cockpit had at the
+    // conversion for left-over schedules, none is taken up there by being seen. Each such space has its own look: one
+    // an agent is bound to after the start's passes asks for a pass of the migration here (at most every few
+    // minutes), so it is not held until the next start. A space added after the conversion is never held.
     holdsFirstSight: (space) => {
       const holds = jobStore.awaitsLeftoverLook(space.key)
       if (holds && Date.now() - lookAskedAt >= LOOK_ASK_MS) {

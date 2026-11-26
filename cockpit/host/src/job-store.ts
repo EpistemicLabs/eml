@@ -14,8 +14,9 @@ import type { NotificationInput } from './notifications.js'
  * are held under `v1` until the migration (application/job-migration.ts) has moved them onto their tasks, space by
  * space, and they survive every rewrite until then. The version 1 file itself is copied next to it
  * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
- * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`): the migration looks
- * through every space of such a home once for schedules left without a job, also a space that has no job.
+ * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`), with the spaces the
+ * cockpit had at the conversion (`v1Spaces`): the migration looks through each of those once for schedules left
+ * without a job, also one that has no job, and no other space.
  *
  * A file that is there and cannot be parsed (cut off in a write, edited by hand) is never overwritten: the store
  * starts empty at version 2 — not as a home that was on version 1, so no look for left-over schedules removes
@@ -70,10 +71,17 @@ interface JobsFile {
   renames?: Record<string, string>
   /**
    * The spaces (their record key; '' for the main space) the migration has looked through for schedules the old
-   * mirror left on tasks without a job. It looks once per space, whenever the space can first be looked through (also
-   * one the home gets later): a schedule set on a jobless task afterwards is real.
+   * mirror left on tasks without a job. It looks once per space of the conversion (v1Spaces), whenever the space can
+   * first be looked through (also one an agent is bound to later): a schedule set on a jobless task afterwards is real.
    */
   leftoversChecked?: string[]
+  /**
+   * The spaces (their record key; '' for the main space) the cockpit had when the version 1 file was converted: the
+   * spaces of its config then, and every space a version 1 job named. Only these can hold a schedule the old mirror
+   * left, so only these are ever held for the look and looked through; a space added later never is (a schedule on a
+   * task there is real, e.g. one a teammate set on a task assigned to this member).
+   */
+  v1Spaces?: string[]
   /**
    * The file was a version 1 file once: its home ran the cockpit that kept schedules on jobs, so a task of it may
    * still show a schedule that cockpit's mirror left without a job. A file that started on version 2 never has it.
@@ -103,6 +111,25 @@ function empty(): JobsFile {
   return { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }
 }
 
+/**
+ * The spaces of a converted file's look: the main space, the spaces the cockpit has now (`spaces`, its config's), every
+ * space a version 1 job names, and any space looked through already. Taken only while the file holds none yet: at the
+ * conversion of a version 1 file, or for a file a build of before converted without them.
+ */
+function spacesOfConversion(data: JobsFile, spaces: ReadonlyArray<string | null>): string[] {
+  return [...new Set(['', ...spaces.map((key) => key ?? ''), ...Object.values(data.v1?.jobs ?? {}).map((job) => job.spaceId ?? ''), ...(data.leftoversChecked ?? [])])]
+}
+
+/**
+ * The file as the store takes it: as it is read (load), and, for a file that was version 1, the spaces of its
+ * conversion when it holds none yet.
+ */
+function loadWithSpaces(file: string | null, spaces: ReadonlyArray<string | null>): ReturnType<typeof load> {
+  const loaded = load(file)
+  if (loaded.data.fromV1 && !loaded.data.v1Spaces) loaded.data.v1Spaces = spacesOfConversion(loaded.data, spaces)
+  return loaded
+}
+
 /** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that is not used (and why). */
 function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; notUsable?: JobsNotUsable } {
   if (!file) return { data: empty(), v1OnDisk: false }
@@ -130,6 +157,7 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; notUsab
         ...(old && typeof old === 'object' ? { v1: { jobs: record(old.jobs), runs: record(old.runs), keys: record(old.keys) } } : {}),
         ...(Object.keys(record(parsed.renames)).length > 0 ? { renames: record<string>(parsed.renames) } : {}),
         ...(Array.isArray(parsed.leftoversChecked) ? { leftoversChecked: parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') } : {}),
+        ...(Array.isArray(parsed.v1Spaces) ? { v1Spaces: parsed.v1Spaces.filter((key): key is string => typeof key === 'string') } : {}),
         // What only the migration of a version 1 file writes says so too.
         ...(parsed.fromV1 === true || parsed.v1 !== undefined || parsed.renames !== undefined || parsed.leftoversChecked !== undefined ? { fromV1: true as const } : {}),
       },
@@ -142,7 +170,11 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; notUsab
 
 const stamp = (at: Date) => at.toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')
 
-/** `file` null: nothing is read or written (a store in memory, for tests). */
+/**
+ * `file` null: nothing is read or written (a store in memory, for tests). `spaces`: the keys of the spaces the cockpit
+ * has at this start (null: the main space); a version 1 file converted now keeps them as the spaces of the look for
+ * left-over schedules (v1Spaces).
+ */
 export class JobStore {
   private data: JobsFile
   private v1OnDisk: boolean
@@ -153,8 +185,8 @@ export class JobStore {
   /** Where the file that is not used was set aside; null: there was none, or it is not set aside yet. */
   private aside: string | null = null
 
-  constructor(private file: string | null = JOBS_FILE) {
-    const loaded = load(file)
+  constructor(private file: string | null = JOBS_FILE, spaces: ReadonlyArray<string | null> = []) {
+    const loaded = loadWithSpaces(file, spaces)
     this.data = loaded.data
     this.v1OnDisk = loaded.v1OnDisk
     this.found = loaded.notUsable ?? null
@@ -257,13 +289,19 @@ export class JobStore {
     return this.data.fromV1 === true
   }
 
+  /** The space was the cockpit's when its version 1 file was converted: only such a space can hold a schedule the old mirror left. */
+  hadAtConversion(spaceKey: string | null): boolean {
+    return this.data.v1Spaces?.includes(spaceKey ?? '') === true
+  }
+
   /**
    * The space still waits for the migration's one look for schedules left without a job: its home was on version 1,
-   * and the space is not marked as looked through. Each space has its own look, also one the home gets or binds an
-   * agent to later. Until then the engine takes up no schedule there by seeing it.
+   * the space was the cockpit's at the conversion, and it is not marked as looked through. Each such space has its own
+   * look, also one an agent is bound to only later; a space added after the conversion never waits. Until then the
+   * engine takes up no schedule there by seeing it.
    */
   awaitsLeftoverLook(spaceKey: string | null): boolean {
-    return this.fromV1() && !this.leftoversChecked(spaceKey)
+    return this.fromV1() && this.hadAtConversion(spaceKey) && !this.leftoversChecked(spaceKey)
   }
 
   markLeftoversChecked(spaceKey: string | null): void {

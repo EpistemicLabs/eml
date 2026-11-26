@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JobStore } from '../src/job-store.js'
@@ -334,6 +334,21 @@ describe('deriving what is due', () => {
     await runner.tick()
     expect(world.store.get('new')).toMatchObject({ cursor: '2026-11-09T01:01:10.000Z' })
     expect(world.store.get('leftover')).toBeUndefined()
+  })
+
+  it('in a home converted from version 1, a space added after the conversion is not held: a schedule a teammate set on a task there fires', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json')
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: ZONE, jobs: {}, runs: {}, keys: {} }))
+    // the cockpit had only its main space when it converted the file
+    world.store = new JobStore(file, [null])
+    world.spaces = [MAIN, TEAM]
+    runner = new JobRunner(world.deps({ holdsFirstSight: (space) => world.store.awaitsLeftoverLook(space.key) }))
+    world.task('main-left', HOURLY)
+    world.task('team-task', HOURLY, { space: 'team' })
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    // the main space waits for its look; the team space came later, and its schedule is real
+    expect(world.started.map((s) => s.task.id)).toEqual(['team-task'])
+    expect(world.store.get('main-left')).toBeUndefined()
   })
 
   it('a task whose schedule cannot be derived does not hold up the others', async () => {

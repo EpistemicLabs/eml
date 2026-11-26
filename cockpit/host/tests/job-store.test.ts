@@ -102,22 +102,31 @@ describe('jobs.json', () => {
     expect([store.pendingV1(), store.fromV1()]).toEqual([null, true])
   })
 
-  it('a space waits for the look for left-over schedules only in a home that was on version 1, and only until it is marked', () => {
+  it('a space waits for the look for left-over schedules only in a home that was on version 1, only if it was the cockpit\'s at the conversion, and only until it is marked', () => {
     const { file } = v1File()
-    const store = new JobStore(file)
-    expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([true, true])
+    // the cockpit's spaces at the start that converts the file: the main space and space-2 (no job names it)
+    const store = new JobStore(file, [null, 'space-2'])
+    expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2'), store.awaitsLeftoverLook('space-new')]).toEqual([true, true, false])
     store.markLeftoversChecked(null)
+    expect(read(file).v1Spaces).toEqual(['', 'space-2'])
     expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([false, true])
-    const again = new JobStore(file)
+    // the spaces of the conversion are kept: a later start with more spaces adds none of them
+    const again = new JobStore(file, [null, 'space-2', 'space-new'])
     expect([again.awaitsLeftoverLook(null), again.awaitsLeftoverLook('space-2')]).toEqual([false, true])
-    // each space has its own look: a space the home gets later waits for its own, whatever was looked through before
     again.markLeftoversChecked('space-2')
-    expect([again.awaitsLeftoverLook('space-2'), again.awaitsLeftoverLook('space-new')]).toEqual([false, true])
-    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(true)
-    // a file a build of before wrote with the home-wide marker: the marker holds no space
+    // a space the home gets after the conversion never waits: a schedule on a task there is real
+    expect([again.awaitsLeftoverLook('space-2'), again.awaitsLeftoverLook('space-new')]).toEqual([false, false])
+    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(false)
+    // every space a version 1 job names is one of the conversion's, also when the config no longer has it
+    const named = join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')
+    writeFileSync(named, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: { j1: v1Job('j1', { spaceId: 'space-old' }) }, runs: {}, keys: {} }))
+    expect(new JobStore(named, [null]).awaitsLeftoverLook('space-old')).toBe(true)
+    // a file a build of before converted without the spaces: those of this start, the jobs' and the ones looked through
     const marked = JSON.parse(readFileSync(file, 'utf8'))
+    delete marked.v1Spaces
     writeFileSync(file, JSON.stringify({ ...marked, leftoverLooksOver: true }))
-    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(true)
+    expect(new JobStore(file, ['space-3']).awaitsLeftoverLook('space-3')).toBe(true)
+    expect(new JobStore(file, []).awaitsLeftoverLook('space-new')).toBe(false)
     expect(new JobStore(file).fromV1()).toBe(true)
     // a home that never had a version 1 file: nothing there can be a leftover
     const fresh = new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json'))

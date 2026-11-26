@@ -34,12 +34,14 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  * planned nor looked through: its jobs wait. So does a space the brain server has not said the kind of (shared or
  * local).
  *
- * In a home that was on version 1, every space is looked through once for schedules the old mirror left on tasks
- * without a job (domain/job-migration.ts), before any job of it moves, and also when it has no job: nothing ran such
- * a schedule, and it must not start to fire. Each space has its own look, made whenever it can first be looked
- * through (an agent bound to it, its kind known, its brain at schema 24), also for a space bound or added later.
- * Until a space was looked through the engine takes up no schedule there by seeing it (application/job-runner.ts
- * holdsFirstSight). A home that never had a version 1 file is not looked through: nothing there can be a leftover.
+ * In a home that was on version 1, every space the cockpit had when the file was converted (job-store.ts v1Spaces) is
+ * looked through once for schedules the old mirror left on tasks without a job (domain/job-migration.ts), before any
+ * job of it moves, and also when it has no job: nothing ran such a schedule, and it must not start to fire. Each such
+ * space has its own look, made whenever it can first be looked through (an agent bound to it, its kind known, its
+ * brain at schema 24), also once an agent is bound to it later. Until a space was looked through the engine takes up
+ * no schedule there by seeing it (application/job-runner.ts holdsFirstSight). A space added after the conversion is
+ * never held nor looked through: a schedule on a task there is real. A home that never had a version 1 file is not
+ * looked through: nothing there can be a leftover.
  */
 
 export interface JobMigrationDeps {

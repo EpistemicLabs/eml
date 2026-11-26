@@ -326,10 +326,12 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   a task no member owns, is not moved, and the report says how its owner (or whoever takes the task) brings it back. A job
   that waited for the user's OK next to one of its task that did not is not moved either (a task has one hold for all its
   times), and the report gives the schedule-tool call that sets it up again. A space is planned only once its brain is at schema 24, and every write
-  is checked against what was planned (the task's rev). In a home that had such a file, each space is looked through
-  once for a schedule left on a task without a job, also a space without jobs, as soon as it can be (an agent bound
-  to it, its kind known, its brain at schema 24; also a space bound or added later): on a task this cockpit fires it
-  is removed, in a local and in a shared space alike; until then no schedule is taken up there by being seen. A
+  is checked against what was planned (the task's rev). In a home that had such a file, each space the cockpit had
+  when the file was converted (its config's, and every space a job named) is looked through once for a schedule left
+  on a task without a job, also a space without jobs, as soon as it can be (an agent bound to it, its kind known, its
+  brain at schema 24; also once an agent is bound to it later): on a task this cockpit fires it is removed, in a local
+  and in a shared space alike; until then no schedule is taken up there by being seen. A space added after the
+  conversion is never held nor looked through. A
   `jobs.json` that cannot be parsed is set aside as `jobs.json.unreadable-<UTC stamp>`, one of a version this cockpit does not know (a newer cockpit's, after a downgrade) as `jobs.json.unknown-version-<UTC stamp>`: neither is overwritten. A record made or changed in the last few minutes is left as it is by a pass that finds no
   schedule on its task (`domain/job.ts` `RECORD_GRACE_MS`).
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
