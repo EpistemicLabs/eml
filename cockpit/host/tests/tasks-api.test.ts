@@ -27,6 +27,7 @@ const deps = {
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
       if (input.taskId === 'gone') return { ok: false, refusal: 'no_session' }
       if (input.taskId === 'placeholder') return { ok: false, refusal: 'not_ready' }
+      if (input.kind === 'run_now' && RUN_NOW_REFUSALS.includes(input.taskId as never)) return { ok: false, refusal: input.taskId }
       return { ok: true, command: { ...input, state: input.handOver?.mode === 'together' ? 'applied' : 'pending', undoUntil: '2026-11-19T10:00:08.000Z', createdAt: '', ...(input.taskId === 'asked' ? { carriedQuestion: 'Which list?' } : {}), ...(input.taskId === 'solo' ? { tookOver: 's1' } : {}) } }
     },
     undo: async (opId: string) => (opId === 'late' ? { ok: false, refusal: 'undo_expired' } : { ok: true }),
@@ -65,6 +66,8 @@ const deps = {
         : { ok: true, written: 3, failed: [], tasksMade: 0, report: '' },
   },
 } as unknown as TasksApiDeps
+/** Run now on a task of that name is refused with it. */
+const RUN_NOW_REFUSALS = ['run_open', 'task_working', 'needs_approval', 'no_project', 'not_scheduled'] as const
 const splits: Array<Record<string, unknown>> = []
 const sorts: Array<Record<string, unknown>> = []
 const starts: Array<Record<string, unknown>> = []
@@ -158,6 +161,17 @@ describe('task board routes', () => {
       .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } } })
     expect(await post('/api/v1/tasks/plain/end-schedule', { opId: 'op-p', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule to end: close it instead.', retry: false } } })
+  })
+
+  it('takes Run now, and answers each of its refusals with its status', async () => {
+    expect((await post('/api/v1/tasks/daily/run-now', { opId: 'op-rn', spaceId: 'main' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-rn', spaceId: 'main', kind: 'run_now', taskId: 'daily' })
+    const refused = async (code: string) => { const r = await post(`/api/v1/tasks/${code}/run-now`, { spaceId: 'main' }); return [r.status, r.body.error.code] }
+    expect(await refused('needs_approval')).toEqual([409, 'needs_approval'])
+    expect(await refused('not_scheduled')).toEqual([409, 'not_scheduled'])
+    // no session could start for it: not a conflict that passes, the task has to be moved into a project
+    expect(await post('/api/v1/tasks/no_project/run-now', { spaceId: 'main' }))
+      .toEqual({ status: 422, body: { error: { code: 'no_project', message: 'The task has no project to run in: move it into a project first.', retry: false } } })
   })
 
   it('takes review, snooze and close; refuses with a code to branch on', async () => {
