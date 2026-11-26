@@ -3,12 +3,13 @@ import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
   activeGrants, CLOSED_BEFORE_START, isHeld, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
-  type GrantTool, type Job, type JobRun, type ReplyChannel, type RunFired,
+  type GrantTool, type Job, type JobRun, type ReplyChannel, type RunFired, type RunNowRefusal,
 } from '../domain/job.js'
 import { delegationOf, type DelegationFields } from '../domain/delegation.js'
 import { decideFiring, type Fired, type FiringFacts } from '../domain/firing-order.js'
 import { firedText, startedBy } from '../domain/run-text.js'
 import { formatDuration } from '../domain/schedule.js'
+import { isOpenTask, nameOfTask } from '../domain/schedule-tool.js'
 import { firesHere, firingOf, type TaskFiring } from '../domain/task-owner.js'
 import { clearWake, dueOf, hasSchedule, sameInstant, scheduleIsOff, scheduleOf, setCrons, setPaused } from '../domain/task-schedule.js'
 import { waitKind } from '../domain/task-turn.js'
@@ -183,17 +184,11 @@ const QUEUED_LIMIT_MS = 24 * 60 * 60_000
 // How long a channel event's key keeps the same event from waking the task again.
 const KEY_MEMORY_MS = 7 * 24 * 60 * 60_000
 const NO_ROOM = 'no room: too little free memory, or the running cap with every session busy'
-const OPEN = new Set(['planned', 'active'])
 /** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
 const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
 
 /** The run counts toward an end after so many runs (the record's `end`): a repeating time fired it. */
 const countsToEnd = (run: Pick<JobRun, 'trigger' | 'fired'>): boolean => run.trigger === 'schedule' && (run.fired?.crons?.length ?? 0) > 0
-
-const nameOfTask = (task: RunnerTask): string => task.properties?.display_title ?? task.title ?? task.id
-
-/** What the user may be told when a run by hand cannot start. */
-export type RunNowRefusal = 'run_open' | 'task_working' | 'needs_approval' | 'no_project'
 
 export class JobRunner {
   private timer: NodeJS.Timeout | null = null
@@ -311,7 +306,7 @@ export class JobRunner {
     } catch {
       return 'retry'
     }
-    if (!task || !OPEN.has(task.status)) return 'refused'
+    if (!task || !isOpenTask(task)) return 'refused'
     const paused = scheduleOf(task)?.paused === true
     this.facts.set(task.id, { name: nameOfTask(task), paused })
     if (isHeld(record) || paused) return 'retry'
@@ -433,7 +428,7 @@ export class JobRunner {
       let task = open.get(record.id) ?? null
       // Not among the open tasks: closed, gone, or the list did not reach it. The task itself says which.
       if (!task) task = await this.deps.task(space, record.taskId)
-      const isOpen = task !== null && OPEN.has(task.status)
+      const isOpen = task !== null && isOpenTask(task)
       const whose = task && isOpen ? await firing(task) : null
       if (task && isOpen && hasSchedule(task) && whose && firesHere(whose, true)) {
         await derive(task)
@@ -687,7 +682,7 @@ export class JobRunner {
       }
     }
     // Nothing fires on a closed task: the run that was due is skipped, and nothing counts as a failure.
-    if (!space || !task || !OPEN.has(task.status)) {
+    if (!space || !task || !isOpenTask(task)) {
       this.update(run, { status: 'skipped', note: CLOSED_BEFORE_START, finishedAt: new Date(now).toISOString() })
       this.deps.log(`[jobs] ${this.nameOf(record.id)}: run ${run.number} skipped, ${CLOSED_BEFORE_START}`)
       return 'gone'

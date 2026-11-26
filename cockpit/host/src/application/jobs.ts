@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { ScheduleFields } from '../domain/delegation.js'
-import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool } from '../domain/job.js'
+import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool, type RunNowRefusal } from '../domain/job.js'
 import { isTimeZone, parseAt } from '../domain/schedule.js'
 import {
   APPROVAL_NOTE, describeTask, everyParagraph, findTask, ID_PREFIX, isOpenTask, JOB_ACTIONS, limitRefusal, mailParagraph, mailTrigger,
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
 } from '../domain/schedule-tool.js'
 import {
-  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
+  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake, withSchedule,
 } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
@@ -61,7 +61,7 @@ export interface JobCaller {
 /** What the tool asks of the engine that fires the schedules (application/job-runner.ts). */
 export interface ScheduleEngine {
   /** One run of the task now; a word when it cannot start. */
-  runNow(spaceId: string | null, task: ToolTask): Promise<JobRun | 'run_open' | 'task_working' | 'needs_approval' | 'no_project'>
+  runNow(spaceId: string | null, task: ToolTask): Promise<JobRun | RunNowRefusal>
   /** The task's schedule was paused or resumed: the engine knows before its next read. */
   paused(taskId: string): void
   resumed(taskId: string): void
@@ -277,7 +277,7 @@ export class Jobs {
       ...(said ? { text: said } : {}),
       fields: { ...(content ? { content } : {}), ...(setGoal ? { goal: setGoal } : {}) },
     })
-    const after = withSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, written.schedule)
+    const after = taskWithSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, written.schedule)
     // The schedule is on the task: now what this cockpit keeps for it.
     const { record, waits } = this.keep(caller, after, settings, mail ?? undefined, true)
     this.deps.changed?.(caller.spaceId)
@@ -350,7 +350,7 @@ export class Jobs {
       })
       schedule = written.schedule
     }
-    const after = withSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, schedule)
+    const after = taskWithSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, schedule)
     const { record, waits } = this.keep(caller, after, settings, mail, changesRecord || cron !== null || at !== null, cron !== null)
     this.deps.changed?.(caller.spaceId)
     const notes = [...(goal && !setGoal ? [`The task keeps its goal ("${task.properties?.goal}").`] : []), ...(waits ? [APPROVAL_NOTE] : [])]
@@ -378,7 +378,7 @@ export class Jobs {
     if (paused) this.deps.engine.paused(task.id)
     else this.deps.engine.resumed(task.id)
     this.deps.changed?.(caller.spaceId)
-    const after = withSchedule(task, written.schedule)
+    const after = taskWithSchedule(task, written.schedule)
     return { status: 200, taskId: task.id, schedule: written.schedule, text: `${paused ? 'Paused' : 'Resumed'} the schedule of "${name}".\n${this.describe(after)}` }
   }
 
@@ -525,7 +525,6 @@ export class Jobs {
 }
 
 /** The task with this schedule, for describing it after a write. */
-function withSchedule(task: ToolTask, schedule: ScheduleFields | null): ToolTask {
-  const { schedule: _old, ...delegation } = task.properties?.delegation ?? { agent: '' }
-  return { ...task, properties: { ...task.properties, delegation: schedule ? { ...delegation, schedule } : delegation } }
+function taskWithSchedule(task: ToolTask, schedule: ScheduleFields | null): ToolTask {
+  return { ...task, properties: { ...task.properties, delegation: withSchedule(task.properties?.delegation ?? { agent: '' }, schedule) } }
 }

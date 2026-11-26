@@ -2,6 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { parseAt } from '../domain/schedule.js'
+import { isOpenTask } from '../domain/schedule-tool.js'
 import { clearWake, nextRunOfSchedule, setWake } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { CheckFix, CheckTime, WakeEdit } from '../domain/turn-end.js'
@@ -64,8 +65,6 @@ export interface TurnWake {
   settle(sessionId: string, wanted: { edit: WakeEdit; why: string }): Promise<WakeSettled>
 }
 
-const OPEN = new Set(['planned', 'active'])
-
 export const NO_TASK = 'this session works on no task, and a wake-up is set on a task'
 export const TASK_CLOSED = 'the session\'s task is closed, and nothing fires on a closed task'
 
@@ -101,7 +100,7 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
     }
     let open = true
     const written = await editTaskSchedule(where.brain, where.taskId, (schedule, task) => {
-      open = OPEN.has(task.status)
+      open = isOpenTask(task)
       if (!open) {
         if (edit.kind === 'set') throw new Refused(TASK_CLOSED, 'none')
         return schedule

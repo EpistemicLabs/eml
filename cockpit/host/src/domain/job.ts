@@ -1,5 +1,6 @@
 import type { ProviderId } from './agent-provider.js'
 import type { WorkerStatus } from './session-attention.js'
+import type { DueCron, DueWake } from './task-schedule.js'
 import type { ToolProfile } from './tool-profile.js'
 
 /**
@@ -159,8 +160,8 @@ export interface JobRun {
 
 /** What of a task's schedule one firing names (domain/task-schedule.ts dueOf): the wake-up and every repeating time due. */
 export interface RunFired {
-  wake?: { at: string; why: string | null; bySession: string | null }
-  crons?: Array<{ cron: string; dueAt: string }>
+  wake?: DueWake
+  crons?: DueCron[]
   /** The zone the schedule's times are read in; absent when it names none. */
   timeZone?: string
 }
@@ -238,6 +239,9 @@ export function recordKeeping(
   const limits = record.limited === true || record.toolProfile !== null
   return { stopListening: false, remove: record.triggers.length === 0 && !limits && !runs.some(isOpenRun) }
 }
+
+/** Why a run by hand (Run now) cannot start: the task's previous run is open, a session of it works, its channel waits for the user's OK, or no session could start for it. */
+export type RunNowRefusal = 'run_open' | 'task_working' | 'needs_approval' | 'no_project'
 
 /** A run that has not come to an end: the next one waits for it. */
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'

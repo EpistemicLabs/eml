@@ -1,7 +1,7 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
-import { narrowedProfile } from './schedule-tool.js'
+import { isOpenTask, nameOfTask, narrowedProfile } from './schedule-tool.js'
 import { firingOf, ownerOf } from './task-owner.js'
 import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
@@ -171,12 +171,10 @@ export interface JobMigrationPlan {
   elsewhere: number
 }
 
-const OPEN = new Set(['planned', 'active'])
 const NOTE_CHARS = 2000
 const iso = (at: number) => new Date(at).toISOString()
 const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim()
-const nameOf = (task: JobMigrationTask) => task.properties?.display_title ?? task.title ?? task.id
 
 /** Who hears of a run, loudest first: of several jobs on one task the loudest wins, so no run goes untold that one of them told. */
 const LOUDEST: readonly JobNotify[] = ['always', 'needs-me', 'never']
@@ -428,7 +426,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   }
   const at = iso(now)
   return {
-    taskId: create ? null : task.id, create, title: nameOf(task), outcome: 'moved',
+    taskId: create ? null : task.id, create, title: nameOfTask(task), outcome: 'moved',
     why: handed ? `the task is ${handed}'s: its schedule fires on their cockpit from now on` : null, schedule, brain, record,
     runs: record ? carried(allRuns, taskId) : [],
     keys: record ? Object.assign({}, ...live.map((j) => input.keys[j.id] ?? {})) as Record<string, string> : {},
@@ -464,22 +462,22 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
         ? 'the brain server has not said yet whether this space is shared: nothing is planned until it has'
         : 'the members of this space could not be read, so it is not known whether a member owns the task: it waits'
       tasks.push({
-        taskId, create: null, title: nameOf(task), outcome: 'left', why, schedule: task.properties?.delegation?.schedule ?? null, brain: null, record: null,
+        taskId, create: null, title: nameOfTask(task), outcome: 'left', why, schedule: task.properties?.delegation?.schedule ?? null, brain: null, record: null,
         runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: `${describe(j)} → waits`, kind: 'waits' as const })), settings: [],
       })
       continue
     }
     const owner = firing === 'theirs' ? ownerOf(task) : null
-    if (!OPEN.has(task.status)) {
+    if (!isOpenTask(task)) {
       if (owner) {
-        tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is closed (${task.status}) and ${owner}'s: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
+        tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status}) and ${owner}'s: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
         continue
       }
       const live = jobs.filter((j) => !j.endedAt)
       const leftover = task.properties?.delegation?.schedule ?? null
       const journal = live.length > 0 ? [`${live.length === 1 ? 'A job' : `${live.length} jobs`} of this task (${live.map((j) => `"${j.name}": ${describe(j)}`).join('; ')}) ended when schedules moved onto tasks: the task is closed. Reopen it and set a schedule to bring ${live.length === 1 ? 'it' : 'them'} back.`] : []
       const brain = leftover || journal.length > 0 ? { setSchedule: leftover !== null, content: null, appended: [], journal } : null
-      tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is closed (${task.status})`, null, brain, (j) => `${describe(j)} → dropped: the task is closed`))
+      tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status})`, null, brain, (j) => `${describe(j)} → dropped: the task is closed`))
       continue
     }
     if (owner) {
@@ -513,10 +511,10 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
   const leftovers: LeftoverSchedule[] = []
   for (const task of input.scheduled ?? []) {
     const schedule = scheduleOf(task)
-    if (!schedule || !OPEN.has(task.status) || byTask.has(task.id) || input.records?.has(task.id)) continue
+    if (!schedule || !isOpenTask(task) || byTask.has(task.id) || input.records?.has(task.id)) continue
     // Only a task this cockpit would fire by seeing it: never another member's, nor one no member owns.
     if (firingOf(input.space.shared, task, input.me, input.members ?? null) !== 'mine') continue
-    leftovers.push({ taskId: task.id, title: nameOf(task), schedule, remove: input.space.shared === false })
+    leftovers.push({ taskId: task.id, title: nameOfTask(task), schedule, remove: input.space.shared === false })
   }
   return { tasks, leftovers, elsewhere: input.jobs.length - mine.length }
 }

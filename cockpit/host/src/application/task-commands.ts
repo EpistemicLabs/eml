@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, type HandOverTask } from '../domain/hand-over.js'
+import type { RunNowRefusal } from '../domain/job.js'
 import { hasSchedule, removeCron, scheduleOf, scheduleText, setPaused, withSchedule } from '../domain/task-schedule.js'
 import { editTaskSchedule } from './task-schedule-write.js'
 import type { Snooze } from '../domain/inbox.js'
@@ -272,7 +273,7 @@ export interface TaskCommandsDeps {
    */
   schedule?: {
     /** Start a run by hand now; a refusal's code when it cannot. */
-    runNow(spaceId: string, task: { id: string; status: string }): Promise<'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project' | 'unknown_space'>
+    runNow(spaceId: string, task: { id: string; status: string }): Promise<'started' | RunNowRefusal | 'unknown_space'>
     /** This cockpit's record of the task listens on a channel: Run now works for it without a schedule. */
     listens(taskId: string): boolean
     /** The cockpit paused the task after failures (its record says why): Resume lifts that too. */
