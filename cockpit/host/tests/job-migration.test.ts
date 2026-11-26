@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { changedMeanwhile, jobMigrationReport, MIGRATED_AWAY, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { changedMeanwhile, jobMigrationReport, MIGRATED_AWAY, NOT_REACHED, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
@@ -508,6 +508,38 @@ describe('planning jobs onto their tasks', () => {
     expect(t.record?.cursor).toBe('2026-11-26T06:59:59.999Z')
     // not for a paused schedule: nothing from the pause is made up
     expect(plan([cron('0 8 * * 1-5', { nextRunAt: '2026-11-26T07:00:00.000Z', paused: true })]).tasks[0].record?.cursor).toBe('2026-11-26T10:00:00.000Z')
+  })
+
+  describe('an open run of version 1 that never reached a session', () => {
+    const unreached = (jobId: string, id: string, status: 'waiting' | 'starting'): JobRun => ({ ...run(jobId, id, status, 1), dueAt: PAST, sessionId: null, startedAt: null, finishedAt: null })
+
+    it('a one-time job whose run waits or was starting has not run: it is the task\'s wake-up with its prompt and session, its run is closed, and the report never says it has run', () => {
+      for (const status of ['waiting', 'starting'] as const) {
+        const check = once(PAST, { runCount: 1 })
+        const [t] = plan([check], [task()], { runs: { [check.id]: [unreached(check.id, 'r1', status)] } }).tasks
+        expect(t).toMatchObject({ outcome: 'moved', settles: [check.id] })
+        expect(t.schedule).toEqual({ at: PAST, why: 'Look whether the reply came.', by_session: 'sess-1234-abcd', time_zone: 'Europe/Berlin' })
+        // no bare run is carried: the wake-up fires once, through the engine's own path
+        expect(t.runs.filter((r) => r.status === 'waiting' || r.status === 'starting')).toEqual([])
+        expect(t.record).toMatchObject({ id: 't1', firedWake: null, runCount: 0 })
+        expect(t.history[check.id]).toMatchObject([{ id: 'r1', status: 'skipped', note: NOT_REACHED }])
+        expect(t.jobs[0]).toMatchObject({ kind: 'moved', what: expect.stringContaining('the task\'s wake-up, though its time has passed: it never ran') })
+        const report = jobMigrationReport(plan([check], [task()], { runs: { [check.id]: [unreached(check.id, 'r1', status)] } }), { space: 'Main', at: 'now', dryRun: true })
+        expect(report).not.toContain('it has run')
+        expect(report).toContain('- Wake-up: 2026-11-25T02:00:00.000Z, set by session sess-123 — "Look whether the reply came."')
+      }
+      // one that ran before its open run (its count says so) has run
+      const ran = once(PAST, { runCount: 2 })
+      expect(plan([ran], [task()], { runs: { [ran.id]: [unreached(ran.id, 'r1', 'waiting')] } }).tasks[0].jobs[0]).toMatchObject({ kind: 'history' })
+    })
+
+    it('a repeating job\'s run that waits is carried, and says which time fired: its due time as a firing of the job\'s cron', () => {
+      const daily = cron('0 8 * * 1-5', { runCount: 1, target: { type: 'session', sessionId: 'sess-1234-abcd' } })
+      const [t] = plan([daily], [task()], { runs: { [daily.id]: [unreached(daily.id, 'r1', 'waiting')] } }).tasks
+      expect(t.runs).toMatchObject([{ id: 'r1', jobId: 't1', status: 'waiting', fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: PAST }], timeZone: 'Europe/Berlin' } }])
+      // the job's prompt is in the task's text, where a new session of the task reads it
+      expect(t.brain?.appended).toEqual(['Every 0 8 * * 1-5: Write the brief.'])
+    })
   })
 
   it('a job without a task gets a task made for it; without a project of the brain it stays as it is; one that is over is dropped', () => {

@@ -26,7 +26,9 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *   - a job's goal → the task's goal when it has none; otherwise the journal quotes it;
  *   - a one-time job whose time has passed and that never ran → not dropped: it is the task's wake-up with its past
  *     time, which the engine fires late; when the task gets its wake-up from another job, its prompt goes into the
- *     journal, and the report says so. One that has run has nothing to carry over;
+ *     journal, and the report says so. One that has run has nothing to carry over. A run that waited to start, or
+ *     was starting, never reached a session: by it the job has not run, and the run is closed, so the wake-up fires
+ *     in its place, once. A repeating job's run of that kind is carried, naming its due time as a firing of its cron;
  *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
  *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
  *     one-time job next to running ones is left out, with a journal line;
@@ -216,12 +218,19 @@ const LOUDEST: readonly JobNotify[] = ['always', 'needs-me', 'never']
 /** The note of a run that was open when its job was dropped by the migration. */
 export const MIGRATED_AWAY = 'its job ended when schedules moved onto tasks'
 
+/** The note of a one-time job's open run that never reached a session: its time is the task's wake-up, which fires in its place. */
+export const NOT_REACHED = 'it had not started when schedules moved onto tasks: its time is the task\'s wake-up now, which fires in its place'
+
 /** The prompt a scheduled hand-over gave its job: built from the task itself (application/task-runner.ts stepPrompt), so the task's text says it already. */
 const builtFromTask = (prompt: string, taskId: string) => prompt.startsWith('A scheduled job started you for "') && prompt.includes(`(task ${taskId})`)
 
 const scheduleTriggerOf = (job: JobV1): ScheduleTrigger | undefined => job.triggers.find(isScheduleTrigger)
 const channelsOf = (job: JobV1): ChannelTrigger[] => job.triggers.filter((t): t is ChannelTrigger => !isScheduleTrigger(t))
-const neverRan = (job: JobV1, runs: readonly JobRun[]) => job.runCount === 0 && !runs.some((r) => r.number > 0)
+/** A run of version 1 that never reached a session: it waited to start, or was starting. Its job has not run by it. */
+const unreached = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting'
+/** The job never got to a session: no run of it got that far, and its count holds no run beyond the ones still open that never did. */
+const neverRan = (job: JobV1, runs: readonly JobRun[]) =>
+  !runs.some((r) => r.number > 0 && !unreached(r)) && job.runCount <= runs.filter((r) => r.number > 0 && unreached(r)).length
 const sessionOf = (job: JobV1): string | null => (job.target.type === 'worker' ? null : job.target.sessionId)
 
 const closed = (run: JobRun, at: string): JobRun => {
@@ -388,7 +397,8 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     }
     schedule = setWake(schedule, { at, why, bySession, timeZone: trigger.timeZone })
     kept.push(job)
-    const reason = long ? `its prompt is longer than a wake-up's reason holds (${SCHEDULE_LIMITS.whyChars} characters): it is ${appendedWake ? 'appended to the task\'s text in full' : 'in the task\'s text in full already'}, and the reason points to it` : 'its prompt is the reason'
+    const opened = (input.runs[job.id] ?? []).some(unreached) ? '; its run that had not started is closed: the wake-up fires in its place' : ''
+    const reason = `${long ? `its prompt is longer than a wake-up's reason holds (${SCHEDULE_LIMITS.whyChars} characters): it is ${appendedWake ? 'appended to the task\'s text in full' : 'in the task\'s text in full already'}, and the reason points to it` : 'its prompt is the reason'}${opened}`
     say(job, late
       ? `once at ${at} → the task's wake-up, though its time has passed: it never ran, so it fires late, at the cockpit's next look${bySession ? `; set by session ${bySession.slice(0, 8)}` : ''}; ${reason}`
       : `once at ${at} → the task's wake-up${bySession ? `, set by session ${bySession.slice(0, 8)}` : ''}; ${reason}`)
@@ -428,7 +438,22 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   // of all (the schedule tool's rule, a job without a profile widens nothing), a limit and a draft reply hold if any
   // had them; runs are told as the loudest of them said. Where a new session starts comes from the oldest job.
   const primary = live[0]
-  const allRuns = live.flatMap((j) => input.runs[j.id] ?? [])
+  // A one-time job that never ran is the task's wake-up (or noted in the journal): its open run that never reached a
+  // session is closed, not carried, so the wake-up fires once, through the engine's own path. An open run of a
+  // repeating job that never reached a session is carried, and names the time that fired: its due time, of its cron.
+  const notRun = new Set([...ahead, ...overdueOnce].map((j) => j.id))
+  const settled = new Map<string, JobRun[]>()
+  const cronOf = new Map(kept.filter((j) => scheduleTriggerOf(j)?.cron !== undefined).map((j) => [j.id, scheduleTriggerOf(j)!.cron!.trim()]))
+  const allRuns = live.flatMap((j) => (input.runs[j.id] ?? []).flatMap((r): JobRun[] => {
+    if (!unreached(r)) return [r]
+    if (notRun.has(j.id)) {
+      settled.set(j.id, [...(settled.get(j.id) ?? []), { ...r, status: 'skipped', note: NOT_REACHED, finishedAt: iso(now) }])
+      return []
+    }
+    const cron = cronOf.get(j.id)
+    return [cron && r.trigger === 'schedule' && !r.fired ? { ...r, fired: { crons: [{ cron, dueAt: r.dueAt }], ...(schedule?.time_zone ? { timeZone: schedule.time_zone } : {}) } } : r]
+  }))
+  const closedRuns = (j: JobV1) => (settled.get(j.id) ?? []).filter((r) => r.number > 0).length
   const triggers = live.flatMap(channelsOf)
   let record: Job | null = null
   if (primary && (schedule || triggers.length > 0 || allRuns.some(isOpenRun))) {
@@ -454,7 +479,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       ...(live.some((j) => j.limited) ? { limited: true } : {}),
       ...(grants.size > 0 ? { grants: [...grants.values()] } : {}),
       cursor: iso(overdue.length > 0 ? Math.min(...overdue) - 1 : now), firedWake: null, lastRunAt: started.at(-1) ?? null,
-      runCount: counted ? counted.runCount : live.reduce((sum, j) => sum + j.runCount, 0),
+      runCount: counted ? counted.runCount - closedRuns(counted) : live.reduce((sum, j) => sum + j.runCount - closedRuns(j), 0),
       failures: Math.max(0, ...live.map((j) => j.failures)),
     }
     settings.push(`tells ${record.notify}`)
@@ -478,7 +503,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     keys: record ? Object.assign({}, ...live.map((j) => input.keys[j.id] ?? {})) as Record<string, string> : {},
     history: Object.fromEntries([
       ...ended.map((j) => [j.id, input.runs[j.id] ?? []] as const),
-      ...(record ? [] : live.map((j) => [j.id, (input.runs[j.id] ?? []).map((r) => closed(r, at))] as const)),
+      ...(record ? [...settled.entries()] : live.map((j) => [j.id, (input.runs[j.id] ?? []).map((r) => closed(r, at))] as const)),
     ]),
     settles: jobs.map((j) => j.id), renamed: record ? live.map((j) => j.id) : [],
     jobs: lines, settings,
