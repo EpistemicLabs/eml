@@ -57,27 +57,33 @@ describe('the Codex chat runtime, a start', () => {
   it('opens a new thread in the user\'s mode, binds its id, and then says what can be chosen and what it runs with', async () => {
     const { runtime, events, server } = start()
     await flush()
-    expect(methods(server)).toEqual(['initialize', 'initialized', 'thread/start', 'model/list'])
+    expect(methods(server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/start'])
     expect(server.requestsOf('initialize')[0]).toMatchObject({ clientInfo: { name: 'eml_cockpit' } })
     // Auto, the setting's default: what the terminal's arguments say for the same mode.
     expect(server.requestsOf('thread/start')).toEqual([{ cwd: '/work', approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review' }])
     expect(kinds(events)).toEqual(['conversation', 'capabilities', 'commands', 'settings'])
     expect(events[0]).toEqual({ kind: 'conversation', conversationId: server.threadId })
     expect(events[1]).toMatchObject({
-      modes: [{ id: 'auto' }, { id: 'ask' }, { id: 'off' }],
+      // Shift+Tab never lands on "no sandbox".
+      modes: [{ id: 'auto' }, { id: 'ask' }, { id: 'off', cycle: false }],
       models: [
-        { id: 'gpt-6-luna', label: 'GPT-6-Luna', description: 'Fast and affordable model for easier tasks.', resolved: 'gpt-6-luna' },
+        {
+          id: 'gpt-6-luna', label: 'GPT-6-Luna', description: 'Fast and affordable model for easier tasks.', resolved: 'gpt-6-luna', defaultEffort: 'medium',
+          efforts: [{ id: 'low', label: 'Low' }, { id: 'medium' }, { id: 'high' }, { id: 'xhigh' }, { id: 'max' }],
+        },
         { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
       ],
+      features: ['stopAgent', 'toolServerReconnect', 'toolServerSignIn', 'reasoningEffort'],
     })
-    expect(events[3]).toEqual({ kind: 'settings', model: 'gpt-6-luna', mode: 'auto' })
+    expect(events[2]).toEqual({ kind: 'commands', commands: [] })
+    expect(events[3]).toEqual({ kind: 'settings', model: 'gpt-6-luna', mode: 'auto', effort: null })
     await runtime.close()
   })
 
   it('continues the stored thread, and starts a new one when the server no longer has it', async () => {
     const resumed = start({ resume: true, conversationId: 'thread-9', model: 'gpt-5.6-terra' })
     await flush()
-    expect(methods(resumed.server)).toEqual(['initialize', 'initialized', 'thread/resume', 'model/list'])
+    expect(methods(resumed.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume'])
     expect(resumed.server.requestsOf('thread/resume')).toEqual([{
       threadId: 'thread-9', cwd: '/work', approvalPolicy: 'on-request', sandbox: 'workspace-write', approvalsReviewer: 'auto_review', model: 'gpt-5.6-terra', excludeTurns: true,
     }])
@@ -88,7 +94,7 @@ describe('the Codex chat runtime, a start', () => {
       server.answer('thread/resume', () => { throw new RefusedRequest(-32600, 'no rollout found for thread id thread-9') })
     })
     await flush()
-    expect(methods(gone.server)).toEqual(['initialize', 'initialized', 'thread/resume', 'thread/start', 'model/list'])
+    expect(methods(gone.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume', 'thread/start'])
     expect(kinds(gone.events)).toEqual(['notice', 'conversation', 'capabilities', 'commands', 'settings'])
     expect(gone.events[1]).toEqual({ kind: 'conversation', conversationId: gone.server.threadId })
     await gone.runtime.close()
@@ -99,13 +105,13 @@ describe('the Codex chat runtime, a start', () => {
       server.answer('thread/resume', () => { throw new RefusedRequest(-32600, 'thread thread-9 already has an active writer') })
     })
     await flush()
-    expect(methods(busy.server)).toEqual(['initialize', 'initialized', 'thread/resume'])
+    expect(methods(busy.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume'])
     expect(busy.events).toEqual([{ kind: 'error', message: `Codex did not start: ${OPEN_ELSEWHERE}` }, { kind: 'runtime_exit', expected: false }])
     const odd = start({ resume: true, conversationId: 'thread-9' }, (server) => {
       server.answer('thread/resume', () => { throw new RefusedRequest(-32603, 'internal error') })
     })
     await flush()
-    expect(methods(odd.server)).toEqual(['initialize', 'initialized', 'thread/resume'])
+    expect(methods(odd.server)).toEqual(['initialize', 'initialized', 'model/list', 'thread/resume'])
     expect(odd.events).toEqual([{ kind: 'error', message: 'Codex did not start: internal error' }, { kind: 'runtime_exit', expected: false }])
   })
 
@@ -326,14 +332,181 @@ describe('the Codex chat runtime, approvals', () => {
     await runtime.close()
   })
 
-  it('refuses a request it cannot put to the user', async () => {
+  it('refuses a request it cannot put to the user, and answers a question with nothing to ask at once', async () => {
     const { runtime, events, server } = start()
     await flush()
     const before = events.length
-    const id = server.ask('item/tool/requestUserInput', { itemId: 'q1', questions: [] })
+    const id = server.ask('mcpServer/elicitation/request', { serverName: 'x' })
     await flush()
-    expect(server.received.at(-1)).toEqual({ id, error: { code: -32601, message: 'The cockpit does not answer item/tool/requestUserInput' } })
+    expect(server.received.at(-1)).toEqual({ id, error: { code: -32601, message: 'The cockpit does not answer mcpServer/elicitation/request' } })
+    const empty = server.ask('item/tool/requestUserInput', { itemId: 'q1', questions: [] })
+    await flush()
+    expect(server.received.at(-1)).toEqual({ id: empty, result: { answers: {} } })
     expect(events).toHaveLength(before)
+    await runtime.close()
+  })
+
+  it('puts the agent\'s questions to the user and answers them by their ids; a skipped card answers nothing', async () => {
+    const { runtime, events, server } = start({}, (fake) => { fake.turnsEnd = false })
+    runtime.send('m1', 'first')
+    await flush()
+    const questions = [
+      { id: 'env', header: 'Target', question: 'Which environment?', isOther: true, isSecret: false, options: [{ label: 'Staging', description: 'Safe' }, { label: 'Production', description: '' }] },
+      { id: 'token', header: 'Token', question: 'Your API token?', isOther: false, isSecret: true, options: null },
+    ]
+    const id = server.ask('item/tool/requestUserInput', { threadId: server.threadId, turnId: 'turn-1', itemId: 'call-1', questions, isBlocking: true })
+    await flush()
+    expect(events.at(-1)).toEqual({
+      kind: 'question', requestId: `req-${id}-call-1`, questions: [
+        { question: 'Which environment?', header: 'Target', multiSelect: false, options: [{ label: 'Staging', description: 'Safe' }, { label: 'Production', description: '' }] },
+        { question: 'Your API token?', header: 'Token', multiSelect: false, options: [], secret: true },
+      ],
+    })
+    runtime.answerPermission(`req-${id}-call-1`, { decision: 'answer', answers: { 'Which environment?': 'Staging', 'Your API token?': 'abc' } })
+    expect(server.received.at(-1)).toEqual({ id, result: { answers: { env: { answers: ['Staging'] }, token: { answers: ['abc'] } } } })
+    expect(events.at(-1)).toEqual({ kind: 'request_settled', requestId: `req-${id}-call-1`, outcome: 'answered' })
+
+    const skipped = server.ask('item/tool/requestUserInput', { threadId: server.threadId, turnId: 'turn-1', itemId: 'call-2', questions, isBlocking: true })
+    await flush()
+    runtime.answerPermission(`req-${skipped}-call-2`, { decision: 'deny' })
+    expect(server.received.at(-1)).toEqual({ id: skipped, result: { answers: {} } })
+    // One the turn leaves open is taken back like an approval.
+    server.ask('item/tool/requestUserInput', { threadId: server.threadId, turnId: 'turn-1', itemId: 'call-3', questions, isBlocking: true })
+    await flush()
+    server.completeTurn()
+    await flush()
+    expect(events).toContainEqual({ kind: 'request_settled', requestId: `req-${skipped + 1}-call-3`, outcome: 'cancelled' })
+    await runtime.close()
+  })
+
+  it('refuses a call and lets the turn go on, or refuses it and stops the turn; words go to the agent another way', async () => {
+    const { runtime, events, server } = start({}, (fake) => {
+      fake.turnsEnd = false
+      fake.answer('turn/steer', () => ({ turnId: 'turn-1' }))
+    })
+    runtime.send('m1', 'first')
+    await flush()
+    const params = (itemId: string) => ({ threadId: server.threadId, turnId: 'turn-1', itemId, command: 'rm -rf build', availableDecisions: ['accept', 'decline', 'cancel'] })
+    const declined = server.ask('item/commandExecution/requestApproval', params('exec-1'))
+    await flush()
+    runtime.answerPermission(`req-${declined}-exec-1`, { decision: 'deny', message: 'Keep the build folder.' })
+    await flush()
+    expect(server.received.filter((message) => message.id === declined && message.method === undefined)).toEqual([{ id: declined, result: { decision: 'decline' } }])
+    // Codex's refusal has no words: they go into the running turn.
+    expect(server.requestsOf('turn/steer')).toEqual([{
+      threadId: server.threadId, expectedTurnId: 'turn-1', input: [hiddenText('The user declined Run rm -rf build: Keep the build folder.')],
+    }])
+
+    const cancelled = server.ask('item/commandExecution/requestApproval', params('exec-2'))
+    await flush()
+    runtime.answerPermission(`req-${cancelled}-exec-2`, { decision: 'deny', interrupt: true, message: 'Stop here.' })
+    await flush()
+    expect(server.received.filter((message) => message.id === cancelled && message.method === undefined)).toEqual([{ id: cancelled, result: { decision: 'cancel' } }])
+    // "cancel" ends the turn itself; the words wait for the next message rather than starting a turn.
+    expect(server.requestsOf('turn/interrupt')).toEqual([])
+    expect(server.requestsOf('turn/steer')).toHaveLength(1)
+    server.completeTurn('interrupted')
+    await flush()
+    expect(events.filter((event) => event.kind === 'turn_end').at(-1)).toEqual({ kind: 'turn_end', reason: 'interrupted' })
+    runtime.send('m2', 'next')
+    await flush()
+    expect(server.requestsOf('turn/start')[1]?.input).toEqual([hiddenText('The user declined Run rm -rf build: Stop here.'), text('next')])
+
+    // A request without "cancel" (more access): refused, and the runtime stops the turn itself.
+    const access = server.ask('item/permissions/requestApproval', {
+      threadId: server.threadId, turnId: 'turn-2', itemId: 'perm-1', cwd: '/work', reason: null, permissions: { network: { enabled: true }, fileSystem: null },
+    })
+    await flush()
+    runtime.answerPermission(`req-${access}-perm-1`, { decision: 'deny', interrupt: true })
+    await flush()
+    expect(server.received.filter((message) => message.id === access && message.method === undefined)).toEqual([{ id: access, result: { permissions: {}, scope: 'turn' } }])
+    expect(server.requestsOf('turn/interrupt')).toEqual([{ threadId: server.threadId, turnId: 'turn-2' }])
+    await runtime.close()
+  })
+})
+
+describe('the Codex chat runtime, reasoning effort', () => {
+  it('starts the thread with the session\'s effort, carries a change with the next turn, and refuses one the model does not take', async () => {
+    const { runtime, events, server } = start({ effort: 'high' })
+    await flush()
+    expect(server.requestsOf('thread/start')[0]).toMatchObject({ config: { model_reasoning_effort: 'high' } })
+    expect(events.find((event) => event.kind === 'settings')).toMatchObject({ effort: 'high' })
+    await runtime.setEffort('low')
+    await expect(runtime.setEffort('ultra')).rejects.toThrow('GPT-6-Luna takes no reasoning effort "ultra".')
+    runtime.send('m1', 'first')
+    runtime.send('m2', 'second')
+    await flush()
+    const [first, second] = server.requestsOf('turn/start')
+    expect(first).toMatchObject({ effort: 'low' })
+    expect(second).not.toHaveProperty('effort')
+    // Terra takes "ultra".
+    await runtime.setModel('gpt-5.6-terra')
+    await runtime.setEffort('ultra')
+    expect(events.at(-1)).toEqual({ kind: 'settings', effort: 'ultra' })
+    // Back on a model without it, the effort gives way to that model's default.
+    await runtime.setModel('gpt-6-luna')
+    expect(events.at(-1)).toEqual({ kind: 'settings', model: 'gpt-6-luna', effort: 'medium' })
+    await runtime.close()
+  })
+
+  it('starts with the setting when the session chose none, and leaves out one the model does not take', async () => {
+    expect(codexSettings.write({ reasoningEffort: 'xhigh' })).toBeNull()
+    expect(codexSettings.write({ reasoningEffort: 'Very High' })).toMatch(/reasoningEffort must be/)
+    try {
+      const set = start()
+      await flush()
+      expect(set.server.requestsOf('thread/start')[0]).toMatchObject({ config: { model_reasoning_effort: 'xhigh' } })
+      await set.runtime.close()
+      const unknown = start({ effort: 'ultra' })
+      await flush()
+      expect(unknown.server.requestsOf('thread/start')[0]).not.toHaveProperty('config')
+      await unknown.runtime.close()
+    } finally {
+      codexSettings.write({ reasoningEffort: 'default' })
+    }
+  })
+})
+
+describe('the Codex chat runtime, subagents', () => {
+  it('shows a subagent on its card, keeps its turns apart from the session\'s, and stops it', async () => {
+    const { runtime, events, server } = start({}, (fake) => {
+      fake.turnsEnd = false
+      // The child's turn is the one that ends (below), not the session's.
+      fake.answer('turn/interrupt', () => ({}))
+    })
+    runtime.send('m1', 'first')
+    await flush()
+    const child = 'child-thread'
+    const item = { type: 'subAgentActivity', id: 'call-a', kind: 'started', agentThreadId: child, agentPath: '/root/run_tests', model: 'gpt-6-luna', reasoningEffort: 'low' }
+    server.notify('item/started', { threadId: server.threadId, turnId: 'turn-1', item })
+    server.notify('turn/started', { threadId: child, turn: { id: 'child-turn', items: [], status: 'inProgress', error: null } })
+    server.notify('item/started', { threadId: child, turnId: 'child-turn', item: { type: 'commandExecution', id: 'exec-c', command: 'npm test', cwd: '/work', status: 'inProgress', commandActions: [] } })
+    await flush()
+    expect(events.slice(-4)).toEqual([
+      { kind: 'tool_call', toolId: 'call-a', name: 'Agent', toolKind: 'agent', title: 'run tests', input: { agentPath: '/root/run_tests', model: 'gpt-6-luna' } },
+      { kind: 'agent_task', taskId: child, toolId: 'call-a', description: 'run tests', status: 'running', background: false },
+      { kind: 'agent_tool', parentToolId: 'call-a', toolId: 'exec-c', toolKind: 'execute', title: 'Run npm test', status: 'running' },
+      { kind: 'agent_task', taskId: child, toolUses: 1, activity: 'Run npm test' },
+    ])
+    await runtime.stopAgent(child)
+    expect(server.requestsOf('turn/interrupt')).toEqual([{ threadId: child, turnId: 'child-turn' }])
+    // The child's turn ends; the session's goes on.
+    server.notify('turn/completed', { threadId: child, turn: { id: 'child-turn', items: [], status: 'interrupted', error: null } })
+    await flush()
+    expect(events.slice(-2)).toEqual([
+      { kind: 'agent_task', taskId: child, status: 'stopped' },
+      { kind: 'tool_result', toolId: 'call-a', status: 'failed', output: 'Stopped.' },
+    ])
+    expect(kinds(events)).not.toContain('turn_end')
+    runtime.send('m2', 'second')
+    await flush()
+    expect(server.requestsOf('turn/start')).toHaveLength(1)
+    // A subagent that is not running is not stopped.
+    await runtime.stopAgent(child)
+    expect(server.requestsOf('turn/interrupt')).toHaveLength(1)
+    server.completeTurn()
+    await flush()
+    expect(events.filter((event) => event.kind === 'turn_end')).toEqual([{ kind: 'turn_end', reason: 'success' }])
     await runtime.close()
   })
 })
@@ -360,12 +533,58 @@ describe('the Codex chat runtime, its end', () => {
     expect(server.requestsOf('turn/start')).toEqual([])
   })
 
-  it('has no tool servers to manage yet, and says so', async () => {
-    const { runtime } = start()
-    expect(await runtime.toolServers()).toEqual([])
-    await expect(runtime.setToolServerEnabled('gmail', false)).rejects.toThrow(/cannot be changed from the chat yet/)
-    await expect(runtime.reconnectToolServer('gmail')).rejects.toThrow(/cannot be changed from the chat yet/)
-    await expect(runtime.stopAgent('a1')).rejects.toThrow(/no subagents/)
+})
+
+describe('the Codex chat runtime, tool servers', () => {
+  const listed = recorded('subagent.jsonl').filter((line) => line.dir === 'in' && (line.msg.result as { data?: Array<{ authStatus?: unknown }> } | undefined)?.data?.[0]?.authStatus).at(-1)?.msg.result
+
+  it('lists the thread\'s servers without address or credentials, and reconnects them by reloading their configuration', async () => {
+    const { runtime, server } = start({}, (fake) => {
+      fake.answer('mcpServerStatus/list', () => listed)
+      fake.answer('config/mcpServer/reload', () => ({}))
+    })
+    await flush()
+    expect(await runtime.toolServers()).toEqual([
+      { name: 'codex_apps', status: 'connected', error: null, scope: null, transport: 'web', toolCount: 3 },
+      { name: 'fake', status: 'connected', error: null, scope: null, transport: 'process', toolCount: 1 },
+    ])
+    expect(server.requestsOf('mcpServerStatus/list')).toEqual([{ threadId: server.threadId, detail: 'toolsAndAuthOnly' }])
+    await runtime.reconnectToolServer('fake')
+    expect(methods(server)).toContain('config/mcpServer/reload')
+    await expect(runtime.setToolServerEnabled('fake', false)).rejects.toThrow(/cannot be switched on or off from the chat/)
+    await runtime.close()
+  })
+
+  it('reads a server\'s state: one that wants a sign-in, one that failed, one still on its way', async () => {
+    const { toolServerOf } = await import('../src/infrastructure/providers/codex/chat-runtime.js')
+    const base = { name: 'notion', pluginId: null, httpOrigin: 'https://mcp.example.com', tools: {}, toolsError: null, authStatus: 'unsupported' as const }
+    expect(toolServerOf({ ...base, runtimeStatus: 'authenticationRequired' }).status).toBe('needs-auth')
+    expect(toolServerOf({ ...base, runtimeStatus: 'failed', authStatus: 'notLoggedIn' }).status).toBe('needs-auth')
+    expect(toolServerOf({ ...base, runtimeStatus: 'failed', toolsError: 'boom' })).toMatchObject({ status: 'failed', error: 'boom' })
+    expect(toolServerOf({ ...base, runtimeStatus: 'starting' }).status).toBe('pending')
+    expect(toolServerOf({ ...base, runtimeStatus: null, tools: { a: {} } }).status).toBe('connected')
+    expect(toolServerOf({ ...base, runtimeStatus: 'connected', pluginId: 'gmail@cockpit', httpOrigin: null })).toMatchObject({ scope: 'plugin', transport: 'process' })
+  })
+
+  it('signs in to a server over the web: the page to open, then a notice and a reload once it is done', async () => {
+    const { runtime, events, server } = start({}, (fake) => {
+      fake.answer('mcpServer/oauth/login', ({ name }) => {
+        if (name === 'fake') throw new RefusedRequest(-32600, 'OAuth login is only supported for streamable HTTP servers.')
+        return { authorizationUrl: 'https://auth.example.com/authorize?state=x', loginId: 'l1' }
+      })
+      fake.answer('config/mcpServer/reload', () => ({}))
+    })
+    await flush()
+    await expect(runtime.signInToolServer('fake')).rejects.toThrow('OAuth login is only supported for streamable HTTP servers.')
+    expect(await runtime.signInToolServer('notion')).toEqual({ url: 'https://auth.example.com/authorize?state=x' })
+    expect(server.requestsOf('mcpServer/oauth/login').at(-1)).toEqual({ name: 'notion', threadId: server.threadId })
+    server.notify('mcpServer/oauthLogin/completed', { name: 'notion', threadId: null, loginId: 'l1', success: true })
+    await flush()
+    expect(events.at(-1)).toEqual({ kind: 'notice', text: 'Signed in to the tool server "notion". It connects again with the next message.' })
+    expect(methods(server)).toContain('config/mcpServer/reload')
+    server.notify('mcpServer/oauthLogin/completed', { name: 'notion', threadId: null, success: false, error: 'access denied' })
+    await flush()
+    expect(events.at(-1)).toEqual({ kind: 'notice', text: 'Signing in to the tool server "notion" did not work: access denied' })
     await runtime.close()
   })
 })

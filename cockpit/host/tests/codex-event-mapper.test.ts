@@ -102,7 +102,9 @@ describe('CodexEventMapper, a recorded turn with a command and its approval', ()
       title: 'Run printf hi > hello.txt',
       input,
       reason: 'The sandbox failed to start the command. May I retry with escalated permissions to create hello.txt in the project directory?',
-      alwaysScope: 'Commands starting with `/bin/bash -lc printf hi > hello.txt`, from now on',
+      alwaysScope: 'Commands starting with `/bin/bash -lc printf hi > hello.txt`, in this and later sessions',
+      // The server offered no "decline": refusing ends the turn.
+      denyStopsTurn: true,
     })
     expect(events.find((event) => event.kind === 'request_settled')).toEqual({ kind: 'request_settled', requestId: `req-0-${COMMAND}`, outcome: 'allowed' })
     expect(events.find((event) => event.kind === 'tool_result')).toEqual({ kind: 'tool_result', toolId: COMMAND, status: 'completed', output: '' })
@@ -281,7 +283,7 @@ describe('CodexEventMapper, approvals', () => {
     const mapper = new CodexEventMapper()
     const amendment = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['npm', 'test'] } }
     const cases: Array<{ offered: unknown[] | null; scope: string | null; allow: unknown; always: unknown; deny: unknown }> = [
-      { offered: ['accept', amendment, 'cancel'], scope: 'Commands starting with `npm test`, from now on', allow: 'accept', always: amendment, deny: 'cancel' },
+      { offered: ['accept', amendment, 'cancel'], scope: 'Commands starting with `npm test`, in this and later sessions', allow: 'accept', always: amendment, deny: 'cancel' },
       { offered: ['accept', 'acceptForSession', amendment, 'decline', 'cancel'], scope: 'This command, for the rest of this session', allow: 'accept', always: 'acceptForSession', deny: 'decline' },
       { offered: ['accept', 'decline'], scope: null, allow: 'accept', always: 'accept', deny: 'decline' },
       // An older server names no list: what the protocol always takes.
@@ -413,5 +415,94 @@ describe('historyEvents, a recorded thread/turns/list', () => {
       { kind: 'history_end' },
     ])
     expect(historyEvents([])).toEqual([{ kind: 'history_end' }])
+  })
+})
+
+describe('CodexEventMapper, a recorded turn with a subagent', () => {
+  const lines = recorded('subagent.jsonl')
+  const thread = (lines.find((line) => line.msg.method === 'thread/started')?.msg.params as { thread: { id: string } }).thread.id
+  const mapper = new CodexEventMapper()
+  mapper.setThread(thread)
+  const events = play(mapper, lines)
+  const CHILD = '01a218a9-1c14-7dd2-b69f-5765317b30ef'
+  const SPAWN = 'call_e0add462d3e34a3cb93aa4930679ae6a'
+  const LOOP = 'exec-e893d6b3-8401-4389-95a6-18ad334d5f8a'
+
+  it('streams a running command\'s output onto its row, and its end replaces it', () => {
+    expect(events.filter((event) => event.kind === 'tool_output_delta')).toEqual([
+      { kind: 'tool_output_delta', toolId: LOOP, delta: 'line 2\n' },
+      { kind: 'tool_output_delta', toolId: LOOP, delta: 'line 3\n' },
+    ])
+    expect(events.find((event) => event.kind === 'tool_result' && event.toolId === LOOP)).toEqual({ kind: 'tool_result', toolId: LOOP, status: 'completed', output: 'line 1\nline 2\nline 3\n' })
+  })
+
+  it('shows the subagent as an agent card with its own command and its report, and its thread\'s turn is not the session\'s', () => {
+    expect(events.find((event) => event.kind === 'tool_call' && event.toolId === SPAWN))
+      .toEqual({ kind: 'tool_call', toolId: SPAWN, name: 'Agent', toolKind: 'agent', title: 'list entries', input: { agentPath: '/root/list_entries', model: 'gpt-6-luna' } })
+    const ofChild = events.filter((event) => (event.kind === 'agent_task' && event.taskId === CHILD) || (event.kind === 'agent_tool' && event.parentToolId === SPAWN))
+    expect(ofChild).toEqual([
+      { kind: 'agent_task', taskId: CHILD, toolId: SPAWN, description: 'list entries', status: 'running', background: false },
+      { kind: 'agent_tool', parentToolId: SPAWN, toolId: 'exec-7bdd49e2-5ede-4514-9278-a496a811ce79', toolKind: 'execute', title: 'Run ls -la', status: 'running' },
+      { kind: 'agent_task', taskId: CHILD, toolUses: 1, activity: 'Run ls -la' },
+      { kind: 'agent_tool', parentToolId: SPAWN, toolId: 'exec-7bdd49e2-5ede-4514-9278-a496a811ce79', status: 'completed' },
+      { kind: 'agent_task', taskId: CHILD, tokens: 13793 },
+      { kind: 'agent_task', taskId: CHILD, activity: '`ls -la` shows 2 entries: `.` and `..`.' },
+      { kind: 'agent_task', taskId: CHILD, tokens: 27680 },
+      { kind: 'agent_task', taskId: CHILD, status: 'completed' },
+    ])
+    expect(events.find((event) => event.kind === 'tool_result' && event.toolId === SPAWN))
+      .toEqual({ kind: 'tool_result', toolId: SPAWN, status: 'completed', output: '`ls -la` shows 2 entries: `.` and `..`.' })
+    // Closed after it was done: still done. One turn end, the session's; the context is the session's alone.
+    expect(events.filter((event) => event.kind === 'turn_end')).toEqual([{ kind: 'turn_end', reason: 'success' }])
+    expect(events.filter((event) => event.kind === 'context').every((event) => event.kind === 'context' && event.maxTokens === 258400)).toBe(true)
+    expect(events.filter((event) => event.kind === 'text').map((event) => event.kind === 'text' && event.text)).not.toContain('`ls -la` shows 2 entries: `.` and `..`.')
+  })
+
+  it('shows waiting for the subagent as a tool row of its own', () => {
+    expect(events.find((event) => event.kind === 'tool_call' && event.toolId === 'call_8a87a04540a84bdc886873efbfeeab21'))
+      .toMatchObject({ name: 'Agent', toolKind: 'other', title: 'Wait for agents' })
+  })
+})
+
+describe('CodexEventMapper, subagents started by a tool call', () => {
+  const spawn = (status: string, receivers: string[], states: object = {}) => ({
+    type: 'collabAgentToolCall', id: 'call-s', tool: 'spawnAgent', status, senderThreadId: 'main', receiverThreadIds: receivers,
+    prompt: 'Review the diff\nand report', model: null, reasoningEffort: null, agentsStates: states,
+  })
+
+  it('makes the card once the new thread is known, and ends it with what a later call learnt of it', () => {
+    const mapper = new CodexEventMapper()
+    mapper.setThread('main')
+    expect(note(mapper, 'item/started', { threadId: 'main', item: spawn('inProgress', []) })).toEqual([])
+    expect(note(mapper, 'item/completed', { threadId: 'main', item: spawn('completed', ['kid']) })).toEqual([
+      { kind: 'tool_call', toolId: 'call-s', name: 'Agent', toolKind: 'agent', title: 'Review the diff', input: { prompt: 'Review the diff\nand report' } },
+      { kind: 'agent_task', taskId: 'kid', toolId: 'call-s', description: 'Review the diff', status: 'running', background: false },
+    ])
+    const wait = { type: 'collabAgentToolCall', id: 'call-w', tool: 'wait', senderThreadId: 'main', receiverThreadIds: ['kid'], prompt: null, model: null, reasoningEffort: null }
+    note(mapper, 'item/started', { threadId: 'main', item: { ...wait, status: 'inProgress', agentsStates: {} } })
+    expect(note(mapper, 'item/completed', { threadId: 'main', item: { ...wait, status: 'completed', agentsStates: { kid: { status: 'completed', message: 'LGTM' } } } })).toEqual([
+      { kind: 'tool_result', toolId: 'call-w', status: 'completed', output: 'LGTM' },
+      { kind: 'agent_task', taskId: 'kid', status: 'completed' },
+      { kind: 'tool_result', toolId: 'call-s', status: 'completed', output: 'LGTM' },
+    ])
+    expect(mapper.runningChild('kid')).toBeNull()
+  })
+
+  it('leaves out what a thread it does not know says, and tells a stored subagent by its call and result alone', () => {
+    const mapper = new CodexEventMapper()
+    mapper.setThread('main')
+    expect(note(mapper, 'turn/completed', { threadId: 'stranger', turn: { id: 'x', status: 'completed', items: [] } })).toEqual([])
+    const stored = historyEvents([{
+      id: 'u', itemsView: 'full', status: 'completed', error: null, startedAt: 1, completedAt: 2, durationMs: 1,
+      items: [
+        { type: 'subAgentActivity', id: 'call-a', kind: 'started', agentThreadId: 'kid', agentPath: '/root/fix_it', model: null, reasoningEffort: null },
+        { type: 'subAgentActivity', id: 'done-a', kind: 'completed', agentThreadId: 'kid', agentPath: '/root/fix_it', model: null, reasoningEffort: null },
+      ],
+    } as unknown as Turn])
+    expect(stored).toEqual([
+      { kind: 'tool_call', toolId: 'call-a', name: 'Agent', toolKind: 'agent', title: 'fix it', input: { agentPath: '/root/fix_it' } },
+      { kind: 'tool_result', toolId: 'call-a', status: 'completed', output: '' },
+      { kind: 'history_end' },
+    ])
   })
 })
