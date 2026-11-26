@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
-import { agentLetter, allSessionState, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, workingWord, type AllSession } from './allSessions';
+import { agentLetter, allSessionState, commandWord, countsLine, filterByName, groupAllSessions, isRead, isUnseen, sessionMark, waitsForCommand, workingWord, type AllSession } from './allSessions';
 
 const main: SpaceInfo = { id: 'main-id', name: 'Main', main: true, agent: null, upgrade: null, shared: false, agentName: 'Alpha' };
 const other: SpaceInfo = { id: 'other-id', name: 'Other', main: false, agent: null, upgrade: null, shared: false, agentName: 'Beta' };
@@ -291,6 +291,30 @@ describe('workingWord', () => {
     expect(workingWord({ state: 'working', since, helpers: 1, workflows: [run, run] })).toBe('Waiting for 1 subagent and 2 workflows');
     expect(workingWord({ state: 'working', since, workflows: [] })).toBe('Working');
     expect(workingWord({ state: 'done', since, workflows: [run] })).toBe('Working');
+  });
+});
+
+describe('waitsForCommand', () => {
+  const tests = { description: 'Run the tests', since: FRESH };
+  const done: TurnInfo = { state: 'done', since: FRESH, commands: [tests] };
+
+  it('is a running session whose turn is over while a command it started runs', () => {
+    expect(waitsForCommand(session('a', { state: 'running' }), done)).toBe(true);
+    expect(waitsForCommand(session('a', { state: 'running', attention: attention('review') }), done)).toBe(true);
+    expect(waitsForCommand(session('a', { state: 'running' }), { state: 'done', since: FRESH })).toBe(false);
+  });
+
+  it('is not one at work, one that asks the user, or one whose process ended', () => {
+    expect(waitsForCommand(session('a', { state: 'running' }), { ...done, state: 'working' })).toBe(false);
+    expect(waitsForCommand(session('a', { state: 'running' }), { ...done, state: 'waiting' })).toBe(false);
+    expect(waitsForCommand(session('a', { state: 'running', attention: attention('question') }), done)).toBe(false);
+    expect(waitsForCommand(session('a', { state: 'running', attention: attention('failed') }), done)).toBe(false);
+    expect(waitsForCommand(session('a', { state: 'ended' }), done)).toBe(false);
+  });
+
+  it('says how many commands it waits for', () => {
+    expect(commandWord(done)).toBe('Waiting for a command');
+    expect(commandWord({ ...done, commands: [tests, tests] })).toBe('Waiting for 2 commands');
   });
 });
 

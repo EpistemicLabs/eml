@@ -10,6 +10,8 @@ import type { LLMProvider } from '@/types/app';
 export type TurnState = 'idle' | 'working' | 'done' | 'waiting';
 /** A workflow run a session waits on, and how far its agents are (they start as it goes, so no total). */
 export type WorkflowWait = { name: string; running: number; done: number };
+/** A background shell command a session started that still runs: what it does and since when. */
+export type RunningCommand = { description: string; since: string };
 export type TurnInfo = {
   state: TurnState;
   since: string;
@@ -17,6 +19,8 @@ export type TurnInfo = {
   helpers?: number;
   /** And for these workflow runs it started; absent when none. */
   workflows?: WorkflowWait[];
+  /** Background commands it started that still run, in any state: its turn may be over meanwhile. Absent when none. */
+  commands?: RunningCommand[];
 };
 export type TurnEvent = TurnInfo & { sessionId: string };
 
@@ -124,8 +128,8 @@ export type SpawnRequest = {
   origin?: 'job' | 'runner';
 };
 
-const turnInfo = ({ state, since, helpers, workflows }: TurnInfo): TurnInfo => ({
-  state, since, ...(helpers ? { helpers } : {}), ...(workflows?.length ? { workflows } : {}),
+const turnInfo = ({ state, since, helpers, workflows, commands }: TurnInfo): TurnInfo => ({
+  state, since, ...(helpers ? { helpers } : {}), ...(workflows?.length ? { workflows } : {}), ...(commands?.length ? { commands } : {}),
 });
 
 export function connectTurnEvents(onSpawns?: (requests: SpawnRequest[]) => void): () => void {

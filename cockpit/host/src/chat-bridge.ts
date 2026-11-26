@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
 import type { AgentProvider, TurnState } from './domain/agent-provider.js'
 import type {
-  EventStore, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
+  EventStore, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -58,13 +58,20 @@ import { toolLabel } from './domain/tool-label.js'
 // How long the done of a session whose last subagent came back waits for the turn that wakes it.
 export const HELPERS_BACK_SETTLE_MS = 5_000
 
-/** What a session waits on: its subagents and workflow runs, each wakes it when it ends. Background shells do not. */
+/**
+ * What a session waits on: its subagents and workflow runs, each wakes it when it ends. Background
+ * shells do not hold its turn: they only show as running commands (onCommands).
+ */
 function helperCount(entry: Pick<ChatEntry, 'runningAgents' | 'runningWorkflows'>): number {
   return entry.runningAgents.size + entry.runningWorkflows.size
 }
 
 function workflowsOf(entry: Pick<ChatEntry, 'runningWorkflows'>): WorkflowWait[] {
   return [...entry.runningWorkflows.values()]
+}
+
+function commandsOf(entry: Pick<ChatEntry, 'runningCommands'>): RunningCommand[] {
+  return [...entry.runningCommands.values()]
 }
 // How long a switch lets an interrupted turn finish on its own before closing it.
 const INTERRUPT_WAIT_MS = 3_000
@@ -140,6 +147,8 @@ interface ChatEntry {
   runningAgents: Set<string>
   /** And the workflow runs, by task id: helpers like a subagent, each wakes it when it ends. */
   runningWorkflows: Map<string, WorkflowWait>
+  /** And the background shells, by task id: shown while they run, they hold nothing. */
+  runningCommands: Map<string, RunningCommand>
   /** A done signal came while its helpers ran and its turn state was kept at working: the bridge owes the done. */
   held: boolean
   /** Its own turn is over and it waits for its helpers: the turn they wake shows as working again. */
@@ -193,6 +202,8 @@ export interface ChatContext {
    * none: no longer. The turn state stays working.
    */
   onHelpers?: (sessionId: string, helpers: number, workflows: WorkflowWait[]) => void
+  /** The background shells the session started that run now; none: no longer. Display only, its turn ends as usual. */
+  onCommands?: (sessionId: string, commands: RunningCommand[]) => void
   /** A turn finished with this text: the task router reads its end_turn call, else its handoff (application/task-router.ts). */
   turnDone?: (sessionId: string, text: string, turn: TurnEndFacts) => void
   /** Whether the session works on its own, by its task as the brain has it now (domain/session-attention.ts worksAlone). */
@@ -384,6 +395,7 @@ export class ChatBridge {
       // Its subagents went with the process (runtime_exit says so too; this holds for a runtime that does not).
       this.releaseHeld(entry)
     }
+    this.clearCommands(entry)
     this.ctx.memory?.release(sessionId)
     // Stopped, archived, timed out, deleted or taken over: its turn is over, not cut off.
     if (reason !== HOST_SHUTDOWN) this.ctx.ledger.setTurnInFlight(sessionId, false)
@@ -639,7 +651,7 @@ export class ChatBridge {
     const resume = this.ctx.ledger.has(sessionId) && provider.canResume(this.ctx.ledger.ref(sessionId, null, space.runtime))
     const entry: ChatEntry = {
       sessionId, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
-      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+      openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
@@ -776,7 +788,7 @@ export class ChatBridge {
     void this.handoff().enter('sdk', sessionId, () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -830,7 +842,7 @@ export class ChatBridge {
     await this.handoff().enter('sdk', sessionId, async () => {
       const entry: ChatEntry = {
         sessionId, spaceId: space.id, projectId, projectPath: path, runtime: null, clients: new Set(), active: false,
-        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
+        openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
       }
       this.entries.set(sessionId, entry)
       this.ctx.events.reset(sessionId)
@@ -1025,6 +1037,22 @@ export class ChatBridge {
     }
   }
 
+  /** A background shell started or ended: its views are told what runs now. */
+  private commandChanged(entry: ChatEntry, event: Extract<RuntimeEvent, { kind: 'shell_task' }>): void {
+    if (event.status === 'running') {
+      if (entry.runningCommands.has(event.taskId)) return
+      entry.runningCommands.set(event.taskId, { description: event.description || 'A shell command', since: new Date().toISOString() })
+    } else if (!event.status || !entry.runningCommands.delete(event.taskId)) return
+    this.ctx.onCommands?.(entry.sessionId, commandsOf(entry))
+  }
+
+  /** The process is gone, and the commands it ran with it. */
+  private clearCommands(entry: ChatEntry): void {
+    if (entry.runningCommands.size === 0) return
+    entry.runningCommands.clear()
+    this.ctx.onCommands?.(entry.sessionId, [])
+  }
+
   private onRuntimeEvent(entry: ChatEntry, event: RuntimeEvent): void {
     entry.lastActivity = Date.now()
     if (startsTurn(event)) this.wake(entry)
@@ -1054,6 +1082,7 @@ export class ChatBridge {
         if (event.kind === 'agent_task' && event.status === 'running') entry.runningAgents.add(event.taskId)
         else if (event.status) entry.runningAgents.delete(event.taskId)
         if (event.kind === 'agent_task' && event.status) this.helpersChanged(entry)
+        if (event.kind === 'shell_task') this.commandChanged(entry, event)
         break
       case 'workflow_task': {
         const known = entry.runningWorkflows.get(event.taskId)
@@ -1129,6 +1158,7 @@ export class ChatBridge {
         entry.backgroundTasks.clear()
         entry.runningAgents.clear()
         entry.runningWorkflows.clear()
+        this.clearCommands(entry)
         entry.turnEnded?.()
         // Its helpers went with the process: nothing wakes it any more. After a crash onExit clears the state.
         if (event.expected) this.releaseHeld(entry)

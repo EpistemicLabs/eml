@@ -3,7 +3,7 @@
 // a click focuses the session's pane or opens it, and a task without a session starts one on it.
 import { useCallback, useMemo, useState } from 'react';
 
-import { allSessionState, MARK_WORD, sessionMark, workingWord, type AllSession } from '@/components/sidebar/allSessions';
+import { allSessionState, commandWord, MARK_WORD, sessionMark, waitsForCommand, workingWord, type AllSession } from '@/components/sidebar/allSessions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
@@ -122,6 +122,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
   const stateOfSession = useCallback((s: AllSession): NodeState => {
     const turn = turns[s.id];
     if (allSessionState(s, turn) === 'working') return { hue: 'agent', hollow: false, label: workingWord(turn) };
+    // Its turn is over while a command it started runs: the working hue, the tree's dots never pulse.
+    if (waitsForCommand(s, turn)) return { hue: 'agent', hollow: false, label: commandWord(turn) };
     const mark = sessionMark(s, turn);
     if (mark === 'failed') return { hue: 'stopped', hollow: false, label: MARK_WORD[mark] };
     // A question, a wait, a result to check: all the person's turn, so all amber.

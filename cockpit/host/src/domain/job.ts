@@ -162,7 +162,7 @@ export interface RunFired {
 /** Limits on what sessions may schedule. */
 export const JOB_LIMITS = {
   /** Jobs per space that have not ended. */
-  perSpace: 25,
+  perSpace: 100,
   /** A repeating schedule fires at most this often. */
   minGapMs: 15 * 60_000,
   /** A one-time run at most this far ahead. */

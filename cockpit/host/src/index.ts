@@ -443,8 +443,9 @@ async function main() {
   const runnerHeld = (taskId: string, requestedAt?: string | null) =>
     Boolean(taskCommands?.held(taskId) || taskCommands?.together(taskId) || workerHolds.holds(taskId, requestedAt))
   // What holds one of the runner's slots: a session in a turn on the task, here or in another cockpit's run (domain/runs.ts).
+  // The board also reads the commands each one still runs.
   const taskSessions = (taskId: string) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
-    .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working' }))
+    .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working', commands: turns.get(e.sessionId)?.commands ?? [] }))
   // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
   // from the provider's summary for that one session only.
   const continueSession = createContinueSession({
@@ -573,6 +574,11 @@ async function main() {
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
     onHelpers: (sessionId, helpers, workflows) => turns.waitOn(sessionId, helpers, workflows),
+    // A task says when a command of its session still runs: the board is built again.
+    onCommands: (sessionId, commands) => {
+      turns.commandsOn(sessionId, commands)
+      if (ledger.get(sessionId)?.taskId) void taskBoard.refresh().catch(() => {})
+    },
     turnDone: turnEnded,
     worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),

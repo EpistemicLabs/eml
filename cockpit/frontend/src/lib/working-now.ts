@@ -1,12 +1,12 @@
 // The Inbox's Working now column: every session that works at this moment, across all spaces, and
 // the next scheduled runs. Pure, so which sessions count and in what order is tested without a browser.
-import { agentLabel, agentLetter, allSessionState, waitingWord, type AllSession } from '@/components/sidebar/allSessions';
+import { agentLabel, agentLetter, allSessionState, commandWord, waitingWord, waitsForCommand, type AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { projectNameOf } from '@/lib/open-task';
 import { agentName, type Board, type BoardTask, readable, taskName } from '@/lib/task-board';
 import { deskOf } from '@/lib/unread-answers';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
-import type { TurnInfo } from '@/stores/useTurnStateStore';
+import type { RunningCommand, TurnInfo } from '@/stores/useTurnStateStore';
 
 export interface WorkingRow {
   key: string;
@@ -28,14 +28,27 @@ export interface WorkingRow {
   step: string | null;
   /** Its own turn is over and it waits for subagents or workflow runs it started: the words for it ("Waiting for 2 subagents"). */
   waiting: string | null;
+  /** Its turn is over while background commands it started run: the words for it and the longest-running one. */
+  command: { label: string; description: string; since: string } | null;
 }
 
-/** Sessions working now: this cockpit's own (the live turn state), then other members' runs from the board. Oldest first, so rows stay put while agents work. */
+/** The longest-running of a session's commands; null when none runs. */
+const oldest = (commands: RunningCommand[] | undefined): RunningCommand | null =>
+  commands?.length ? commands.reduce((a, b) => (b.since < a.since ? b : a)) : null;
+
+/**
+ * Sessions working now: this cockpit's own (the live turn state), then other members' runs from the board. A session
+ * whose turn is over while a command it started runs is a row too, for as long as the command runs. Oldest first, so
+ * rows stay put while agents work.
+ */
 export function workingNow(sessions: AllSession[], turns: Record<string, TurnInfo>, board: Pick<Board, 'tasks' | 'projects'>, spaces: SpaceInfo[]): WorkingRow[] {
   const byId = new Map(board.tasks.map((t) => [t.id, t]));
   const rows: WorkingRow[] = [];
   for (const s of sessions) {
-    if (s.archivedAt || allSessionState(s, turns[s.id]) !== 'working') continue;
+    if (s.archivedAt) continue;
+    const turn = turns[s.id];
+    const command = waitsForCommand(s, turn) ? oldest(turn?.commands) : null;
+    if (!command && allSessionState(s, turn) !== 'working') continue;
     const space = spaces.find((sp) => sp.id === s.spaceId);
     const task = (s.taskId ? byId.get(s.taskId) : undefined) ?? board.tasks.find((t) => t.spaceId === s.spaceId && t.sessionIds.includes(s.id));
     rows.push({
@@ -47,9 +60,10 @@ export function workingNow(sessions: AllSession[], turns: Record<string, TurnInf
       name: task ? taskName(task) : readable(sessionDisplayName(s)) || 'New session',
       where: task ? [task.spaceName, projectNameOf(board, task)].filter(Boolean).join(' · ') : deskOf(s, board, space),
       kind: s.worker ? 'worker' : 'desk',
-      since: turns[s.id]?.since ?? s.turnSince ?? null,
+      since: command?.since ?? turn?.since ?? s.turnSince ?? null,
       step: task?.statusLine?.now ?? null,
-      waiting: waitingWord(turns[s.id]),
+      waiting: waitingWord(turn),
+      command: command ? { label: commandWord(turn), description: command.description, since: command.since } : null,
     });
   }
   for (const task of board.tasks) {
@@ -69,6 +83,7 @@ export function workingNow(sessions: AllSession[], turns: Record<string, TurnInf
         since: null,
         step: task.statusLine?.now ?? null,
         waiting: null,
+        command: null,
       });
     }
   }
@@ -82,10 +97,33 @@ export function nextRuns(board: Pick<Board, 'tasks'>): BoardTask[] {
     .sort((a, b) => String(a.nextRunAt).localeCompare(String(b.nextRunAt)));
 }
 
-/** How long a turn has been working: "4 min", "1 h 05". */
+/** How long a turn or a command has been running: "4 min", "1 h 05", "2 d 4 h". */
 export function workingFor(since: string | null, now: number): string {
   const at = since ? Date.parse(since) : NaN;
   if (!Number.isFinite(at)) return '';
   const min = Math.max(0, Math.floor((now - at) / 60_000));
-  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
+  if (min < 60) return `${min} min`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}`;
+  return `${Math.floor(min / (24 * 60))} d ${Math.floor((min % (24 * 60)) / 60)} h`;
+}
+
+/** A row waiting for a command, in words: "Waiting for a command · Run the tests · 12 min". */
+export function commandLine(command: NonNullable<WorkingRow['command']>, now: number): string {
+  return `${command.label} · ${command.description} · ${workingFor(command.since, now)}`;
+}
+
+/** The count in the header: "3", or "2 working · 1 waiting for a command" when some rows wait for a command. */
+export function workingCount(rows: WorkingRow[]): string {
+  const waiting = rows.filter((row) => row.command).length;
+  if (waiting === 0) return String(rows.length);
+  return `${rows.length - waiting} working · ${waiting} waiting for ${waiting === 1 ? 'a command' : 'commands'}`;
+}
+
+/** The extra line on a task whose session waits for its commands; null while none runs. */
+export function commandsNote(task: Pick<BoardTask, 'commands'>, now: number): string | null {
+  const commands = task.commands ?? [];
+  const first = oldest(commands);
+  if (!first) return null;
+  if (commands.length === 1) return `A command is still running (${first.description}, ${workingFor(first.since, now)}); the session continues when it finishes.`;
+  return `${commands.length} commands are still running; the session continues when they finish.`;
 }

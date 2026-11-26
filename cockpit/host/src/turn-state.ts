@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { TurnState } from './domain/agent-provider.js'
-import type { WorkflowWait } from './domain/session-runtime.js'
+import type { RunningCommand, WorkflowWait } from './domain/session-runtime.js'
 
 /**
  * Per-session turn state, fed by the session hooks of the agent provider
@@ -25,6 +25,11 @@ export interface TurnInfo {
   helpers?: number
   /** And for these workflow runs it started, with how far their agents are. Absent when none. */
   workflows?: WorkflowWait[]
+  /**
+   * The background shells it started that still run, in any state: its turn may be over while they
+   * do. Display only, they hold nothing. Absent when none.
+   */
+  commands?: RunningCommand[]
 }
 
 export interface TurnEvent extends TurnInfo {
@@ -76,7 +81,23 @@ export class TurnTracker extends EventEmitter {
       state: info.state, since: info.since,
       ...(helpers > 0 ? { helpers } : {}),
       ...(workflows.length > 0 ? { workflows: workflows.map(({ name, running, done }) => ({ name, running, done })) } : {}),
+      ...(info.commands ? { commands: info.commands } : {}),
     }
+    this.turns.set(sessionId, next)
+    this.emit('turn', { sessionId, ...next } satisfies TurnEvent)
+  }
+
+  /**
+   * The background shells the session started that run now; none: no longer. Its state, `since` and
+   * what it waits on stay; the commands stay through later changes of its state until they end.
+   */
+  commandsOn(sessionId: string, commands: RunningCommand[]): void {
+    const info = this.turns.get(sessionId)
+    if (!info) return
+    if (JSON.stringify(info.commands ?? []) === JSON.stringify(commands)) return
+    const next: TurnInfo = { ...info }
+    if (commands.length > 0) next.commands = commands.map(({ description, since }) => ({ description, since }))
+    else delete next.commands
     this.turns.set(sessionId, next)
     this.emit('turn', { sessionId, ...next } satisfies TurnEvent)
   }
@@ -90,7 +111,8 @@ export class TurnTracker extends EventEmitter {
 
   private set(sessionId: string, state: Exclude<TurnState, 'idle'>): TurnEvent {
     const change = { sessionId, state }
-    const info: TurnInfo = { state: change.state, since: new Date().toISOString() }
+    const commands = this.turns.get(sessionId)?.commands
+    const info: TurnInfo = { state: change.state, since: new Date().toISOString(), ...(commands ? { commands } : {}) }
     this.turns.set(change.sessionId, info)
     const event: TurnEvent = { sessionId: change.sessionId, ...info }
     this.emit('turn', event)

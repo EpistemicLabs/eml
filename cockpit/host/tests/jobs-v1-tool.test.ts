@@ -104,6 +104,20 @@ describe('schedule tool', () => {
     expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/Main job/)
   })
 
+  it('takes 100 jobs per space and refuses the 101st until one is deleted; another space is not counted', async () => {
+    const { jobs } = setup()
+    const create = (who: JobCaller, name: string) => jobs.handle(who, { action: 'create', name, prompt: 'p', cron: '0 8 * * *' })
+    for (let n = 1; n <= 99; n++) expect((await create(caller, `Job ${n}`)).status).toBe(201)
+    const other: JobCaller = { sessionId: 'other-caller', spaceId: 'space-b', projectId: 'bp-x', toolProfile: null }
+    expect((await create(other, 'Elsewhere')).status).toBe(201)
+    expect((await create(caller, 'Job 100')).status).toBe(201)
+    const refused = await create(caller, 'Job 101')
+    expect(refused.status).toBe(400)
+    expect(refused.text).toBe('this space already has 100 jobs; delete one first (at most 100)')
+    expect((await jobs.handle(caller, { action: 'delete', job: 'Job 1' })).status).toBe(200)
+    expect((await create(caller, 'Job 101')).status).toBe(201)
+  })
+
   it('gives a job at most its maker’s tools', async () => {
     const { jobs } = setup()
     const limited: JobCaller = { ...caller, toolProfile: { deniedTools: ['Bash'], mcpServers: ['gmail'] } }

@@ -111,6 +111,24 @@ export function waitingWord(turn: TurnInfo | undefined): string | null {
   return null;
 }
 
+/**
+ * Its turn is over, nothing asks the user, and background commands it started still run: it goes on
+ * when they finish. Display only; the session is not working.
+ */
+export function waitsForCommand(session: ProjectSession, turn: TurnInfo | undefined): boolean {
+  if (!turn?.commands?.length) return false;
+  const state = allSessionState(session, turn);
+  if (state !== 'done') return false;
+  const kind = session.attention?.kind;
+  return kind !== 'question' && kind !== 'failed';
+}
+
+/** The words for the commands it waits for: "Waiting for a command", "Waiting for 2 commands". */
+export function commandWord(turn: TurnInfo | undefined): string {
+  const n = turn?.commands?.length ?? 0;
+  return n > 1 ? `Waiting for ${n} commands` : 'Waiting for a command';
+}
+
 /** What a working session's dot says: its own turn may be over while helpers it started still run. */
 export function workingWord(turn: TurnInfo | undefined): string {
   return waitingWord(turn) ?? 'Working';

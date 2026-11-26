@@ -40,3 +40,52 @@ describe('TurnTracker.waitOn', () => {
     expect(tracker.get('s1')?.workflows).toBeUndefined()
   })
 })
+
+describe('TurnTracker.commandsOn', () => {
+  const tests = { description: 'Run the tests', since: '2026-02-01T11:00:00.000Z' }
+  const build = { description: 'Build the app', since: '2026-02-01T11:30:00.000Z' }
+
+  it('carries the commands a session runs through its state changes, and drops them once none runs', () => {
+    const tracker = new TurnTracker()
+    const events: TurnEvent[] = []
+    tracker.apply({ sessionId: 's1', state: 'working' })
+    tracker.on('turn', (event: TurnEvent) => events.push(event))
+    tracker.commandsOn('s1', [tests])
+    expect(tracker.get('s1')?.commands).toEqual([tests])
+    // Its turn ends while the command runs: done, with the command still shown.
+    tracker.apply({ sessionId: 's1', state: 'done' })
+    expect(tracker.get('s1')).toMatchObject({ state: 'done', commands: [tests] })
+    tracker.commandsOn('s1', [tests, build])
+    tracker.commandsOn('s1', [build])
+    tracker.commandsOn('s1', [])
+    expect(tracker.get('s1')).toEqual({ state: 'done', since: tracker.get('s1')?.since })
+    expect(events.map((event) => [event.state, event.commands])).toEqual([
+      ['working', [tests]], ['done', [tests]], ['done', [tests, build]], ['done', [build]], ['done', undefined],
+    ])
+  })
+
+  it('keeps what a working session waits on beside its commands, and says nothing when nothing changed', () => {
+    const tracker = new TurnTracker()
+    const events: TurnEvent[] = []
+    tracker.apply({ sessionId: 's1', state: 'working' })
+    tracker.waitOn('s1', 1)
+    tracker.on('turn', (event: TurnEvent) => events.push(event))
+    tracker.commandsOn('s1', [tests])
+    tracker.commandsOn('s1', [{ ...tests }])
+    expect(tracker.get('s1')).toMatchObject({ helpers: 1, commands: [tests] })
+    tracker.waitOn('s1', 0)
+    expect(tracker.get('s1')?.commands).toEqual([tests])
+    expect(events).toHaveLength(2)
+  })
+
+  it('has no commands for a session it does not know, nor after the session is gone', () => {
+    const tracker = new TurnTracker()
+    tracker.commandsOn('s1', [tests])
+    expect(tracker.get('s1')).toBeUndefined()
+    tracker.apply({ sessionId: 's1', state: 'working' })
+    tracker.commandsOn('s1', [tests])
+    tracker.forget('s1')
+    tracker.apply({ sessionId: 's1', state: 'working' })
+    expect(tracker.get('s1')?.commands).toBeUndefined()
+  })
+})
