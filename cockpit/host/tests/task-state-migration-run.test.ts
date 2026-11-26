@@ -121,12 +121,12 @@ describe('the task state migration run', () => {
   it('a routine without a task gets one, named after it, and a retry finds it again instead of making a second', async () => {
     const w = world([])
     const routine = { id: 'job-1234567890', name: 'Daily brief', prompt: 'write the brief' }
-    const task = routineTask(routine, 'bp-ops', 'lasse')!
-    expect(task).toEqual({ title: routineTitle(routine), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['lasse'] })
+    const task = routineTask(routine, 'bp-ops', 'member')!
+    expect(task).toEqual({ title: routineTitle(routine), display_title: 'Daily brief', content: 'write the brief', scope: 'project.ops', status: 'active', assignee_ids: ['member'] })
     expect(task.title).toBe('routine-daily-brief-job-1234')
     // a task belongs to a project of the brain
-    expect(routineTask(routine, null, 'lasse')).toBeNull()
-    expect(routineTask(routine, 'some-folder', 'lasse')).toBeNull()
+    expect(routineTask(routine, null, 'member')).toBeNull()
+    expect(routineTask(routine, 'some-folder', 'member')).toBeNull()
 
     expect(await makeRoutineTask(w.brain, task)).toEqual({ id: 'made-0', made: true })
     expect(w.posts).toEqual([{ path: '/engram/task', body: task }])

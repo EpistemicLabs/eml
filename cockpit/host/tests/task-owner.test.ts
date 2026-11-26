@@ -31,31 +31,31 @@ describe('who owns a task', () => {
 })
 
 describe('whose cockpit fires a task\'s schedule', () => {
-  const members = ['lasse', 'dominik']
+  const members = ['member', 'other']
   const task = (assignees: string[], author: string | null) => ({ ingested_by: author, properties: { assignee_ids: assignees } })
 
   it('in a local space every task is this member\'s', () => {
-    for (const t of [task(['dominik'], 'dominik'), task([], 'atlas'), task([], null)]) expect(firingOf(false, t, 'lasse', null)).toBe('mine')
+    for (const t of [task(['other'], 'other'), task([], 'atlas'), task([], null)]) expect(firingOf(false, t, 'member', null)).toBe('mine')
   })
 
   it('in a shared space: mine by the first assignee, else by authorship; another member\'s is theirs', () => {
-    expect(firingOf(true, task(['lasse', 'dominik'], 'dominik'), 'lasse', members)).toBe('mine')
-    expect(firingOf(true, task([], 'lasse'), 'lasse', members)).toBe('mine')
-    expect(firingOf(true, task(['dominik', 'lasse'], 'lasse'), 'lasse', members)).toBe('theirs')
-    expect(firingOf(true, task([], 'dominik'), 'lasse', members)).toBe('theirs')
+    expect(firingOf(true, task(['member', 'other'], 'other'), 'member', members)).toBe('mine')
+    expect(firingOf(true, task([], 'member'), 'member', members)).toBe('mine')
+    expect(firingOf(true, task(['other', 'member'], 'member'), 'member', members)).toBe('theirs')
+    expect(firingOf(true, task([], 'other'), 'member', members)).toBe('theirs')
     // an assignee decides without the member list
-    expect(firingOf(true, task(['dominik'], 'atlas'), 'lasse', null)).toBe('theirs')
+    expect(firingOf(true, task(['other'], 'atlas'), 'member', null)).toBe('theirs')
   })
 
   it('a task nobody is assigned to that no member wrote is ownerless: the cockpit that holds its record fires it', () => {
-    expect(firingOf(true, task([], 'atlas'), 'lasse', members)).toBe('ownerless')
-    expect(firingOf(true, task([], null), 'lasse', null)).toBe('ownerless')
+    expect(firingOf(true, task([], 'atlas'), 'member', members)).toBe('ownerless')
+    expect(firingOf(true, task([], null), 'member', null)).toBe('ownerless')
     expect([firesHere('ownerless', true), firesHere('ownerless', false)]).toEqual([true, false])
     expect([firesHere('mine', false), firesHere('theirs', true), firesHere('unknown', true)]).toEqual([true, false, false])
   })
 
   it('is unknown while the space\'s kind is, or while the members who would decide cannot be read', () => {
-    expect(firingOf(null, task(['lasse'], 'lasse'), 'lasse', members)).toBe('unknown')
-    expect(firingOf(true, task([], 'atlas'), 'lasse', null)).toBe('unknown')
+    expect(firingOf(null, task(['member'], 'member'), 'member', members)).toBe('unknown')
+    expect(firingOf(true, task([], 'atlas'), 'member', null)).toBe('unknown')
   })
 })

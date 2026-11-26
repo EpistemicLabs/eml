@@ -15,7 +15,7 @@ const at = (day: number, hour: number, minute = 0) => new Date(Date.UTC(2026, 10
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 'daily', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'daily-brief', status: 'active', parentId: null, updatedAt: null,
   turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', coverage: { ok: true, how: 'at_time' }, urgency: 0, important: false, sessionIds: [], working: false,
-  nextRunAt: at(20, 8), hasSchedule: true, owner: 'lasse', schedule: { crons: ['0 8 * * 1-5', '0 18,22 * * 1-5'], time_zone: 'Asia/Bangkok' }, ...patch,
+  nextRunAt: at(20, 8), hasSchedule: true, owner: 'member', schedule: { crons: ['0 8 * * 1-5', '0 18,22 * * 1-5'], time_zone: 'Asia/Bangkok' }, ...patch,
 });
 const record = (patch: Partial<TaskRecord> = {}): TaskRecord => ({ id: 'daily', triggers: [], reply: {}, pausedReason: null, ...patch });
 const run = (patch: Partial<TaskRun>): TaskRun => ({ id: 'r1', number: 1, trigger: 'schedule', dueAt: at(19, 8), status: 'finished', sessionId: 's1', startedAt: at(19, 8, 1), finishedAt: at(19, 8, 9), outcome: 'done', note: null, session: null, ...patch });

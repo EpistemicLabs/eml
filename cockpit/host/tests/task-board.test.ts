@@ -235,8 +235,8 @@ describe('the task board', () => {
   it('shows the schedule of a task another member owns as scheduled, with its next run', async () => {
     const { board } = setup({
       main: [
-        mine('theirs-weekly', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC' } } }),
-        mine('paused', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC', paused: true } } }),
+        mine('theirs-weekly', { assignee_ids: ['other'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC' } } }),
+        mine('paused', { assignee_ids: ['other'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC', paused: true } } }),
       ],
     })
     const model = await board.refresh()
@@ -586,7 +586,7 @@ describe('the task board', () => {
         // Its schedule is paused: no run is coming up, it has one all the same.
         mine('paused', { waits: [review], waiting_on: review }),
         // Another member's task: its schedule counts all the same.
-        { id: 'mirrored', status: 'active', properties: { assignee_ids: ['dominik'], waits: [review], waiting_on: review, delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } } },
+        { id: 'mirrored', status: 'active', properties: { assignee_ids: ['other'], waits: [review], waiting_on: review, delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } } },
         // Its schedule has ended since, but it had one when the owner chose Looks good.
         mine('was-scheduled', { waits: [review], waiting_on: review }),
         // The next run asked for its review after the owner approved the one before: that one stays.

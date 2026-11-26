@@ -29,7 +29,7 @@ type WorldTask = RunnerTask & { space: string | null }
 class World {
   now = Date.parse('2026-11-09T00:00:00Z') // Monday 08:00 in Asia/Makassar
   room = true
-  me = 'lasse'
+  me = 'member'
   spaces: RunnerSpace[] = [MAIN]
   /** Every task of every space, open or closed, by id; `space` says where it lives. */
   tasks = new Map<string, WorldTask>()
@@ -47,7 +47,7 @@ class World {
   sessions: Array<{ taskId: string; sessionId: string; working: boolean; linked: boolean }> = []
   elsewhere = new Set<string>()
   /** The people of a shared space; null: they cannot be read. */
-  members: string[] | null = ['lasse', 'dominik']
+  members: string[] | null = ['member', 'other']
   /** What the brain server says of a space of unknown kind when it is asked again, by key; the calls are counted. */
   kinds = new Map<string | null, boolean>()
   kindAsked = 0
@@ -68,9 +68,9 @@ class World {
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
   task(id: string, schedule: ScheduleFields | null, patch: Partial<RunnerTask> & { space?: string | null; owner?: string[] } = {}): WorldTask {
-    const { space = null, owner = ['lasse'], properties, ...rest } = patch
+    const { space = null, owner = ['member'], properties, ...rest } = patch
     const task: WorldTask = {
-      id, title: `slug-${id}`, content: `Do the work of ${id}.`, status: 'active', scope: 'project.eml', ingested_by: 'lasse', space,
+      id, title: `slug-${id}`, content: `Do the work of ${id}.`, status: 'active', scope: 'project.eml', ingested_by: 'member', space,
       properties: { assignee_ids: owner, display_title: `Task ${id}`, ...(schedule ? { delegation: { agent: 'atlas', checkpoint: 'none', schedule } } : {}), ...properties },
       ...rest,
     }
@@ -99,7 +99,7 @@ class World {
 
   wait(taskId: string, sessionId: string, kind: string): void {
     const task = this.tasks.get(taskId)!
-    this.patch(taskId, { properties: { ...task.properties, waits: [{ id: sessionId, who: 'lasse', kind, why: 'asks', session_id: sessionId }] } })
+    this.patch(taskId, { properties: { ...task.properties, waits: [{ id: sessionId, who: 'member', kind, why: 'asks', session_id: sessionId }] } })
   }
 
   deps(patch: Partial<JobRunnerDeps> = {}): JobRunnerDeps {
@@ -562,29 +562,29 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
   }
 
   it('fires my task', async () => {
-    world.task('mine', WEEKDAYS_8, { space: 'team', owner: ['lasse', 'dominik'], ingested_by: 'dominik' })
+    world.task('mine', WEEKDAYS_8, { space: 'team', owner: ['member', 'other'], ingested_by: 'other' })
     expect(await fires('mine')).toEqual({ record: true, started: true })
     expect(world.store.get('mine')?.spaceId).toBe('team')
   })
 
   it('leaves another member\'s task to their cockpit: no record, no run', async () => {
-    world.task('theirs', WEEKDAYS_8, { space: 'team', owner: ['dominik', 'lasse'], ingested_by: 'lasse' })
+    world.task('theirs', WEEKDAYS_8, { space: 'team', owner: ['other', 'member'], ingested_by: 'member' })
     expect(await fires('theirs')).toEqual({ record: false, started: false })
   })
 
   it('fires a task nobody is assigned to that I authored', async () => {
-    world.task('authored', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'lasse' })
+    world.task('authored', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'member' })
     expect(await fires('authored')).toEqual({ record: true, started: true })
   })
 
   it('leaves a task nobody is assigned to that another member authored', async () => {
-    world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'dominik' })
+    world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'other' })
     expect(await fires('their-own')).toEqual({ record: false, started: false })
   })
 
   it('fires every task of a local space', async () => {
     world.spaces = [MAIN]
-    world.task('local', WEEKDAYS_8, { owner: ['dominik'], ingested_by: 'dominik' })
+    world.task('local', WEEKDAYS_8, { owner: ['other'], ingested_by: 'other' })
     world.task('agents', WEEKDAYS_8, { owner: [], ingested_by: 'atlas' })
     await firstSeenThen('2026-11-10T00:00:30Z')
     expect(world.started.map((s) => s.task.id).sort()).toEqual(['agents', 'local'])
@@ -634,7 +634,7 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
       world.members = null
       expect(await fires('agents')).toEqual({ record: true, started: false })
       expect(world.store.get('agents')?.cursor).toBe('2026-11-10T00:00:10.000Z')
-      world.members = ['lasse', 'dominik']
+      world.members = ['member', 'other']
       world.now = Date.parse('2026-11-11T00:00:30Z')
       await runner.tick()
       await runner.tick()
@@ -642,7 +642,7 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
     })
 
     it('a task nobody is assigned to that another member wrote is that member\'s, record or not', async () => {
-      world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'dominik' })
+      world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'other' })
       world.store.put({ ...newRecord({ id: 'their-own', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), limited: true })
       expect(await fires('their-own')).toEqual({ record: true, started: false })
     })
@@ -652,7 +652,7 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
     world.task('moved', WEEKDAYS_8, { space: 'team' })
     await runner.tick()
     expect(world.store.get('moved')).toBeDefined()
-    world.patch('moved', { properties: { ...world.tasks.get('moved')!.properties, assignee_ids: ['dominik'] } })
+    world.patch('moved', { properties: { ...world.tasks.get('moved')!.properties, assignee_ids: ['other'] } })
     world.now += RECORD_GRACE_MS
     await runner.tick()
     expect(world.store.get('moved')).toBeUndefined()

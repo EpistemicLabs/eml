@@ -45,11 +45,11 @@ describe('job contract v1', () => {
     delivered = []
     working = []
     room = true
-    task = { id: JOB_ID, title: 'customer-mail', content: 'Answer customer mail as drafts.', status: 'active', scope: 'project.customer', properties: { assignee_ids: ['lasse'], display_title: 'Customer mail' } }
+    task = { id: JOB_ID, title: 'customer-mail', content: 'Answer customer mail as drafts.', status: 'active', scope: 'project.customer', properties: { assignee_ids: ['member'], display_title: 'Customer mail' } }
     ensureJobTokens([SPACE, OTHER], dir)
     runner = new JobRunner({
       // every pass reads the tasks: no minute to wait
-      store, me: 'lasse', deriveEveryMs: 0, spaces: () => [{ key: null, name: 'Main', shared: false }],
+      store, me: 'member', deriveEveryMs: 0, spaces: () => [{ key: null, name: 'Main', shared: false }],
       openTasks: async () => (task && ['planned', 'active'].includes(task.status) ? [task] : []), task: async (_space, id) => (task && id === task.id ? task : null),
       sessionsOf: () => working.map((sessionId) => ({ sessionId, working: true, linked: !sessionId.startsWith('own-') })), editSchedule: async () => {},
       hasRoom: () => room, sessionState: (id) => (started.includes(id) ? 'idle' : 'queued'), sessionRuns: (id) => working.includes(id),

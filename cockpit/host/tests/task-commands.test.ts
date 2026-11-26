@@ -1033,13 +1033,13 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
   })
 
   it('refuses each on a task without a schedule, a closed one, an unknown one, and another owner\'s', async () => {
-    const w = withEngine([owned('plain', {}, 'active'), scheduled('closed', DAILY, {}, 'resolved'), scheduled('theirs', DAILY, { assignee_ids: ['dominik'] })])
+    const w = withEngine([owned('plain', {}, 'active'), scheduled('closed', DAILY, {}, 'resolved'), scheduled('theirs', DAILY, { assignee_ids: ['other'] })])
     for (const kind of ['pause_schedule', 'resume_schedule', 'run_now', 'remove_time'] as const) {
       const submit = (taskId: string) => w.commands.submit({ opId: `${kind}-${taskId}`, kind, spaceId: 'main', taskId, cron: '0 8 * * 1-5' })
       expect(await submit('plain')).toMatchObject({ ok: false, refusal: kind === 'remove_time' ? 'unknown_time' : 'not_scheduled' })
       expect(await submit('closed')).toMatchObject({ ok: false, refusal: 'task_closed' })
       expect(await submit('nope')).toMatchObject({ ok: false, refusal: 'unknown_task' })
-      expect(await submit('theirs')).toMatchObject({ ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can change its schedule.' })
+      expect(await submit('theirs')).toMatchObject({ ok: false, refusal: 'not_owner', message: 'Only its owner (other) can change its schedule.' })
       expect(await w.commands.submit({ opId: `${kind}-none`, kind, spaceId: 'main' })).toMatchObject({ ok: false, refusal: 'invalid' })
     }
     expect(w.posts).toEqual([])
