@@ -138,6 +138,26 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.posts[0].body.delegation).toEqual({ agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })
   })
 
+  it('a journal line without a change of the schedule is posted on its own: the text, and no delegation', async () => {
+    // The task has its job's time and says what it is for already; its second job ran in another zone and is left out.
+    const has = task('t1', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
+    has.content = 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.'
+    const w = world([v1('j1'), v1('j2', { name: 'Tokyo brief', createdAt: '2026-11-02T00:00:00.000Z', triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Asia/Tokyo' }] })], [has])
+    expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: { text: expect.stringContaining('The routine "Tokyo brief" NO LONGER FIRES') } }])
+    expect(w.byId.get('t1')!.properties.delegation).toEqual({ agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })
+  })
+
+  it('a task that has the schedule already gets only the text of what its time is for, with the journal line the brain asks for', async () => {
+    const w = world([v1('j1')], [task('t1', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })])
+    expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: {
+      content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.',
+      text: 'Schedules moved onto tasks: what its repeating job did was added to the task\'s text, as "Every <cron>: …".',
+    } }])
+    expect(w.store.get('t1')).toMatchObject({ id: 't1' })
+  })
+
   it('a task whose write fails keeps its jobs for the next start; the others move', async () => {
     const w = world([v1('j1'), v1('j2', { taskId: 't2' })], [task('t1'), task('t2')], { failOn: ['t1'] })
     const result = await w.migration.run()
