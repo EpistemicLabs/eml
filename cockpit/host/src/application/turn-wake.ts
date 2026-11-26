@@ -23,6 +23,11 @@ import { editTaskSchedule } from './task-schedule-write.js'
 export interface TurnWakeDeps {
   /** The session's task (the ledger's) and the brain of its space, with the space's agent; null: the cockpit does not know the session. */
   where(sessionId: string): { taskId: string | null; brain: Pick<EmlApi, 'get' | 'post'> | null; agent: string | null } | null
+  /**
+   * The task still has jobs of before brain schema 24 that are moving onto it (application/job-migration.ts): the
+   * migration replaces its schedule with what they say, so nothing is written to it until they have moved.
+   */
+  moving?(taskId: string): boolean
   /** The user's time zone now: a call's when is read in it. */
   zone(): string
   now?: () => number
@@ -73,6 +78,7 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
     if (!where) throw new Refused('the cockpit does not know this session', 'none')
     if (!where.taskId) throw new Refused(NO_TASK, 'none')
     if (!where.brain) throw new Refused('the space of the session\'s task has no brain to write to', 'again')
+    if (deps.moving?.(where.taskId)) throw new Refused('the task\'s jobs from before are still moving onto it; in a minute it can be set', 'again')
     const zone = deps.zone()
     let at: string | undefined
     if (edit.kind === 'set') {

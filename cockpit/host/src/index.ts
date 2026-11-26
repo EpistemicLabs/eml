@@ -859,6 +859,7 @@ async function main() {
       const space = spaces.resolve(entry.spaceId ?? null)
       return { taskId: entry.taskId ?? null, brain: taskBrain(space), agent: space.agent ?? null }
     },
+    moving: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
     zone: userTimeZone, log,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
   })

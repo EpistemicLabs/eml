@@ -9,7 +9,7 @@ const WEEKDAYS: ScheduleFields = { crons: ['0 8 * * 1-5'], time_zone: 'Asia/Maka
 const WHY = 'The check you set with end_turn is due. You planned: look again. See where the task stands and act on it.'
 
 /** A brain that keeps one task and applies each track call's delegation to it, as the real one does. */
-function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean } = {}) {
+function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean; moving?: boolean } = {}) {
   const task: ScheduledTask = {
     id: 't1', status: opts.status ?? 'active',
     properties: opts.delegation === false ? {} : { delegation: { agent: 'atlas', checkpoint: 'after', ...(opts.schedule ? { schedule: opts.schedule } : {}) } },
@@ -27,6 +27,7 @@ function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId
   }
   const wake = createTurnWake({
     where: () => (opts.known === false ? null : { taskId: opts.taskId === undefined ? 't1' : opts.taskId, brain: opts.noBrain ? null : brain, agent: 'atlas' }),
+    moving: () => opts.moving === true,
     zone: () => ZONE, now: () => NOW, log: (line) => log.push(line), changed: () => { changed += 1 },
   })
   const schedule = () => task.properties?.delegation?.schedule ?? null
@@ -141,6 +142,14 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
     const w = world()
     expect(await w.wake.settle('s1', set('2028-01-01T10:00'))).toMatchObject({ problem: 'at most a year ahead', fix: 'time', saved: null })
     expect(await w.wake.settle('s1', set('soon'))).toMatchObject({ problem: '"soon" is not a time', fix: 'time' })
+    expect(w.posts).toEqual([])
+  })
+
+  it('writes nothing to a task whose jobs from before are still moving onto it: the call is to be made again', async () => {
+    const w = world({ schedule: WEEKDAYS, moving: true })
+    expect(await w.wake.settle('s1', set('2026-11-26T10:00')))
+      .toEqual({ problem: 'the task\'s jobs from before are still moving onto it; in a minute it can be set', fix: 'again', saved: null, nextRun: false })
+    expect(await w.wake.settle('s1', clear('any'))).toEqual({ problem: null, saved: null, nextRun: false })
     expect(w.posts).toEqual([])
   })
 
