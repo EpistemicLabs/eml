@@ -638,6 +638,7 @@ async function main() {
     },
     clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
     jobs: scheduleFor,
+    endTurnTool,
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)

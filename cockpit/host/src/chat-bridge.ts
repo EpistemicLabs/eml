@@ -18,7 +18,7 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type EndTurn, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
+import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type EndTurn, type EndTurnAccess, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
 import type { WakeSettled } from './application/turn-wake.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
@@ -251,6 +251,11 @@ export interface ChatContext {
   clearJobProfile?: (jobId: string) => void
   /** The schedule tool's actions, for the session that calls it (application/jobs.ts); absent: no tool. */
   jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
+  /**
+   * How the session has end_turn (application/turn-context.ts endTurnAccess), for the reminder that asks for the
+   * call: one that gets it from an MCP server (Codex) is told its name there. Absent: built in.
+   */
+  endTurnTool?: (sessionId: string) => EndTurnAccess
 }
 
 type ClientMessage = {
@@ -1009,7 +1014,7 @@ export class ChatBridge {
         // One reminder per turn, naming everything it lacks: no call and unasked questions only while nobody has the session open, no reply always.
         if (entry.reminded || missing.length === 0) return null
         entry.reminded = true
-        return reminder(missing)
+        return reminder(missing, this.ctx.endTurnTool ? { tool: this.ctx.endTurnTool(entry.sessionId) } : {})
       },
     }
   }
