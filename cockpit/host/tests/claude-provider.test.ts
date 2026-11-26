@@ -141,4 +141,22 @@ describe('Claude Code provider', () => {
     expect(hook({ hook_event_name: 'SessionStart' })).toBeNull()
     expect(provider.turnSignal({ hook_event_name: 'Stop' })).toBeNull()
   })
+
+  it('has the chat, the end_turn tool and messaging', () => {
+    expect(provider.capabilities).toEqual({ chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true } })
+  })
+
+  it('reads the last reply from a Stop hook: its field, else the transcript', () => {
+    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
+    const file = join(home, 'transcript.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the last reply' }, { type: 'tool_use' }] } }),
+      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
+    ].join('\n'))
+    expect(provider.lastReply({ transcript_path: file })).toBe('the last reply')
+    expect(provider.lastReply({ last_assistant_message: 'hello', transcript_path: file })).toBe('hello')
+    expect(provider.lastReply({ transcript_path: join(home, 'missing.jsonl') })).toBe('')
+    expect(provider.lastReply({})).toBe('')
+  })
 })

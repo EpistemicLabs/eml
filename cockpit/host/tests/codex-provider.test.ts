@@ -248,6 +248,22 @@ describe('Codex provider', () => {
     expect(hook('Stop')).toEqual({ kind: 'turn', providerSessionId: 'their-id', state: 'done' })
     expect(hook('SessionStart')).toBeNull()
   })
+
+  it('runs in the terminal only: no chat, no end_turn tool, no messaging, each with its reason', () => {
+    expect(provider.capabilities).toEqual({
+      chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+      endTurnTool: { supported: false, reason: 'Codex sessions say how a turn ends in the text of their reply.' },
+      messaging: { supported: false, reason: 'Codex sessions have no session-to-session messaging.' },
+    })
+  })
+
+  it('reads the last reply from a Stop hook\'s own field only', () => {
+    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
+    const file = join(home, 'codex-transcript.jsonl')
+    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'not read' }] } }))
+    expect(provider.lastReply({ transcript_path: file })).toBe('')
+    expect(provider.lastReply({})).toBe('')
+  })
 })
 
 describe('Codex rollout summary', () => {

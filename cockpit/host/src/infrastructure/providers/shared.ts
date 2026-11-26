@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { HOOK_LIST_AGENTS_JS, HOOK_MCP_CLI_JS, HOOK_NODE, HOOK_SEND_MESSAGE_JS, HOOK_TASK_JS, HOOK_TURN_JS } from '../../paths.js'
 import type { PlatformOs } from '../../domain/platform.js'
+import type { ProviderCapabilities } from '../../domain/agent-provider.js'
 import { platform } from '../platform/index.js'
 
 /**
@@ -221,5 +222,18 @@ export function installManagedSkills(sourceDirs: string[], configDir: string): v
       fs.mkdirSync(targetDir, { recursive: true })
       fs.copyFileSync(source, target)
     }
+  }
+}
+
+/**
+ * What a provider whose sessions run in the terminal only can do: no chat
+ * view, so no end_turn tool, and no address another session could send to.
+ */
+export function terminalOnly(label: string): ProviderCapabilities {
+  return {
+    // The chat's refusal for such a session, word for word (chat-bridge.ts init).
+    chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+    endTurnTool: { supported: false, reason: `${label} sessions say how a turn ends in the text of their reply.` },
+    messaging: { supported: false, reason: `${label} sessions have no session-to-session messaging.` },
   }
 }

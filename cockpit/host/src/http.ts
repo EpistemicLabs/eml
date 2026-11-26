@@ -14,7 +14,6 @@ import type { StartWorker } from './application/start-worker.js'
 import { renameRefusal, type SessionTask } from './application/session-task.js'
 import { cycleOf, plannerPrompt, type Cycles } from './application/cycles.js'
 import { leadDay, leadPrompt } from './domain/project-lead.js'
-import { replyFromStopHook } from './application/task-router.js'
 import { planArchive } from './application/archive-session.js'
 import { attentionShown, needsAnswer, wasSpawned, worksAlone } from './domain/session-attention.js'
 import { listAgentsContext, searchResult, searchSessions, SEARCH_LIMIT, type DirectoryEntry, type DirectoryQuery } from './domain/session-directory.js'
@@ -213,6 +212,7 @@ async function providerViews(deps: HostDeps) {
     signedIn: await provider.auth.signedIn().catch(() => false),
     isDefault: provider.id === preferred,
     settings: provider.settings?.read() ?? null,
+    capabilities: provider.capabilities,
   })))
 }
 
@@ -407,8 +407,8 @@ function directoryEntries(deps: HostDeps, callerId: string): DirectoryEntry[] {
   }
   return ledger.list()
     .filter((entry) => entry.sessionId !== callerId && agentOf(entry.spaceId) === agentOf(caller.spaceId))
-    // A Codex session has no address to send to.
-    .filter((entry) => deps.providers.forSession(entry.sessionId).messaging)
+    // A session of a provider without messaging has no address to send to.
+    .filter((entry) => deps.providers.forSession(entry.sessionId).capabilities.messaging.supported)
     .map((entry) => {
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       const view = sessionView(deps, project, entry)
@@ -1252,7 +1252,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         {
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
           waitsOnHelpers: (sessionId: string) => deps.chat.holdTurnOpen(sessionId),
-          ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, replyFromStopHook(payload)) } : {}),
+          ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, deps.providers.forSession(sessionId).lastReply(payload)) } : {}),
           ...(deps.answered ? { answered: deps.answered } : {}),
           ...(deps.userWrote ? { userWrote: deps.userWrote } : {}),
         },

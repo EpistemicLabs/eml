@@ -1,6 +1,6 @@
-// Whether a new session opens in chat. An unknown provider stays in the terminal: only Claude has a chat.
-export function startsInChat(session: { chatDefault: boolean; provider: string | null }): boolean {
-  return session.chatDefault && session.provider === 'claude';
+// Whether a new session opens in chat. `canChat`: its provider has a chat view (lib/providers.ts).
+export function startsInChat(session: { chatDefault: boolean; canChat: boolean }): boolean {
+  return session.chatDefault && session.canChat;
 }
 
 // When a terminal pane should show its session in the chat view instead.
@@ -12,11 +12,12 @@ export function shouldOpenInChat(pane: {
   chatDefault: boolean;
   /** The view the user picked for this session in this browser. */
   pickedView: string | undefined;
-  provider: string;
+  /** The session's provider has a chat view (lib/providers.ts). */
+  canChat: boolean;
   /** A worker's start command waits for the terminal. */
   queuedCommand: boolean;
 }): boolean {
-  if (pane.view !== 'terminal' || pane.provider !== 'claude' || pane.queuedCommand) return false;
+  if (pane.view !== 'terminal' || !pane.canChat || pane.queuedCommand) return false;
   if (pane.runtime === 'sdk') return true;
   return pane.chatDefault && pane.pickedView !== 'terminal';
 }

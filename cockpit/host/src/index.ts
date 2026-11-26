@@ -988,7 +988,8 @@ async function main() {
   const splitBrief = createSplitBrief({
     transcript: async (sessionId) => {
       const entry = ledger.get(sessionId)
-      if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+      // The conversation is read through the chat runtime: only a provider with a chat has one there.
+      if (!entry || !providers.get(entry.provider)?.capabilities.chat.supported || !entry.projectId) return null
       const space = spaces.resolve(entry.spaceId)
       const projectPath = space.registry.get(entry.projectId)?.path
       if (!projectPath) return null
@@ -1063,7 +1064,7 @@ async function main() {
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {
         const entry = ledger.get(sessionId)
-        if (!entry || entry.provider !== 'claude' || !entry.projectId) return null
+        if (!entry || !providers.get(entry.provider)?.capabilities.chat.supported || !entry.projectId) return null
         const space = spaces.resolve(entry.spaceId)
         const projectPath = space.registry.get(entry.projectId)?.path
         if (!projectPath) return null

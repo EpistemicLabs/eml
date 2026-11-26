@@ -138,7 +138,8 @@ describe('the session directory endpoint', () => {
     spaces.add(space('shared-brain', null) as never)
     spaces.add(space('agent-brain', 'second-agent') as never)
     const provider = (id: string, messaging: boolean) => ({
-      id, messaging, deleteTranscript: () => {},
+      id, label: id, capabilities: { messaging: messaging ? { supported: true } : { supported: false, reason: 'no address' } }, deleteTranscript: () => {},
+      runtime: { version: () => '1.0.0', problem: () => null, problemHint: '', state: () => ({}) }, auth: { signedIn: async () => true },
       summary: (ref: { sessionId: string }) => ({ messageCount: 2, lastMessageAt: hoursAgo(3), lastActivity: null, summary: ref.sessionId === 'catalogue-session' ? 'Import the spring catalogue' : 'Something else', aiTitle: null, lastReply: null, model: null, contextTokens: null }),
     })
     const claude = provider('claude', true)
@@ -146,7 +147,7 @@ describe('the session directory endpoint', () => {
     const deps = {
       spaces,
       turns: new TurnTracker(),
-      providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex] },
+      providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex], default: () => claude },
       bridge: { ledger, sessionRef: (sessionId: string, projectPath: string | null) => ({ sessionId, projectPath }), sessionState: () => 'ended' },
       chat: { isRunning: () => false, backgroundTasks: () => 0 },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
@@ -161,6 +162,15 @@ describe('the session directory endpoint', () => {
   afterAll(async () => {
     await new Promise((resolve) => server.close(resolve))
     rmSync(home, { recursive: true, force: true })
+  })
+
+  it('the provider list says what each provider can do', async () => {
+    const res = await fetch(`${base}/api/providers`, { headers: { origin: 'http://cockpit.test' } })
+    const { providers } = await res.json() as { providers: Array<{ id: string; capabilities: unknown }> }
+    expect(providers.map((p) => [p.id, p.capabilities])).toEqual([
+      ['claude', { messaging: { supported: true } }],
+      ['codex', { messaging: { supported: false, reason: 'no address' } }],
+    ])
   })
 
   it('answers only a cockpit session that says who it is', async () => {

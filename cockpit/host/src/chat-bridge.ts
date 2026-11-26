@@ -574,7 +574,9 @@ export class ChatBridge {
     const project = this.projectFor(space, projectId)
     if (!project?.path) return refuse('Unknown project, or it has no folder')
     const provider = this.ctx.ledger.has(sessionId) ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get('claude')
-    if (!provider || provider.id !== 'claude') return refuse('The chat view runs Claude Code sessions only. This session stays in the terminal.')
+    if (!provider) return refuse('The chat view runs Claude Code sessions only. This session stays in the terminal.')
+    const chat = provider.capabilities.chat
+    if (!chat.supported) return refuse(chat.reason)
     const problem = provider.runtime.problem()
     if (problem) return refuse(`${problem} ${provider.runtime.problemHint}`)
     // A space with its own agent never falls back to the shared config.

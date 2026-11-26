@@ -236,6 +236,21 @@ export interface AgentAuth {
   invalidate(): void
 }
 
+/** Whether a provider has a feature; one without it says why, for the UI and for a refusal. */
+export type Capability = { supported: true } | { supported: false; reason: string }
+
+/**
+ * The features that differ per provider:
+ *   chat         its sessions can run in the chat view (a SessionRuntime, domain/session-runtime.ts),
+ *                which also reads their earlier conversation
+ *   endTurnTool  a chat session has the end_turn tool (domain/turn-end.ts); one without it says how
+ *                its turn ends in the text of its reply, like a terminal
+ *   messaging    sessions can message each other by their address (LaunchRequest.address)
+ */
+export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging'] as const
+export type CapabilityId = (typeof CAPABILITY_IDS)[number]
+export type ProviderCapabilities = Record<CapabilityId, Capability>
+
 export interface AgentProvider {
   readonly id: ProviderId
   /** Product name for logs and messages, e.g. "Claude Code". */
@@ -245,13 +260,8 @@ export interface AgentProvider {
    * provider assigns its own and reports it with the session's first hook (false).
    */
   readonly adoptsSessionId: boolean
-  /** Whether sessions can message each other by their address (LaunchRequest.address) — Claude Code's SendMessage. */
-  readonly messaging: boolean
-  /**
-   * Whether a chat session of this provider has the end_turn tool (domain/turn-end.ts). One without it
-   * says how its turn ends in the text of its reply, like a terminal.
-   */
-  readonly endTurnTool: boolean
+  /** What this provider's sessions can do; the host and the UI read it instead of asking which provider it is. */
+  readonly capabilities: ProviderCapabilities
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */
@@ -269,6 +279,8 @@ export interface AgentProvider {
   resumeNotFound(earlyOutput: string): boolean
   /** Read a hook payload the provider's sessions posted; null when it means nothing to the host. */
   turnSignal(payload: Record<string, unknown>): TurnSignal | null
+  /** The last assistant reply of a turn, from the provider's Stop hook payload; empty when it has none. */
+  lastReply(payload: Record<string, unknown>): string
   summary(session: SessionRef): SessionSummary
   /** Delete the stored conversation (best-effort). */
   deleteTranscript(session: SessionRef): void

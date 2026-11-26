@@ -70,6 +70,30 @@ describe('Qwen Code in the registry', () => {
   })
 })
 
+describe('what Qwen Code can do', () => {
+  let provider: AgentProvider
+  beforeAll(async () => {
+    const { createQwenProvider } = await import('../src/infrastructure/providers/qwen/index.js')
+    provider = createQwenProvider()
+  })
+
+  it('runs in the terminal only: no chat, no end_turn tool, no messaging, each with its reason', () => {
+    expect(provider.capabilities).toEqual({
+      chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+      endTurnTool: { supported: false, reason: 'Qwen Code sessions say how a turn ends in the text of their reply.' },
+      messaging: { supported: false, reason: 'Qwen Code sessions have no session-to-session messaging.' },
+    })
+  })
+
+  it('reads the last reply from a Stop hook\'s own field only', () => {
+    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
+    const file = join(home, 'qwen-transcript.jsonl')
+    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'not read' }] } }))
+    expect(provider.lastReply({ transcript_path: file })).toBe('')
+    expect(provider.lastReply({})).toBe('')
+  })
+})
+
 describe.runIf(darwin)('Qwen Code provider', () => {
   let provider: AgentProvider
   const settings = () => JSON.parse(readFileSync(join(qwenHome, 'settings.json'), 'utf8'))

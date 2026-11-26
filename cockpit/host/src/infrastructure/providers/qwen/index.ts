@@ -6,7 +6,7 @@ import type {
 import { COCKPIT_SKILLS_DIR, MCP_SKILLS_DIR, QWEN_CONFIG_DIR } from '../../../paths.js'
 import {
   EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TURN_HOOK_OPTIONS,
-  emlHookCommand, ensureHookNode, installManagedSkills, shellLine, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  emlHookCommand, ensureHookNode, installManagedSkills, shellLine, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { qwenRuntime } from './runtime.js'
@@ -105,8 +105,7 @@ class QwenProvider implements AgentProvider {
   readonly label = 'Qwen Code'
   /** Qwen Code starts under the cockpit's id (--session-id). */
   readonly adoptsSessionId = true
-  readonly messaging = false
-  readonly endTurnTool = false
+  readonly capabilities = terminalOnly(this.label)
   readonly settings = qwenSettings
 
   /** The cockpit's own folders a session writes to (IsolationContext), as of the last prepare. */
@@ -265,6 +264,10 @@ class QwenProvider implements AgentProvider {
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       default: return null
     }
+  }
+
+  lastReply(payload: Record<string, unknown>): string {
+    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
   }
 
   summary(session: SessionRef): SessionSummary {

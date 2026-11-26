@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Capability, ProviderCapabilities } from '../src/domain/agent-provider.js'
 import { createTurnContexts, hasEndTurnTool, turnContextOf } from '../src/application/turn-context.js'
 
 function setup(opts: { agent?: string | null; task?: Record<string, unknown> | null; fail?: () => boolean } = {}) {
@@ -72,7 +73,8 @@ describe('turn context', () => {
 
 describe('whether a session has the end_turn tool', () => {
   it('is its provider\'s to say, and only for a session in the chat', () => {
-    const [withTool, without] = [{ endTurnTool: true }, { endTurnTool: false }]
+    const capabilities = (endTurnTool: Capability) => ({ capabilities: { chat: { supported: true }, endTurnTool, messaging: { supported: true } } as ProviderCapabilities })
+    const [withTool, without] = [capabilities({ supported: true }), capabilities({ supported: false, reason: 'says it in its reply' })]
     expect(hasEndTurnTool({ runtime: 'sdk' }, withTool)).toBe(true)
     expect(hasEndTurnTool({ runtime: 'terminal' }, withTool)).toBe(false)
     expect(hasEndTurnTool({ runtime: 'sdk' }, without)).toBe(false)
@@ -82,6 +84,6 @@ describe('whether a session has the end_turn tool', () => {
   it('only Claude\'s chat has it', async () => {
     const { ProviderRegistry } = await import('../src/infrastructure/providers/registry.js')
     const providers = new ProviderRegistry()
-    expect(providers.all().filter((p) => p.endTurnTool).map((p) => p.id)).toEqual(['claude'])
+    expect(providers.all().filter((p) => p.capabilities.endTurnTool.supported).map((p) => p.id)).toEqual(['claude'])
   })
 })
