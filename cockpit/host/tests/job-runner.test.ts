@@ -677,6 +677,28 @@ describe('the four-line order', () => {
     expect(statuses('once')).toEqual(['started'])
   })
 
+  it('a wake-up that waited for hours gets its hour to start from when its run was made, not from the time it was set for', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.session('once', 's-work', true)
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    // the session works for three hours, then stops; the machine has no room for a new session at that moment
+    world.now = Date.parse('2026-11-09T05:00:10Z')
+    world.sessions[0].working = false
+    world.states.set('s-work', 'stopped')
+    world.room = false
+    await runner.tick()
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(runs('once').map((r) => [r.status, r.attempts])).toEqual([['waiting', 2]])
+    expect(world.scheduleOf('once')?.at).toBe('2026-11-09T02:00:00.000Z')
+    world.room = true
+    world.now += 5 * MIN
+    await runner.tick()
+    expect(statuses('once')).toEqual(['started'])
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
   it('a: repeating times and the wake-up due together while a session works: the times are skipped and recorded, the wake-up stays', async () => {
     world.task('mixed', { ...HOURLY, at: '2026-11-09T01:00:00.000Z', why: 'Check the reply.' })
     world.session('mixed', 's-work', true)

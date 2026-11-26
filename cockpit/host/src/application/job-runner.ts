@@ -46,7 +46,8 @@ import { stepPrompt } from './task-runner.js'
  *
  * A run is written before anything is started, and is 'starting' while it is: a host restart in that state retries
  * it once. A new session's id is chosen before its start, so a restart can tell whether it got that far. A session
- * that is busy or a machine without room gets later attempts, up to an hour after the run was due; then the run
+ * that is busy or a machine without room gets later attempts, up to an hour after the run was due (or was made, when
+ * that was later: a wake-up that fires late); then the run
  * fails. Failures in a row pause the task's schedule (on the task, with the reason on the record) and tell the user.
  */
 
@@ -670,7 +671,9 @@ export class JobRunner {
       if (!once) this.retry(this.current(run), why, counted)
       return 'retry'
     }
-    if (now - Date.parse(run.dueAt) > JOB_LIMITS.retryWindowMs && run.attempts > 0) {
+    // The hour to start in counts from when the run was due, or from when it was made if that was later: a wake-up
+    // that waited for a working session, or one that fires late, is made long after its time and still gets its hour.
+    if (now - Math.max(Date.parse(run.dueAt), Date.parse(run.createdAt)) > JOB_LIMITS.retryWindowMs && run.attempts > 0) {
       this.failRun(run, `could not start within ${formatDuration(JOB_LIMITS.retryWindowMs)}: ${run.note ?? 'no room'}`)
       return 'failed'
     }
