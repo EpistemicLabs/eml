@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JobStore } from '../src/job-store.js'
-import { JobRunner, type JobRunnerDeps, type RunnerSpace, type RunnerTask, type RunSessionState } from '../src/application/job-runner.js'
+import { JobRunner, runProjectOf, type JobRunnerDeps, type RunnerSpace, type RunnerTask, type RunSessionState } from '../src/application/job-runner.js'
 import { newRecord, type Job, type JobRun } from '../src/domain/job.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
 import { withSchedule } from '../src/domain/task-schedule.js'
@@ -1285,6 +1285,23 @@ describe('carrying a run out', () => {
     await runner.tick()
     expect(world.ended).toEqual(['daily:chrome', 'daily:SendMessage'])
     expect(world.store.get('daily')?.grants).toEqual([])
+  })
+})
+
+describe('where a new session of a task starts', () => {
+  it('is the record\'s project, which wins over the task\'s own', () => {
+    expect(runProjectOf({ projectId: 'bp-ops' }, { scope: 'project.sales' })).toBe('bp-ops')
+    expect(runProjectOf({ projectId: 'bp-ops' }, {})).toBe('bp-ops')
+  })
+
+  it('is the project of the task\'s scope when the record names none', () => {
+    expect(runProjectOf({ projectId: null }, { scope: 'project.sales' })).toBe('bp-sales')
+  })
+
+  it('is nowhere for a task without a project scope: no session can start for it', () => {
+    expect(runProjectOf({ projectId: null }, { scope: 'global' })).toBeNull()
+    expect(runProjectOf({ projectId: null }, { scope: null })).toBeNull()
+    expect(runProjectOf({ projectId: null }, {})).toBeNull()
   })
 })
 

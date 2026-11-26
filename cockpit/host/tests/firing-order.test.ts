@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ANSWER_WAITS, decideFiring, type Fired, type FiringSession } from '../src/domain/firing-order.js'
+import { ANSWER_WAITS, decideFiring, sessionsOnTask, type Fired, type FiringSession, type LedgerSession } from '../src/domain/firing-order.js'
 
 // The four-line order: what the cockpit does when a task comes due. The first line that applies decides:
 // a. a session works → a time is skipped, a message goes to it (or the bridge retries);
@@ -182,5 +182,25 @@ describe('a channel message only goes to a session linked to the task\'s record:
     expect(decide(cron, [own('s-own', { wait: 'question' })])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'waiting' })
     expect(decide(wake('s-own'), [own('s-own')])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'wake' })
     expect(decide(manual, [own('s-own', { wait: 'go' })])).toEqual({ kind: 'resume', sessionId: 's-own', line: 'waiting' })
+  })
+})
+
+describe('this cockpit\'s sessions on a task', () => {
+  const entry = (sessionId: string, patch: Partial<LedgerSession> = {}): LedgerSession => ({ sessionId, taskId: 't1', createdAt: '2026-11-20T08:00:00.000Z', archivedAt: null, jobId: null, ...patch })
+
+  it('are the task\'s sessions that are not put away, newest first', () => {
+    const entries = [
+      entry('old'), entry('new', { createdAt: '2026-11-25T08:00:00.000Z' }), entry('away', { createdAt: '2026-11-26T08:00:00.000Z', archivedAt: '2026-11-26T09:00:00.000Z' }),
+      entry('other', { taskId: 't2' }), entry('none', { taskId: null }),
+    ]
+    expect(sessionsOnTask(entries, 't1', () => false).map((s) => s.sessionId)).toEqual(['new', 'old'])
+    expect(sessionsOnTask(entries, 't9', () => false)).toEqual([])
+  })
+
+  it('a session is working when it is in a turn, and linked when it was started for the task\'s record', () => {
+    const entries = [entry('run', { jobId: 't1' }), entry('own', { createdAt: '2026-11-19T08:00:00.000Z' }), entry('elsewhere', { createdAt: '2026-11-18T08:00:00.000Z', jobId: 't2' })]
+    expect(sessionsOnTask(entries, 't1', (id) => id === 'own')).toEqual([
+      { sessionId: 'run', working: false, linked: true }, { sessionId: 'own', working: true, linked: false }, { sessionId: 'elsewhere', working: false, linked: false },
+    ])
   })
 })

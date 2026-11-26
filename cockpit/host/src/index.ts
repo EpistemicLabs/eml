@@ -72,7 +72,8 @@ import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
 import { JobStore } from './job-store.js'
-import { JobRunner, type RunnerSpace, type RunnerTask } from './application/job-runner.js'
+import { JobRunner, runProjectOf, type RunnerSpace, type RunnerTask } from './application/job-runner.js'
+import { sessionsOnTask } from './domain/firing-order.js'
 import { createTaskRecords } from './application/task-record.js'
 import { editTaskSchedule } from './application/task-schedule-write.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
@@ -84,11 +85,11 @@ import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import type { ProviderId } from './domain/agent-provider.js'
-import { isHeld, type GrantTool, type Job } from './domain/job.js'
+import { isHeld, scheduleFactsOf, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
 import { openTasks, taskById } from './application/task-read.js'
-import { createMigrationWatch } from './application/job-migration-watch.js'
+import { createMigrationWatch, pendingSpaces } from './application/job-migration-watch.js'
 import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { keepRecord } from './application/record-profile.js'
 import { hasSchedule } from './domain/task-schedule.js'
@@ -714,17 +715,7 @@ async function main() {
   const onGrantEnd = (job: Pick<Job, 'id'>, tools: GrantTool[]) => void takeBackJobTools(jobSessions, job, tools)
     .catch((err: unknown) => log(`[jobs] taking ${tools.join(', ')} back from job ${job.id.slice(0, 8)} failed: ${(err as Error).message}`))
   // What this cockpit's record says of a task's schedule: for the task runner's hold, the next-step check and the board.
-  const scheduleFacts = (taskId: string): ScheduleFacts => {
-    const record = jobStore.get(taskId)
-    if (!record) return {}
-    const waiting = jobStore.runs(taskId).find((run) => run.status === 'waiting' || run.status === 'starting')
-    return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
-  }
-  // Where a new session of a task starts: the record's project, else the task's own; null when it has none.
-  const runProjectOf = (record: Pick<Job, 'projectId'>, task: { scope?: string | null }): string | null => {
-    const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
-    return record.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
-  }
+  const scheduleFacts = (taskId: string): ScheduleFacts => scheduleFactsOf(jobStore.get(taskId), jobStore.runs(taskId))
   // The engine: it fires the schedules of the tasks this member owns (application/job-runner.ts).
   // Whether a space is shared: what the host knows, else the brain server asked again (team-space.ts); null: still unknown.
   const spaceKindOf = async (space: BrainSpace): Promise<boolean | null> => {
@@ -762,10 +753,8 @@ async function main() {
       const runs = runsOf(((await brain.get('/object/run')) as { objects?: Array<Record<string, unknown>> }).objects ?? []).filter((run) => run.task_id === taskId)
       return runsBlockRunner(runs, new Set(ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId)), Date.now())
     },
-    sessionsOf: (taskId) => ledger.list().filter((e) => e.taskId === taskId && !e.archivedAt)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      // Linked: started for the task's record, so each of its launches gets the bridge's tools (withChannelTools).
-      .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working', linked: e.jobId === taskId })),
+    // Linked: started for the task's record, so each of its launches gets the bridge's tools (withChannelTools).
+    sessionsOf: (taskId) => sessionsOnTask(ledger.list(), taskId, (sessionId) => turns.get(sessionId)?.state === 'working'),
     editSchedule: async (space, taskId, edit, text) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error(`space ${space.name} has no agent`)
@@ -1227,12 +1216,7 @@ async function main() {
   // jobs wait, and the user is told of a space whose schedules do not fire meanwhile (application/job-migration-watch.ts).
   createMigrationWatch({
     run: () => jobMigration.run(),
-    pending: () => {
-      const waiting = new Map<string | null, number>()
-      for (const job of Object.values(jobStore.pendingV1()?.jobs ?? {})) waiting.set(job.spaceId ?? null, (waiting.get(job.spaceId ?? null) ?? 0) + 1)
-      const nameOf = (key: string | null) => spaces.list().find((space) => (space.main ? null : space.id) === key)?.name ?? 'A space this cockpit no longer has'
-      return [...waiting].map(([key, jobs]) => ({ key, name: nameOf(key), jobs }))
-    },
+    pending: () => pendingSpaces(Object.values(jobStore.pendingV1()?.jobs ?? {}), spaces.list().map(runnerSpaceOf)),
     notify: (input) => notifier.notify(input),
     now: () => Date.now(),
     log,

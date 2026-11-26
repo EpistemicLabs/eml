@@ -17,6 +17,7 @@ import { waitsOf } from '../domain/task-waits.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
 import type { NotificationInput, NotificationKind } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
+import { projectIdForBrain } from '../project-registry.js'
 import { endTaskRecord } from './end-task-record.js'
 import type { ScheduleEdit } from './task-schedule-write.js'
 import { stepPrompt } from './task-runner.js'
@@ -51,6 +52,15 @@ import { stepPrompt } from './task-runner.js'
  * that was later: a wake-up that fires late); then the run
  * fails. Failures in a row pause the task's schedule (on the task, with the reason on the record) and tell the user.
  */
+
+/**
+ * Where a new session of a task starts: the record's project, else the task's own (the project of its scope); null
+ * when it has none, so no session can start for it.
+ */
+export function runProjectOf(record: Pick<Job, 'projectId'>, task: { scope?: string | null }): string | null {
+  const brainProject = task.scope?.startsWith('project.') ? task.scope.slice('project.'.length) : null
+  return record.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
+}
 
 /** What came of trying to start a run. gone: its task is closed or gone. skipped: a session of the task was working. */
 type Attempt = 'started' | 'retry' | 'failed' | 'gone' | 'skipped'

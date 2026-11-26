@@ -1,6 +1,6 @@
 import type { ProviderId } from './agent-provider.js'
 import type { WorkerStatus } from './session-attention.js'
-import type { DueCron, DueWake } from './task-schedule.js'
+import type { DueCron, DueWake, ScheduleFacts } from './task-schedule.js'
 import type { ToolProfile } from './tool-profile.js'
 
 /**
@@ -200,6 +200,18 @@ export function retryDelay(attempts: number): number {
  * set is on the task's schedule (delegation.schedule.paused), not here.
  */
 export const isHeld = (job: Pick<Job, 'pendingApproval' | 'pausedReason'>): boolean => job.pendingApproval === true || job.pausedReason !== null
+
+/**
+ * What this cockpit's record says of a task's schedule (domain/task-schedule.ts runComingAt): the cursor and the
+ * wake-up it fired, the due time of a run that waits to start or is being started, and whether its channel waits for
+ * the user's OK. Nothing for a task without a record. It holds the task runner off the task, is the next-step check's
+ * next run and the board's.
+ */
+export function scheduleFactsOf(record: Pick<Job, 'cursor' | 'firedWake' | 'pendingApproval'> | undefined, runs: readonly JobRun[]): ScheduleFacts {
+  if (!record) return {}
+  const waiting = runs.find((run) => run.status === 'waiting' || run.status === 'starting')
+  return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
+}
 
 /** The mail addresses and domains a job listens on, as "address:x" / "domain:y". */
 export function mailKeys(job: { triggers: ReadonlyArray<{ type: string; match?: unknown[] }> }): Set<string> {

@@ -46,6 +46,19 @@ export interface FiringSession {
   linked: boolean
 }
 
+/** A session as the cockpit's ledger has it, as far as the order reads it. */
+export interface LedgerSession { sessionId: string; taskId: string | null; createdAt: string; archivedAt: string | null; jobId: string | null }
+
+/**
+ * This cockpit's sessions on the task that the order may give a firing to: those not put away, newest first. Each is
+ * working when it is in a turn, and linked when it was started for the task's record (its jobId is the task's id).
+ */
+export function sessionsOnTask(entries: readonly LedgerSession[], taskId: string, working: (sessionId: string) => boolean): Array<{ sessionId: string; working: boolean; linked: boolean }> {
+  return entries.filter((entry) => entry.taskId === taskId && !entry.archivedAt)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((entry) => ({ sessionId: entry.sessionId, working: working(entry.sessionId), linked: entry.jobId === taskId }))
+}
+
 export interface Fired {
   /** A time came due: a repeating time, the wake-up, or a run the owner started by hand. */
   times: boolean

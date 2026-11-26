@@ -19,6 +19,16 @@ import type { JobMigrationResult } from './job-migration.js'
 /** A space that still has version 1 jobs waiting. `key`: what its jobs carry as spaceId, null for the main space. */
 export interface PendingSpace { key: string | null; name: string; jobs: number }
 
+/** A space this cockpit no longer has, as the user is told of jobs that still name it. */
+export const SPACE_GONE = 'A space this cockpit no longer has'
+
+/** The spaces that still have version 1 jobs waiting, each with how many, by what the jobs carry as spaceId. */
+export function pendingSpaces(jobs: ReadonlyArray<{ spaceId?: string | null }>, spaces: ReadonlyArray<{ key: string | null; name: string }>): PendingSpace[] {
+  const waiting = new Map<string | null, number>()
+  for (const job of jobs) waiting.set(job.spaceId ?? null, (waiting.get(job.spaceId ?? null) ?? 0) + 1)
+  return [...waiting].map(([key, count]) => ({ key, name: spaces.find((space) => space.key === key)?.name ?? SPACE_GONE, jobs: count }))
+}
+
 export interface MigrationWatchDeps {
   /** One pass of the migration. */
   run(): Promise<JobMigrationResult>

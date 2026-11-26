@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { newRecord, recordKeeping, type Job, type JobRun, type TaskStanding } from '../src/domain/job.js'
+import { newRecord, recordKeeping, scheduleFactsOf, type Job, type JobRun, type TaskStanding } from '../src/domain/job.js'
 
 // What a pass does with a task's record: it stays while this cockpit fires the task's schedule; without one it goes
 // when nothing holds it; a closed task's record stops listening first.
@@ -45,5 +45,27 @@ describe('recordKeeping', () => {
     expect(keep(record({ triggers: mail, limited: true }), 'closed', [run('waiting'), run('finished')]).remove).toBe(true)
     expect(keep(record({ triggers: mail }), 'closed', [run('started')]).remove).toBe(false)
     expect(keep(record(), 'closed', [run('starting')]).remove).toBe(false)
+  })
+})
+
+describe('what a record says of its task\'s schedule', () => {
+  it('is nothing for a task without a record', () => {
+    expect(scheduleFactsOf(undefined, [run('waiting')])).toEqual({})
+  })
+
+  it('is the cursor and the wake-up it fired, with no run waiting', () => {
+    const kept = record({ cursor: '2026-11-26T08:00:00.000Z', firedWake: '2026-11-25T08:00:00.000Z' })
+    expect(scheduleFactsOf(kept, [run('finished'), run('started'), run('skipped')])).toEqual({ cursor: '2026-11-26T08:00:00.000Z', firedWake: '2026-11-25T08:00:00.000Z', waitingRunDueAt: null })
+  })
+
+  it('names the due time of a run that waits to start or is being started: that holds the task runner off', () => {
+    const late = { ...run('starting'), dueAt: '2026-11-26T09:00:00.000Z' }
+    expect(scheduleFactsOf(record(), [run('finished'), run('waiting'), late]).waitingRunDueAt).toBe('2026-11-26T08:00:00.000Z')
+    expect(scheduleFactsOf(record(), [run('started'), late]).waitingRunDueAt).toBe('2026-11-26T09:00:00.000Z')
+  })
+
+  it('says that the channel waits for the user\'s OK only while it does', () => {
+    expect(scheduleFactsOf(record({ pendingApproval: true }), [])).toMatchObject({ needsOk: true })
+    expect(scheduleFactsOf(record(), [])).not.toHaveProperty('needsOk')
   })
 })

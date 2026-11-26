@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createMigrationWatch, MIGRATION_RETRY, type PendingSpace } from '../src/application/job-migration-watch.js'
+import { createMigrationWatch, MIGRATION_RETRY, pendingSpaces, type PendingSpace } from '../src/application/job-migration-watch.js'
 import type { NotificationInput } from '../src/notifications.js'
 
 // The jobs of before brain schema 24 move onto their tasks at the host's start. What does not move at once (a brain
@@ -107,5 +107,18 @@ describe('the jobs migration keeps trying, and tells the user', () => {
     await watch.idle()
     expect(logs).toEqual(['[jobs] migration failed: jobs.json cannot be read'])
     expect(timers).toHaveLength(1)
+  })
+})
+
+describe('the spaces whose jobs still wait', () => {
+  const spaces = [{ key: null, name: 'Main' }, { key: 'space-2', name: 'Team' }]
+
+  it('are counted by what the jobs carry as their space, the main space as none', () => {
+    expect(pendingSpaces([{ spaceId: null }, {}, { spaceId: 'space-2' }], spaces)).toEqual([{ key: null, name: 'Main', jobs: 2 }, { key: 'space-2', name: 'Team', jobs: 1 }])
+    expect(pendingSpaces([], spaces)).toEqual([])
+  })
+
+  it('a job of a space this cockpit no longer has is counted under a name that says so', () => {
+    expect(pendingSpaces([{ spaceId: 'space-gone' }], spaces)).toEqual([{ key: 'space-gone', name: 'A space this cockpit no longer has', jobs: 1 }])
   })
 })
