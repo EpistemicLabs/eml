@@ -24,6 +24,15 @@ describe('InMemoryEventStore', () => {
     expect(store.after('a', 0).map(({ event }) => event.kind)).toEqual(['text_delta', 'text'])
   })
 
+  it('a call\'s result takes the place of the output that streamed of it', () => {
+    const store = new InMemoryEventStore()
+    store.append('a', { kind: 'tool_call', toolId: 't1', name: 'Shell', toolKind: 'execute', title: 'Run ls', input: {} })
+    store.append('a', { kind: 'tool_output_delta', toolId: 't1', delta: 'a\n' })
+    store.append('a', { kind: 'tool_output_delta', toolId: 't2', delta: 'other' })
+    store.append('a', { kind: 'tool_result', toolId: 't1', status: 'completed', output: 'a\nb\n' })
+    expect(store.after('a', 0).map(({ event }) => event.kind)).toEqual(['tool_call', 'tool_output_delta', 'tool_result'])
+  })
+
   it('a reset starts a new epoch with numbers from 1', () => {
     const store = new InMemoryEventStore()
     store.append('a', { kind: 'compaction' })
