@@ -862,8 +862,9 @@ async function main() {
       const entry = ledger.get(sessionId)
       if (!entry) return null
       const space = spaces.resolve(entry.spaceId ?? null)
-      return { taskId: entry.taskId ?? null, brain: taskBrain(space), agent: space.agent ?? null }
+      return { taskId: entry.taskId ?? null, brain: taskBrain(space), agent: space.agent ?? null, spaceId: entry.spaceId ?? null, toolProfile: entry.toolProfile }
     },
+    records: jobStore,
     moving: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
     zone: userTimeZone, log,
     changed: () => { void taskBoard.refresh().catch(() => {}) },

@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { createTurnWake, NO_TASK, scheduleAfterTurn, TASK_CLOSED } from '../src/application/turn-wake.js'
 import type { ScheduledTask } from '../src/application/task-schedule-write.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
+import { newRecord } from '../src/domain/job.js'
+import type { ToolProfile } from '../src/domain/tool-profile.js'
+import { JobStore } from '../src/job-store.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
 const ZONE = 'Asia/Bangkok' // UTC+7
@@ -9,29 +12,36 @@ const WEEKDAYS: ScheduleFields = { crons: ['0 8 * * 1-5'], time_zone: 'Asia/Maka
 const WHY = 'The check you set with end_turn is due. You planned: look again. See where the task stands and act on it.'
 
 /** A brain that keeps one task and applies each track call's delegation to it, as the real one does. */
-function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean; moving?: boolean } = {}) {
+function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean; moving?: boolean; profile?: ToolProfile | null; record?: ToolProfile | null } = {}) {
   const task: ScheduledTask = {
     id: 't1', status: opts.status ?? 'active',
     properties: opts.delegation === false ? {} : { delegation: { agent: 'atlas', checkpoint: 'after', ...(opts.schedule ? { schedule: opts.schedule } : {}) } },
   }
   const posts: Array<Record<string, unknown>> = []
   const log: string[] = []
+  /** What was written, in order: the task's schedule (brain) and the task's record (store). */
+  const writes: string[] = []
   let changed = 0
+  const store = new JobStore(null)
+  if (opts.record !== undefined) store.put({ ...newRecord({ id: 't1', spaceId: null }, '2026-11-01T00:00:00.000Z', 'maker'), toolProfile: opts.record })
+  const records = { get: (id: string) => store.get(id), put: (record: Parameters<JobStore['put']>[0]) => { writes.push('record'); store.put(record) } }
   const brain = {
     async get() { if (opts.failing) throw new Error('the brain does not answer'); return structuredClone(task) },
     async post(_path: string, body: Record<string, unknown>) {
       posts.push(body)
+      writes.push('schedule')
       if (body.delegation) task.properties = { ...task.properties, delegation: body.delegation as never }
       return {}
     },
   }
   const wake = createTurnWake({
-    where: () => (opts.known === false ? null : { taskId: opts.taskId === undefined ? 't1' : opts.taskId, brain: opts.noBrain ? null : brain, agent: 'atlas' }),
+    where: () => (opts.known === false ? null : { taskId: opts.taskId === undefined ? 't1' : opts.taskId, brain: opts.noBrain ? null : brain, agent: 'atlas', spaceId: null, toolProfile: opts.profile ?? null }),
+    records,
     moving: () => opts.moving === true,
     zone: () => ZONE, now: () => NOW, log: (line) => log.push(line), changed: () => { changed += 1 },
   })
   const schedule = () => task.properties?.delegation?.schedule ?? null
-  return { wake, posts, log, schedule, changed: () => changed }
+  return { wake, posts, log, schedule, changed: () => changed, store, writes }
 }
 
 const set = (when: string) => ({ edit: { kind: 'set' as const, when }, why: WHY })
@@ -160,5 +170,49 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
     expect(await w.wake.settle('s1', clear('own'))).toEqual({ problem: null, saved: null, nextRun: false })
     expect(w.log).toEqual(['[wake] s1 wake-up not set: the brain does not answer', '[wake] s1 wake-up not cleared: the brain does not answer'])
     expect((await world({ noBrain: true }).wake.settle('s1', set('2026-11-26T10:00'))).fix).toBe('again')
+  })
+})
+
+describe('a wake-up set by a session with narrowed tools', () => {
+  const NO_SHELL: ToolProfile = { deniedTools: ['Bash'], mcpServers: ['eml'] }
+
+  it('a session with all its tools sets the wake-up and touches no record', async () => {
+    const none = world()
+    await none.wake.settle('s1', set('2026-11-26T10:00'))
+    expect(none.store.get('t1')).toBeUndefined()
+    const has = world({ record: NO_SHELL })
+    await has.wake.settle('s1', set('2026-11-26T10:00'))
+    expect(has.store.get('t1')?.toolProfile).toEqual(NO_SHELL)
+    expect(has.writes).toEqual(['schedule'])
+  })
+
+  it('on a task without a record: the schedule is written first, then a record with the session\'s profile', async () => {
+    const w = world({ profile: NO_SHELL })
+    expect((await w.wake.settle('s1', set('2026-11-26T10:00'))).problem).toBeNull()
+    expect(w.writes).toEqual(['schedule', 'record'])
+    expect(w.store.get('t1')).toMatchObject({ id: 't1', createdBy: 's1', toolProfile: NO_SHELL })
+    expect(w.log.at(-2)).toBe('[wake] s1 task t1: its sessions get at most this session\'s tools')
+  })
+
+  it('narrows a wider record to what both allow, and leaves a narrower one as it is', async () => {
+    const wider = world({ profile: NO_SHELL, record: { deniedTools: ['WebFetch'], mcpServers: null } })
+    await wider.wake.settle('s1', set('2026-11-26T10:00'))
+    expect(wider.store.get('t1')?.toolProfile).toEqual({ deniedTools: ['WebFetch', 'Bash'], mcpServers: ['eml'] })
+    const narrower = world({ profile: NO_SHELL, record: { deniedTools: ['Bash', 'SendMessage'], mcpServers: ['eml'] } })
+    await narrower.wake.settle('s1', set('2026-11-26T10:00'))
+    expect(narrower.store.get('t1')?.toolProfile).toEqual({ deniedTools: ['Bash', 'SendMessage'], mcpServers: ['eml'] })
+    expect(narrower.writes).toEqual(['schedule'])
+  })
+
+  it('touches no record when no wake-up was set: an end without a time, a closed task, a time that is refused', async () => {
+    const cleared = world({ profile: NO_SHELL, schedule: { at: '2026-11-26T03:00:00.000Z', why: WHY, by_session: 's1' } })
+    await cleared.wake.settle('s1', clear('own'))
+    expect(cleared.store.get('t1')).toBeUndefined()
+    const closed = world({ profile: NO_SHELL, status: 'resolved' })
+    expect((await closed.wake.settle('s1', set('2026-11-26T10:00'))).problem).toBe(TASK_CLOSED)
+    expect(closed.store.get('t1')).toBeUndefined()
+    const bad = world({ profile: NO_SHELL })
+    expect((await bad.wake.settle('s1', set('whenever'))).problem).toBe('"whenever" is not a time')
+    expect(bad.store.get('t1')).toBeUndefined()
   })
 })

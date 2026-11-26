@@ -3,7 +3,10 @@ import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { parseAt } from '../domain/schedule.js'
 import { clearWake, nextRunOfSchedule, setWake } from '../domain/task-schedule.js'
+import type { ToolProfile } from '../domain/tool-profile.js'
 import type { CheckFix, CheckTime, WakeEdit } from '../domain/turn-end.js'
+import type { JobStore } from '../job-store.js'
+import { narrowRecordProfile } from './record-profile.js'
 import { editTaskSchedule } from './task-schedule-write.js'
 
 /**
@@ -16,13 +19,22 @@ import { editTaskSchedule } from './task-schedule-write.js'
  * it whoever set it, so a review is not followed by a run nobody asked for. A session without a task has nothing to
  * set a wake-up on, and nothing fires on a closed task: there the time is refused, the rest of the call stands.
  *
+ * A session with narrowed tools that sets a wake-up narrows the task's record with it (application/record-profile.ts):
+ * if that session is gone when the wake-up fires, the cockpit starts a new one with the record's tools, and that
+ * must never be more than the session that set it had.
+ *
  * The answer also says whether the task has a next run once the call is applied: a task that has one needs no time
  * from the agent (domain/turn-end.ts missingOf).
  */
 
 export interface TurnWakeDeps {
   /** The session's task (the ledger's) and the brain of its space, with the space's agent; null: the cockpit does not know the session. */
-  where(sessionId: string): { taskId: string | null; brain: Pick<EmlApi, 'get' | 'post'> | null; agent: string | null } | null
+  where(sessionId: string): { taskId: string | null; brain: Pick<EmlApi, 'get' | 'post'> | null; agent: string | null; spaceId?: string | null; toolProfile?: ToolProfile | null } | null
+  /**
+   * What this cockpit keeps per task (job-store.ts): a session whose own tools are narrowed (`where().toolProfile`)
+   * narrows the task's record when it sets a wake-up. `where().spaceId`: the space a new record is filed under.
+   */
+  records?: Pick<JobStore, 'get' | 'put'>
   /**
    * The task still has jobs of before brain schema 24 that are moving onto it (application/job-migration.ts): the
    * migration replaces its schedule with what they say, so nothing is written to it until they have moved.
@@ -96,6 +108,11 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
       }
       return scheduleAfterTurn(schedule, edit, { sessionId, at, why: wanted.why, zone })
     }, { agent: where.agent })
+    // After the schedule is on the task: the tools a new session of the task starts with are at most this session's.
+    if (edit.kind === 'set' && open && written.schedule?.at && deps.records) {
+      const narrowed = narrowRecordProfile(deps.records, { id: where.taskId, spaceId: where.spaceId ?? null }, { sessionId, toolProfile: where.toolProfile ?? null }, new Date(now()).toISOString())
+      if (narrowed) deps.log(`[wake] ${sessionId.slice(0, 8)} task ${where.taskId.slice(0, 8)}: its sessions get at most this session's tools`)
+    }
     if (written.changed) {
       deps.changed?.()
       deps.log(`[wake] ${sessionId.slice(0, 8)} task ${where.taskId.slice(0, 8)}: wake-up ${edit.kind === 'set' ? `set for ${edit.when} (${zone}) = ${at}` : 'cleared'}`)
