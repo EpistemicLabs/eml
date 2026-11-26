@@ -47,9 +47,14 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  * v0.23: task state — the runs table (one session on a task, written only by
  *   the member it names) and the task fields delegation and waits, mirrored
  *   with delegate/checkpoint and waiting_on (task-state.ts). Additive only.
+ * v0.24: a task holds its schedule — delegation.schedule is { crons?, at?, why?,
+ *   by_session?, time_zone?, paused?, ends_at? }: a list of repeating times and
+ *   at most one wake-up (task-state.ts). cron (one rule) and session (new ·
+ *   resume) are gone; the migration rewrites the stored schedules. A new agent
+ *   keeps the task's schedule. No state table changes.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 23
+export const CURRENT_BRAIN_SCHEMA_VERSION = 24
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or

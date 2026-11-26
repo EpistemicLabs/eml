@@ -123,7 +123,8 @@ describe('v0.23 migration — runs, and the mirrored task state for existing tas
     expect((db.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid').all('runs') as Array<{ name: string }>).map(c => c.name))
       .toEqual(['id', 'task_id', 'member', 'agent', 'origin', 'driver', 'state', 'started_at', 'last_activity_at', 'ended_at', 'end_reason', 'result', 'created_at', 'updated_at'])
     const log = db.prepare('SELECT seq, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, payload: string }>
-    const checkpoint = JSON.parse(log[log.length - 1].payload)
+    // (schema 24 changes no task of this fixture, so the state now is still that one)
+    const checkpoint = log.map(e => JSON.parse(e.payload)).find(p => p.schema === 23 && p.call === 'brain.checkpoint')
     expect(checkpoint).toMatchObject({ schema: 23, call: 'brain.checkpoint', args: { state_hash: stateHash(stateDump(db)) } })
 
     const juno = eml.env({ handle: 'juno' })

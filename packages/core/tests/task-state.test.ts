@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { plainJson, type OpEnvelope } from '@engramprotocol/protocol/log'
 import { EML, CURRENT_BRAIN_SCHEMA_VERSION, initDatabase, mostUrgentWait } from '../src'
+import { fieldProblem } from '../src/fields'
+import { mirrorTaskState } from '../src/task-state'
+import { scheduleText } from '../src/commands/task-track'
 import { uuidv5 } from '../src/log/op'
 import { readObject } from '../src/objects'
 import { createObject, updateObject, validNote, validTask, writes } from './fixtures'
@@ -34,14 +37,14 @@ describe('task.delegation mirrors delegate and checkpoint', () => {
   })
 
   it('a task created with a delegation gets the flat fields, timestamps as stored', () => {
-    const t = task({ delegation: { schedule: { session: 'new', time_zone: 'Asia/Makassar', cron: '0 8 * * 1-5' }, agent: 'atlas', checkpoint: 'before', requested_at: '2026-11-23' } })
+    const t = task({ delegation: { schedule: { time_zone: 'Asia/Makassar', crons: ['0 8 * * 1-5'] }, agent: 'atlas', checkpoint: 'before', requested_at: '2026-11-23' } })
     expect(props(t.id)).toMatchObject({
       delegate: 'atlas', checkpoint: 'before',
-      delegation: { agent: 'atlas', checkpoint: 'before', requested_at: '2026-11-23T00:00:00.000Z', schedule: { cron: '0 8 * * 1-5', time_zone: 'Asia/Makassar', session: 'new' } },
+      delegation: { agent: 'atlas', checkpoint: 'before', requested_at: '2026-11-23T00:00:00.000Z', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Asia/Makassar' } },
     })
     // the stored keys are in one order, whatever order the caller sent
     expect(Object.keys(props(t.id).delegation)).toEqual(['agent', 'checkpoint', 'requested_at', 'schedule'])
-    expect(Object.keys(props(t.id).delegation.schedule)).toEqual(['cron', 'time_zone', 'session'])
+    expect(Object.keys(props(t.id).delegation.schedule)).toEqual(['crons', 'time_zone'])
   })
 
   it('a checkpoint without a delegate has no delegation', () => {
@@ -50,16 +53,49 @@ describe('task.delegation mirrors delegate and checkpoint', () => {
     expect(props(t.id).checkpoint).toBe('before')
   })
 
-  it('a flat write keeps requested_at and the schedule while the agent stays; a new agent starts a new delegation', () => {
-    const schedule = { at: '2026-11-24T08:00:00.000Z', session: 'resume' }
+  it('a flat write keeps requested_at and the schedule while the agent stays', () => {
+    const schedule = { crons: ['0 9 * * 1'], at: '2026-11-24T08:00:00.000Z', why: 'look again', by_session: 'sess-1' }
     const t = task({ delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-23T10:00:00.000Z', schedule } })
     writes(eml).trackTask(t.id, { checkpoint: 'none' })
     expect(props(t.id).delegation).toEqual({ agent: 'atlas', checkpoint: 'none', requested_at: '2026-11-23T10:00:00.000Z', schedule })
     writes(eml).trackTask(t.id, { checkpoint: null })
     expect(props(t.id).delegation).toEqual({ agent: 'atlas', requested_at: '2026-11-23T10:00:00.000Z', schedule })
-    writes(eml).trackTask(t.id, { delegate: 'motti', checkpoint: 'after' })
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual([])
+  })
+
+  it('a flat write with a new agent starts unrequested and keeps the schedule, without the session that set the wake-up', () => {
+    const schedule = { crons: ['0 9 * * 1'], at: '2026-11-24T08:00:00.000Z', why: 'look again', by_session: 'sess-1', time_zone: 'Asia/Makassar', paused: true, ends_at: '2026-12-31T00:00:00.000Z' }
+    const t = task({ delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-23T10:00:00.000Z', schedule } })
+    writes(eml).trackTask(t.id, { delegate: 'motti' })
+    const { by_session: _session, ...kept } = schedule
+    expect(props(t.id).delegation).toEqual({ agent: 'motti', checkpoint: 'after', schedule: kept })
+    expect(Object.keys(props(t.id).delegation.schedule)).toEqual(['crons', 'at', 'why', 'time_zone', 'paused', 'ends_at'])
+    expect(changes(t.id)).toEqual(expect.arrayContaining(['delegate atlas → motti', 'delegation request cleared']))
+    // the times are the same, so the journal names no schedule change
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual([])
+  })
+
+  it('a new agent on a task without a schedule gets none', () => {
+    const t = task({ delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-23T10:00:00.000Z' } })
+    writes(eml).trackTask(t.id, { delegate: 'motti' })
     expect(props(t.id).delegation).toEqual({ agent: 'motti', checkpoint: 'after' })
-    expect(changes(t.id)).toEqual(expect.arrayContaining(['delegate atlas → motti', 'delegation request cleared', 'schedule at 2026-11-24T08:00:00.000Z (resume) → none']))
+  })
+
+  it('a write of delegation is the whole value: one without a schedule ends the schedule', () => {
+    const t = task({ delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'] } } })
+    writes(eml).trackTask(t.id, { delegation: { agent: 'motti' } })
+    expect(props(t.id).delegation).toEqual({ agent: 'motti' })
+    expect(changes(t.id)).toContain('schedule crons 0 9 * * 1 → none')
+  })
+
+  it('clearing the delegate, or the delegation, clears the schedule with it', () => {
+    const a = task({ delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'] } } })
+    writes(eml).trackTask(a.id, { delegate: null })
+    expect(props(a.id).delegation).toBeUndefined()
+    const b = task({ delegation: { agent: 'atlas', schedule: { at: '2026-11-28' } } })
+    writes(eml).trackTask(b.id, { delegation: null })
+    expect(props(b.id).delegation).toBeUndefined()
+    expect(changes(b.id)).toContain('schedule at 2026-11-28T00:00:00.000Z → none')
   })
 
   it('clearing the delegate clears the delegation; the checkpoint stays as written', () => {
@@ -75,8 +111,8 @@ describe('task.delegation mirrors delegate and checkpoint', () => {
     // the delegation carries no checkpoint, so the flat one is cleared to match
     expect(props(t.id)).toMatchObject({ delegate: 'atlas' })
     expect(props(t.id).checkpoint).toBeUndefined()
-    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-23T10:00:00.000Z', schedule: { cron: '0 9 * * 1', paused: true } } })
-    expect(changes(t.id)).toEqual(expect.arrayContaining(['delegate none → atlas', 'delegation requested', 'checkpoint none → after', 'schedule none → cron 0 9 * * 1 (paused)']))
+    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-23T10:00:00.000Z', schedule: { crons: ['0 9 * * 1'], paused: true } } })
+    expect(changes(t.id)).toEqual(expect.arrayContaining(['delegate none → atlas', 'delegation requested', 'checkpoint none → after', 'schedule none → crons 0 9 * * 1 (paused)']))
     writes(eml).trackTask(t.id, { delegation: null })
     const p = props(t.id)
     expect([p.delegate, p.checkpoint, p.delegation]).toEqual([undefined, undefined, undefined])
@@ -90,11 +126,192 @@ describe('task.delegation mirrors delegate and checkpoint', () => {
     expect(() => writes(eml).trackTask(t.id, { delegation: { agent: ' ' } })).toThrow('delegation.agent must not be blank.')
     expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', requested_at: 'soon' } })).toThrow('delegation.requested_at must be an ISO date')
     expect(() => writes(eml).trackTask(t.id, { delegation: 'atlas' })).toThrow('delegation must be an object')
-    expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { session: 'new' } } })).toThrow('exactly one of at')
-    expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { at: '2026-11-28', cron: '0 8 * * *' } } })).toThrow('exactly one of at')
-    expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { cron: '0 8 * * *', session: 'later' } } })).toThrow('delegation.schedule.session must be one of new, resume.')
-    expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { cron: '0 8 * * *', paused: 'yes' } } })).toThrow('delegation.schedule.paused must be true or false.')
+    expect(() => writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * *'], paused: 'yes' } } })).toThrow('delegation.schedule.paused must be true or false.')
     expect(() => writes(eml).store(validTask({ scope: 'project.eml', properties: { delegation: { agent: 'atlas' }, delegate: 'motti' } }))).toThrow('not both')
+  })
+})
+
+// Schema 24: delegation.schedule is the one place a task's schedule lives — its
+// repeating times (crons) and at most one wake-up (at, with why and by_session).
+describe('task.delegation.schedule (schema 24)', () => {
+  let eml: EML
+  beforeEach(() => {
+    eml = new EML({ dbPath: ':memory:', namespace: 'test' })
+    writes(eml).projects.create({ id: 'eml', name: 'EML' })
+  })
+  afterEach(() => eml.close())
+
+  const props = (id: string) => eml.engrams.getRaw(id)!.properties as Record<string, any>
+  const changes = (id: string) => eml.engrams.entries(id, ['change']).map(e => e.text)
+  const task = (properties: Record<string, unknown> = {}) => writes(eml).store(validTask({ scope: 'project.eml', properties }))
+  const scheduled = (schedule: unknown) => task({ delegation: { agent: 'atlas', schedule } })
+  const stored = (schedule: unknown) => props(scheduled(schedule).id).delegation.schedule
+  const NEEDS_A_TIME = 'Invalid engram: delegation.schedule needs a repeating time (crons) or a wake-up (at).'
+
+  it('holds repeating times alone', () => {
+    expect(stored({ crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'] })).toEqual({ crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'] })
+  })
+
+  it('holds a wake-up alone', () => {
+    expect(stored({ at: '2026-11-27T02:00:00.000Z' })).toEqual({ at: '2026-11-27T02:00:00.000Z' })
+  })
+
+  it('holds both: a wake-up next to the repeating times', () => {
+    expect(stored({ crons: ['0 13 * * 1-5'], at: '2026-11-27T02:00:00.000Z' })).toEqual({ crons: ['0 13 * * 1-5'], at: '2026-11-27T02:00:00.000Z' })
+  })
+
+  it('refuses a schedule with neither a repeating time nor a wake-up', () => {
+    expect(() => scheduled({})).toThrow(NEEDS_A_TIME)
+    expect(() => scheduled({ time_zone: 'Asia/Makassar', paused: true, ends_at: '2026-12-31' })).toThrow(NEEDS_A_TIME)
+    expect(() => scheduled({ why: 'look again', by_session: 'sess-1' })).toThrow(NEEDS_A_TIME)
+  })
+
+  it('stores its keys in one order, whatever order the caller sent', () => {
+    const s = stored({ ends_at: '2026-12-31T00:00:00.000Z', paused: false, time_zone: 'Asia/Makassar', by_session: 'sess-1', why: 'look again', at: '2026-11-27T02:00:00.000Z', crons: ['0 13 * * 1-5'] })
+    expect(Object.keys(s)).toEqual(['crons', 'at', 'why', 'by_session', 'time_zone', 'paused', 'ends_at'])
+    expect(s).toEqual({ crons: ['0 13 * * 1-5'], at: '2026-11-27T02:00:00.000Z', why: 'look again', by_session: 'sess-1', time_zone: 'Asia/Makassar', paused: false, ends_at: '2026-12-31T00:00:00.000Z' })
+  })
+
+  it('stores at as ISO-8601 UTC with milliseconds', () => {
+    expect(stored({ at: '2026-11-27' }).at).toBe('2026-11-27T00:00:00.000Z')
+    expect(stored({ at: '2026-11-27T10:00:00+08:00' }).at).toBe('2026-11-27T02:00:00.000Z')
+  })
+
+  it('stores ends_at as ISO-8601 UTC with milliseconds', () => {
+    expect(stored({ crons: ['0 8 * * *'], ends_at: '2026-12-31' }).ends_at).toBe('2026-12-31T00:00:00.000Z')
+    expect(stored({ crons: ['0 8 * * *'], ends_at: '2026-12-31T08:00:00+08:00' }).ends_at).toBe('2026-12-31T00:00:00.000Z')
+  })
+
+  it('stores crons without the white space around an entry, in the order given', () => {
+    expect(stored({ crons: [' 0 18 * * * ', '0 8 * * *\n'] }).crons).toEqual(['0 18 * * *', '0 8 * * *'])
+  })
+
+  it('stores each cron once, keeping the first place', () => {
+    const patch: Record<string, unknown> = { delegation: { agent: 'atlas', schedule: { crons: ['0 18 * * *', '0 8 * * *', ' 0 18 * * * ', '0 8 * * *'] } } }
+    mirrorTaskState({}, patch)
+    expect((patch.delegation as any).schedule).toEqual({ crons: ['0 18 * * *', '0 8 * * *'] })
+  })
+
+  it('refuses a cron that occurs twice, also when only the white space around it differs', () => {
+    expect(() => scheduled({ crons: ['0 8 * * *', '0 8 * * *'] })).toThrow('delegation.schedule.crons: 0 8 * * * occurs twice.')
+    expect(() => scheduled({ crons: ['0 8 * * *', ' 0 8 * * * '] })).toThrow('delegation.schedule.crons: 0 8 * * * occurs twice.')
+  })
+
+  it('refuses a blank cron', () => {
+    expect(() => scheduled({ crons: ['0 8 * * *', ' '] })).toThrow('delegation.schedule.crons[1] must not be blank.')
+    expect(() => scheduled({ crons: [''], at: '2026-11-27' })).toThrow('delegation.schedule.crons[0] must not be blank.')
+  })
+
+  it('refuses an empty list of crons, also next to a wake-up: without a repeating time the key is left out', () => {
+    expect(() => scheduled({ crons: [] })).toThrow('delegation.schedule.crons takes 1 to 10 entries (got 0).')
+    expect(() => scheduled({ crons: [], at: '2026-11-27' })).toThrow('delegation.schedule.crons takes 1 to 10 entries (got 0).')
+  })
+
+  it('takes ten crons and refuses an eleventh', () => {
+    const crons = (n: number) => Array.from({ length: n }, (_, i) => `${i} 8 * * *`)
+    expect(stored({ crons: crons(10) }).crons).toHaveLength(10)
+    expect(() => scheduled({ crons: crons(11) })).toThrow('delegation.schedule.crons takes 1 to 10 entries (got 11).')
+  })
+
+  it('refuses crons that are not a list of text', () => {
+    expect(() => scheduled({ crons: '0 8 * * *' })).toThrow('delegation.schedule.crons must be a list of text.')
+    expect(() => scheduled({ crons: [8] })).toThrow('delegation.schedule.crons must be a list of text.')
+  })
+
+  it('keeps why and by_session with the wake-up', () => {
+    expect(stored({ at: '2026-11-27T02:00:00.000Z', why: 'check whether the customer answered', by_session: 'sess-1' }))
+      .toEqual({ at: '2026-11-27T02:00:00.000Z', why: 'check whether the customer answered', by_session: 'sess-1' })
+  })
+
+  it('drops why and by_session when there is no wake-up', () => {
+    expect(stored({ crons: ['0 8 * * *'], why: 'check whether the customer answered', by_session: 'sess-1' })).toEqual({ crons: ['0 8 * * *'] })
+  })
+
+  it('takes a why of 2000 characters and refuses a longer one', () => {
+    expect(stored({ at: '2026-11-27', why: 'x'.repeat(2000) }).why).toHaveLength(2000)
+    expect(() => scheduled({ at: '2026-11-27', why: 'x'.repeat(2001) })).toThrow('delegation.schedule.why is at most 2000 characters (got 2001).')
+  })
+
+  it('refuses the keys of schema 23, cron and session, like any unknown key', () => {
+    expect(() => scheduled({ cron: '0 8 * * *' })).toThrow('delegation.schedule has unknown key cron (it takes crons, at, why, by_session, time_zone, paused, ends_at).')
+    expect(() => scheduled({ crons: ['0 8 * * *'], session: 'new' })).toThrow('delegation.schedule has unknown key session')
+    expect(() => scheduled({ at: '2026-11-27', next_run_at: '2026-11-27' })).toThrow('delegation.schedule has unknown key next_run_at')
+  })
+
+  it('refuses values that are not their kind: at and ends_at dates, paused a bool, time_zone not blank, text as text', () => {
+    expect(() => scheduled({ at: 'tomorrow' })).toThrow('delegation.schedule.at must be an ISO date')
+    expect(() => scheduled({ at: '2026-11-27', ends_at: 'never' })).toThrow('delegation.schedule.ends_at must be an ISO date')
+    expect(() => scheduled({ at: '2026-11-27', paused: 'yes' })).toThrow('delegation.schedule.paused must be true or false.')
+    expect(() => scheduled({ crons: ['0 8 * * *'], time_zone: ' ' })).toThrow('delegation.schedule.time_zone must not be blank.')
+    expect(() => scheduled({ at: '2026-11-27', by_session: 7 })).toThrow('delegation.schedule.by_session must be text.')
+    expect(() => scheduled({ at: '2026-11-27', why: null })).toThrow('delegation.schedule.why is left out, not null.')
+  })
+
+  it('a task with a schedule is not requested at its creation', () => {
+    const t = task({ delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *'] } } })
+    expect(props(t.id).delegation.requested_at).toBeUndefined()
+  })
+
+  it('setting a wake-up next to the repeating times is one schedule write; clearing it keeps the crons', () => {
+    const t = scheduled({ crons: ['0 13 * * 1-5'], time_zone: 'Asia/Makassar' })
+    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { crons: ['0 13 * * 1-5'], time_zone: 'Asia/Makassar', at: '2026-11-27T02:00:00Z', why: 'look again', by_session: 'sess-1' } } })
+    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { crons: ['0 13 * * 1-5'], time_zone: 'Asia/Makassar' } } })
+    expect(props(t.id).delegation.schedule).toEqual({ crons: ['0 13 * * 1-5'], time_zone: 'Asia/Makassar' })
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual([
+      'schedule crons 0 13 * * 1-5 (Asia/Makassar) → crons 0 13 * * 1-5 (Asia/Makassar), at 2026-11-27T02:00:00.000Z',
+      'schedule crons 0 13 * * 1-5 (Asia/Makassar), at 2026-11-27T02:00:00.000Z → crons 0 13 * * 1-5 (Asia/Makassar)',
+    ])
+  })
+
+  it('journals a schedule change as schedule <old> → <new>; a change of only the wake-up\'s reason or session gets no entry', () => {
+    const t = scheduled({ at: '2026-11-27T02:00:00.000Z', why: 'look again', by_session: 'sess-1' })
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual([])
+    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { at: '2026-11-27T02:00:00.000Z', why: 'look once more', by_session: 'sess-2' } } })
+    expect(props(t.id).delegation.schedule).toEqual({ at: '2026-11-27T02:00:00.000Z', why: 'look once more', by_session: 'sess-2' })
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual([])
+    writes(eml).trackTask(t.id, { delegation: { agent: 'atlas', schedule: { at: '2026-11-27T02:00:00.000Z', paused: true } } })
+    expect(changes(t.id).filter(c => c.startsWith('schedule'))).toEqual(['schedule at 2026-11-27T02:00:00.000Z → at 2026-11-27T02:00:00.000Z (paused)'])
+  })
+})
+
+describe('scheduleText — a schedule as one journal word group', () => {
+  it('is none without a schedule', () => {
+    expect(scheduleText(undefined)).toBe('none')
+  })
+  it('names the crons, their time zone, the wake-up and paused', () => {
+    expect(scheduleText({ crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], at: '2026-11-27T02:00:00.000Z', why: 'look again', by_session: 's', time_zone: 'Asia/Makassar', paused: true }))
+      .toBe('crons 0 13 * * 1-5; 0 18,22 * * 1-5 (Asia/Makassar), at 2026-11-27T02:00:00.000Z (paused)')
+  })
+  it('names crons alone, without a time zone when there is none', () => {
+    expect(scheduleText({ crons: ['0 8 * * *'] })).toBe('crons 0 8 * * *')
+  })
+  it('names a wake-up alone, and no time zone with it: the zone is the crons\'', () => {
+    expect(scheduleText({ at: '2026-11-27T02:00:00.000Z', time_zone: 'Asia/Makassar' })).toBe('at 2026-11-27T02:00:00.000Z')
+  })
+  it('names the end', () => {
+    expect(scheduleText({ crons: ['0 8 * * *'], ends_at: '2026-12-31T00:00:00.000Z', paused: false })).toBe('crons 0 8 * * *, ends 2026-12-31T00:00:00.000Z')
+  })
+})
+
+describe('a text[] field with entries (schema 24)', () => {
+  const spec = { kind: 'text[]', entries: { min: 1, max: 3 } } as const
+  it('takes a list within its bounds', () => {
+    expect(fieldProblem('f', spec, ['a'])).toBeNull()
+    expect(fieldProblem('f', spec, ['a', 'b', 'c'])).toBeNull()
+  })
+  it('refuses fewer or more entries than it takes', () => {
+    expect(fieldProblem('f', spec, [])).toBe('f takes 1 to 3 entries (got 0).')
+    expect(fieldProblem('f', spec, ['a', 'b', 'c', 'd'])).toBe('f takes 1 to 3 entries (got 4).')
+  })
+  it('refuses a blank entry', () => {
+    expect(fieldProblem('f', spec, ['a', '  '])).toBe('f[1] must not be blank.')
+  })
+  it('refuses an entry that occurs twice, read without the white space around it', () => {
+    expect(fieldProblem('f', spec, ['a', 'b', ' a'])).toBe('f: a occurs twice.')
+  })
+  it('a text[] without entries stays unbounded, as before', () => {
+    expect(fieldProblem('f', { kind: 'text[]' }, [])).toBeNull()
+    expect(fieldProblem('f', { kind: 'text[]' }, ['a', 'a', ''])).toBeNull()
   })
 })
 

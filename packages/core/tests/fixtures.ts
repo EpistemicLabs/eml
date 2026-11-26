@@ -211,8 +211,11 @@ export function writeEverything(eml: EML): void {
   // v0.23: the hand-over as one value and the flat fields that mirror it, the waits and waiting_on, a run on the task
   writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'after', requested_at: '2026-11-19T09:00:00Z' }, text: 'handed over' }, ada)
   writes(eml).trackTask(successor.id, { checkpoint: 'before' }, ada)
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', requested_at: '2026-11-19T09:00:00.000Z', schedule: { cron: '0 8 * * 1-5', time_zone: 'Europe/Berlin', session: 'new' } } }, ada)
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { at: '2026-11-20', session: 'resume', paused: true } }, text: 'checks again on Friday' }, juno)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', requested_at: '2026-11-19T09:00:00.000Z', schedule: { crons: ['0 8 * * 1-5', ' 0 18,22 * * 1-5 '], time_zone: 'Europe/Berlin' } } }, ada)
+  // v0.24: the schedule holds the repeating times and the one wake-up; why and by_session go with the wake-up
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { ends_at: '2026-12-31', paused: true, by_session: 's1', why: 'check whether the vendor answered', at: '2026-11-20', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } }, text: 'checks again on Friday' }, juno)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin', why: 'no wake-up to go with', by_session: 's1' } }, text: 'the wake-up fired' }, juno)
+  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { at: '2026-11-21T08:00:00Z', why: 'look again', by_session: 's1', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } } }, juno)
   writes(eml).trackTask(successor.id, { waits: [
     { id: 's1', who: 'ada', kind: 'question', why: 'which one?', since: '2026-11-19T09:05:00.000Z', session_id: 's1' },
     { id: 's2', who: 'ada', kind: 'review', why: 'please look', since: '2026-11-19T09:06:00Z', session_id: 's2', snoozed_until: '2026-11-22' },
