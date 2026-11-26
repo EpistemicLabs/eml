@@ -48,8 +48,9 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *     by): it is not moved, and nothing is written to that task, which this cockpit does not fire: no schedule, no
  *     text, no journal line. The job leaves the version 1 data (nothing fires it any more), and the report says so
  *     loudly, with the schedule-tool call by which the task's owner brings it back;
- *   - a job on a task no member owns: moved as this member's own, with a record here, which is what makes this
- *     cockpit fire it;
+ *   - a job on a task no member owns (only a shared space has such a task): handled like one on another member's
+ *     task, since either member's old cockpit may have had jobs on it: not moved, nothing written, and the report
+ *     says how to take the task and set its time again;
  *   - a job of a space whose kind is not known yet (the brain server has not said whether it is shared), or on a task
  *     whose owner cannot be told yet: left where it is, for a later pass;
  *   - a job in another space: left for that space's pass;
@@ -264,30 +265,32 @@ const describe = (job: JobV1): string => {
 }
 
 /**
- * An open task another member owns: its jobs are not moved, and nothing is written to the task, since this cockpit
- * does not fire it. They end here; each one that still had something to do is named loudly, with the way back.
+ * An open task another member owns, or in a shared space one no member owns: its jobs are not moved, and nothing is
+ * written to the task, since this cockpit does not fire it (a task nobody owns fires only where a record of it is
+ * kept, and either member's old cockpit may have had jobs on it). They end here; each one that still had something to
+ * do is named loudly, with the way back. `owner` null: nobody owns the task.
  */
-function notMine(task: JobMigrationTask, owner: string, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
+function notMine(task: JobMigrationTask, owner: string | null, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
   const name = nameOfTask(task)
-  const plan = dropped(task.id, name, jobs, input, `the task is ${owner}'s: this cockpit does not fire it and writes nothing to it`, task.properties?.delegation?.schedule ?? null, null, () => '')
+  const why = owner ? `the task is ${owner}'s: this cockpit does not fire it and writes nothing to it` : 'nobody owns the task: this cockpit moves no job onto it and writes nothing to it'
+  const plan = dropped(task.id, name, jobs, input, why, task.properties?.delegation?.schedule ?? null, null, () => '')
   const lines: TaskMigration['jobs'] = jobs.map((job) => {
     if (job.endedAt) return { id: job.id, name: job.name, what: 'had ended: its runs stay as history', kind: 'history' }
     const trigger = scheduleTriggerOf(job)
     if (trigger?.at !== undefined && Date.parse(trigger.at) <= input.now && !neverRan(job, input.runs[job.id] ?? [])) return { id: job.id, name: job.name, what: `once at ${trigger.at} → it has run: no time to carry over`, kind: 'history' }
     const prompt = cut(flat(job.prompt), NOTE_CHARS)
-    const back = !trigger
-      ? `To bring it back, ${owner} sets it up on the task on their own cockpit: a channel is kept per machine.`
-      : `To bring it back, ${owner} sets the time on the task with the schedule tool: action "create", task_id "${task.id}", ${trigger.cron !== undefined ? `cron "${trigger.cron.trim()}"` : `at "${trigger.at}"`}, timezone "${trigger.timeZone}", prompt "${prompt}"`
-    return { id: job.id, name: job.name, what: `NOT MOVED, IT NO LONGER FIRES: the task "${name}" (${task.id}) is ${owner}'s, and this cockpit writes nothing to a task it does not fire. The job (${describe(job)}) had the prompt "${prompt}" ${back}`, kind: 'lost' }
+    const call = trigger ? `with the schedule tool: action "create", task_id "${task.id}", ${trigger.cron !== undefined ? `cron "${trigger.cron.trim()}"` : `at "${trigger.at}"`}, timezone "${trigger.timeZone}", prompt "${prompt}"` : ''
+    const back = owner
+      ? (!trigger ? `To bring it back, ${owner} sets it up on the task on their own cockpit: a channel is kept per machine.` : `To bring it back, ${owner} sets the time on the task ${call}`)
+      : (!trigger ? 'To bring it back, assign the task to yourself and set it up on it again on your cockpit: a channel is kept per machine.' : `To bring it back, assign the task to yourself and set its time ${call}`)
+    const whose = owner ? `the task "${name}" (${task.id}) is ${owner}'s, and this cockpit writes nothing to a task it does not fire` : `nobody owns this task: "${name}" (${task.id})`
+    return { id: job.id, name: job.name, what: `NOT MOVED, IT NO LONGER FIRES: ${whose}. The job (${describe(job)}) had the prompt "${prompt}" ${back}`, kind: 'lost' }
   })
   return { ...plan, jobs: lines }
 }
 
-/**
- * One open task this cockpit fires: its jobs onto it. `task` is the task as it is, or the one `create` will make.
- * `ownerless`: no member owns it, so the record kept here is what makes this cockpit fire it.
- */
-function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: readonly JobV1[], input: JobMigrationInput, ownerless = false): TaskMigration {
+/** One open task this cockpit fires: its jobs onto it. `task` is the task as it is, or the one `create` will make. */
+function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
   const now = input.now
   const taskId = create ? '' : task.id
   const live = jobs.filter((j) => !j.endedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -492,7 +495,6 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     if (record.end) settings.push(`ends after ${record.end.afterRuns} runs (${record.runCount} so far)`)
     if (record.projectId) settings.push(`new sessions start in ${record.projectId}${record.provider ? ` with ${record.provider}` : ''}`)
     if (record.pausedReason) settings.push(`paused by the cockpit: ${record.pausedReason}`)
-    if (ownerless) settings.push('no member owns the task: this cockpit fires it, because it keeps its record')
     if (live.length > 1) settings.push(`from its ${live.length} jobs: new sessions start where the oldest one ("${primary.name}") started them; the tools are the narrowest, a limit and draft replies hold if any had them, runs are told as the loudest of them said, lent tools and channels are those of all`)
     const open = allRuns.filter(isOpenRun).length
     if (allRuns.length > 0) settings.push(`${allRuns.length} run${allRuns.length === 1 ? '' : 's'} carried over${open ? ` (${open} open)` : ''}`)
@@ -541,9 +543,12 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       continue
     }
     const owner = firing === 'theirs' ? ownerOf(task) : null
+    // In a shared space a task no member owns is not this cockpit's to move jobs onto: either member's old cockpit may
+    // have had jobs on it. It is handled like another member's task. (In a local space every task is this member's.)
+    const nobodys = firing === 'ownerless'
     if (!isOpenTask(task)) {
-      if (owner) {
-        tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status}) and ${owner}'s: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
+      if (owner || nobodys) {
+        tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status}) and ${owner ? `${owner}'s` : 'nobody owns it'}: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
         continue
       }
       const live = jobs.filter((j) => !j.endedAt)
@@ -553,11 +558,11 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status})`, null, brain, (j) => `${describe(j)} → dropped: the task is closed`))
       continue
     }
-    if (owner) {
+    if (owner || nobodys) {
       tasks.push(notMine(task, owner, jobs, input))
       continue
     }
-    tasks.push(moved(task, null, jobs, input, firing === 'ownerless'))
+    tasks.push(moved(task, null, jobs, input))
   }
   for (const job of taskless) {
     if (job.endedAt) {

@@ -240,17 +240,18 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     // The fake brain is one for every space: only the team space is this cockpit's here, so its tasks are not looked through as the main space's.
     w.spaces.shift()
     const result = await w.migration.run()
-    expect(result).toMatchObject({ moved: 2, dropped: 1, left: 0, failed: [], jobs: { moved: 2, notMoved: 1 } })
-    // no write of any kind reaches the other member's task: no schedule, no text, no journal line
-    expect(w.posts.map((p) => p.path)).toEqual(['/task/agents/track', '/task/mine/track'])
+    expect(result).toMatchObject({ moved: 1, dropped: 2, left: 0, failed: [], jobs: { moved: 1, notMoved: 2 } })
+    // no write of any kind reaches the other member's task, nor the one no member owns: no schedule, no text, no journal line
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/mine/track'])
     expect(w.byId.get('theirs')).toEqual(theirs)
-    // a record for my task and for the one no member owns, none for the other member's
-    expect(w.store.list().map((r) => r.id).sort()).toEqual(['agents', 'mine'])
-    expect(w.moved).toEqual([['j2', 'agents'], ['j3', 'mine']])
+    // a record for my task only
+    expect(w.store.list().map((r) => r.id)).toEqual(['mine'])
+    expect(w.moved).toEqual([['j3', 'mine']])
+    expect(result.reports[0]).toContain('- Job "Daily brief" (j2): NOT MOVED, IT NO LONGER FIRES: nobody owns this task: "agents" (agents).')
     expect(w.store.runs('j1')).toMatchObject([{ status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
     expect(result.reports[0]).toContain('- Job "Daily brief" (j1): NOT MOVED, IT NO LONGER FIRES: the task "theirs" (theirs) is other\'s, and this cockpit writes nothing to a task it does not fire.')
     expect(result.reports[0]).toContain('To bring it back, other sets the time on the task with the schedule tool: action "create", task_id "theirs", cron "0 8 * * 1-5", timezone "UTC", prompt "Write the brief."')
-    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 2 moved, 1 not moved — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 1 moved, 2 not moved — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
     expect(w.store.pendingV1()).toBeNull()
   })
 

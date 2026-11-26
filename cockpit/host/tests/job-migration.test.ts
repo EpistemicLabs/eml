@@ -275,12 +275,26 @@ describe('planning jobs onto their tasks', () => {
       expect(outcome(task('t1', { ingested_by: 'other' }, { assignee_ids: [] }))).toMatchObject({ outcome: 'dropped', brain: null, record: null, why: 'the task is other\'s: this cockpit does not fire it and writes nothing to it' })
     })
 
-    it('a task no member owns (nobody assigned, written by an agent or by nobody) moves as this member\'s own, with a record here', () => {
+    it('in a shared space a task no member owns (nobody assigned, written by an agent or by nobody) is not moved onto, like another member\'s: nothing is written, and the report says how to take it', () => {
       for (const author of ['atlas', null]) {
         const t = outcome(task('t1', { ingested_by: author }, { assignee_ids: [] }))
-        expect(t).toMatchObject({ outcome: 'moved', why: null, record: { id: 't1', spaceId: null }, schedule: { crons: ['0 8 * * 1-5'] } })
-        expect(t.settings).toContain('no member owns the task: this cockpit fires it, because it keeps its record')
+        expect(t).toMatchObject({ outcome: 'dropped', why: 'nobody owns the task: this cockpit moves no job onto it and writes nothing to it', brain: null, record: null, settles: [expect.any(String)] })
+        expect(t.jobs).toEqual([{
+          id: expect.any(String), name: 'Daily brief', kind: 'lost',
+          what: 'NOT MOVED, IT NO LONGER FIRES: nobody owns this task: "Task t1" (t1). The job (cron "0 8 * * 1-5" (Europe/Berlin)) had the prompt "Write the brief." '
+            + 'To bring it back, assign the task to yourself and set its time with the schedule tool: action "create", task_id "t1", cron "0 8 * * 1-5", timezone "Europe/Berlin", prompt "Write the brief."',
+        }])
       }
+      // a channel alone, and a closed task no member owns: nothing is written either
+      const mail = plan([job({ name: 'Mail', triggers: [{ type: 'mail', match: ['a@example.com'] } as never] })], [task('t1', { ingested_by: 'atlas' }, { assignee_ids: [] })], shared).tasks[0]
+      expect(mail.jobs[0].what).toBe('NOT MOVED, IT NO LONGER FIRES: nobody owns this task: "Task t1" (t1). The job (no time, woken by mail) had the prompt "Write the brief." To bring it back, assign the task to yourself and set it up on it again on your cockpit: a channel is kept per machine.')
+      const closed = outcome(task('t1', { ingested_by: 'atlas', status: 'resolved' }, { assignee_ids: [], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'] } } }))
+      expect(closed).toMatchObject({ outcome: 'dropped', brain: null, record: null, why: 'the task is closed (resolved) and nobody owns it: nothing is written' })
+    })
+
+    it('in a private space a task nobody is assigned to moves as this member\'s own', () => {
+      const t = outcome(task('t1', { ingested_by: 'atlas' }, { assignee_ids: [] }), { space: { key: null, name: 'Main', shared: false } })
+      expect(t).toMatchObject({ outcome: 'moved', why: null, record: { id: 't1', spaceId: null }, schedule: { crons: ['0 8 * * 1-5'] } })
     })
 
     it('plans nothing while it is not known whether the space is shared, or who its members are: the jobs wait', () => {

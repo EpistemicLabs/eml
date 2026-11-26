@@ -322,8 +322,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `jobs.json` from before brain schema 24 move onto their tasks at start (`application/job-migration.ts`): tried
   again every 15 minutes while jobs wait, with each run's report appended to `<home>/jobs-migration-report.md` and
   the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`). The
-  migration never writes to a task this cockpit does not fire: a job on another member's task is not moved, and the
-  report says how its owner brings it back. A space is planned only once its brain is at schema 24, and every write
+  migration never writes to a task this cockpit does not fire: a job on another member's task, or in a shared space on
+  a task no member owns, is not moved, and the report says how its owner (or whoever takes the task) brings it back. A space is planned only once its brain is at schema 24, and every write
   is checked against what was planned (the task's rev). In a home that had such a file, each space is looked through
   once for a schedule left on a task without a job, also a space without jobs, as soon as it can be (an agent bound
   to it, its kind known, its brain at schema 24; also a space bound or added later): on a task this cockpit fires it
