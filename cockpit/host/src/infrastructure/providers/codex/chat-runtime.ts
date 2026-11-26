@@ -489,6 +489,11 @@ class CodexChatRuntime implements SessionRuntime {
     return { url: authorizationUrl }
   }
 
+  /** Codex finishes a sign-in on its own page; it takes nothing back. */
+  async finishToolServerSignIn(): Promise<void> {
+    throw new Error('Codex finishes this sign-in on its own page.')
+  }
+
   async close(): Promise<void> {
     if (this.closing) return this.client?.exited
     this.closing = true

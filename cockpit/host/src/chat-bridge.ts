@@ -40,7 +40,8 @@ import { toolLabel } from './domain/tool-label.js'
  *   client → { type:'answer', requestId, answer }
  *   client → { type:'restart', unlimited?, forJob? } (a new process for the same conversation; `unlimited`: the user lifts its limits first)
  *   client → { type:'tool_servers' }
- *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect' }
+ *   client → { type:'tool_server', name, action:'enable'|'disable'|'reconnect'|'sign_in' }
+ *   client → { type:'tool_server', name, action:'sign_in_code', code }  (the address a sign-in's page ended on, or its code)
  *   client → { type:'set_mode', mode }
  *   client → { type:'set_model', model }
  *   client → { type:'stop_agent', taskId }
@@ -51,6 +52,7 @@ import { toolLabel } from './domain/tool-label.js'
  *   host   → { type:'reset', epoch }                (drop the view, numbers start over)
  *   host   → { type:'event', seq, event }
  *   host   → { type:'tool_servers', servers, error }  (a snapshot, not part of the event log)
+ *   host   → { type:'tool_server_sign_in', name, url, takesCode? }  (to the client that asked for the sign-in)
  *   host   → { type:'error', message }
  *
  * Attach handshake as for the terminal: POST /api/chat mints a one-time nonce, the
@@ -278,6 +280,8 @@ type ClientMessage = {
   taskId?: unknown
   name?: unknown
   action?: unknown
+  /** tool_server sign_in_code: what the user pasted back from a sign-in's page. */
+  code?: unknown
   /** restart: the user lifts the session's limits first; forJob: its job's future runs too. */
   unlimited?: unknown
   forJob?: unknown
@@ -549,7 +553,7 @@ export class ChatBridge {
           void this.restart(entry).catch((error: Error) => this.emit(entry, { kind: 'error', message: error.message }))
         }
         else if (data.type === 'tool_servers') void this.sendToolServers(entry, ws)
-        else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action))
+        else if (data.type === 'tool_server') void this.changeToolServer(entry, ws, text(data.name), text(data.action), text(data.code))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.log(`error: ${message}`)
@@ -1264,15 +1268,19 @@ export class ChatBridge {
   }
 
   /** Whatever comes of it, the client gets the servers as they are now. */
-  private async changeToolServer(entry: ChatEntry, ws: WebSocket, name: string, action: string): Promise<void> {
+  private async changeToolServer(entry: ChatEntry, ws: WebSocket, name: string, action: string, code = ''): Promise<void> {
     let failure: string | null = null
     try {
       if (action === 'enable' || action === 'disable') await entry.runtime?.setToolServerEnabled(name, action === 'enable')
       else if (action === 'reconnect') await entry.runtime?.reconnectToolServer(name)
       else if (action === 'sign_in' && entry.runtime) {
         // The page to open goes to the client that asked; the rest hear of it through the list.
-        const { url } = await entry.runtime.signInToolServer(name)
-        send(ws, { type: 'tool_server_sign_in', name, url })
+        // Null: nothing to open, the list shows it connecting.
+        const signIn = await entry.runtime.signInToolServer(name)
+        if (signIn) send(ws, { type: 'tool_server_sign_in', name, url: signIn.url, ...(signIn.takesCode ? { takesCode: true } : {}) })
+      } else if (action === 'sign_in_code' && entry.runtime) {
+        // A secret: it goes to the runtime and nowhere else, not into a message either.
+        await entry.runtime.finishToolServerSignIn(name, code)
       }
     } catch (error) {
       // A server that wants a sign-in throws here though it did what was asked; the

@@ -92,6 +92,12 @@ export type RuntimeFeature =
 /** Where to sign in to a tool server: a page the user opens; the runtime notices when it is done. */
 export interface ToolServerSignIn {
   url: string
+  /**
+   * The page sends the browser back to an address on the cockpit's own machine. A browser on another
+   * computer cannot open it; the user pastes that address (or the code in it) back instead
+   * (finishToolServerSignIn).
+   */
+  takesCode?: boolean
 }
 
 /** An image going into a message: base64. */
@@ -252,9 +258,15 @@ export interface SessionRuntime {
   reconnectToolServer(name: string): Promise<void>
   /**
    * Feature `toolServerSignIn`: starts a sign-in to a server in status needs-auth. Resolves with the page to
-   * open; a `notice` says when it is done, and the server's status changes then. Rejects where unsupported.
+   * open, or null when there is nothing to open (it was signed in already); a `notice` says when it is done,
+   * and the server's status changes then. Rejects where unsupported.
    */
-  signInToolServer(name: string): Promise<ToolServerSignIn>
+  signInToolServer(name: string): Promise<ToolServerSignIn | null>
+  /**
+   * Feature `toolServerSignIn`, for a sign-in that `takesCode`: the address its page ended on, or the code
+   * in it. Resolves once the server is signed in. The value is a secret: never logged or kept.
+   */
+  finishToolServerSignIn(name: string, code: string): Promise<void>
   /** Ends the run; resolves once its process has exited. Open requests settle as cancelled. */
   close(): Promise<void>
 }
