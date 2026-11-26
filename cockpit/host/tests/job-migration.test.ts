@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { jobMigrationReport, MIGRATED_AWAY, planJobMigration, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
+import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
 
 // Thursday 26 November 2026, 10:00 UTC.
 const NOW = Date.parse('2026-11-26T10:00:00.000Z')
@@ -47,6 +48,18 @@ describe('planning jobs onto their tasks', () => {
       triggers: [], projectId: 'bp-ops', toolProfile: null, reply: {}, end: null, notify: 'always', pausedReason: null,
       cursor: '2026-11-26T10:00:00.000Z', firedWake: null, lastRunAt: null, runCount: 4, failures: 1,
     })
+  })
+
+  it('a paragraph the schedule tool added is found in the text, and one the migration added is found by the tool: neither is written twice', () => {
+    // the tool's side, written with stray white space around the cron and the prompt
+    const byTool = withParagraph('Keep the customer informed.\n', everyParagraph(' 0 8 * * 1-5 ', ' Write the brief.\n'))!
+    const [found] = plan([cron(' 0 8 * * 1-5 ', { prompt: 'Write the brief. ' })], [task('t1', { content: byTool })]).tasks
+    expect(found.brain).toMatchObject({ content: null, appended: [] })
+    expect(found.jobs[0].what).toContain('its prompt is in the task\'s text already')
+    // the migration's side: what it appends is what the tool would append, so the tool has nothing to add
+    const [added] = plan([cron(' 0 8 * * 1-5 ', { prompt: ' Write the brief.\n' })], [task('t1', { content: 'Keep the customer informed.\n\n' })]).tasks
+    expect(added.brain?.content).toBe(byTool)
+    expect(withParagraph(added.brain!.content, everyParagraph('0 8 * * 1-5', 'Write the brief.'))).toBeNull()
   })
 
   it('two repeating jobs on one task: both crons, each prompt its own paragraph, one record from the older job', () => {
