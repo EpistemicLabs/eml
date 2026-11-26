@@ -316,13 +316,18 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   space), reads the tasks listening on a channel (held ones marked, so their mail still waits for them), and wakes one
   with a short text and an idempotency key; a message is never skipped: the host decides which session it reaches and
   answers delivered, retry or refused. Only a session started for the task's record gets a message (it has the
-  bridge's tools); while another session of the task works the bridge is asked to try again. The jobs of a
+  bridge's tools); while a session without them works on the task a new one starts for the message. Retry is for a
+  record that is held or paused, no room, a linked session that cannot take the message now, and an id that is
+  still moving (a version 1 job, or its old id until the bridge confirmed the new one). The jobs of a
   `jobs.json` from before brain schema 24 move onto their tasks at start (`application/job-migration.ts`): tried
   again every 15 minutes while jobs wait, with each run's report appended to `<home>/jobs-migration-report.md` and
-  the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`). In a home
-  that had such a file, each space is looked through once for a schedule left on a task without a job, also a space
-  without jobs: in a local space it is removed, in a shared one left and reported; until then no schedule is taken up
-  there by being seen. A record made or changed in the last few minutes is left as it is by a pass that finds no
+  the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`). The
+  migration never writes to a task this cockpit does not fire: a job on another member's task is not moved, and the
+  report says how its owner brings it back. A space is planned only once its brain is at schema 24, and every write
+  is checked against what was planned (the task's rev). In a home that had such a file, each space is looked through
+  once for a schedule left on a task without a job, also a space without jobs: on a task this cockpit fires it is
+  removed, in a local and in a shared space alike; until then no schedule is taken up there by being seen. A
+  `jobs.json` that cannot be parsed is set aside as `jobs.json.unreadable-<UTC stamp>`, never overwritten. A record made or changed in the last few minutes is left as it is by a pass that finds no
   schedule on its task (`domain/job.ts` `RECORD_GRACE_MS`).
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
