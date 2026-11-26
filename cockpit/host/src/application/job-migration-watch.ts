@@ -8,7 +8,8 @@ import type { JobMigrationResult } from './job-migration.js'
  * Until a space's jobs have moved onto their tasks nothing fires them: the engine waits for the migration
  * (application/job-runner.ts waitsForMigration). A brain that is not up yet, one still at the schema of before, or a
  * brain server that has not said whether a space is shared comes back later, so a pass that leaves jobs waiting is
- * tried again: after 1, 5 and 15 minutes, then every 15 minutes for as long as jobs wait.
+ * tried again: after 1, 5 and 15 minutes, then every 15 minutes for as long as jobs wait. A space the pass could not
+ * look through yet for schedules left without a job is tried again the same way, without a word to the user.
  *
  * A space whose jobs have waited for more than ten minutes is told to the user once, through the notifier the
  * engine tells a paused schedule with (notifications.ts; "Schedule paused · <space>" on the user's devices), and the
@@ -30,8 +31,8 @@ export function pendingSpaces(jobs: ReadonlyArray<{ spaceId?: string | null }>, 
 }
 
 export interface MigrationWatchDeps {
-  /** One pass of the migration. */
-  run(): Promise<JobMigrationResult>
+  /** One pass of the migration; `unlooked`: the spaces it could not look through yet for left-over schedules. */
+  run(): Promise<Pick<JobMigrationResult, 'unlooked'>>
   /** The spaces that still have version 1 jobs waiting, as the store has them now. */
   pending(): PendingSpace[]
   notify(input: NotificationInput): void
@@ -85,12 +86,15 @@ export function createMigrationWatch(deps: MigrationWatchDeps) {
   }
 
   const pass = async (attempt: number): Promise<void> => {
+    let unlooked = 0
     try {
-      await deps.run()
+      unlooked = (await deps.run()).unlooked
     } catch (err) {
       deps.log(`[jobs] migration failed: ${(err as Error).message}`)
     }
-    if (!look()) return
+    // Jobs that wait are tried again, and so is a space still to be looked through: the engine takes up no schedule there meanwhile.
+    const waits = look()
+    if (!waits && !(unlooked > 0)) return
     const wait = MIGRATION_RETRY.quickMs[attempt] ?? MIGRATION_RETRY.everyMs
     deps.later(() => { running = pass(attempt + 1) }, wait)
   }

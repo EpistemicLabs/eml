@@ -25,10 +25,16 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  *
  * A brain that is not at schema 24 yet refuses the new schedule shape: that task's write fails and its jobs wait.
  * A space the brain server has not said the kind of (shared or local) is not planned at all: its jobs wait too.
+ *
+ * In a home that was on version 1, every space is looked through once for schedules the old mirror left on tasks
+ * without a job (domain/job-migration.ts), before any job of it moves, and also when it has no job: nothing ran such
+ * a schedule, and it must not start to fire. Until a space was looked through the engine takes up no schedule there
+ * by seeing it (application/job-runner.ts holdsFirstSight). A home that never had a version 1 file is not looked
+ * through: nothing there can be a leftover.
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'leftoversChecked' | 'markLeftoversChecked' | 'get'>>
+  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -71,6 +77,8 @@ export interface JobMigrationResult {
   leftovers: number
   /** Where this run's report was kept; null: none was written (nothing was planned, nothing changed since the last one, or it failed). */
   reportFile: string | null
+  /** Spaces this run could not look through yet for schedules left without a job: a later pass tries again. */
+  unlooked: number
 }
 
 /** What a real run appends to the report file: its date, the count by job, what was not done, and each space's report. */
@@ -126,20 +134,29 @@ export function createJobMigration(deps: JobMigrationDeps) {
   const kindOf = async (space: BrainSpace): Promise<boolean | null> =>
     space.shared ?? (deps.spaceKind ? await deps.spaceKind(space).catch(() => null) : null)
 
-  /** The plan of one space, from the version 1 data and the brain as they are now. Nothing is written. */
+  /** The space still waits for its one look for schedules left without a job (job-store.ts awaitsLeftoverLook). */
+  const awaitsLook = (space: BrainSpace): boolean => deps.store.awaitsLeftoverLook?.(keyOf(space)) === true
+  /** Spaces said in the log to wait for that look: once each, not at every pass. */
+  const saidUnlooked = new Set<string | null>()
+
+  /**
+   * The plan of one space, from the version 1 data and the brain as they are now; null when it has no job to move and
+   * was looked through. Nothing is written.
+   */
   const planSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>): Promise<SpacePlan | null> => {
     const pending = deps.store.pendingV1()
     const jobs = Object.values(pending?.jobs ?? {})
     const mine = jobs.filter((j) => (j.spaceId ?? null) === keyOf(space))
-    if (!pending || mine.length === 0) return null
     const now = deps.now()
     const shared = await kindOf(space)
     // The first look through the space, while all its version 1 jobs are still there: the schedules left without a
-    // job are named too. Once it was looked through, never again: a schedule set on a jobless task later is real.
-    const first = shared !== null && deps.store.leftoversChecked !== undefined && !deps.store.leftoversChecked(keyOf(space))
+    // job are named too, also in a space that has no job. Once it was looked through, never again: a schedule set on
+    // a jobless task later is real.
+    const first = shared !== null && awaitsLook(space)
+    if (mine.length === 0 && !first) return null
     const scheduled = first ? await scheduledTasks(brain) : undefined
     const plan = planJobMigration({
-      jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name, shared },
+      jobs, runs: pending?.runs ?? {}, keys: pending?.keys ?? {}, space: { key: keyOf(space), name: space.name, shared },
       ...(scheduled ? { scheduled, records: new Set(scheduled.filter((task) => deps.store.get?.(task.id) !== undefined).map((task) => task.id)) } : {}),
       // Only a shared space has other members whose tasks are not this cockpit's.
       members: shared === true ? await membersOf(brain) : null,
@@ -185,28 +202,40 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   const runOnce = async (): Promise<JobMigrationResult> => {
-    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null }
+    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 }
     /** What was not done: for the result and the report as the user reads it (names), and for the log (ids). */
     const failed = (shown: string, logged: string) => {
       result.failed.push(shown)
       deps.log(`[jobs] migration: ${logged}`)
     }
-    if (!deps.store.pendingV1()) {
+    // A home that was on version 1 has its spaces looked through once for schedules left without a job, also the
+    // spaces that have no job. A home that never was has nothing of the kind: no space of it is asked.
+    const hadJobs = deps.store.pendingV1() !== null
+    const looks = deps.store.fromV1?.() === true
+    if (!hadJobs && !(looks && deps.spaces().some(awaitsLook))) {
       await confirmRenames()
       return result
+    }
+    /** The space has no job that waits, and cannot be looked through now: it waits, said once in the log. */
+    const unlooked = (space: BrainSpace, why: string) => {
+      if (saidUnlooked.has(keyOf(space))) return
+      saidUnlooked.add(keyOf(space))
+      deps.log(`[jobs] migration, ${spaceTag(space)}: not looked through yet for schedules left without a job: ${why}`)
     }
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
       const waiting = Object.values(deps.store.pendingV1()?.jobs ?? {}).filter((j) => (j.spaceId ?? null) === keyOf(space)).length
-      if (waiting === 0) continue
+      if (waiting === 0 && !awaitsLook(space)) continue
       if (!brain) {
-        failed(`${space.name}: no brain to ask, its ${waiting} job(s) wait`, `${spaceTag(space)}: no brain to ask, its ${waiting} job(s) wait`)
+        if (waiting === 0) unlooked(space, 'no brain to ask')
+        else failed(`${space.name}: no brain to ask, its ${waiting} job(s) wait`, `${spaceTag(space)}: no brain to ask, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }
       // Whose cockpit fires a task depends on the space's kind: not known, nothing of it is planned, and it waits.
       if (await kindOf(space) === null) {
-        failed(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
+        if (waiting === 0) unlooked(space, KIND_UNKNOWN)
+        else failed(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }
@@ -214,13 +243,15 @@ export function createJobMigration(deps: JobMigrationDeps) {
       try {
         planned = await planSpace(space, brain)
       } catch (err) {
-        const what = `its brain did not answer (${(err as Error).message}), its ${waiting} job(s) wait`
-        failed(`${space.name}: ${what}`, `${spaceTag(space)}: ${what}`)
+        const what = `its brain did not answer (${(err as Error).message})`
+        if (waiting === 0) unlooked(space, what)
+        else failed(`${space.name}: ${what}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${what}, its ${waiting} job(s) wait`)
         result.jobs.notMoved += waiting
         continue
       }
       if (!planned) continue
-      result.reports.push(planned.report)
+      // A space that had no job and nothing left over has nothing to report.
+      if (waiting > 0 || (planned.plan.leftovers?.length ?? 0) > 0) result.reports.push(planned.report)
       // The left-over schedules first, before any job of the space moves. One that cannot be removed is tried again:
       // the space counts as looked through only once all are gone, and until then the engine takes up no schedule
       // there by seeing it.
@@ -265,7 +296,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const known = new Set(deps.spaces().map(keyOf))
     const homeless = rest.filter((j) => !known.has(j.spaceId ?? null)).length
     if (homeless > 0) failed(`${homeless} job(s) of a space this cockpit no longer has stay as they are`, `${homeless} job(s) of a space this cockpit no longer has stay as they are`)
-    deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
+    if (looks) result.unlooked = deps.spaces().filter(awaitsLook).length
+    if (hadJobs) deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
     await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
     if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped + result.leftovers > 0)) {
@@ -286,7 +318,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
   return {
     /** The channel bridge runs (again): the renames it has not confirmed are told now. */
     confirmRenames,
-    /** The pass: every space that has jobs to move. A pass under way is joined, not doubled. */
+    /** The pass: every space that has jobs to move, or is still to be looked through. A pass under way is joined, not doubled. */
     run(): Promise<JobMigrationResult> {
       if (!running) running = runOnce().finally(() => { running = null })
       return running

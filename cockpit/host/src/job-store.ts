@@ -13,7 +13,8 @@ import type { JobV1 } from './domain/job-v1.js'
  * are held under `v1` until the migration (application/job-migration.ts) has moved them onto their tasks, space by
  * space, and they survive every rewrite until then. The version 1 file itself is copied next to it
  * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
- * channel bridge has taken the new id.
+ * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`): the migration looks
+ * through every space of such a home once for schedules left without a job, also a space that has no job.
  */
 
 /** What a version 1 file held, as far as it is not migrated yet. */
@@ -45,6 +46,11 @@ interface JobsFile {
    * mirror left on tasks without a job. It looks once per space: a schedule set on a jobless task afterwards is real.
    */
   leftoversChecked?: string[]
+  /**
+   * The file was a version 1 file once: its home ran the cockpit that kept schedules on jobs, so a task of it may
+   * still show a schedule that cockpit's mirror left without a job. A file that started on version 2 never has it.
+   */
+  fromV1?: true
 }
 
 /** One task's part of the version 1 migration, written in one go. */
@@ -77,7 +83,7 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
     const timeZone = typeof parsed.timeZone === 'string' ? parsed.timeZone : null
     if (parsed.version === 1) {
       const v1: JobsV1Data = { jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys) }
-      return { data: { ...empty(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}) }, v1OnDisk: true }
+      return { data: { ...empty(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}), fromV1: true }, v1OnDisk: true }
     }
     if (parsed.version !== 2) return { data: empty(), v1OnDisk: false }
     const old = parsed.v1 as Partial<JobsV1Data> | undefined
@@ -87,6 +93,8 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
         ...(old && typeof old === 'object' ? { v1: { jobs: record(old.jobs), runs: record(old.runs), keys: record(old.keys) } } : {}),
         ...(Object.keys(record(parsed.renames)).length > 0 ? { renames: record<string>(parsed.renames) } : {}),
         ...(Array.isArray(parsed.leftoversChecked) ? { leftoversChecked: parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') } : {}),
+        // What only the migration of a version 1 file writes says so too.
+        ...(parsed.fromV1 === true || parsed.v1 !== undefined || parsed.renames !== undefined || parsed.leftoversChecked !== undefined ? { fromV1: true as const } : {}),
       },
       v1OnDisk: false,
     }
@@ -156,6 +164,19 @@ export class JobStore {
   /** The migration has looked through this space (its record key; null: main) for schedules left without a job. */
   leftoversChecked(spaceKey: string | null): boolean {
     return this.data.leftoversChecked?.includes(spaceKey ?? '') === true
+  }
+
+  /** The file was a version 1 file once, now or before a rewrite: only such a home can hold a schedule left without a job. */
+  fromV1(): boolean {
+    return this.data.fromV1 === true
+  }
+
+  /**
+   * The space still waits for the migration's one look for schedules left without a job: its home was on version 1,
+   * and the space is not marked as looked through. Until then the engine takes up no schedule there by seeing it.
+   */
+  awaitsLeftoverLook(spaceKey: string | null): boolean {
+    return this.fromV1() && !this.leftoversChecked(spaceKey)
   }
 
   markLeftoversChecked(spaceKey: string | null): void {

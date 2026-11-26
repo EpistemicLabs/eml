@@ -101,6 +101,22 @@ describe('the jobs migration keeps trying, and tells the user', () => {
     expect(w.notices.map((n) => [n.title, n.spaceId, n.jobId, n.body.includes('1 job from before')])).toEqual([['Main', null, 'jobs-migration:main', true]])
   })
 
+  it('tries again while a space is not looked through for left-over schedules, though no job waits, and tells the user nothing', async () => {
+    const waits: number[] = []
+    const notices: NotificationInput[] = []
+    const unlooked = [1, 1, 0]
+    let pass = 0
+    const watch = createMigrationWatch({
+      run: async () => ({ unlooked: unlooked[pass++] ?? 0 }), pending: () => [], notify: (input) => { notices.push(input) }, now: () => 0, log: () => {},
+      later: (fn, ms) => { waits.push(ms); queueMicrotask(fn) },
+    })
+    watch.start()
+    for (let i = 0; i < 6; i++) await watch.idle()
+    expect(waits).toEqual([MIGRATION_RETRY.quickMs[0], MIGRATION_RETRY.quickMs[1]])
+    expect(pass).toBe(3)
+    expect(notices).toEqual([])
+  })
+
   it('a pass that throws is tried again like one that left jobs', async () => {
     const timers: Array<() => void> = []
     const logs: string[] = []

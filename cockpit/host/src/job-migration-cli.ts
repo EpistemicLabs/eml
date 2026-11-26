@@ -60,8 +60,10 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
   // Read as the host reads it (job-store.ts); the store writes only on a change, and none is made here.
   const store = new JobStore(home.jobsFile)
   const pending = store.pendingV1()
-  if (!pending || Object.keys(pending.jobs).length === 0) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
-  const jobs = Object.values(pending.jobs)
+  const jobs = Object.values(pending?.jobs ?? {})
+  // As the host's pass: in a home that was on version 1 the main space is looked through once for schedules left
+  // without a job, also when it has no job.
+  if (jobs.length === 0 && !store.awaitsLeftoverLook(null)) { out('jobs.json holds no version 1 jobs: nothing to move\n'); return true }
   const me = config.handle ?? 'user'
   const now = Date.now()
   const spaces = [{ token: config.token, name: config.mainName ?? 'Main', main: true }, ...(config.spaces ?? []).map((s) => ({ token: s.token, name: s.name ?? 'Space', main: false }))]
@@ -73,8 +75,9 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
     if (!space.main && !key) { out(`# ${space.name}\n\nIts brain is not in this home's control.db: skipped.\n\n`); continue }
     seen.add(key)
     const mine = jobs.filter((j) => (j.spaceId ?? null) === key)
-    if (mine.length === 0) continue
-    if (!info.brainFile || !fs.existsSync(info.brainFile)) { out(`# ${space.name}\n\nIts brain file is not on this machine: its ${mine.length} job(s) cannot be planned here.\n\n`); continue }
+    const first = store.awaitsLeftoverLook(key)
+    if (mine.length === 0 && !(space.main && first)) continue
+    if (!info.brainFile || !fs.existsSync(info.brainFile)) { out(`# ${space.name}\n\nIts brain file is not on this machine: ${mine.length > 0 ? `its ${mine.length} job(s) cannot be planned here` : 'it cannot be looked through here'}.\n\n`); continue }
     // Whose cockpit fires a task depends on whether its space is shared, and only the brain server says that. The
     // main space is this home's own brain, local by construction; any other space is not planned here, not guessed.
     if (!space.main) {
@@ -86,12 +89,12 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
       const tasks: Record<string, JobMigrationTask | null> = {}
       for (const id of new Set(mine.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = taskFrom(db, id)
       // As the host's first pass of a space: the schedules the old mirror left on tasks without a job are named too.
-      const first = !store.leftoversChecked(key)
       const plan = planJobMigration({
-        jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me),
+        jobs, runs: pending?.runs ?? {}, keys: pending?.keys ?? {}, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me),
         ...(first ? { scheduled: scheduledFrom(db), records: new Set(store.list().map((record) => record.id)) } : {}),
       })
-      out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
+      // A space that has no job and nothing left over has nothing to report, as in the host's pass.
+      if (mine.length > 0 || (plan.leftovers?.length ?? 0) > 0) out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
     } finally {
       db.close()
     }

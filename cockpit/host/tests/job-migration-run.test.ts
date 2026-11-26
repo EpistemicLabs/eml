@@ -110,8 +110,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     await w.migration.run()
     const posts = w.posts.length
     const file = readFileSync(w.file, 'utf8')
-    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
-    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
+    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
     expect(w.posts).toHaveLength(posts)
     expect(readFileSync(w.file, 'utf8')).toBe(file)
     expect(w.moved).toEqual([['j1', 't1']])
@@ -226,6 +226,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
       [v1('j1', { spaceId: 'space-2', taskId: 'theirs', limited: true }), v1('j2', { spaceId: 'space-2', taskId: 'agents' }), v1('j3', { spaceId: 'space-2', taskId: 'mine' })],
       [theirs, { ...task('agents', { assignee_ids: [] }), ingested_by: 'atlas' } as never, task('mine')], { team: true, runs: { j1: [openRun('j1')] } },
     )
+    // The fake brain is one for every space: only the team space is this cockpit's here, so its tasks are not looked through as the main space's.
+    w.spaces.shift()
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 3, dropped: 0, left: 0, failed: [] })
     // the owner's own time stays, mine joins it; the delegation is carried whole
@@ -290,7 +292,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a home without version 1 jobs has nothing to do', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
     const migration = createJobMigration({ store: new JobStore(file), spaces: () => { throw new Error('not asked') }, brain: () => null, me: 'lasse', moveSessions: () => {}, now: () => NOW, log: () => {} })
-    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null })
+    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
     expect(existsSync(file)).toBe(false)
   })
 })
@@ -328,12 +330,94 @@ describe('a schedule the old mirror left on a task without a job', () => {
 
   it('a removal the brain refuses is said and tried again at the next pass: the space is not marked as looked through', async () => {
     const w = world([v1('j1')], [task('t1'), task('left', stale)], { failOn: ['left'] })
+    w.spaces.pop()
     const first = await w.migration.run()
     expect(first.failed).toEqual(['Main: "left": its schedule without a job could not be removed: Invalid engram: delegation.schedule has an unknown key'])
     expect(first).toMatchObject({ moved: 1, leftovers: 0 })
     expect(w.store.leftoversChecked(null)).toBe(false)
   })
 
+})
+
+describe('a space without version 1 jobs, in a home that was on version 1', () => {
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+  const NOTE = 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.'
+
+  it('is looked through once all the same: a schedule left there without a job is removed, though the space is never planned for a job', async () => {
+    // the only job is the team space's: the main space has none
+    const w = world([v1('j2', { spaceId: 'space-2', taskId: 't2' })], [task('t2'), task('left', stale)])
+    expect(w.store.awaitsLeftoverLook(null)).toBe(true)
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ moved: 1, leftovers: 1, failed: [], unlooked: 0 })
+    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
+    expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+    expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([false, false])
+    expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 1 moved, 0 not moved, 1 schedule without a job removed — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
+    // looked through once: a schedule set on a jobless task afterwards is real, in this process and after a restart
+    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
+    expect(await w.migration.run()).toMatchObject({ leftovers: 0, unlooked: 0, reports: [] })
+    expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0, reports: [] })
+    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.posts.filter((p) => p.path === '/task/left/track')).toHaveLength(1)
+  })
+
+  it('a version 1 file that holds no job at all: its spaces are looked through, and the file becomes version 2 with its backup', async () => {
+    const w = world([], [task('left', stale), task('kept', stale)])
+    w.store.put({ id: 'kept', spaceId: null, taskId: 'kept', runCount: 0 } as never)
+    expect(w.store.pendingV1()).toBeNull()
+    expect(await w.migration.run()).toMatchObject({ moved: 0, leftovers: 1, failed: [], unlooked: 0 })
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } }])
+    expect(w.byId.get('kept')!.properties.delegation).toEqual(stale.delegation)
+    expect(JSON.parse(readFileSync(w.file, 'utf8'))).toMatchObject({ version: 2, fromV1: true, leftoversChecked: ['', 'space-2'] })
+    expect(existsSync(`${w.file}.v1-backup`)).toBe(true)
+  })
+
+  it('in a shared space the schedule is left as it is, logged and reported, and the space counts as looked through', async () => {
+    const w = world([], [task('left', stale)], { team: true })
+    w.spaces.shift()
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ leftovers: 0, failed: [], unlooked: 0 })
+    expect(w.posts).toEqual([])
+    expect(w.logs).toContain('[jobs] migration, space space-2: task left has a schedule without a job; in a shared space it is left as it is')
+    expect(result.reports[0]).toContain('In a shared space another member\'s cockpit may have put it there when its jobs moved, so it is left as it is and fires from now on')
+    expect(w.saved).toHaveLength(1)
+    expect(w.store.awaitsLeftoverLook('space-2')).toBe(false)
+  })
+
+  it('a space with nothing left over is marked without a report or a word to the user', async () => {
+    const w = world([], [task('t1')])
+    expect(await w.migration.run()).toMatchObject({ leftovers: 0, failed: [], reports: [], reportFile: null, unlooked: 0 })
+    expect([w.saved, w.notices, w.posts]).toEqual([[], [], []])
+    expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([false, false])
+  })
+
+  it('a space whose kind is not known, or whose brain does not answer, is not looked through yet: it waits, said once in the log, and the pass says how many wait', async () => {
+    const w = world([], [task('left', stale)], { team: null, down: ['main-id'] })
+    const first = await w.migration.run()
+    expect(first).toMatchObject({ leftovers: 0, failed: [], reports: [], unlooked: 2 })
+    expect(w.posts).toEqual([])
+    expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([true, true])
+    const said = w.logs.filter((l) => l.includes('not looked through yet'))
+    expect(said).toEqual([
+      '[jobs] migration, space main: not looked through yet for schedules left without a job: its brain did not answer (connect ECONNREFUSED)',
+      '[jobs] migration, space space-2: not looked through yet for schedules left without a job: the brain server has not said yet whether it is shared',
+    ])
+    await w.migration.run()
+    expect(w.logs.filter((l) => l.includes('not looked through yet'))).toEqual(said)
+    // the brain answers: the main space is looked through, the other still waits
+    w.opts.down = []
+    expect(await w.migration.run()).toMatchObject({ leftovers: 1, unlooked: 1 })
+    expect(w.posts.map((p) => [p.space, p.path])).toEqual([['main-id', '/task/left/track']])
+  })
+
+  it('a home that never had a version 1 file is not looked through: nothing there can be a leftover, and no space is asked', async () => {
+    const w = world([], [task('later', stale)])
+    writeFileSync(w.file, JSON.stringify({ version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }))
+    expect(new JobStore(w.file).awaitsLeftoverLook(null)).toBe(false)
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, reportFile: null, unlooked: 0 })
+    expect(w.posts).toEqual([])
+    expect(w.byId.get('later')!.properties.delegation).toEqual(stale.delegation)
+  })
 })
 
 describe('the channel bridge follows a moved job\'s id', () => {

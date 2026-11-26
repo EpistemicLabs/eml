@@ -75,6 +75,44 @@ describe('jobs.json', () => {
     expect(new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')).hasV1Jobs('t1')).toBe(false)
   })
 
+  it('remembers that it was a version 1 file once, through the rewrite to version 2 and every restart; a file that started on version 2 never was', () => {
+    const { file } = v1File()
+    expect(new JobStore(file).fromV1()).toBe(true)
+    new JobStore(file).setTimeZone('Europe/Berlin')
+    expect(read(file)).toMatchObject({ version: 2, fromV1: true })
+    const moved = new JobStore(file)
+    moved.migrateV1({ jobIds: ['j1', 'j2'], record: null })
+    expect(moved.pendingV1()).toBeNull()
+    expect(new JobStore(file).fromV1()).toBe(true)
+    // a home that starts on this version: no file, then a version 2 file of its own
+    const fresh = join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')
+    const store = new JobStore(fresh)
+    expect(store.fromV1()).toBe(false)
+    store.put(newRecord({ id: 't1', spaceId: null }, '2026-11-25T00:00:00.000Z'))
+    expect(new JobStore(fresh).fromV1()).toBe(false)
+    expect(read(fresh)).not.toHaveProperty('fromV1')
+  })
+
+  it('a version 1 file without any job was a version 1 file all the same', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json')
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: {}, runs: {}, keys: {} }))
+    const store = new JobStore(file)
+    expect([store.pendingV1(), store.fromV1()]).toEqual([null, true])
+  })
+
+  it('a space waits for the look for left-over schedules only in a home that was on version 1, and only until it is marked', () => {
+    const { file } = v1File()
+    const store = new JobStore(file)
+    expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([true, true])
+    store.markLeftoversChecked(null)
+    expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([false, true])
+    const again = new JobStore(file)
+    expect([again.awaitsLeftoverLook(null), again.awaitsLeftoverLook('space-2')]).toEqual([false, true])
+    // a home that never had a version 1 file: nothing there can be a leftover
+    const fresh = new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json'))
+    expect([fresh.awaitsLeftoverLook(null), fresh.awaitsLeftoverLook('space-2')]).toEqual([false, false])
+  })
+
   it('writes one task\'s part of the migration in one go: its jobs leave v1, its record, runs and keys are in, history stays under the old id', () => {
     const { file } = v1File()
     const store = new JobStore(file)

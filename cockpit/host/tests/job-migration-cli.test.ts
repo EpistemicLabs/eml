@@ -89,6 +89,20 @@ describe('eml-cockpit migrate-jobs', () => {
     expect(text).not.toContain('Task closed')
   })
 
+  it('looks through the main space of a home that was on version 1 also when it holds no job; a home that never was has nothing to move', async () => {
+    const stale = { delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+    const was = homeWith({ jobs: { version: 1, jobs: {}, runs: {}, keys: {} }, tasks: [{ id: 'left', properties: stale }] })
+    await was.run()
+    expect(was.printed.join('')).toContain('## Task left (left) — a schedule without a job\n\n- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+    // looked through already: nothing more to say
+    const looked = homeWith({ jobs: { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {}, fromV1: true, leftoversChecked: [''] }, tasks: [{ id: 'left', properties: stale }] })
+    await looked.run()
+    expect(looked.printed).toEqual(['jobs.json holds no version 1 jobs: nothing to move\n'])
+    const never = homeWith({ jobs: { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }, tasks: [{ id: 'left', properties: stale }] })
+    await never.run()
+    expect(never.printed).toEqual(['jobs.json holds no version 1 jobs: nothing to move\n'])
+  })
+
   it('a job of a space this home no longer has stays as it is, and is counted', async () => {
     const h = homeWith({ jobs: { version: 1, jobs: { j9: job('j9', { spaceId: 'space-gone' }) }, runs: {}, keys: {} } })
     expect(await h.run()).toBe(true)
