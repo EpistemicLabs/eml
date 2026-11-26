@@ -428,15 +428,36 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.filter((p) => p.path === '/task/left/track')).toHaveLength(1)
   })
 
-  it('once every space was looked through the looks are over: a space the cockpit gets later is not held and not looked through', async () => {
+  it('a space the cockpit gets later is held and looked through once, as soon as it can be: each space has its own look', async () => {
     const w = world([], [task('t1')])
     expect(await w.migration.run()).toMatchObject({ unlooked: 0 })
     w.spaces.push({ id: 'space-3', name: 'Later', main: false, agent: 'atlas', shared: false })
-    w.byId.set('theirs', task('theirs', stale))
+    w.byId.set('left', task('left', stale))
+    expect(w.store.awaitsLeftoverLook('space-3')).toBe(true)
+    expect(await w.migration.run()).toMatchObject({ leftovers: 1, unlooked: 0 })
+    expect(w.posts.map((p) => [p.space, p.path])).toEqual([['space-3', '/task/left/track']])
     expect(w.store.awaitsLeftoverLook('space-3')).toBe(false)
-    expect(await w.migration.run()).toMatchObject({ leftovers: 0, unlooked: 0 })
+    // looked through once: never again
+    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
     expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0 })
-    expect(w.posts).toEqual([])
+    expect(w.posts).toHaveLength(1)
+  })
+
+  it('a space no agent was bound to at the first start is neither looked through nor marked; bound later, it is held and looked through before anything in it fires', async () => {
+    const w = world([], [task('t1'), task('left', stale)])
+    w.spaces[1].agent = null as never
+    expect(await w.migration.run()).toMatchObject({ leftovers: 1, unlooked: 0 })
+    expect(w.posts.map((p) => p.space)).toEqual(['main-id'])
+    expect([w.store.leftoversChecked(null), w.store.leftoversChecked('space-2')]).toEqual([true, false])
+    // the team space's task (the fake brain serves one set of tasks to every space) shows a schedule the old mirror left
+    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
+    // bound now: the engine holds it until it was looked through, also after a restart
+    w.spaces[1].agent = 'motti'
+    expect(w.store.awaitsLeftoverLook('space-2')).toBe(true)
+    expect(new JobStore(w.file).awaitsLeftoverLook('space-2')).toBe(true)
+    expect(await w.restart().run()).toMatchObject({ leftovers: 1, unlooked: 0 })
+    expect(w.posts.map((p) => [p.space, p.path])).toEqual([['main-id', '/task/left/track'], ['space-2', '/task/left/track']])
+    expect(new JobStore(w.file).awaitsLeftoverLook('space-2')).toBe(false)
   })
 
   it('while a space still waits for its look, the looks are not over', async () => {
@@ -514,17 +535,16 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
   })
 
-  it('a space no agent is bound to needs no look: nothing there can fire, so it does not keep the looks open; one that is bound and has no brain now still waits', async () => {
+  it('a space no agent is bound to is not looked through yet and not counted: nothing there can fire; one that is bound and has no brain now still waits', async () => {
     const w = world([], [task('t1')], { noBrain: ['space-2'] })
     // bound (agent motti), and no brain to ask now: it waits
     expect(await w.migration.run()).toMatchObject({ unlooked: 1 })
     expect(w.logs).toContain('[jobs] migration, space space-2: not looked through yet for schedules left without a job: no brain to ask')
-    expect(JSON.parse(readFileSync(w.file, 'utf8')).leftoverLooksOver).toBeUndefined()
     // no agent is bound to it: it has no brain because nothing runs there
     w.spaces[1].agent = null as never
     expect(await w.migration.run()).toMatchObject({ unlooked: 0, failed: [] })
-    expect(w.logs).toContain('[jobs] migration, space space-2: no agent is bound to it, so nothing there can fire: it needs no look for schedules left without a job')
-    expect(JSON.parse(readFileSync(w.file, 'utf8'))).toMatchObject({ leftoversChecked: [''], leftoverLooksOver: true })
+    expect(JSON.parse(readFileSync(w.file, 'utf8')).leftoversChecked).toEqual([''])
+    expect(w.store.awaitsLeftoverLook('space-2')).toBe(true)
   })
 
   it('jobs of a space no agent is bound to wait all the same, and are said', async () => {

@@ -35,13 +35,14 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  *
  * In a home that was on version 1, every space is looked through once for schedules the old mirror left on tasks
  * without a job (domain/job-migration.ts), before any job of it moves, and also when it has no job: nothing ran such
- * a schedule, and it must not start to fire. Until a space was looked through the engine takes up no schedule there
- * by seeing it (application/job-runner.ts holdsFirstSight). A home that never had a version 1 file is not looked
- * through: nothing there can be a leftover.
+ * a schedule, and it must not start to fire. Each space has its own look, made whenever it can first be looked
+ * through (an agent bound to it, its kind known, its brain at schema 24), also for a space bound or added later.
+ * Until a space was looked through the engine takes up no schedule there by seeing it (application/job-runner.ts
+ * holdsFirstSight). A home that never had a version 1 file is not looked through: nothing there can be a leftover.
  */
 
 export interface JobMigrationDeps {
-  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'endLeftoverLooks' | 'get'>>
+  store: Pick<JobStore, 'pendingV1' | 'migrateV1'> & Partial<Pick<JobStore, 'pendingRenames' | 'renameConfirmed' | 'fromV1' | 'awaitsLeftoverLook' | 'markLeftoversChecked' | 'get'>>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /**
@@ -159,10 +160,12 @@ export function createJobMigration(deps: JobMigrationDeps) {
    *     be read (a schedule of schema 23 reads as none, domain/task-schedule.ts scheduleOf: a look would find nothing
    *     left over and call it done). A brain that does not answer the plan's reads waits the same way (runOnce).
    *   - `none`: no agent is bound to the space, so the host has no task brain for it and the engine fires nothing
-   *     there. It needs no look and keeps the looks of the home open for nobody. Its version 1 jobs still wait.
+   *     there. It is neither looked through nor marked: once an agent is bound to it, it waits for its look like any
+   *     other space, and is held until then. Its version 1 jobs still wait.
    */
   const readinessOf = async (space: BrainSpace, brain: Pick<EmlApi, 'get' | 'post'> | null): Promise<{ ready: true } | { ready: false; why: string; look: 'later' | 'none' }> => {
-    if (!brain) return { ready: false, why: NO_BRAIN, look: isUnbound(space) ? 'none' : 'later' }
+    // A space no agent is bound to has no task brain here, whatever else answers for it.
+    if (!brain || isUnbound(space)) return { ready: false, why: NO_BRAIN, look: isUnbound(space) ? 'none' : 'later' }
     if (await kindOf(space) === null) return { ready: false, why: KIND_UNKNOWN, look: 'later' }
     const schema = deps.brainSchema(space)
     if (schema === null) return { ready: false, why: 'the schema of its brain could not be read', look: 'later' }
@@ -263,7 +266,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
     // spaces that have no job. A home that never was has nothing of the kind: no space of it is asked.
     const hadJobs = deps.store.pendingV1() !== null
     const looks = deps.store.fromV1?.() === true
-    if (!hadJobs && !(looks && deps.spaces().some(awaitsLook))) {
+    if (!hadJobs && !(looks && deps.spaces().some((space) => awaitsLook(space) && !isUnbound(space)))) {
       await confirmRenames()
       return result
     }
@@ -277,7 +280,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
       if (!readiness.ready || !brain) {
         const why = readiness.ready ? NO_BRAIN : readiness.why
         if (waiting > 0) failed(`${space.name}: ${why}, its ${waiting} job(s) wait`, `${spaceTag(space)}: ${why}, its ${waiting} job(s) wait`)
-        else if (!readiness.ready && readiness.look === 'none') said(`${spaceTag(space)}: no agent is bound to it, so nothing there can fire: it needs no look for schedules left without a job`)
+        else if (!readiness.ready && readiness.look === 'none') said(`${spaceTag(space)}: no agent is bound to it, so nothing there can fire: it is looked through for schedules left without a job once one is`)
         else unlooked(space, why)
         result.jobs.notMoved += waiting
         continue
@@ -353,10 +356,8 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const known = new Set(deps.spaces().map(keyOf))
     const homeless = rest.filter((j) => !known.has(j.spaceId ?? null)).length
     if (homeless > 0) failed(`${homeless} job(s) of a space this cockpit no longer has stay as they are`, `${homeless} job(s) of a space this cockpit no longer has stay as they are`)
-    // A space no agent is bound to needs no look: it does not count.
+    // A space no agent is bound to is not looked through yet: it does not count until one is.
     if (looks) result.unlooked = deps.spaces().filter((space) => awaitsLook(space) && !isUnbound(space)).length
-    // Every space this cockpit has was looked through: a space it gets later waits for no look.
-    if (looks && result.unlooked === 0) deps.store.endLeftoverLooks?.()
     if (hadJobs) deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
     await confirmRenames()
     // The report is kept: the first one of this process, then one for every pass that moved or dropped something.

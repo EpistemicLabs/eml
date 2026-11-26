@@ -725,6 +725,9 @@ async function main() {
   }
   const runnerSpaceOf = (space: BrainSpace): RunnerSpace => ({ key: space.main ? null : space.id, name: space.name, shared: space.shared })
   const brainOfRunnerSpace = (space: RunnerSpace) => taskBrain(spaces.resolve(space.key))
+  /** When the engine last asked the jobs migration to look through a space it holds (holdsFirstSight below). */
+  let lookAskedAt = 0
+  const LOOK_ASK_MS = 5 * 60_000
   const jobRunner: JobRunner = new JobRunner({
     store: jobStore, log, timeZone: userTimeZone, me: owner,
     spaces: () => spaces.list().map(runnerSpaceOf),
@@ -740,8 +743,17 @@ async function main() {
     // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
     waitsForMigration: (taskId) => jobStore.hasV1Jobs(taskId),
     migratingTasks: () => jobStore.v1TaskIds(),
-    // In a home that was on version 1, until the migration has looked through a space for left-over schedules, none is taken up there by being seen.
-    holdsFirstSight: (space) => jobStore.awaitsLeftoverLook(space.key),
+    // In a home that was on version 1, until the migration has looked through a space for left-over schedules, none is
+    // taken up there by being seen. Each space has its own look: one bound or added after the start's passes asks for
+    // a pass of the migration here (at most every few minutes), so it is not held until the next start.
+    holdsFirstSight: (space) => {
+      const holds = jobStore.awaitsLeftoverLook(space.key)
+      if (holds && Date.now() - lookAskedAt >= LOOK_ASK_MS) {
+        lookAskedAt = Date.now()
+        void jobMigration.run().catch((err: unknown) => log(`[jobs] migration failed: ${(err as Error).message}`))
+      }
+      return holds
+    },
     task: async (space, taskId) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error('its space has no agent')

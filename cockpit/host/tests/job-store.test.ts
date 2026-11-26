@@ -110,10 +110,14 @@ describe('jobs.json', () => {
     expect([store.awaitsLeftoverLook(null), store.awaitsLeftoverLook('space-2')]).toEqual([false, true])
     const again = new JobStore(file)
     expect([again.awaitsLeftoverLook(null), again.awaitsLeftoverLook('space-2')]).toEqual([false, true])
-    // once every space the home had was looked through, the looks are over: a space it gets later waits for none
-    again.endLeftoverLooks()
-    expect([again.awaitsLeftoverLook('space-2'), again.awaitsLeftoverLook('space-new')]).toEqual([false, false])
-    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(false)
+    // each space has its own look: a space the home gets later waits for its own, whatever was looked through before
+    again.markLeftoversChecked('space-2')
+    expect([again.awaitsLeftoverLook('space-2'), again.awaitsLeftoverLook('space-new')]).toEqual([false, true])
+    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(true)
+    // a file a build of before wrote with the home-wide marker: the marker holds no space
+    const marked = JSON.parse(readFileSync(file, 'utf8'))
+    writeFileSync(file, JSON.stringify({ ...marked, leftoverLooksOver: true }))
+    expect(new JobStore(file).awaitsLeftoverLook('space-new')).toBe(true)
     expect(new JobStore(file).fromV1()).toBe(true)
     // a home that never had a version 1 file: nothing there can be a leftover
     const fresh = new JobStore(join(mkdtempSync(join(tmpdir(), 'cockpit-job-store-')), 'jobs.json'))
