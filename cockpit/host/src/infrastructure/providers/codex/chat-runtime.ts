@@ -63,10 +63,12 @@ export function modelOption(model: Model): ModelOption {
 export function toolServerOf(server: McpServerStatus): ToolServer {
   const toolCount = server.tools && typeof server.tools === 'object' ? Object.keys(server.tools).length : 0
   const error = typeof server.toolsError === 'string' && server.toolsError ? server.toolsError : null
+  // Signed in since the thread connected: it connects anew at the next turn (config/mcpServer/reload).
+  const signedIn = server.authStatus === 'oAuth' || server.authStatus === 'bearerToken'
   const status = ((): ToolServer['status'] => {
     switch (server.runtimeStatus) {
       case 'connected': return 'connected'
-      case 'authenticationRequired': return 'needs-auth'
+      case 'authenticationRequired': return signedIn ? 'pending' : 'needs-auth'
       case 'failed': case 'cancelled': return server.authStatus === 'notLoggedIn' ? 'needs-auth' : 'failed'
       case 'disabled': return 'disabled'
       case 'starting': case 'notStarted': return 'pending'

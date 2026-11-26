@@ -559,6 +559,8 @@ describe('the Codex chat runtime, tool servers', () => {
     const { toolServerOf } = await import('../src/infrastructure/providers/codex/chat-runtime.js')
     const base = { name: 'notion', pluginId: null, httpOrigin: 'https://mcp.example.com', tools: {}, toolsError: null, authStatus: 'unsupported' as const }
     expect(toolServerOf({ ...base, runtimeStatus: 'authenticationRequired' }).status).toBe('needs-auth')
+    // Signed in meanwhile: it connects with the next turn.
+    expect(toolServerOf({ ...base, runtimeStatus: 'authenticationRequired', authStatus: 'oAuth' }).status).toBe('pending')
     expect(toolServerOf({ ...base, runtimeStatus: 'failed', authStatus: 'notLoggedIn' }).status).toBe('needs-auth')
     expect(toolServerOf({ ...base, runtimeStatus: 'failed', toolsError: 'boom' })).toMatchObject({ status: 'failed', error: 'boom' })
     expect(toolServerOf({ ...base, runtimeStatus: 'starting' }).status).toBe('pending')

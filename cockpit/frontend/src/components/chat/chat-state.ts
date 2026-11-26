@@ -15,7 +15,10 @@ export interface Question {
   question: string;
   header: string;
   multiSelect: boolean;
+  /** Empty: the answer is free text. */
   options: Array<{ label: string; description: string }>;
+  /** The answer is a secret: typed hidden. */
+  secret?: boolean;
 }
 
 export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
@@ -27,18 +30,38 @@ export interface CommandInfo {
   aliases: string[];
 }
 
+export interface EffortOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface ModelOption {
   id: string;
   label: string;
   description: string;
   resolved: string | null;
+  /** The reasoning efforts it takes; absent: none to choose. */
+  efforts?: EffortOption[];
+  defaultEffort?: string | null;
 }
 
 export interface ModeOption {
   id: string;
   label: string;
   description: string;
+  /** False: Shift+Tab passes over it. */
+  cycle?: boolean;
 }
+
+/** What a session's runtime can do beside the basics (host domain/session-runtime.ts RuntimeFeature). */
+export type RuntimeFeature = 'commands' | 'stopAgent' | 'toolServerToggle' | 'toolServerReconnect' | 'toolServerSignIn' | 'reasoningEffort';
+
+/**
+ * What a `capabilities` event without `features` means: it comes from before they were named, when the
+ * chat ran Claude Code only, so the controls shown then stay.
+ */
+export const UNNAMED_FEATURES: readonly RuntimeFeature[] = ['commands', 'stopAgent', 'toolServerToggle', 'toolServerReconnect'];
 
 export interface ShellTask {
   taskId: string;
@@ -89,8 +112,8 @@ export interface ToolServer {
 }
 
 export type ChatEvent =
-  | { kind: 'settings'; model?: string | null; mode?: string }
-  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[] }
+  | { kind: 'settings'; model?: string | null; mode?: string; effort?: string | null }
+  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[]; features?: RuntimeFeature[] }
   | { kind: 'commands'; commands: CommandInfo[] }
   | { kind: 'context'; usedTokens: number; maxTokens: number }
   | { kind: 'agent_task'; taskId: string; toolId?: string | null; description?: string; agentType?: string | null; status?: AgentTaskStatus; background?: boolean; activity?: string; tokens?: number; toolUses?: number; durationMs?: number }
@@ -104,8 +127,9 @@ export type ChatEvent =
   | { kind: 'thinking_delta'; blockId: string; delta: string }
   | { kind: 'thinking'; blockId: string; text: string }
   | { kind: 'tool_call'; toolId: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown> }
+  | { kind: 'tool_output_delta'; toolId: string; delta: string }
   | { kind: 'tool_result'; toolId: string; status: 'completed' | 'failed' | 'launched'; output: string }
-  | { kind: 'permission_request'; requestId: string; toolId: string | null; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null }
+  | { kind: 'permission_request'; requestId: string; toolId: string | null; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null; denyStopsTurn?: boolean }
   | { kind: 'question'; requestId: string; questions: Question[] }
   | { kind: 'request_settled'; requestId: string; outcome: RequestOutcome }
   | { kind: 'activity'; state: Activity }
@@ -123,7 +147,7 @@ export type ChatItem =
   | { type: 'assistant'; id: string; text: string; streaming: boolean }
   | { type: 'thinking'; id: string; text: string; streaming: boolean }
   | { type: 'tool'; id: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown>; status: ToolStatus; output: string; approval?: RequestOutcome }
-  | { type: 'permission'; id: string; toolId?: string | null; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null; outcome: RequestOutcome | null }
+  | { type: 'permission'; id: string; toolId?: string | null; toolName: string; title: string; input: Record<string, unknown>; reason: string | null; alwaysScope: string | null; denyStopsTurn?: boolean; outcome: RequestOutcome | null }
   | { type: 'question'; id: string; questions: Question[]; outcome: RequestOutcome | null }
   | { type: 'notice'; id: string; text: string }
   | { type: 'error'; id: string; text: string }
@@ -134,8 +158,12 @@ export interface ChatState {
   activity: Activity;
   model: string | null;
   mode: string | null;
+  /** The reasoning effort chosen; null: the model's default. */
+  effort: string | null;
   models: ModelOption[];
   modes: ModeOption[];
+  /** What the runtime can do beside the basics; a control it lacks is not shown. */
+  features: readonly RuntimeFeature[];
   commands: CommandInfo[];
   context: { usedTokens: number; maxTokens: number } | null;
   agents: AgentTask[];
@@ -152,7 +180,7 @@ export interface ChatState {
 }
 
 export const EMPTY_CHAT: ChatState = {
-  items: [], activity: 'idle', model: null, mode: null, models: [], modes: [], commands: [], context: null, agents: [], shells: [], workflows: [], agentTools: {}, failed: false, process: 'unknown',
+  items: [], activity: 'idle', model: null, mode: null, effort: null, models: [], modes: [], features: UNNAMED_FEATURES, commands: [], context: null, agents: [], shells: [], workflows: [], agentTools: {}, failed: false, process: 'unknown',
 };
 
 function indexOfItem(items: ChatItem[], type: ChatItem['type'], id: string): number {
@@ -279,11 +307,12 @@ function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
         ...state,
         ...(event.model !== undefined ? { model: event.model } : {}),
         ...(event.mode !== undefined ? { mode: event.mode } : {}),
+        ...(event.effort !== undefined ? { effort: event.effort } : {}),
       };
     case 'process':
       return { ...state, process: event.state };
     case 'capabilities':
-      return { ...state, models: event.models, modes: event.modes };
+      return { ...state, models: event.models, modes: event.modes, features: event.features ?? UNNAMED_FEATURES };
     case 'commands':
       return { ...state, commands: event.commands };
     case 'context':
@@ -337,6 +366,14 @@ function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
           input: event.input, status: 'running', output: '',
         }],
       };
+    case 'tool_output_delta': {
+      // Only while it runs: a result already has all of it.
+      const index = indexOfItem(items, 'tool', event.toolId);
+      if (index < 0) return state;
+      const item = items[index] as Extract<ChatItem, { type: 'tool' }>;
+      if (item.status !== 'running') return state;
+      return { ...state, items: replaceAt(items, index, { ...item, output: item.output + event.delta }) };
+    }
     case 'tool_result': {
       const index = indexOfItem(items, 'tool', event.toolId);
       if (index < 0) return state;
@@ -349,6 +386,7 @@ function foldEvent(state: ChatState, event: ChatEvent, seq: number): ChatState {
         items: [...items, {
           type: 'permission', id: event.requestId, toolId: event.toolId, toolName: event.toolName, title: event.title,
           input: event.input, reason: event.reason, alwaysScope: event.alwaysScope, outcome: null,
+          ...(event.denyStopsTurn ? { denyStopsTurn: true } : {}),
         }],
       };
     case 'question':
@@ -689,6 +727,31 @@ export const PANE_COMMANDS: CommandInfo[] = [
 /** The pane's commands and the agent's, each name once. */
 export function withPaneCommands(commands: CommandInfo[]): CommandInfo[] {
   return [...PANE_COMMANDS, ...commands.filter((c) => !PANE_COMMANDS.some((p) => p.name === c.name))];
+}
+
+/** Whether the session's runtime offers this. */
+export function hasFeature(state: Pick<ChatState, 'features'>, feature: RuntimeFeature): boolean {
+  return state.features.includes(feature);
+}
+
+/** The mode Shift+Tab goes to: the next one that takes part in the cycle; null when there is none. */
+export function nextCycleMode(modes: ModeOption[], current: string | null): string | null {
+  const index = modes.findIndex((option) => option.id === current);
+  for (let step = 1; step <= modes.length; step += 1) {
+    const next = modes[(index + step + modes.length) % modes.length];
+    if (next && next.cycle !== false && next.id !== current) return next.id;
+  }
+  return null;
+}
+
+/** The efforts the current model takes, and the one it runs with now; null when there is nothing to choose. */
+export function effortChoice(state: Pick<ChatState, 'model' | 'models' | 'effort' | 'features'>): { options: EffortOption[]; current: string | null; isDefault: boolean } | null {
+  if (!hasFeature(state, 'reasoningEffort')) return null;
+  const model = currentModelOption(state) ?? state.models[0] ?? null;
+  const options = model?.efforts ?? [];
+  if (options.length === 0) return null;
+  const chosen = state.effort && options.some((option) => option.id === state.effort) ? state.effort : null;
+  return { options, current: chosen ?? model?.defaultEffort ?? null, isDefault: chosen === null };
 }
 
 /** The commands a draft is asking for: only while it is a bare `/word`. Name matches first, in the list's order. */

@@ -1,7 +1,8 @@
-// The session's MCP servers: what is there, on/off, reconnect. Signing in stays
-// in the terminal's /mcp: the SDK has no call for it.
+// The session's MCP servers: what is there, on/off, reconnect, sign in. Which of
+// these a session offers is its runtime's (capabilities.features): a control it
+// lacks is not shown. Without a sign-in here it stays in the terminal's /mcp.
 import { useEffect, useRef, type ReactNode } from 'react';
-import { AlertTriangle, Check, CircleOff, Loader2, Power, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { AlertTriangle, Check, CircleOff, ExternalLink, KeyRound, Loader2, Power, RefreshCw, RotateCcw, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS } from '@/shared/view/ui';
@@ -17,9 +18,24 @@ const COLUMNS = 'grid grid-cols-(--grid-tool-servers) items-center gap-x-3';
 
 const TRANSPORT: Record<NonNullable<ToolServer['transport']>, string> = { web: 'Web', process: 'Process' };
 
-/** Whether the panel should look again soon: a server is still on its way. */
-export function shouldPoll(servers: ToolServer[] | null): boolean {
-  return servers?.some((server) => server.status === 'pending') ?? false;
+/** Whether the panel should look again soon: a server is still on its way, or a sign-in is under way. */
+export function shouldPoll(servers: ToolServer[] | null, signIns: Record<string, string> = {}): boolean {
+  return (servers?.some((server) => server.status === 'pending') ?? false) || Object.keys(signIns).length > 0;
+}
+
+/** What the panel can do with a server, as the session's runtime offers it. */
+export interface ToolServerControls {
+  toggle: boolean;
+  reconnect: boolean;
+  signIn: boolean;
+}
+
+/** The line under the list for servers that want a sign-in; null when none does. */
+export function signInHint(servers: ToolServer[] | null, can: ToolServerControls): string | null {
+  if (!servers?.some((server) => server.status === 'needs-auth')) return null;
+  return can.signIn
+    ? 'Sign in opens the server\'s own page. The list updates once you are done there.'
+    : 'To sign in, switch this pane to the terminal and run /mcp.';
 }
 
 function statusOf(server: ToolServer): { label: string; icon: ReactNode } {
@@ -53,9 +69,12 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, onClose }: {
+export function ToolServersPanel({ servers, error, signIns, can, onAsk, onChange, onRestart, onClose }: {
   servers: ToolServer[] | null;
   error: string | null;
+  /** Sign-ins under way: the page to open, by server name. */
+  signIns: Record<string, string>;
+  can: ToolServerControls;
   onAsk: () => boolean;
   onChange: (name: string, action: ToolServerAction) => boolean;
   /** A new process for the session: it reads its servers from the configuration again. */
@@ -65,14 +84,14 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, o
   const ask = useRef(onAsk);
   ask.current = onAsk;
   useEffect(() => { ask.current(); }, []);
-  const polling = shouldPoll(servers);
+  const polling = shouldPoll(servers, signIns);
   useEffect(() => {
     if (!polling) return undefined;
     const timer = setInterval(() => ask.current(), PENDING_POLL_MS);
     return () => clearInterval(timer);
   }, [polling]);
 
-  const needsSignIn = servers?.some((server) => server.status === 'needs-auth');
+  const hint = signInHint(servers, can);
   return (
     <div className="max-h-72 overflow-auto rounded-xl border border-border bg-card p-2 text-ui">
       <div className="flex items-center justify-between pb-1">
@@ -95,6 +114,7 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, o
       {servers?.map((server) => {
         const status = statusOf(server);
         const off = server.status === 'disabled';
+        const signInUrl = signIns[server.name];
         return (
           <div key={server.name} className="border-b border-border py-0.5 last:border-b-0">
             <div className={COLUMNS}>
@@ -108,21 +128,39 @@ export function ToolServersPanel({ servers, error, onAsk, onChange, onRestart, o
                 <Tooltip content={status.label} position="top">
                   <span role="img" aria-label={status.label} className="flex size-(--target-min) items-center justify-center">{status.icon}</span>
                 </Tooltip>
-                {!off && (
+                {can.signIn && server.status === 'needs-auth' && !signInUrl && (
+                  <IconButton label={`Sign in to ${server.name}`} onClick={() => onChange(server.name, 'sign_in')}>
+                    <KeyRound aria-hidden className="size-3.5" />
+                  </IconButton>
+                )}
+                {!off && can.reconnect && (
                   <IconButton label={`Reconnect ${server.name}`} onClick={() => onChange(server.name, 'reconnect')}>
                     <RefreshCw aria-hidden className="size-3.5" />
                   </IconButton>
                 )}
-                <IconButton label={`Turn ${server.name} ${off ? 'on' : 'off'} (all sessions in this project)`} onClick={() => onChange(server.name, off ? 'enable' : 'disable')}>
-                  <Power aria-hidden className="size-3.5" />
-                </IconButton>
+                {can.toggle && (
+                  <IconButton label={`Turn ${server.name} ${off ? 'on' : 'off'} (all sessions in this project)`} onClick={() => onChange(server.name, off ? 'enable' : 'disable')}>
+                    <Power aria-hidden className="size-3.5" />
+                  </IconButton>
+                )}
               </span>
             </div>
             {server.error && <div className="text-stopped-ink break-words">{server.error}</div>}
+            {signInUrl && (
+              <a
+                href={signInUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn('inline-flex items-center gap-1 py-0.5 text-foreground underline underline-offset-2', FOCUS)}
+              >
+                Open the sign-in page for {server.name}
+                <ExternalLink aria-hidden className="size-3" />
+              </a>
+            )}
           </div>
         );
       })}
-      {needsSignIn && <div className="pt-1 text-muted-foreground">To sign in, switch this pane to the terminal and run /mcp.</div>}
+      {hint && <div className="pt-1 text-muted-foreground">{hint}</div>}
     </div>
   );
 }
