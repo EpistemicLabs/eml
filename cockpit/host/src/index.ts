@@ -31,11 +31,11 @@ import { deliverMessage, type MessageRequest } from './application/deliver-messa
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
 import { shutDownOnSignal } from './application/shut-down.js'
 import type { SpawnRequest } from './domain/spawn-request.js'
+import type { RuntimeEvent } from './domain/session-runtime.js'
 import { loadMessageToken } from './message-token.js'
 import { sessionAddress } from './session-address.js'
 import { InMemoryEventStore } from './application/session-events.js'
 import { SessionHandoff } from './application/session-handoff.js'
-import { createClaudeSdkRuntimes } from './infrastructure/providers/claude/sdk-runtime.js'
 import { ABOUT, createHostServer, directoryEntries, type HostDeps } from './http.js'
 import { getFreePort } from './ports.js'
 import { TurnTracker, type TurnEvent } from './turn-state.js'
@@ -587,10 +587,8 @@ async function main() {
   const callTime = () => ({ now: Date.now(), zone: userTimeZone() })
   const settleTurnCheck: NonNullable<RecordEndTurnDeps['turnCheck']> = (sessionId, { at, call, turn }) =>
     turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) })
-  const sdkRuntimes = createClaudeSdkRuntimes()
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
-    runtimes: sdkRuntimes,
     events: new InMemoryEventStore(),
     onTurn: (sessionId, state, settleMs) => turns.apply({ sessionId, state, settleMs }),
     onHelpers: (sessionId, helpers, workflows) => turns.waitOn(sessionId, helpers, workflows),
@@ -1005,17 +1003,19 @@ async function main() {
     return lists.flatMap((l) => ((l as { engrams?: Array<{ id: string; title: string | null; scope: string }> }).engrams ?? []))
       .map((t) => ({ id: t.id, title: t.title ?? t.id, project: t.scope.startsWith('project.') ? t.scope.slice('project.'.length) : null }))
   }
+  // A session's earlier conversation, read through its provider's chat runtime: only a provider with a chat
+  // has one there. Null when it has none, or it could not be read.
+  const earlierConversation = async (sessionId: string): Promise<RuntimeEvent[] | null> => {
+    const entry = ledger.get(sessionId)
+    const provider = entry ? providers.get(entry.provider) : undefined
+    if (!entry || !provider?.capabilities.chat.supported || !provider.chatRuntime || !entry.projectId) return null
+    const space = spaces.resolve(entry.spaceId)
+    const projectPath = space.registry.get(entry.projectId)?.path
+    if (!projectPath) return null
+    return provider.chatRuntime.history(ledger.ref(sessionId, projectPath, space.runtime)).catch(() => null)
+  }
   const splitBrief = createSplitBrief({
-    transcript: async (sessionId) => {
-      const entry = ledger.get(sessionId)
-      // The conversation is read through the chat runtime: only a provider with a chat has one there.
-      if (!entry || !providers.get(entry.provider)?.capabilities.chat.supported || !entry.projectId) return null
-      const space = spaces.resolve(entry.spaceId)
-      const projectPath = space.registry.get(entry.projectId)?.path
-      if (!projectPath) return null
-      const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
-      return sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
-    },
+    transcript: earlierConversation,
     facts: async (sessionId) => {
       const entry = ledger.get(sessionId)
       if (!entry) return null
@@ -1103,13 +1103,7 @@ async function main() {
       },
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {
-        const entry = ledger.get(sessionId)
-        if (!entry || !providers.get(entry.provider)?.capabilities.chat.supported || !entry.projectId) return null
-        const space = spaces.resolve(entry.spaceId)
-        const projectPath = space.registry.get(entry.projectId)?.path
-        if (!projectPath) return null
-        const conversationId = ledger.ref(sessionId, null).providerSessionId ?? sessionId
-        const events = await sdkRuntimes.history(conversationId, projectPath, space.runtime).catch(() => null)
+        const events = await earlierConversation(sessionId)
         return events ? events.flatMap((event) => (event.kind === 'text' ? [event.text] : [])) : null
       },
       push: { store: pushStore, notifier: pushNotifier },

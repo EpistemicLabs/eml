@@ -38,6 +38,9 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   Task: 'agent', Agent: 'agent',
 }
 
+// The mode a worker runs in, as in the terminal (index.ts launch, unattended).
+const WORKER_MODE = 'auto'
+
 const MODES: ModeOption[] = [
   { id: 'default', label: 'Ask first', description: 'Asks before edits and commands' },
   { id: 'acceptEdits', label: 'Accept edits', description: 'Edits go through, commands still ask' },
@@ -45,15 +48,42 @@ const MODES: ModeOption[] = [
   { id: 'auto', label: 'Auto', description: 'A classifier approves or stops each action' },
 ]
 
+/** What a start request means for the CLI. */
+export interface ClaudeStartOptions {
+  /** The session's environment without a login token. */
+  env: Record<string, string>
+  /** The session's brain space, as the CLI takes it: its own MCP file when its tool profile limits the servers. */
+  files: { mcpConfig: string; settings: string }
+  /** Exactly the servers of `files.mcpConfig`, nothing else the CLI knows of: a space with a runtime of its own, or a limited session. */
+  strictMcp: boolean
+  /** Browser control for a strict session: a runtime's own, or Chrome lent to a limited job (index.ts launch decides). */
+  chrome: boolean
+  /** Built-in tools this session may not use (its tool profile). */
+  deniedTools: string[]
+}
+
+/** Reads a start request as Claude Code takes it: from the provider's launch and the session's space. */
+export function claudeStartOptions({ env, launch, space }: Pick<SessionRuntimeStart, 'env' | 'launch' | 'space'>): ClaudeStartOptions {
+  // The SDK never carries a login token: token mode stays in the terminal (index.ts workerRunsInChat).
+  const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...withoutToken } = env
+  return {
+    env: withoutToken,
+    files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
+    strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
+    chrome: launch.chrome === true,
+    deniedTools: launch.limits?.deniedTools ?? [],
+  }
+}
+
 /**
  * The terminal follows Chrome's "Enabled by default" setting; an SDK session ignores
  * it and needs the flag. An agent keeps to its MCP allowlist, so it gets no browser
  * unless its record gives it one.
  */
-function chromeForChat(request: SessionRuntimeStart): boolean {
-  if (request.strictMcp) return request.chrome === true
+function chromeForChat(start: ClaudeStartOptions): boolean {
+  if (start.strictMcp) return start.chrome
   try {
-    const configDir = request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
+    const configDir = start.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
     const config = JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8')) as { claudeInChromeDefaultEnabled?: unknown }
     return config.claudeInChromeDefaultEnabled === true
   } catch {
@@ -535,12 +565,13 @@ class ClaudeSdkRuntime implements SessionRuntime {
 
   constructor(private request: SessionRuntimeStart, private watchJournal: JournalWatcher = watchWorkflowJournal) {
     this.exited = new Promise((resolve) => { this.markExited = resolve })
+    const start = claudeStartOptions(request)
     this.query = query({
       prompt: this.input,
       options: {
         cwd: request.cwd,
         // Artifact is off by default in the SDK. A value already set wins, so 0 turns it off.
-        env: { CLAUDE_CODE_ARTIFACT: '1', ...request.env },
+        env: { CLAUDE_CODE_ARTIFACT: '1', ...start.env },
         pathToClaudeCodeExecutable: CLAUDE_BIN,
         // Always named: left out, the CLI picks one itself.
         permissionMode: startingMode(request.mode, readPermissionMode()) as PermissionMode,
@@ -548,19 +579,19 @@ class ClaudeSdkRuntime implements SessionRuntime {
         agentProgressSummaries: true,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         includePartialMessages: true,
-        settings: request.files.settings,
+        settings: start.files.settings,
         // Paths, not the servers themselves: the brain token stays in the file.
         extraArgs: {
-          'mcp-config': request.files.mcpConfig,
+          'mcp-config': start.files.mcpConfig,
           // A flag without a value.
-          ...(request.strictMcp ? { 'strict-mcp-config': null } : {}),
-          ...(chromeForChat(request) ? { chrome: null } : {}),
+          ...(start.strictMcp ? { 'strict-mcp-config': null } : {}),
+          ...(chromeForChat(start) ? { chrome: null } : {}),
           name: request.address,
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
         ...(request.worker ? workerOptions(request.worker, request.jobs, request.timeZone) : {}),
-        ...(request.deniedTools?.length ? { disallowedTools: request.deniedTools } : {}),
+        ...(start.deniedTools.length ? { disallowedTools: start.deniedTools } : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {
           const child = spawn(options.command, options.args, {
@@ -820,13 +851,15 @@ export function createClaudeSdkRuntimes(watchJournal: JournalWatcher = watchWork
   // folder. No session inherits the variable (baseAgentEnv).
   let reads: Promise<unknown> = Promise.resolve()
   return {
+    workerMode: WORKER_MODE,
     start: (request) => new ClaudeSdkRuntime(request, watchJournal),
-    history(conversationId, cwd, runtime) {
+    // `runtime`: the conversation is in that runtime's folder.
+    history({ sessionId, providerSessionId, projectPath, runtime }) {
       const configDir = runtime ? runtime.configDirs.claude : CONFIG_DIR
       if (!configDir) return Promise.reject(new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`))
       const read = reads.then(async () => {
         process.env.CLAUDE_CONFIG_DIR = configDir
-        return historyEvents(await getSessionMessages(conversationId, { dir: cwd }))
+        return historyEvents(await getSessionMessages(providerSessionId ?? sessionId, projectPath ? { dir: projectPath } : {}))
       })
       reads = read.catch(() => { /* the caller gets it */ })
       return read

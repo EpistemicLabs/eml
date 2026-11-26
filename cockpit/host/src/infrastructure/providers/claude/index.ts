@@ -9,6 +9,7 @@ import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
 import { lastReplyInTranscript } from './last-reply.js'
+import { createClaudeSdkRuntimes } from './sdk-runtime.js'
 
 /**
  * Claude Code as an agent provider: the cockpit's own `claude` (runtime.ts,
@@ -58,6 +59,9 @@ class ClaudeProvider implements AgentProvider {
     terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
   }
   private isolation: IsolationFiles | null = null
+
+  /** Claude Code through the Agent SDK (sdk-runtime.ts). */
+  readonly chatRuntime = createClaudeSdkRuntimes()
 
   readonly runtime = asAgentRuntime(claudeRuntime, 'Settings › Models › Claude Code › "Check now" sets it up; then reopen this pane.')
 

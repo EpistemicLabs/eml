@@ -12,6 +12,7 @@ import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import { reminder, type EndTurn } from '../src/domain/turn-end.js'
 import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
+import { claudeStartOptions, type ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -26,7 +27,9 @@ class FakeRuntime implements SessionRuntime {
   closed = false
   servers: ToolServer[] = [{ name: 'tools', status: 'connected', error: null, scope: 'user', transport: 'web', toolCount: 2 }]
   serverCalls: string[] = []
-  constructor(readonly start: SessionRuntimeStart) {}
+  /** The request, and over it what Claude Code's runtime makes of its launch and space: the limits and the environment its CLI gets. */
+  readonly start: SessionRuntimeStart & ClaudeStartOptions
+  constructor(request: SessionRuntimeStart) { this.start = { ...request, ...claudeStartOptions(request) } }
   emit(event: RuntimeEvent): void { this.start.onEvent(event) }
   send(_id: string, text: string, images: ImageInput[] = []): void { this.sent.push(text); this.images.push(images) }
   async interrupt(): Promise<void> { this.interrupts += 1; this.emit({ kind: 'turn_end', reason: 'interrupted' }) }
@@ -68,6 +71,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve))
 function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker; zone?: string; checkSaved?: ChatContext['checkSaved'] } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
+    workerMode: 'auto',
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
@@ -75,6 +79,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
     id: opts.provider ?? 'claude',
+    chatRuntime: factory,
     capabilities: { chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true } },
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
@@ -117,7 +122,6 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
     spaces: { get: () => space, main: space, resolve: () => space, movedAway: (ledgerSpaceId?: string | null) => (ledgerSpaceId ? `This session moved to ${ledgerSpaceId}. Open it there.` : null) },
     sessionEnv: { COCKPIT_URL: 'http://host' },
-    runtimes: factory,
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: 'working' | 'done' | 'waiting', settleMs?: number) => {
       turns.push(settleMs ? [id, state, settleMs] : [id, state])
@@ -1702,6 +1706,28 @@ describe('ChatBridge', () => {
     await flush()
     expect(ws.frames[0]).toEqual({ type: 'error', message: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' })
     expect(runtimes).toEqual([])
+  })
+
+  it('a new chat runs with the provider its view names, Claude Code when it names none, and a known session keeps its own', async () => {
+    const asked: string[] = []
+    const named = (init: object, known = false) => {
+      const made = setup(known ? { runtimeOf: 'sdk' } : {})
+      const providers = (made.bridge as unknown as { ctx: { providers: { get: (id: string) => unknown } } }).ctx.providers
+      const get = providers.get
+      providers.get = (id) => { asked.push(id); return id === 'nobody' ? undefined : get(id) }
+      return { ...made, ws: connect(made.bridge, init) }
+    }
+    const plain = named({})
+    const other = named({ provider: 'codex' })
+    const unknown = named({ provider: 'nobody' })
+    const known = named({ provider: 'codex' }, true)
+    await flush()
+    expect(asked).toEqual(['claude', 'codex', 'nobody'])
+    expect(plain.runtimes).toHaveLength(1)
+    expect(other.runtimes).toHaveLength(1)
+    expect(unknown.ws.frames[0]).toEqual({ type: 'error', message: 'This cockpit has no such agent.' })
+    expect(unknown.runtimes).toEqual([])
+    expect(known.runtimes).toHaveLength(1)
   })
 
   it('refuses a session the ledger keeps in another space, and starts nothing', async () => {
