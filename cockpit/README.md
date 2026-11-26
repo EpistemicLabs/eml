@@ -299,12 +299,15 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   MCP server, next to `end_turn`) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`) adds a repeating time, sets the wake-up,
   pauses, resumes, ends or runs a task's schedule; the task is `task_id`, the caller's own (`target self`), or a new one
   made from name and prompt (`application/jobs.ts`, `domain/schedule-tool.ts`). What a time is for stands in the task's
-  text. The cockpit of the task's owner fires it (`application/job-runner.ts`): a session of the task that works skips
+  text. The cockpit of the task's owner fires it (`application/job-runner.ts`; `domain/task-owner.ts` `firingOf`: in
+  a shared space a task no member owns fires on the cockpit that holds a record for it, and nothing fires in a space
+  the brain server has not yet said the kind of): a session of the task that works skips
   a due repeating time (a due wake-up is never skipped: it waits until that session stops, or joins a run that waits to start), one that waits on the owner's answer gets it as a message, a due wake-up continues the session that set
   it, anything else starts a new session; its prompt is built from the task, behind a line saying the cockpit sent it and
   what fired (`domain/firing-order.ts`, `domain/run-text.ts`). What only this machine needs sits in one record per
   task in `<home>/jobs.json` (`domain/job.ts`), with its last 100 runs: where the schedule stands, who hears of a run,
-  the tools of the task's sessions (never more than its maker's), an end after so many runs, the channels. Runs start a
+  the tools of the task's sessions (never more than its maker's), an end of the repeating times after so many of their
+  runs (the wake-up stays), the channels. Runs start a
   few at a time and only with room (the worker check above); a busy session is tried again for up to an hour; a
   repeating time due more than 6 hours ago (the cockpit was down) is recorded as missed, a wake-up still fires late;
   three failures in a row pause the schedule. At most 100 open tasks of a space hold a schedule. The channel bridge
@@ -312,7 +315,11 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `/v1` (`domain/job-contract.ts`) with a space's token from `<home>/job-tokens/<brain id>` (made at start for every
   space), reads the tasks listening on a channel (held ones marked, so their mail still waits for them), and wakes one
   with a short text and an idempotency key; a message is never skipped: the host decides which session it reaches and
-  answers delivered, retry or refused.
+  answers delivered, retry or refused. Only a session started for the task's record gets a message (it has the
+  bridge's tools); while another session of the task works the bridge is asked to try again. The jobs of a
+  `jobs.json` from before brain schema 24 move onto their tasks at start (`application/job-migration.ts`): tried
+  again every 15 minutes while jobs wait, with each run's report appended to `<home>/jobs-migration-report.md` and
+  the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`).
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
   (`infrastructure/channel-bridge/`). A session started for a task that listens on a channel gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
