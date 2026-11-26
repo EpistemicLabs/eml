@@ -4,7 +4,7 @@ import { JOB_LIMITS } from '../domain/job.js'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { needsAnswer, wasSpawned, worksAlone } from '../domain/session-attention.js'
-import { reminder } from '../domain/turn-end.js'
+import { reminder, type EndTurnAccess } from '../domain/turn-end.js'
 import { sameWaits, waitsBody, waitsOf, withSessionWait } from '../domain/task-waits.js'
 import type { SessionLedger } from '../session-ledger.js'
 import { trackWaits } from './task-waits.js'
@@ -129,8 +129,8 @@ export interface NextStepDeps {
   scheduleFacts?(taskId: string): ScheduleFacts
   /** When the session's current run began: its job run's start, else its creation. */
   runStartedAt(sessionId: string): string
-  /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot is pointed at the block. */
-  endTurnTool(sessionId: string): boolean
+  /** Whether and how the session can call end_turn (application/turn-context.ts endTurnAccess); one that cannot is pointed at the block. */
+  endTurnTool(sessionId: string): EndTurnAccess
   /** The session is in a turn now (for another session on the task, and on the tick). */
   working(sessionId: string): boolean
   /** The session is open in a pane (a chat view or terminal attached); not that the user looks at it. */

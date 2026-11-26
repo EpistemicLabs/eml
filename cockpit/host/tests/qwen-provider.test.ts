@@ -11,6 +11,7 @@ const qwenHome = join(home, 'qwen-config')
 const HOOK_TOKEN = '0123456789abcdef'
 const MCP_TOKEN = 'f'.repeat(64)
 const MCP_URL = 'http://127.0.0.1:60001/mcp'
+const COCKPIT_MCP_URL = 'http://127.0.0.1:60001/mcp/cockpit'
 const API_KEY = 'sk-test-0000'
 const darwin = process.platform === 'darwin'
 
@@ -27,7 +28,7 @@ const space: SessionSpace = {
 }
 
 const prepare = (provider: AgentProvider, hookToken = HOOK_TOKEN) => provider.prepare({
-  hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken, mcpUrl: MCP_URL,
+  hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken, mcpUrl: MCP_URL, cockpitMcpUrl: COCKPIT_MCP_URL,
   writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
 })
 
@@ -70,6 +71,31 @@ describe('Qwen Code in the registry', () => {
   })
 })
 
+describe('what Qwen Code can do', () => {
+  let provider: AgentProvider
+  beforeAll(async () => {
+    const { createQwenProvider } = await import('../src/infrastructure/providers/qwen/index.js')
+    provider = createQwenProvider()
+  })
+
+  it('runs in the terminal only, with the cockpit\'s tools from the host: no chat, nothing another session could send to, each with its reason', () => {
+    expect(provider.capabilities).toEqual({
+      chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+      endTurnTool: { supported: true },
+      messaging: { supported: false, reason: 'Qwen Code sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
+      terminalTools: { supported: true },
+    })
+  })
+
+  it('reads the last reply from a Stop hook\'s own field only', () => {
+    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
+    const file = join(home, 'qwen-transcript.jsonl')
+    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'not read' }] } }))
+    expect(provider.lastReply({ transcript_path: file })).toBe('')
+    expect(provider.lastReply({})).toBe('')
+  })
+})
+
 describe.runIf(darwin)('Qwen Code provider', () => {
   let provider: AgentProvider
   const settings = () => JSON.parse(readFileSync(join(qwenHome, 'settings.json'), 'utf8'))
@@ -101,13 +127,11 @@ describe.runIf(darwin)('Qwen Code provider', () => {
     })
   })
 
-  it('registers the host\'s brain MCP endpoint, the space and session as headers from the session env — no token in the file', () => {
+  it('registers the host\'s brain MCP endpoint and the cockpit\'s own session tools, the space and session as headers from the session env — no token in the file', () => {
+    const headers = { 'x-cockpit-mcp-token': '${COCKPIT_MCP_TOKEN}', 'x-eml-session': '${COCKPIT_SESSION_ID}' }
     expect(settings().mcpServers).toEqual({
-      eml_brain: {
-        httpUrl: MCP_URL,
-        headers: { 'x-cockpit-mcp-token': '${COCKPIT_MCP_TOKEN}', 'x-eml-session': '${COCKPIT_SESSION_ID}' },
-        trust: true,
-      },
+      eml_brain: { httpUrl: MCP_URL, headers, trust: true },
+      cockpit: { httpUrl: COCKPIT_MCP_URL, headers, trust: true },
       other: { command: 'x' },
     })
     expect(readFileSync(join(qwenHome, 'settings.json'), 'utf8')).not.toContain(MCP_TOKEN)
@@ -118,6 +142,8 @@ describe.runIf(darwin)('Qwen Code provider', () => {
     expect(Object.keys(hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'PostToolUse', 'Stop'])
     expect(hooks.SessionStart[0].hooks[0].command).toMatch(/ hook session-start$/)
     expect(hooks.SessionStart[1].hooks[0].command).toMatch(/ hook project-block$/)
+    // The session's task (task-hook.ts), as plain stdout like the EML hooks.
+    expect(hooks.SessionStart[2].hooks[0]).toMatchObject({ timeout: 10, command: expect.stringMatching(/task-hook\.js --plain$/) })
     expect(hooks.UserPromptSubmit[1].hooks[0].command).toMatch(/ hook user-prompt-submit --no-cwd-nudge$/)
     expect(hooks.Stop[1].hooks[0].command).toMatch(/ hook stop$/)
     expect(hooks.Stop[0].hooks[0]).toMatchObject({ type: 'command', async: true, timeout: 5, command: expect.stringContaining('turn-hook.js') })
@@ -130,7 +156,7 @@ describe.runIf(darwin)('Qwen Code provider', () => {
   })
 
   it('delivers the EML skills and the cockpit\'s own', () => {
-    expect(readdirSync(join(qwenHome, 'skills')).sort()).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'spawn-session', 'task-run'])
+    expect(readdirSync(join(qwenHome, 'skills')).sort()).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'schedule', 'spawn-session', 'task-run'])
   })
 
   const launch = (unattended: boolean, initialPrompt: string | null = null) =>
@@ -210,7 +236,10 @@ describe.runIf(darwin)('Qwen Code provider', () => {
 
   it('maps hooks to turn signals', () => {
     const hook = (event: string) => provider.turnSignal({ session_id: 'c-1', hook_event_name: event })
+    // Qwen Code fires UserPromptSubmit again, with an empty prompt, after each tool batch: only one with a prompt starts a turn.
     expect(hook('UserPromptSubmit')).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'working' })
+    expect(provider.turnSignal({ session_id: 'c-1', hook_event_name: 'UserPromptSubmit', prompt: '' })).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'working' })
+    expect(provider.turnSignal({ session_id: 'c-1', hook_event_name: 'UserPromptSubmit', prompt: 'go on' })).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'working', prompt: true })
     expect(hook('PermissionRequest')).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'waiting' })
     expect(hook('PostToolUse')).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'working' })
     expect(hook('Stop')).toEqual({ kind: 'turn', providerSessionId: 'c-1', state: 'done' })

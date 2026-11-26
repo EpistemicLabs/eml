@@ -26,7 +26,7 @@ describe('Claude Code provider', () => {
   beforeAll(async () => {
     const { createClaudeProvider } = await import('../src/infrastructure/providers/claude/index.js')
     provider = createClaudeProvider()
-    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', mcpUrl: 'http://127.0.0.1:60001/mcp', writableDirs: [] })
+    provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', mcpUrl: 'http://127.0.0.1:60001/mcp', cockpitMcpUrl: 'http://127.0.0.1:60001/mcp/cockpit', writableDirs: [] })
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -132,7 +132,7 @@ describe('Claude Code provider', () => {
 
   it('maps hooks to turn signals', () => {
     const hook = (extra: Record<string, unknown>) => provider.turnSignal({ session_id: 's1', ...extra })
-    expect(hook({ hook_event_name: 'UserPromptSubmit' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'working' })
+    expect(hook({ hook_event_name: 'UserPromptSubmit' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'working', prompt: true })
     expect(hook({ hook_event_name: 'Stop' })).toEqual({ kind: 'turn', providerSessionId: 's1', state: 'done' })
     expect(hook({ hook_event_name: 'Notification', notification_type: 'permission_prompt' }))
       .toEqual({ kind: 'turn', providerSessionId: 's1', state: 'waiting' })
@@ -140,5 +140,26 @@ describe('Claude Code provider', () => {
       .toEqual({ kind: 'unclassified', label: 'idle_prompt' })
     expect(hook({ hook_event_name: 'SessionStart' })).toBeNull()
     expect(provider.turnSignal({ hook_event_name: 'Stop' })).toBeNull()
+  })
+
+  it('has the chat, the end_turn tool and messaging; its terminal sessions get no tools from the host', () => {
+    expect(provider.capabilities).toEqual({
+      chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true },
+      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+    })
+  })
+
+  it('reads the last reply from a Stop hook: its field, else the transcript', () => {
+    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
+    const file = join(home, 'transcript.jsonl')
+    writeFileSync(file, [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the last reply' }, { type: 'tool_use' }] } }),
+      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
+    ].join('\n'))
+    expect(provider.lastReply({ transcript_path: file })).toBe('the last reply')
+    expect(provider.lastReply({ last_assistant_message: 'hello', transcript_path: file })).toBe('hello')
+    expect(provider.lastReply({ transcript_path: join(home, 'missing.jsonl') })).toBe('')
+    expect(provider.lastReply({})).toBe('')
   })
 })

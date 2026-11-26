@@ -48,6 +48,7 @@ export default function CodexSettings({ codex, onCloseSettings }: { codex: Agent
     PERMISSION_MODES.find((option) => option.value === codex.settings?.permissionMode)?.value ?? 'auto';
   const sandboxed = mode !== 'off';
   const network = codex.settings?.sandboxNetwork === true;
+  const chatView = codex.settings?.chatView === true;
 
   if (!codex.version) {
     return (
@@ -125,6 +126,26 @@ export default function CodexSettings({ codex, onCloseSettings }: { codex: Agent
             Worker sessions opened by another session always run in Auto — nobody is watching them.
           </div>
           {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Chat view (beta)" description="Run Codex sessions in the chat view, next to the terminal. Applies to sessions opened from now on.">
+        <SettingsCard divided>
+          <SettingsRow
+            label="Codex in the chat view"
+            description={
+              chatView
+                ? 'On — a Codex session can open in the chat view. Worker sessions stay in the terminal.'
+                : 'Off — Codex sessions run in the terminal only.'
+            }
+          >
+            <Switch
+              checked={chatView}
+              onChange={(checked: boolean) => setSettings.mutate({ chatView: checked })}
+              ariaLabel="Codex in the chat view"
+              disabled={setSettings.isPending}
+            />
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
 

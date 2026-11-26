@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseHandoff } from '../src/domain/handoff.js'
 import {
   BEFORE_IDLE_STOP, END_TURN_DESCRIPTION, END_TURN_TOOL, endTurnDescription, JOB_HEADER_STATUS, checkPrompt, deriveTurn, endTurnAnswer,
-  fromHandoff, handoffBlock, missingOf, passedWhen, readEndTurn, reminder, resultOfTurn, shortQuestion, turnEndRules, untilDoneRules, wakeEditOf, whoOf, withoutOutside, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing,
+  fromHandoff, handoffBlock, missingOf, passedWhen, readEndTurn, reminder, resultOfTurn, shortQuestion, turnEndRules, untilDoneRules, wakeEditOf, whoOf, withoutOutside, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing, userZoneLine,
 } from '../src/domain/turn-end.js'
 import { zoneLabel } from '../src/domain/schedule.js'
 
@@ -303,6 +303,11 @@ describe('the texts', () => {
     expect(reminder(['call', 'next'])).toBe(reminder(['call']))
     expect(reminder(['next'], { tool: false })).toBe(`${reminder(['next'])} Without the end_turn tool, end your reply with the Handoff block instead.`)
     expect(reminder(['reply'], { tool: false })).toBe(reminder(['reply']))
+    // A session that gets the tool from an MCP server: the name the tool goes by there.
+    const mcp = { mcpServer: 'cockpit' }
+    expect(reminder(['next'], { tool: mcp })).toBe(`${reminder(['next'])} The tool is mcp__cockpit__end_turn, from the MCP server cockpit.`)
+    expect(reminder(['reply'], { tool: mcp })).toBe(reminder(['reply']))
+    expect(reminder(['next'], { tool: true })).toBe(reminder(['next']))
   })
 
   it('the tool answers with what it recorded, and always ends with the reply that comes after the call', () => {
@@ -409,6 +414,21 @@ describe('the texts', () => {
     expect(rules).toContain('Write no block for a turn that is plain conversation.')
     expect(rules).toContain('End your reply with this block when you stop')
     expect(rules).toContain('required unless who is the user, where it is not used')
+  })
+
+  it('a session that gets the tool from an MCP server reads the tool by its name there and its whole rule: its agent CLI may never load the description', () => {
+    const rules = turnEndRules({ owner: 'kim', agent: 'nova', tool: { mcpServer: 'cockpit' }, zone: 'Asia/Bangkok (UTC+7)' })
+    expect(rules.split('\n')).toEqual([
+      '## Ending a turn',
+      'End a turn with the end_turn tool: mcp__cockpit__end_turn, from the MCP server cockpit. This is its whole rule:',
+      // The rule, word for word as the tool's description says it.
+      ...endTurnDescription('Asia/Bangkok (UTC+7)').split('\n'),
+      'A note on the task does not replace the call: only the call says whose move it is.',
+      'Handles for who: the user is kim, you are nova.',
+      userZoneLine('Asia/Bangkok (UTC+7)'),
+    ])
+    // No block: a session with the tool has one way to end a turn.
+    expect(rules).not.toMatch(/handoff|block/i)
   })
 
   it('the wake-up\'s reason tells the session what it waited for', () => {

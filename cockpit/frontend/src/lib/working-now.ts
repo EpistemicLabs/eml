@@ -3,7 +3,7 @@
 import { agentLabel, agentLetter, allSessionState, commandWord, waitingWord, waitsForCommand, type AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { projectNameOf } from '@/lib/open-task';
-import { agentName, type Board, type BoardTask, readable, taskName } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, CLOSED_STATUSES, readable, taskName } from '@/lib/task-board';
 import { deskOf } from '@/lib/unread-answers';
 import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { RunningCommand, TurnInfo } from '@/stores/useTurnStateStore';
@@ -37,11 +37,23 @@ const oldest = (commands: RunningCommand[] | undefined): RunningCommand | null =
   commands?.length ? commands.reduce((a, b) => (b.since < a.since ? b : a)) : null;
 
 /**
- * Sessions working now: this cockpit's own (the live turn state), then other members' runs from the board. A session
- * whose turn is over while a command it started runs is a row too, for as long as the command runs. Oldest first, so
- * rows stay put while agents work.
+ * When the session's task closed (ms), from the board's open or closed tasks; null while the task is open or the board
+ * does not hold it. A close the board has no time for comes after every turn.
  */
-export function workingNow(sessions: AllSession[], turns: Record<string, TurnInfo>, board: Pick<Board, 'tasks' | 'projects'>, spaces: SpaceInfo[]): WorkingRow[] {
+function taskClosedAt(session: AllSession, task: BoardTask | undefined, board: Pick<Board, 'closed'>): number | null {
+  const at = (time: string | null | undefined) => { const ms = Date.parse(time ?? ''); return Number.isFinite(ms) ? ms : Infinity; };
+  if (task) return CLOSED_STATUSES.has(task.status) ? at(task.updatedAt) : null;
+  const closed = board.closed?.find((t) => (session.taskId ? t.id === session.taskId : t.spaceId === session.spaceId && t.sessionIds.includes(session.id)));
+  return closed ? at(closed.closedAt) : null;
+}
+
+/**
+ * Sessions working now: this cockpit's own (the live turn state), then other members' runs from the board. A session
+ * whose turn is over while a command it started runs is a row too, for as long as the command runs. A session whose
+ * task is closed counts only with a turn that started after the close: one from before ended with it, whatever its
+ * state still says. Oldest first, so rows stay put while agents work.
+ */
+export function workingNow(sessions: AllSession[], turns: Record<string, TurnInfo>, board: Pick<Board, 'tasks' | 'projects' | 'closed'>, spaces: SpaceInfo[]): WorkingRow[] {
   const byId = new Map(board.tasks.map((t) => [t.id, t]));
   const rows: WorkingRow[] = [];
   for (const s of sessions) {
@@ -49,8 +61,10 @@ export function workingNow(sessions: AllSession[], turns: Record<string, TurnInf
     const turn = turns[s.id];
     const command = waitsForCommand(s, turn) ? oldest(turn?.commands) : null;
     if (!command && allSessionState(s, turn) !== 'working') continue;
-    const space = spaces.find((sp) => sp.id === s.spaceId);
     const task = (s.taskId ? byId.get(s.taskId) : undefined) ?? board.tasks.find((t) => t.spaceId === s.spaceId && t.sessionIds.includes(s.id));
+    const closedAt = taskClosedAt(s, task, board);
+    if (!command && closedAt !== null && !(Date.parse(turn?.since ?? s.turnSince ?? '') > closedAt)) continue;
+    const space = spaces.find((sp) => sp.id === s.spaceId);
     rows.push({
       key: s.id,
       sessionId: s.id,

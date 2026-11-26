@@ -78,4 +78,16 @@ describe('opening a session of another space', () => {
     storage.set('cockpit-settings', JSON.stringify({ chatDefault: false }));
     expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('terminal');
   });
+
+  it('opens a new session in chat when the host says its provider has one', () => {
+    const viewOf = (paneId: string) => store.getDesks().flatMap((desk) => desk.panes).find((pane) => pane.id === paneId)?.paneView;
+    const provider = (id: string, chat: boolean) => ({
+      id,
+      capabilities: { chat: chat ? { supported: true } : { supported: false, reason: 'No chat view.' } },
+    });
+    store.setProviders([provider('claude', false), provider('codex', true)] as never);
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'claude' }))).toBe('terminal');
+    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'codex' }))).toBe('chat');
+    store.setProviders(undefined);
+  });
 });

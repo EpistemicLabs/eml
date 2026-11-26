@@ -1,3 +1,4 @@
+import type { SessionRuntimeFactory } from './session-runtime.js'
 import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
@@ -31,6 +32,12 @@ export interface IsolationContext {
   hookToken: string
   /** The host's brain MCP endpoint (brain-mcp.ts), for a provider whose MCP config is shared by every space. */
   mcpUrl: string
+  /**
+   * The host's endpoint for the cockpit's own session tools (cockpit-mcp.ts): end_turn, schedule, send_message,
+   * list_sessions for a session that runs in a terminal. For a provider whose terminal sessions get them over MCP;
+   * the same token and session headers as the brain endpoint guard it.
+   */
+  cockpitMcpUrl: string
   /**
    * Folders outside a session's project that it must be able to write to
    * (worker requests, task files) — for providers that confine writes.
@@ -172,8 +179,9 @@ export type TurnSignal =
    * The session changed turn state; the id is the provider's own. `settleMs`:
    * the state often resolves by itself within moments — apply it only if the
    * session sends nothing else for that long.
+   * `prompt`, with `working`: the user sent a prompt, a new turn starts — not a tool that ran in the turn.
    */
-  | { kind: 'turn'; providerSessionId: string; state: Exclude<TurnState, 'idle'>; settleMs?: number }
+  | { kind: 'turn'; providerSessionId: string; state: Exclude<TurnState, 'idle'>; settleMs?: number; prompt?: true }
   /** A hook the host has no state for — logged so new ones can be classified. */
   | { kind: 'unclassified'; label: string }
 
@@ -236,6 +244,22 @@ export interface AgentAuth {
   invalidate(): void
 }
 
+/** Whether a provider has a feature; one without it says why, for the UI and for a refusal. */
+export type Capability = { supported: true } | { supported: false; reason: string }
+
+/**
+ * The features that differ per provider:
+ *   chat           its sessions can run in the chat view (a SessionRuntime, domain/session-runtime.ts),
+ *                  which also reads their earlier conversation
+ *   endTurnTool    its sessions have the end_turn tool (domain/turn-end.ts): in the chat, or in a terminal
+ *                  with terminalTools; a session without it says how its turn ends in the text of its reply
+ *   messaging      another session can send to its sessions by their address (LaunchRequest.address)
+ *   terminalTools  its terminal sessions get the cockpit's tools from the host's MCP endpoint (cockpit-mcp.ts)
+ */
+export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging', 'terminalTools'] as const
+export type CapabilityId = (typeof CAPABILITY_IDS)[number]
+export type ProviderCapabilities = Record<CapabilityId, Capability>
+
 export interface AgentProvider {
   readonly id: ProviderId
   /** Product name for logs and messages, e.g. "Claude Code". */
@@ -245,13 +269,10 @@ export interface AgentProvider {
    * provider assigns its own and reports it with the session's first hook (false).
    */
   readonly adoptsSessionId: boolean
-  /** Whether sessions can message each other by their address (LaunchRequest.address) — Claude Code's SendMessage. */
-  readonly messaging: boolean
-  /**
-   * Whether a chat session of this provider has the end_turn tool (domain/turn-end.ts). One without it
-   * says how its turn ends in the text of its reply, like a terminal.
-   */
-  readonly endTurnTool: boolean
+  /** What this provider's sessions can do; the host and the UI read it instead of asking which provider it is. */
+  readonly capabilities: ProviderCapabilities
+  /** The provider's sessions in the chat view (`capabilities.chat`); absent for a provider without one. */
+  readonly chatRuntime?: SessionRuntimeFactory
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** Settings of this provider the generic settings UI can show; absent when it has none there. */
@@ -269,6 +290,8 @@ export interface AgentProvider {
   resumeNotFound(earlyOutput: string): boolean
   /** Read a hook payload the provider's sessions posted; null when it means nothing to the host. */
   turnSignal(payload: Record<string, unknown>): TurnSignal | null
+  /** The last assistant reply of a turn, from the provider's Stop hook payload; empty when it has none. */
+  lastReply(payload: Record<string, unknown>): string
   summary(session: SessionRef): SessionSummary
   /** Delete the stored conversation (best-effort). */
   deleteTranscript(session: SessionRef): void

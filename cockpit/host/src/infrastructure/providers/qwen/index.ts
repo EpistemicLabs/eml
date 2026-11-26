@@ -5,8 +5,8 @@ import type {
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, MCP_SKILLS_DIR, QWEN_CONFIG_DIR } from '../../../paths.js'
 import {
-  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TURN_HOOK_OPTIONS,
-  emlHookCommand, ensureHookNode, installManagedSkills, shellLine, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS,
+  emlHookCommand, ensureHookNode, installManagedSkills, shellLine, taskHookCommand, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { qwenRuntime } from './runtime.js'
@@ -25,7 +25,7 @@ import { qwenEndpointSet, qwenSettings, readQwenApiKey, readQwenSettings } from 
  * One Qwen home serves every brain space, so nothing written here names a
  * brain. A session gets its space through its environment: the space's
  * per-boot MCP token (COCKPIT_MCP_TOKEN) and its session id, which Qwen Code
- * puts into the headers to the host's brain MCP endpoint (settings.json
+ * puts into the headers to the host's MCP endpoints (settings.json
  * expands ${VAR} from the session's env), and EML_HOOK_CONFIG, the path of the
  * space's EML hook config. No brain token reaches a session.
  *
@@ -33,8 +33,9 @@ import { qwenEndpointSet, qwenSettings, readQwenApiKey, readQwenSettings } from 
  *   - settings.json: telemetry, Qwen Code's own update check, prompt
  *     suggestions and its own auto-memory off (the brain is the memory);
  *     Qwen Code's own scrolling viewport, which survives a pane resize; the
- *     brain MCP server (eml_brain) trusted and its tools loaded up front; the
- *     hooks. Qwen Code keeps its own state in the same file, so only these keys
+ *     brain MCP server (eml_brain) and the cockpit's own session tools
+ *     (cockpit, the host's endpoint for terminal sessions) trusted and their
+ *     tools loaded up front; the hooks. Qwen Code keeps its own state in the same file, so only these keys
  *     are replaced. No token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
  *   - skills/<name>/SKILL.md: the EML skills and the cockpit's own.
@@ -105,8 +106,7 @@ class QwenProvider implements AgentProvider {
   readonly label = 'Qwen Code'
   /** Qwen Code starts under the cockpit's id (--session-id). */
   readonly adoptsSessionId = true
-  readonly messaging = false
-  readonly endTurnTool = false
+  readonly capabilities = terminalOnly(this.label)
   readonly settings = qwenSettings
 
   /** The cockpit's own folders a session writes to (IsolationContext), as of the last prepare. */
@@ -157,23 +157,27 @@ class QwenProvider implements AgentProvider {
       tools: { toolSearch: { enabled: false } },
     })
     const mcpServers = settings.mcpServers && typeof settings.mcpServers === 'object' ? settings.mcpServers as Json : {}
+    // One of the host's MCP endpoints: the session's space and session id from the session's env (launch), trusted.
+    const hostServer = (httpUrl: string) => ({
+      httpUrl,
+      headers: Object.fromEntries(Object.entries(MCP_ENV_HEADERS).map(([header, env]) => [header, `\${${env}}`])),
+      trust: true,
+    })
     writeSettings({
       ...settings,
-      // eml_brain and the hooks are the cockpit's: replaced whole, so nothing an older cockpit wrote lingers.
+      // eml_brain, cockpit and the hooks are the cockpit's: replaced whole, so nothing an older cockpit wrote lingers.
       mcpServers: {
         ...mcpServers,
-        eml_brain: {
-          httpUrl: ctx.mcpUrl,
-          // The session's space and session id, from the session's env (launch).
-          headers: { [MCP_TOKEN_HEADER]: `\${${MCP_TOKEN_ENV}}`, [MCP_SESSION_HEADER]: '${COCKPIT_SESSION_ID}' },
-          trust: true,
-        },
+        eml_brain: hostServer(ctx.mcpUrl),
+        // The cockpit's own session tools (cockpit-mcp.ts).
+        [COCKPIT_MCP_SERVER]: hostServer(ctx.cockpitMcpUrl),
       },
       hooks: {
         // The project block (mcp-server hooks/project-block.ts), as for Claude: a second
         // SessionStart command; it brings the session's project, so the reminder drops
         // its guess from the working directory.
-        SessionStart: [eml('session-start'), eml('project-block')],
+        // The task hook (task-hook.ts) a third: the session's task, as plain stdout like the others.
+        SessionStart: [eml('session-start'), eml('project-block'), entry(taskHookCommand(true), TASK_HOOK_OPTIONS)],
         UserPromptSubmit: [turn, eml('user-prompt-submit', ['--no-cwd-nudge'])],
         PermissionRequest: [turn],
         // Back to "working" once an approved tool ran.
@@ -225,7 +229,7 @@ class QwenProvider implements AgentProvider {
       env: {
         QWEN_HOME: QWEN_CONFIG_DIR,
         // The session's space: Qwen Code sends its MCP token as a header to the
-        // host's brain MCP endpoint (settings.json); the hooks read the space's config.
+        // host's MCP endpoints (settings.json); the hooks read the space's config.
         [MCP_TOKEN_ENV]: req.space.mcpToken,
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
         OPENAI_BASE_URL: settings.baseUrl,
@@ -251,7 +255,8 @@ class QwenProvider implements AgentProvider {
    * Qwen Code's hooks (settings.json above):
    *
    *   UserPromptSubmit, PostToolUse → working   (UserPromptSubmit also comes,
-   *                                             with an empty prompt, after each tool batch)
+   *                                             with an empty prompt, after each tool batch:
+   *                                             only one with a prompt is the user's, a new turn)
    *   PermissionRequest             → waiting   (a tool waits for the user's approval)
    *   Stop                          → done
    */
@@ -260,11 +265,18 @@ class QwenProvider implements AgentProvider {
     if (typeof providerSessionId !== 'string' || !providerSessionId) return null
     switch (payload.hook_event_name) {
       case 'UserPromptSubmit':
+        return typeof payload.prompt === 'string' && payload.prompt !== ''
+          ? { kind: 'turn', providerSessionId, state: 'working', prompt: true }
+          : { kind: 'turn', providerSessionId, state: 'working' }
       case 'PostToolUse': return { kind: 'turn', providerSessionId, state: 'working' }
       case 'PermissionRequest': return { kind: 'turn', providerSessionId, state: 'waiting' }
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       default: return null
     }
+  }
+
+  lastReply(payload: Record<string, unknown>): string {
+    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
   }
 
   summary(session: SessionRef): SessionSummary {

@@ -28,6 +28,7 @@ import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionVi
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
 import { PLUGIN_DEFS, useViewEnabled } from '@/lib/pane-views';
+import { providerCanChat, useProviders } from '@/lib/providers';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
@@ -78,6 +79,7 @@ function MainContent({
   const pane = usePane(paneId);
   const noteId = pane?.noteId;
   const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
+  const canChat = providerCanChat(useProviders().data, selectedSession?.__provider ?? pane?.provider ?? 'claude');
   // A session's way of running follows it (session-handoff.ts): when it appears here
   // or moves to chat elsewhere. Not on every look: a session the user just moved
   // back to the terminal still reads as chat until the host has moved it.
@@ -93,10 +95,10 @@ function MainContent({
       runtime: changed ? runtime : null,
       chatDefault,
       pickedView: getSessionView(sessionId),
-      provider: selectedSession.__provider ?? pane?.provider ?? 'claude',
+      canChat,
       queuedCommand: initialShellCommand !== null,
     })) onSetPaneView('chat');
-  }, [selectedSession, sessionId, paneView, chatDefault, pane?.provider, initialShellCommand, onSetPaneView]);
+  }, [selectedSession, sessionId, paneView, chatDefault, canChat, initialShellCommand, onSetPaneView]);
   const switchBlocked = useSwitchBlocked(sessionId);
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what

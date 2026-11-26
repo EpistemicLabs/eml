@@ -1,4 +1,5 @@
 import type { McpServerConfig } from '../../../domain/space-plugins.js'
+import { COCKPIT_MCP_SERVER } from '../shared.js'
 import { tomlString, type TomlTable } from './toml.js'
 
 /**
@@ -6,11 +7,12 @@ import { tomlString, type TomlTable } from './toml.js'
  * space, so each server is written once into config.toml, switched off (`enabled = false`), and a
  * session switches on its own space's with `--config mcp_servers.<name>.enabled=true`: no value
  * ever goes on a command line. A server name that two spaces fill differently (another connection)
- * gets a second entry, `<name>_2`. Codex has no SSE transport: such a server is left out.
+ * gets a second entry, `<name>_2`, and so does one named like a server of the cockpit's own (codex/index.ts
+ * prepare). Codex has no SSE transport: such a server is left out.
  */
 export function codexPluginTables(bySpace: Record<string, Record<string, McpServerConfig>>): { tables: TomlTable[]; names: Record<string, string[]> } {
   const entries = new Map<string, { name: string; config: McpServerConfig }>()
-  const taken = new Set<string>(['eml_brain'])
+  const taken = new Set<string>(['eml_brain', COCKPIT_MCP_SERVER])
   const names: Record<string, string[]> = {}
   for (const [spaceId, servers] of Object.entries(bySpace).sort(([a], [b]) => a.localeCompare(b))) {
     names[spaceId] = []

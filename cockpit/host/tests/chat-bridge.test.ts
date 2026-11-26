@@ -10,8 +10,9 @@ import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
 import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
-import { reminder, type EndTurn } from '../src/domain/turn-end.js'
+import { deriveTurn, reminder, type EndTurn } from '../src/domain/turn-end.js'
 import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
+import { claudeStartOptions, type ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -26,7 +27,9 @@ class FakeRuntime implements SessionRuntime {
   closed = false
   servers: ToolServer[] = [{ name: 'tools', status: 'connected', error: null, scope: 'user', transport: 'web', toolCount: 2 }]
   serverCalls: string[] = []
-  constructor(readonly start: SessionRuntimeStart) {}
+  /** The request, and over it what Claude Code's runtime makes of its launch and space: the limits and the environment its CLI gets. */
+  readonly start: SessionRuntimeStart & ClaudeStartOptions
+  constructor(request: SessionRuntimeStart) { this.start = { ...request, ...claudeStartOptions(request) } }
   emit(event: RuntimeEvent): void { this.start.onEvent(event) }
   send(_id: string, text: string, images: ImageInput[] = []): void { this.sent.push(text); this.images.push(images) }
   async interrupt(): Promise<void> { this.interrupts += 1; this.emit({ kind: 'turn_end', reason: 'interrupted' }) }
@@ -65,16 +68,19 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
+    workerMode: 'auto',
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
   const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; conversation?: string }>()
   if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
   const provider = {
-    id: 'claude',
+    id: opts.provider ?? 'claude',
+    chatRuntime: factory,
+    capabilities: { chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true } },
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},
@@ -116,7 +122,6 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
     providers: { get: () => provider, forSession: () => provider, default: () => provider },
     spaces: { get: () => space, main: space, resolve: () => space, movedAway: (ledgerSpaceId?: string | null) => (ledgerSpaceId ? `This session moved to ${ledgerSpaceId}. Open it there.` : null) },
     sessionEnv: { COCKPIT_URL: 'http://host' },
-    runtimes: factory,
     events: new InMemoryEventStore(),
     onTurn: (id: string, state: 'working' | 'done' | 'waiting', settleMs?: number) => {
       turns.push(settleMs ? [id, state, settleMs] : [id, state])
@@ -641,6 +646,29 @@ describe('ChatBridge', () => {
       ])
     })
 
+    it('keeps a call that arrives over the cockpit MCP endpoint like its own: the reply is what follows the call', async () => {
+      const ends: Array<[string, unknown]> = []
+      const { worker, runtime, bridge, attention } = started({ turnDone: (_id, text, turn) => ends.push([text, turn]) })
+      const call: EndTurn = { result: 'Draft ready', questions: ['Send it today?'] }
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Let me write the draft.' })
+      // The agent CLI calls the tool on the host's endpoint: the chat shows the call, the endpoint hands it on (cockpit-mcp.ts).
+      runtime.emit({ kind: 'tool_call', toolId: 't1', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'mcp__cockpit__end_turn', input: call })
+      expect(bridge.said('s1', { call, ctx, derived: deriveTurn(call, ctx) })).toBe(true)
+      expect(attention()).toEqual({ kind: 'question', reason: 'Send it today?' })
+      // Nothing written after the call yet: the reply and its question are missing.
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply', 'questions']))
+      runtime.emit({ kind: 'text', blockId: 'b2', text: 'The draft is ready. Send it today?' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(ends).toEqual([['Let me write the draft.The draft is ready. Send it today?', { call, ctx, reminded: true, said: true }]])
+    })
+
+    it('keeps nothing for a session it does not run', () => {
+      const { bridge, ledgerEntries } = setup()
+      const call: EndTurn = { result: 'Done' }
+      expect(bridge.said('nobody', { call, ctx, derived: deriveTurn(call, ctx) })).toBe(false)
+      expect(ledgerEntries.size).toBe(0)
+    })
+
     it('does not send back the turn a delivered reminder starts: the stop had its one reminder', async () => {
       const ends: unknown[] = []
       const { worker, runtime, bridge } = started({ turnDone: (_id, _text, turn) => ends.push(turn) })
@@ -1084,6 +1112,46 @@ describe('ChatBridge', () => {
     await flush()
     own.runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
     expect((own.ledgerEntries.get('s1') as unknown as { result?: boolean }).result ?? false).toBe(false)
+  })
+
+  describe('a turn the user stopped', () => {
+    it('is no longer working, and leaves no result, flag or handoff', async () => {
+      const done: string[] = []
+      const tracker = new TurnTracker()
+      const { bridge, runtimes, ledgerEntries, turns } = setup({ tracker, turnDone: (_id, text) => done.push(text) })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      expect(tracker.get('s1')?.state).toBe('working')
+      runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'Half way.' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
+      expect(tracker.get('s1')?.state).toBe('done')
+      expect(turns.filter(([, state]) => state === 'done')).toEqual([['s1', 'done']])
+      const entry = ledgerEntries.get('s1') as unknown as { result?: boolean; attention?: unknown }
+      expect(entry.result ?? false).toBe(false)
+      expect(entry.attention ?? null).toBeNull()
+      expect(done).toEqual([])
+    })
+
+    it('keeps the commands it still runs, so it shows as waiting for them', async () => {
+      const tracker = new TurnTracker()
+      const { bridge, runtimes } = setup({ tracker })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      runtimes[0].emit({ kind: 'shell_task', taskId: 'sh1', toolId: null, description: 'Run the tests', status: 'running' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'interrupted' })
+      expect(tracker.get('s1')).toMatchObject({ state: 'done', commands: [{ description: 'Run the tests' }] })
+    })
+
+    it('a turn that ends on its own still leaves its done to the Stop hook, with a result and a handoff', async () => {
+      const done: string[] = []
+      const tracker = new TurnTracker()
+      const { bridge, runtimes, ledgerEntries, turns } = setup({ tracker, turnDone: (_id, text) => done.push(text) })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      runtimes[0].emit({ kind: 'text', blockId: 'b1', text: 'All done.' })
+      runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+      expect(turns.filter(([, state]) => state === 'done')).toEqual([])
+      expect(tracker.get('s1')?.state).toBe('working')
+      expect((ledgerEntries.get('s1') as unknown as { result?: boolean }).result).toBe(true)
+      expect(done).toEqual(['All done.'])
+    })
   })
 
   it('a worker keeps its tool profile on the runtime', async () => {
@@ -1554,6 +1622,18 @@ describe('ChatBridge', () => {
     expect(runtimes[0].stopped).toEqual(['a1'])
   })
 
+  it('binds the id the agent gave the conversation, and shows no view the event', async () => {
+    const { bridge, runtimes } = setup({ transcript: true })
+    const ws = connect(bridge)
+    await flush()
+    const before = ws.events().length
+    runtimes[0].emit({ kind: 'conversation', conversationId: 'thread-1' })
+    expect(ws.events()).toHaveLength(before)
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'send', text: 'go on' })
+    expect(runtimes[1].start).toMatchObject({ resume: true, conversationId: 'thread-1' })
+  })
+
   it('follows a cleared conversation: the next run resumes the new one', async () => {
     const { bridge, runtimes } = setup({ transcript: true })
     const ws = connect(bridge)
@@ -1667,6 +1747,36 @@ describe('ChatBridge', () => {
     bridge.attach(ws as unknown as WebSocket)
     ws.client({ type: 'init', paneId: 'pane', projectId: 'p1', sessionId: 'bad id!' })
     expect(ws.frames[0]).toMatchObject({ type: 'error' })
+  })
+
+  it('refuses a session of a provider without a chat, in the words it always had', async () => {
+    const { bridge, runtimes } = setup({ provider: 'codex', runtimeOf: 'terminal' })
+    const ws = connect(bridge)
+    await flush()
+    expect(ws.frames[0]).toEqual({ type: 'error', message: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' })
+    expect(runtimes).toEqual([])
+  })
+
+  it('a new chat runs with the provider its view names, Claude Code when it names none, and a known session keeps its own', async () => {
+    const asked: string[] = []
+    const named = (init: object, known = false) => {
+      const made = setup(known ? { runtimeOf: 'sdk' } : {})
+      const providers = (made.bridge as unknown as { ctx: { providers: { get: (id: string) => unknown } } }).ctx.providers
+      const get = providers.get
+      providers.get = (id) => { asked.push(id); return id === 'nobody' ? undefined : get(id) }
+      return { ...made, ws: connect(made.bridge, init) }
+    }
+    const plain = named({})
+    const other = named({ provider: 'codex' })
+    const unknown = named({ provider: 'nobody' })
+    const known = named({ provider: 'codex' }, true)
+    await flush()
+    expect(asked).toEqual(['claude', 'codex', 'nobody'])
+    expect(plain.runtimes).toHaveLength(1)
+    expect(other.runtimes).toHaveLength(1)
+    expect(unknown.ws.frames[0]).toEqual({ type: 'error', message: 'This cockpit has no such agent.' })
+    expect(unknown.runtimes).toEqual([])
+    expect(known.runtimes).toHaveLength(1)
   })
 
   it('refuses a session the ledger keeps in another space, and starts nothing', async () => {

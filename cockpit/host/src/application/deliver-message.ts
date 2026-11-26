@@ -13,6 +13,11 @@ export interface MessageRequest {
    * session it could reach while running gets it. A running one answers 'running'.
    */
   onlyIfStoppedFor?: string
+  /**
+   * The sending session cannot be messaged back (it runs in a terminal): the receiver reads who wrote
+   * and that its answer goes through the task or the user, instead of how to reply.
+   */
+  noReply?: boolean
   /** The cockpit's one reminder of a stop (domain/turn-end.ts): the turn it starts gets no reminder of its own. */
   reminder?: boolean
 }
@@ -48,9 +53,10 @@ export async function deliverMessage(deps: DeliverMessageDeps, request: MessageR
 }
 
 /** A woken session reads this as a prompt, so it has to say that no user wrote it and how to answer. */
-function withSender({ from, text, caller }: MessageRequest): string {
+function withSender({ from, text, caller, noReply }: MessageRequest): string {
   if (!from) return text
-  return caller === 'session'
-    ? `[Message from ${from}, another session, not your user. To answer, use SendMessage to ${from}.]\n\n${text}`
-    : `[Message from ${from}]\n\n${text}`
+  if (caller !== 'session') return `[Message from ${from}]\n\n${text}`
+  return noReply
+    ? `[Message from ${from}, another session, not your user. A reply does not reach ${from}: put your answer into the task, or tell your user.]\n\n${text}`
+    : `[Message from ${from}, another session, not your user. To answer, use SendMessage to ${from}.]\n\n${text}`
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
-import { clearChatStart, peekChatStart, rememberModels } from './chat-start';
+import { chatInitFrame, clearChatStart, peekChatStart, rememberModels } from './chat-start';
 
 import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
@@ -78,15 +78,12 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
       const sendInit = (wait: boolean) => {
         if (socket.readyState !== WebSocket.OPEN) return;
         const space = spaceId !== undefined ? spaceId : paneStore.getDeskOfPane(paneId)?.spaceId ?? null;
-        const start = peekChatStart(sessionId);
-        socket.send(JSON.stringify({
-          type: 'init', paneId, projectId, sessionId, spaceId: space, ...resumePoint(sessionId), readOnly: true, ...(wait ? { whenIdle: true } : {}),
-          // Settings › Preferences › Sessions; the host greets only a plain new chat, as in the terminal.
+        socket.send(JSON.stringify(chatInitFrame({
+          paneId, projectId, sessionId, spaceId: space, resume: resumePoint(sessionId), wait,
           greet: readSettings().greetOnStart,
-          // A chat started from the launcher: its first message and model (the host ignores them for a known session).
-          ...(start?.prompt ? { prompt: start.prompt } : {}),
-          ...(start?.model ? { model: start.model } : {}),
-        }));
+          provider: paneStore.chatProviderOfPane(paneId),
+          start: peekChatStart(sessionId),
+        })));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };
 

@@ -3,6 +3,8 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { z } from 'zod'
 import { HttpClient, McpHttpEndpoint, Provenance } from '../src/server'
 
 // The Streamable HTTP endpoint (http-endpoint.ts) as an embedder serves it: the
@@ -117,5 +119,73 @@ describe('McpHttpEndpoint', () => {
     await transport.terminateSession()
     await client.close()
     expect(endpoint.size).toBe(before)
+  })
+})
+
+// An embedder's own tools on the same endpoint: it builds the server per MCP session (createServer).
+describe('McpHttpEndpoint with the embedder\'s own server', () => {
+  let own: McpHttpEndpoint
+  let ownHost: http.Server
+  let ownUrl: string
+
+  beforeAll(async () => {
+    own = new McpHttpEndpoint({
+      createServer: ({ owner, sessionId }) => {
+        const server = new McpServer({ name: 'own', version: '1.0.0' })
+        server.registerTool('who', { description: 'Says who calls.', inputSchema: { greeting: z.string() } },
+          async ({ greeting }) => ({ content: [{ type: 'text', text: `${greeting} ${sessionId} of ${owner}` }] }))
+        return server
+      },
+    })
+    ownHost = http.createServer((req, res) => {
+      void own.handle(req, res, { owner: req.headers['x-test-owner'] as string, sessionId: req.headers['x-test-session'] as string })
+    })
+    ownUrl = `http://127.0.0.1:${await listen(ownHost)}/mcp`
+  })
+
+  afterAll(async () => {
+    await own.close()
+    await new Promise((r) => ownHost.close(r))
+  })
+
+  const connectOwn = async (owner: string, sessionId: string) => {
+    const transport = new StreamableHTTPClientTransport(new URL(ownUrl), { requestInit: { headers: { 'x-test-owner': owner, 'x-test-session': sessionId } } })
+    const client = new Client({ name: 'codex', version: '1.0.0' })
+    await client.connect(transport)
+    return { client, transport }
+  }
+
+  it('serves that server\'s tools, each MCP session with its own caller, and none of the EML tools', async () => {
+    const a = await connectOwn('space-a', 'session-a')
+    const b = await connectOwn('space-b', 'session-b')
+    expect((await a.client.listTools()).tools.map((t) => t.name)).toEqual(['who'])
+    seen.length = 0
+    const [fromA, fromB] = await Promise.all([a, b].map(({ client }) => client.callTool({ name: 'who', arguments: { greeting: 'hello' } })))
+    expect(fromA.content).toEqual([{ type: 'text', text: 'hello session-a of space-a' }])
+    expect(fromB.content).toEqual([{ type: 'text', text: 'hello session-b of space-b' }])
+    expect(seen).toEqual([])
+    await a.client.close()
+    await b.client.close()
+  })
+
+  it('binds the MCP session to its caller and closes the sessions of one agent session', async () => {
+    const before = own.size
+    const { client, transport } = await connectOwn('space-a', 'session-x')
+    const other = await connectOwn('space-a', 'session-y')
+    const res = await fetch(ownUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json', accept: 'application/json, text/event-stream',
+        'mcp-session-id': transport.sessionId!, 'mcp-protocol-version': '2025-06-18',
+        'x-test-owner': 'space-a', 'x-test-session': 'session-y',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    expect(res.status).toBe(403)
+    expect(own.size).toBe(before + 2)
+    await own.close('session-x')
+    expect(own.size).toBe(before + 1)
+    await client.close().catch(() => undefined)
+    await other.client.close()
   })
 })

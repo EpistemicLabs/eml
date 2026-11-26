@@ -2,12 +2,13 @@
  * The task hook — a SessionStart command next to the EML boot (isolation.ts,
  * codex/index.ts, taskHookCommand):
  *
- *   node task-hook.js
+ *   node task-hook.js [--plain]
  *
  * Task system (application/session-task.ts): the host gives a session its
  * task, creating one when there is none, and this prints the task and how
- * the session ends a turn. When the host answers with nothing, the hook
- * prints nothing. Never fails: the
+ * the session ends a turn, in the hook JSON envelope, or with --plain as it
+ * is (Qwen Code takes a hook's stdout as context). When the host answers with
+ * nothing, the hook prints nothing. Never fails: the
  * session starts as before whatever goes wrong here.
  */
 
@@ -27,7 +28,7 @@ async function main(): Promise<void> {
   if (!res.ok) return
   const { text } = await res.json() as { text?: unknown }
   if (typeof text !== 'string' || !text) return
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }))
+  process.stdout.write(process.argv.includes('--plain') ? text : JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } }))
 }
 
 main().catch(() => {}).finally(() => { process.exitCode = 0 })

@@ -63,6 +63,17 @@ describe('searching sessions', () => {
     const none = searchResult([], { words: ['zebra'] })
     expect(none).toContain('No session matches "zebra"')
     expect(none).toContain('node "$COCKPIT_SESSIONS_JS" <words> --archived')
+    expect(none).toBe('No session matches "zebra". Retry with other words from what your user called it: node "$COCKPIT_SESSIONS_JS" <other words>. Archived sessions: node "$COCKPIT_SESSIONS_JS" <words> --archived. The most recent sessions: ListAgents.')
+  })
+
+  it('names another way to search for a reader that has one, and changes nothing else', () => {
+    const wording = { retry: 'list_sessions with other words', archived: 'list_sessions with archived true', recent: 'list_sessions without words' }
+    expect(searchResult([], { words: ['zebra'] }, wording))
+      .toBe('No session matches "zebra". Retry with other words from what your user called it: list_sessions with other words. Archived sessions: list_sessions with archived true. The most recent sessions: list_sessions without words.')
+    // Without words there is nothing to retry with.
+    expect(searchResult([], { words: [] }, wording)).toBe('There is no session you can message. Archived sessions: list_sessions with archived true.')
+    const found = searchSessions(sessions, { words: ['catalogue'] })
+    expect(searchResult(found, { words: ['catalogue'] }, wording)).toBe(searchResult(found, { words: ['catalogue'] }))
   })
 })
 
@@ -138,7 +149,8 @@ describe('the session directory endpoint', () => {
     spaces.add(space('shared-brain', null) as never)
     spaces.add(space('agent-brain', 'second-agent') as never)
     const provider = (id: string, messaging: boolean) => ({
-      id, messaging, deleteTranscript: () => {},
+      id, label: id, capabilities: { messaging: messaging ? { supported: true } : { supported: false, reason: 'no address' } }, deleteTranscript: () => {},
+      runtime: { version: () => '1.0.0', problem: () => null, problemHint: '', state: () => ({}) }, auth: { signedIn: async () => true },
       summary: (ref: { sessionId: string }) => ({ messageCount: 2, lastMessageAt: hoursAgo(3), lastActivity: null, summary: ref.sessionId === 'catalogue-session' ? 'Import the spring catalogue' : 'Something else', aiTitle: null, lastReply: null, model: null, contextTokens: null }),
     })
     const claude = provider('claude', true)
@@ -146,7 +158,7 @@ describe('the session directory endpoint', () => {
     const deps = {
       spaces,
       turns: new TurnTracker(),
-      providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex] },
+      providers: { forSession: (sessionId: string) => (sessionId === 'codex-session' ? codex : claude), all: () => [claude, codex], default: () => claude },
       bridge: { ledger, sessionRef: (sessionId: string, projectPath: string | null) => ({ sessionId, projectPath }), sessionState: () => 'ended' },
       chat: { isRunning: () => false, backgroundTasks: () => 0 },
       spawns: { on: () => {}, off: () => {}, list: () => [] },
@@ -161,6 +173,15 @@ describe('the session directory endpoint', () => {
   afterAll(async () => {
     await new Promise((resolve) => server.close(resolve))
     rmSync(home, { recursive: true, force: true })
+  })
+
+  it('the provider list says what each provider can do', async () => {
+    const res = await fetch(`${base}/api/providers`, { headers: { origin: 'http://cockpit.test' } })
+    const { providers } = await res.json() as { providers: Array<{ id: string; capabilities: unknown }> }
+    expect(providers.map((p) => [p.id, p.capabilities])).toEqual([
+      ['claude', { messaging: { supported: true } }],
+      ['codex', { messaging: { supported: false, reason: 'no address' } }],
+    ])
   })
 
   it('answers only a cockpit session that says who it is', async () => {

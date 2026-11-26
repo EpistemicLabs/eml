@@ -13,6 +13,11 @@ export interface SessionHookDeps {
   /** The user typed a prompt into the session's terminal: a closed task it works on reopens first. */
   userWrote?: (sessionId: string) => void
   /**
+   * The user sent a prompt into the session's terminal (TurnSignal.prompt): a new turn starts, and what the
+   * session said in a turn that never ended no longer stands (application/terminal-turns.ts).
+   */
+  turnStarted?: (sessionId: string) => void
+  /**
    * A chat session's turn ended while subagents it started still run, and it asks nobody anything:
    * they wake it again, so its done is not applied and it stays working. Whoever answers true ends
    * the turn state itself once they are back (chat-bridge.ts holdTurnOpen).
@@ -65,6 +70,7 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
     deps.ledger.setAttention(sessionId, null)
     deps.ledger.unarchive(sessionId)
     deps.userWrote?.(sessionId)
+    if (signal.prompt) deps.turnStarted?.(sessionId)
   }
   // A turn that ends with a question for the user ends as done: its flag keeps it in Your turn,
   // the desk dot clears once seen. Only a live prompt is waiting (decision desk-dot-until-seen).

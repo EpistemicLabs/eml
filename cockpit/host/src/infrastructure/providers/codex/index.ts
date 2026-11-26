@@ -6,9 +6,12 @@ import type {
 } from '../../../domain/agent-provider.js'
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
-  EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_SESSION_HEADER, MCP_TOKEN_ENV, MCP_TOKEN_HEADER, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
+  emlHookCommand, ensureHookNode, installManagedSkills, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig, type HookCommand,
 } from '../shared.js'
+import type { ProviderCapabilities } from '../../../domain/agent-provider.js'
+import type { SessionRuntimeFactory } from '../../../domain/session-runtime.js'
+import { createCodexChatRuntimes } from './chat-runtime.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -29,8 +32,8 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  * One Codex home serves every brain space, so nothing written here names a
  * brain. A session gets its space through its environment instead: the
  * space's per-boot MCP token (COCKPIT_MCP_TOKEN) and its session id, which
- * Codex sends as headers to the host's brain MCP endpoint (`env_http_headers`
- * in config.toml; brain-mcp.ts), and EML_HOOK_CONFIG, the path of the space's
+ * Codex sends as headers to the host's MCP endpoints (`env_http_headers`
+ * in config.toml; brain-mcp.ts, cockpit-mcp.ts), and EML_HOOK_CONFIG, the path of the space's
  * EML hook config, which the EML hooks read themselves (see shared.ts,
  * EML_HOOK_CONFIG_ENV). No brain token reaches a session.
  *
@@ -38,7 +41,9 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *   - config.toml: Codex's own update check off; the brain MCP server (eml_brain,
  *     the host's endpoint over streamable HTTP) with its tool calls pre-approved
  *     (Codex asks per call otherwise, and fails the call where nobody can
- *     answer); one `projects."<path>"` table per trusted folder. Codex keeps
+ *     answer), and the same way the cockpit's own session tools (cockpit, the
+ *     host's endpoint for terminal sessions: end_turn, schedule, send_message,
+ *     list_sessions); one `projects."<path>"` table per trusted folder. Codex keeps
  *     its own state in the same file, so only these tables are replaced. No
  *     token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
@@ -53,6 +58,10 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *     (spawn-session, task-run), refreshed each boot. The folders those two
  *     write to — the spawn inbox, the tasks folder — are extra writable roots
  *     of the sandbox (config.toml, sandbox_workspace_write).
+ *
+ * A session runs in a terminal, or, once the user switches the chat view on
+ * (settings.ts chatView), in the chat through `codex app-server`
+ * (chat-runtime.ts): the same home, hooks and MCP servers either way.
  *
  * The binary is the cockpit's own (runtime.ts), installed when the user sets
  * Codex up; sign-in is Codex's own screen in the pane. What a session may do
@@ -137,8 +146,23 @@ class CodexProvider implements AgentProvider {
   readonly label = 'Codex'
   /** Codex assigns the session id itself and reports it with the first hook. */
   readonly adoptsSessionId = false
-  readonly messaging = false
-  readonly endTurnTool = false
+  private terminal = terminalOnly(this.label)
+  private writableDirs: string[] = []
+  /** Codex through its app-server (chat-runtime.ts). */
+  private runtimes = createCodexChatRuntimes(undefined, {
+    pluginServers: (spaceId) => pluginServerNames[spaceId] ?? [],
+    writableDirs: () => this.writableDirs,
+  })
+
+  /** The chat view is the user's switch (settings.ts chatView), read each time: it holds from the next session on. */
+  get capabilities(): ProviderCapabilities {
+    return readCodexSettings().chatView ? withChat(this.terminal) : this.terminal
+  }
+
+  /** There exactly while the chat view is on. */
+  get chatRuntime(): SessionRuntimeFactory | undefined {
+    return readCodexSettings().chatView ? this.runtimes : undefined
+  }
 
   readonly runtime = asAgentRuntime(codexRuntime, 'Settings › Models › Codex › "Set up now" installs it; then reopen this pane.')
   readonly settings = codexSettings
@@ -163,6 +187,7 @@ class CodexProvider implements AgentProvider {
   }
 
   prepare(ctx: IsolationContext): void {
+    this.writableDirs = ctx.writableDirs
     fs.mkdirSync(CODEX_CONFIG_DIR, { recursive: true, mode: 0o700 })
     fs.chmodSync(CODEX_CONFIG_DIR, 0o700)
     ensureHookNode()
@@ -171,17 +196,21 @@ class CodexProvider implements AgentProvider {
     // The cockpit updates its own Codex (runtime.ts); Codex's own check would
     // point the user at an install the cockpit does not use.
     const config = setTopLevelKey(readConfig(), 'check_for_update_on_startup', 'false')
+    // One of the host's MCP endpoints: the session's space and session id as headers from the
+    // session's env (launch), every tool call approved.
+    const hostServer = (name: string, url: string) => ({
+      header: `mcp_servers.${name}`,
+      lines: [
+        `url = ${tomlString(url)}`,
+        `env_http_headers = { ${Object.entries(MCP_ENV_HEADERS).map(([header, env]) => `${tomlString(header)} = ${tomlString(env)}`).join(', ')} }`,
+        'default_tools_approval_mode = "approve"',
+      ],
+    })
     // Cockpits before brain spaces kept the brain token in an env table here.
     writeConfig(upsertTables(removeTables(config, ['mcp_servers.eml_brain.env']), [
-      {
-        header: 'mcp_servers.eml_brain',
-        lines: [
-          `url = ${tomlString(ctx.mcpUrl)}`,
-          // The session's space and session id, as headers from the session's env (launch).
-          `env_http_headers = { ${tomlString(MCP_TOKEN_HEADER)} = ${tomlString(MCP_TOKEN_ENV)}, ${tomlString(MCP_SESSION_HEADER)} = "COCKPIT_SESSION_ID" }`,
-          'default_tools_approval_mode = "approve"',
-        ],
-      },
+      hostServer('eml_brain', ctx.mcpUrl),
+      // The cockpit's own session tools (cockpit-mcp.ts).
+      hostServer(COCKPIT_MCP_SERVER, ctx.cockpitMcpUrl),
       {
         // The sandbox confines writes to the project folder; these are the
         // cockpit's own folders a session writes to as well.
@@ -273,7 +302,7 @@ class CodexProvider implements AgentProvider {
       env: {
         CODEX_HOME: CODEX_CONFIG_DIR,
         // The session's space: Codex sends its MCP token as a header to the
-        // host's brain MCP endpoint (env_http_headers in config.toml); the
+        // host's MCP endpoints (env_http_headers in config.toml); the
         // hooks read the space's config.
         [MCP_TOKEN_ENV]: req.space.mcpToken,
         [EML_HOOK_CONFIG_ENV]: req.space.files.emlConfig,
@@ -299,7 +328,7 @@ class CodexProvider implements AgentProvider {
   /**
    * Codex's hooks (hooks.json above):
    *
-   *   UserPromptSubmit, PostToolUse → working
+   *   UserPromptSubmit, PostToolUse → working   (UserPromptSubmit: the user's prompt, a new turn)
    *   PermissionRequest             → waiting   (Codex is about to ask for approval;
    *                                             in auto mode only once the reviewer had its time)
    *   Stop                          → done
@@ -308,7 +337,7 @@ class CodexProvider implements AgentProvider {
     const providerSessionId = payload.session_id
     if (typeof providerSessionId !== 'string' || !providerSessionId) return null
     switch (payload.hook_event_name) {
-      case 'UserPromptSubmit':
+      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working', prompt: true }
       case 'PostToolUse': return { kind: 'turn', providerSessionId, state: 'working' }
       case 'PermissionRequest':
         // With Auto-review the request first goes to the reviewer model, which
@@ -321,6 +350,10 @@ class CodexProvider implements AgentProvider {
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       default: return null
     }
+  }
+
+  lastReply(payload: Record<string, unknown>): string {
+    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
   }
 
   summary(session: SessionRef): SessionSummary {

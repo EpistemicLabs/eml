@@ -604,17 +604,4 @@ describe('task router', () => {
     await expect(r.turnEnded('s9', HANDOFF)).resolves.toBeUndefined()
     expect(logs.at(-1)).toContain('brain down')
   })
-
-  it('reads the last reply from a Stop hook: its field, else the transcript', () => {
-    expect(router.replyFromStopHook({ last_assistant_message: 'hello' })).toBe('hello')
-    const file = join(home, 'transcript.jsonl')
-    writeFileSync(file, [
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } }),
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: HANDOFF }, { type: 'tool_use' }] } }),
-      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
-    ].join('\n'))
-    expect(router.replyFromStopHook({ transcript_path: file })).toBe(HANDOFF)
-    expect(router.replyFromStopHook({ transcript_path: join(home, 'missing.jsonl') })).toBe('')
-    expect(router.replyFromStopHook({})).toBe('')
-  })
 })

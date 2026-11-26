@@ -36,7 +36,10 @@ describe('spawn inbox', () => {
       spawns, spawnToken: TOKEN,
       spaces: new BrainSpaces(main),
       ledger: new SessionLedger(),
-      providers: new ProviderRegistry({ providers: [{ id: 'claude', messaging: true } as AgentProvider, { id: 'codex', messaging: false } as AgentProvider] }),
+      providers: new ProviderRegistry({ providers: [
+        { id: 'claude', capabilities: { messaging: { supported: true } } } as AgentProvider,
+        { id: 'codex', capabilities: { messaging: { supported: false, reason: 'no address' } } } as AgentProvider,
+      ] }),
     })
   })
   afterAll(() => {

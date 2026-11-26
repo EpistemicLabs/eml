@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { z } from 'zod'
 import { createSdkMcpServer, query, getSessionMessages, tool, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKMessage, type SDKUserMessage, type SessionMessage, type SlashCommand } from '@anthropic-ai/claude-agent-sdk'
 import { CONFIG_DIR } from '../../../paths.js'
 import type {
@@ -9,12 +8,12 @@ import type {
 } from '../../../domain/session-runtime.js'
 import { readPermissionMode } from './login.js'
 import { CLAUDE_BIN } from './runtime.js'
-import { WORKER_STATUSES } from '../../../domain/session-attention.js'
-import { endTurnDescription, END_TURN_INPUT, END_TURN_TOOL, endTurnAnswer, LEGACY_STATUS_DESCRIPTION, LEGACY_STATUS_TOOL, notRecorded, readEndTurn, statusAnswer } from '../../../domain/turn-end.js'
+import { SESSION_TOOLS } from '../../../domain/session-tools.js'
+import { endTurn, schedule, type ToolAnswer } from '../../../application/session-tools.js'
 import { newestRunDir, watchWorkflowJournal, workflowsDir, type JournalWatch, type JournalWatcher } from './workflow-journal.js'
-import { BRIEF_TEMPLATE } from '../../../application/split-brief.js'
-import { SPLIT_RELATIONS } from '../../../domain/split.js'
-import { SORT_PICKS } from '../../../domain/sort.js'
+
+// Where these were first; their definitions are domain/session-tools.ts.
+export { OFFER_SPLIT_ANSWER, OFFER_SPLIT_TOOL, PROPOSE_SORT_ANSWER, PROPOSE_SORT_TOOL, scheduleToolDescription } from '../../../domain/session-tools.js'
 
 /**
  * Claude Code through the Agent SDK as a SessionRuntime: the same binary, config
@@ -39,6 +38,9 @@ const TOOL_KINDS: Record<string, ToolKind> = {
   Task: 'agent', Agent: 'agent',
 }
 
+// The mode a worker runs in, as in the terminal (index.ts launch, unattended).
+const WORKER_MODE = 'auto'
+
 const MODES: ModeOption[] = [
   { id: 'default', label: 'Ask first', description: 'Asks before edits and commands' },
   { id: 'acceptEdits', label: 'Accept edits', description: 'Edits go through, commands still ask' },
@@ -46,15 +48,42 @@ const MODES: ModeOption[] = [
   { id: 'auto', label: 'Auto', description: 'A classifier approves or stops each action' },
 ]
 
+/** What a start request means for the CLI. */
+export interface ClaudeStartOptions {
+  /** The session's environment without a login token. */
+  env: Record<string, string>
+  /** The session's brain space, as the CLI takes it: its own MCP file when its tool profile limits the servers. */
+  files: { mcpConfig: string; settings: string }
+  /** Exactly the servers of `files.mcpConfig`, nothing else the CLI knows of: a space with a runtime of its own, or a limited session. */
+  strictMcp: boolean
+  /** Browser control for a strict session: a runtime's own, or Chrome lent to a limited job (index.ts launch decides). */
+  chrome: boolean
+  /** Built-in tools this session may not use (its tool profile). */
+  deniedTools: string[]
+}
+
+/** Reads a start request as Claude Code takes it: from the provider's launch and the session's space. */
+export function claudeStartOptions({ env, launch, space }: Pick<SessionRuntimeStart, 'env' | 'launch' | 'space'>): ClaudeStartOptions {
+  // The SDK never carries a login token: token mode stays in the terminal (index.ts workerRunsInChat).
+  const { CLAUDE_CODE_OAUTH_TOKEN: _token, ...withoutToken } = env
+  return {
+    env: withoutToken,
+    files: { mcpConfig: launch.limits?.mcpConfig ?? space.files.mcpConfig, settings: space.files.settings },
+    strictMcp: !!space.runtime || !!launch.limits?.mcpConfig,
+    chrome: launch.chrome === true,
+    deniedTools: launch.limits?.deniedTools ?? [],
+  }
+}
+
 /**
  * The terminal follows Chrome's "Enabled by default" setting; an SDK session ignores
  * it and needs the flag. An agent keeps to its MCP allowlist, so it gets no browser
  * unless its record gives it one.
  */
-function chromeForChat(request: SessionRuntimeStart): boolean {
-  if (request.strictMcp) return request.chrome === true
+function chromeForChat(start: ClaudeStartOptions): boolean {
+  if (start.strictMcp) return start.chrome
   try {
-    const configDir = request.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
+    const configDir = start.env.CLAUDE_CONFIG_DIR ?? CONFIG_DIR
     const config = JSON.parse(readFileSync(join(configDir, '.claude.json'), 'utf8')) as { claudeInChromeDefaultEnabled?: unknown }
     return config.claudeInChromeDefaultEnabled === true
   } catch {
@@ -466,126 +495,33 @@ export function startingMode(chosen: string | null, setting: string): string {
   return chosen ?? setting
 }
 
-export const OFFER_SPLIT_TOOL = 'offer_split'
-const OFFER_SPLIT_TOOL_DESCRIPTION = 'Offer to split a new topic off this chat into a task and a session of its own. The chat shows the user a card: Split off… opens a dialog filled with what you pass, Keep it here keeps the topic in this chat. '
-  + 'Call it as soon as the user brings up new work that is not part of what this session works on (its task\'s goal, or its first request), before you start on it, instead of creating a task for it yourself; a question that only clarifies the current work is not a new topic. '
-  + 'Steps of the current work, and a task the user explicitly asks you to note, are not splits: create those yourself. '
-  + 'Once per topic: never again for a topic the user kept here. Until they choose, answer briefly or wait; do not start real work on the new topic. '
-  + 'relation: sub only if this session\'s task cannot be done without it; spun if it grew out of this work; unrelated if it has nothing to do with it. '
-  + 'project: the project it belongs to (its id or name), if not this one. task: the id of an open task this topic already has (check eml_list first); the split then goes onto that task instead of making a new one. '
-  + `brief: at most 12 lines from the last turns, in this shape:\n${BRIEF_TEMPLATE}`
-const OFFER_SPLIT_TOOL_INPUT = {
-  title: z.string().describe('The new topic in two to five words, sentence case.'),
-  relation: z.enum(SPLIT_RELATIONS),
-  project: z.string().optional(),
-  task: z.string().optional().describe('An open task this topic already has: its id.'),
-  brief: z.string(),
-  reason: z.string().describe('One line: why this is a new topic.'),
-}
-
-/** What the agent reads after offering a split: nothing happened yet, the user decides. */
-export const OFFER_SPLIT_ANSWER = 'Offered: the chat shows the user Split off… and Keep it here. Nothing is split until they choose; do not start on the new topic meanwhile. If they keep it here, carry on with it in this chat and do not offer it again.'
-
-export const PROPOSE_SORT_TOOL = 'propose_sort'
-const PROPOSE_SORT_TOOL_DESCRIPTION = 'Propose where each topic of this session belongs, when the session has drifted: after a compaction, or once it has covered four or more topics outside its task\'s goal. '
-  + 'The chat shows the user a card; Sort topics… opens a table of your rows where they change what is wrong and apply. Nothing starts on its own; nothing happens until they apply. '
-  + 'Read your own transcript and the brain (open tasks of the project) first. One row per topic, oldest first: when (a short date), topic (two to five words), summary (where it stands, a few words), '
-  + 'today (what the brain has for it now: this task, a task, a linked task, nothing), pick, taskId (its task if it has one), brief (for a topic without a task: what a session needs to pick it up). '
-  + 'pick: keep (it is this task\'s work) · sub (this task cannot be done without it) · spun (it grew out of this work) · unrelated (its own task, no link) · drop (close it: not needed). '
-  + 'Offer it once; if the user says later, do not offer it again before the next compaction.'
-const PROPOSE_SORT_TOOL_INPUT = {
-  rows: z.array(z.object({
-    when: z.string().optional(),
-    topic: z.string(),
-    summary: z.string().optional(),
-    today: z.string().optional(),
-    pick: z.enum(SORT_PICKS),
-    taskId: z.string().optional(),
-    brief: z.string().optional(),
-  })),
-  reason: z.string().describe('One line: why this session should be sorted now.'),
-}
-
-/** What the agent reads after proposing a sort: nothing happened yet, the user decides. */
-export const PROPOSE_SORT_ANSWER = 'Proposed: the chat shows the user Sort topics… and Later. Nothing changes until they apply; carry on meanwhile.'
-
-const SCHEDULE_TOOL = 'schedule'
-/** The schedule tool's description; `zone` names the user's own time zone, "Asia/Bangkok (UTC+7)". */
-export const scheduleToolDescription = (zone?: string) => 'Schedule work for later. A schedule belongs to a task: repeating times and at most one wake-up. At the time the cockpit runs the task, even when nobody has the cockpit open. '
-  + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
-  + 'not for work you can do now. '
-  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: the task\'s id or exact name; pause and resume hold the task\'s whole schedule, delete and finish end it and leave the task open). '
-  + 'create needs prompt and exactly one of cron (a repeating time, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
-  + 'or at (the wake-up, e.g. "2026-11-13T10:00"; it replaces the one the task had). Times read in timezone (an IANA name), by default the user\'s own' + (zone ? ` (${zone})` : '') + '; pass it when the user names another. '
-  + 'The task: task_id (one that exists), or target self (the task this session works on); without either a new task is made from name and prompt, in project (by default this one\'s). '
-  + 'A run reads the task, so the prompt goes into it: a repeating time\'s as its own paragraph of the task\'s text, a wake-up\'s as its reason. Write it so it stands alone (what to do, where, and what to report). '
-  + 'A repeating time starts a new session per run; a wake-up continues the session that set it if that session works on the task. '
-  + 'update: cron replaces the task\'s repeating times with that one, at replaces its wake-up. '
-  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a time): the task is then started when such mail arrives. '
-  + 'It reacts only after the user\'s OK on the task in the cockpit, and its replies are drafts the user approves; you cannot change either. '
-  + 'goal: what has to be true for the task to be done (e.g. "refund received"); it is set when the task has none. '
-  + 'Optional: max_runs, ends_at, deny_tools (tools the task\'s sessions may not use), '
-  + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
-  + 'You reach the tasks of this space, and a task\'s sessions get at most this session\'s tools; a limited task\'s session reaches only its own task (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
-const SCHEDULE_TOOL_INPUT = {
-  action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish']),
-  job: z.string().optional().describe('The task whose schedule to act on: its id (or the first 8 characters) or its exact name.'),
-  name: z.string().optional().describe('For a new task: a short name the user recognizes, e.g. "Daily brief".'),
-  prompt: z.string().optional().describe('What a run at that time should do; it goes into the task.'),
-  cron: z.string().optional(),
-  at: z.string().optional(),
-  timezone: z.string().optional(),
-  // Any word is taken, so one the tool does not know is answered with what to do instead (application/jobs.ts).
-  target: z.string().optional().describe('worker (default) or self: the task this session works on.'),
-  project: z.string().optional().describe('The project a new task is made in, and where new sessions of the task start.'),
-  provider: z.string().optional(),
-  max_runs: z.number().int().optional(),
-  ends_at: z.string().optional(),
-  task_id: z.string().optional().describe('The task that gets the time.'),
-  goal: z.string().optional().describe('What has to be true for the task to be done; set when the task has none.'),
-  deny_tools: z.array(z.string()).optional(),
-  notify: z.enum(['needs-me', 'always', 'never']).optional(),
-  mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()
-    .describe('Mail that starts the task: sender domains (e.g. example.com) and addresses.'),
-}
-
 /**
  * What an end_turn call is answered with: why it was refused, or what was recorded and what it still lacks.
  * `refused`: nothing was recorded. The tool then answers as an error, so the chat shows a failed tool row
  * and not the end of the turn (frontend turn-end-line.ts turnEndOfTool).
  */
 export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart['worker']>, 'endTurn'>, input: unknown): Promise<{ text: string; refused: boolean }> {
-  const read = readEndTurn(input)
-  if (!read.ok) return { text: read.error, refused: true }
-  try {
-    const { derived, missing, checkProblem, checkFix, checkTime, nextRun } = await worker.endTurn(read.call)
-    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkFix, checkTime, nextRun }), refused: false }
-  } catch (error: unknown) {
-    return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
-  }
+  const { text, isError } = await endTurn(worker, input)
+  return { text, refused: isError }
 }
 
 /** end_turn, the schedule tool and the check before a turn ends, in this process: no extra server per session. */
 function workerOptions(worker: NonNullable<SessionRuntimeStart['worker']>, jobs: SessionRuntimeStart['jobs'], zone?: string) {
   const said = (text: string) => ({ content: [{ type: 'text' as const, text }] })
+  const answered = ({ text, isError }: ToolAnswer) => (isError ? { ...said(text), isError: true } : said(text))
+  const T = SESSION_TOOLS
   // In the tool list from the start: a worker that has to search for it only finds it once it is sent back.
-  const endTurn = tool(END_TURN_TOOL, endTurnDescription(zone), END_TURN_INPUT, async (input) => {
-    const { text, refused } = await endTurnReply(worker, input)
-    return refused ? { ...said(text), isError: true } : said(text)
-  }, { alwaysLoad: true })
+  const endTurnTool = tool(T.endTurn.name, T.endTurn.description(zone), T.endTurn.input, async (input) => answered(await endTurn(worker, input)), { alwaysLoad: true })
   // A session started before end_turn still calls this one.
-  const status = tool(LEGACY_STATUS_TOOL, LEGACY_STATUS_DESCRIPTION, { status: z.enum(WORKER_STATUSES), reason: z.string().optional() }, async ({ status, reason }) => {
+  const status = tool(T.legacyStatus.name, T.legacyStatus.description(), T.legacyStatus.input, async ({ status, reason }) => {
     worker.report(status, reason ?? null)
-    return said(statusAnswer(status))
+    return said(T.legacyStatus.answer(status))
   })
-  const schedule = jobs && tool(SCHEDULE_TOOL, scheduleToolDescription(zone), SCHEDULE_TOOL_INPUT, async (input) => {
-    const text = await jobs(input).catch((error: unknown) => `The schedule tool failed: ${error instanceof Error ? error.message : 'unknown error'}`)
-    return said(text)
-  })
+  const scheduleTool = jobs && tool(T.schedule.name, T.schedule.description(zone), T.schedule.input, async (input) => answered(await schedule({ jobs }, input)))
   // Changes nothing: the chat renders the call as a card, and the user's choice comes back as a message.
-  const offerSplit = tool(OFFER_SPLIT_TOOL, OFFER_SPLIT_TOOL_DESCRIPTION, OFFER_SPLIT_TOOL_INPUT, async () => said(OFFER_SPLIT_ANSWER))
-  const proposeSort = tool(PROPOSE_SORT_TOOL, PROPOSE_SORT_TOOL_DESCRIPTION, PROPOSE_SORT_TOOL_INPUT, async () => said(PROPOSE_SORT_ANSWER))
-  const tools = [endTurn, status, offerSplit, proposeSort, ...(schedule ? [schedule] : [])]
+  const offerSplit = tool(T.offerSplit.name, T.offerSplit.description(), T.offerSplit.input, async () => said(T.offerSplit.answer))
+  const proposeSort = tool(T.proposeSort.name, T.proposeSort.description(), T.proposeSort.input, async () => said(T.proposeSort.answer))
+  const tools = [endTurnTool, status, offerSplit, proposeSort, ...(scheduleTool ? [scheduleTool] : [])]
   const server = createSdkMcpServer({ name: 'cockpit', tools })
   return {
     mcpServers: { cockpit: server },
@@ -629,12 +565,13 @@ class ClaudeSdkRuntime implements SessionRuntime {
 
   constructor(private request: SessionRuntimeStart, private watchJournal: JournalWatcher = watchWorkflowJournal) {
     this.exited = new Promise((resolve) => { this.markExited = resolve })
+    const start = claudeStartOptions(request)
     this.query = query({
       prompt: this.input,
       options: {
         cwd: request.cwd,
         // Artifact is off by default in the SDK. A value already set wins, so 0 turns it off.
-        env: { CLAUDE_CODE_ARTIFACT: '1', ...request.env },
+        env: { CLAUDE_CODE_ARTIFACT: '1', ...start.env },
         pathToClaudeCodeExecutable: CLAUDE_BIN,
         // Always named: left out, the CLI picks one itself.
         permissionMode: startingMode(request.mode, readPermissionMode()) as PermissionMode,
@@ -642,19 +579,19 @@ class ClaudeSdkRuntime implements SessionRuntime {
         agentProgressSummaries: true,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         includePartialMessages: true,
-        settings: request.files.settings,
+        settings: start.files.settings,
         // Paths, not the servers themselves: the brain token stays in the file.
         extraArgs: {
-          'mcp-config': request.files.mcpConfig,
+          'mcp-config': start.files.mcpConfig,
           // A flag without a value.
-          ...(request.strictMcp ? { 'strict-mcp-config': null } : {}),
-          ...(chromeForChat(request) ? { chrome: null } : {}),
+          ...(start.strictMcp ? { 'strict-mcp-config': null } : {}),
+          ...(chromeForChat(start) ? { chrome: null } : {}),
           name: request.address,
         },
         ...(request.resume ? { resume: request.conversationId ?? request.sessionId } : { sessionId: request.sessionId }),
         canUseTool: (toolName, input, options) => this.canUseTool(toolName, input, options),
         ...(request.worker ? workerOptions(request.worker, request.jobs, request.timeZone) : {}),
-        ...(request.deniedTools?.length ? { disallowedTools: request.deniedTools } : {}),
+        ...(start.deniedTools.length ? { disallowedTools: start.deniedTools } : {}),
         // Our own spawn: the only way to know when the process has really exited.
         spawnClaudeCodeProcess: (options) => {
           const child = spawn(options.command, options.args, {
@@ -914,13 +851,15 @@ export function createClaudeSdkRuntimes(watchJournal: JournalWatcher = watchWork
   // folder. No session inherits the variable (baseAgentEnv).
   let reads: Promise<unknown> = Promise.resolve()
   return {
+    workerMode: WORKER_MODE,
     start: (request) => new ClaudeSdkRuntime(request, watchJournal),
-    history(conversationId, cwd, runtime) {
+    // `runtime`: the conversation is in that runtime's folder.
+    history({ sessionId, providerSessionId, projectPath, runtime }) {
       const configDir = runtime ? runtime.configDirs.claude : CONFIG_DIR
       if (!configDir) return Promise.reject(new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`))
       const read = reads.then(async () => {
         process.env.CLAUDE_CONFIG_DIR = configDir
-        return historyEvents(await getSessionMessages(conversationId, { dir: cwd }))
+        return historyEvents(await getSessionMessages(providerSessionId ?? sessionId, projectPath ? { dir: projectPath } : {}))
       })
       reads = read.catch(() => { /* the caller gets it */ })
       return read

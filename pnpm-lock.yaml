@@ -156,6 +156,9 @@ importers:
       '@engramprotocol/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.2
+        version: 1.32.2(zod@4.6.7)
       '@xterm/addon-serialize':
         specifier: ^0.14.0
         version: 0.14.0

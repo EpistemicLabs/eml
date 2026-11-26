@@ -8,7 +8,7 @@ import { parentOf } from '../domain/task-relations.js'
 import { workerDelegation, type WorkerTaskHolds } from './worker-task.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
-import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules } from '../domain/turn-end.js'
+import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules, type EndTurnAccess } from '../domain/turn-end.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -38,8 +38,8 @@ export interface SessionTaskDeps {
   jobTask?: (jobId: string) => string | null
   /** This cockpit's member: the owner of a session's task when the task it comes from names none. */
   me: string
-  /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot reads the block. */
-  endTurnTool(sessionId: string): boolean
+  /** Whether and how the session can call end_turn (application/turn-context.ts endTurnAccess); one that cannot reads the block. */
+  endTurnTool(sessionId: string): EndTurnAccess
   /** The user's time zone as a session is told it, "Asia/Bangkok (UTC+7)" (domain/schedule.ts zoneLabel). */
   zone?: () => string
   /**
@@ -86,11 +86,11 @@ export const placeholderTitle = (sessionId: string, now: Date) =>
 
 export { displayTitleOf, kebabTitle }
 
-/** Who ends the turns of this session: the user's handle, the agent's, whether it has the end_turn tool, and the user's time zone. */
+/** Who ends the turns of this session: the user's handle, the agent's, whether and how it has the end_turn tool, and the user's time zone. */
 export interface TurnParty {
   owner: string
   agent?: string | null
-  tool: boolean
+  tool: EndTurnAccess
   zone?: string | null
 }
 

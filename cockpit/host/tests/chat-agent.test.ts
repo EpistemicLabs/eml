@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
+import type { LaunchSpec, SessionRef, SessionSpace } from '../src/domain/agent-provider.js'
 import type { RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart } from '../src/domain/session-runtime.js'
+import type { ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 import type { JournalWatcher, JournalWatchRequest } from '../src/infrastructure/providers/claude/workflow-journal.js'
 
 // paths.ts reads the home at import time — set it before loading the modules.
@@ -76,14 +78,21 @@ function scriptedStream() {
 
 const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)) }
 
+// A start request's launch and space, as the bridge passes them on. `limited`: the session has an MCP file of its own.
+const plainLaunch: LaunchSpec = { bin: 'claude', args: [], env: {}, keepRunning: false }
+const limitedLaunch: LaunchSpec = { ...plainLaunch, limits: { mcpConfig: '/m', deniedTools: [] } }
+const plainSpace: SessionSpace = { id: 'space', mcpToken: 't', files: { mcpConfig: '/m', settings: '/s', emlConfig: '/e' } }
+
 describe('the chat view in a space with its own agent', () => {
-  const starts: SessionRuntimeStart[] = []
+  // Each request, and over it what Claude Code's runtime makes of its launch and space (claudeStartOptions).
+  const starts: Array<SessionRuntimeStart & ClaudeStartOptions> = []
   const histories: Array<[string, unknown]> = []
   let isolation: typeof import('../src/infrastructure/providers/claude/isolation.js')
   let connect: (spaceId: string, sessionId: string) => FakeSocket
   let spaces: InstanceType<typeof import('../src/brain-space.js')['BrainSpaces']>
   let ledger: InstanceType<typeof import('../src/session-ledger.js')['SessionLedger']>
   let createClaudeSdkRuntimes: typeof import('../src/infrastructure/providers/claude/sdk-runtime.js')['createClaudeSdkRuntimes']
+  let claudeStartOptions: typeof import('../src/infrastructure/providers/claude/sdk-runtime.js')['claudeStartOptions']
 
   beforeAll(async () => {
     mkdirSync(configDir, { recursive: true })
@@ -99,7 +108,7 @@ describe('the chat view in a space with its own agent', () => {
     const { InMemoryEventStore } = await import('../src/application/session-events.js')
     const { SessionHandoff } = await import('../src/application/session-handoff.js')
     const { CLAUDE_TURN_HOOK_CONFIG } = await import('../src/paths.js')
-    ;({ createClaudeSdkRuntimes } = await import('../src/infrastructure/providers/claude/sdk-runtime.js'))
+    ;({ createClaudeSdkRuntimes, claudeStartOptions } = await import('../src/infrastructure/providers/claude/sdk-runtime.js'))
 
     const provider = createClaudeProvider()
     provider.prepare({ hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: '0123456789abcdef', writableDirs: [] })
@@ -113,18 +122,21 @@ describe('the chat view in a space with its own agent', () => {
     for (const space of spaces.list()) space.registry.get = (() => ({ projectId: 'p1', path: '/work' })) as never
     ledger = new SessionLedger()
     const runtimes: SessionRuntimeFactory = {
+      workerMode: 'auto',
       start: (request) => {
-        starts.push(request)
+        starts.push({ ...request, ...claudeStartOptions(request) })
         const runtime: SessionRuntime = { send: () => {}, interrupt: async () => {}, answerPermission: () => {}, close: async () => {} }
         return runtime
       },
-      history: async (sessionId, _cwd, agent): Promise<RuntimeEvent[]> => {
-        histories.push([sessionId, agent?.id ?? null])
+      history: async (session): Promise<RuntimeEvent[]> => {
+        histories.push([session.providerSessionId ?? session.sessionId, session.runtime?.id ?? null])
         return [{ kind: 'history_end' }]
       },
     }
+    // The bridge takes the provider's chat runtime: this one in place of the SDK's.
+    Object.defineProperty(provider, 'chatRuntime', { value: runtimes })
     const bridge = new ChatBridge({
-      ledger, spaces, sessionEnv: {}, runtimes, events: new InMemoryEventStore(), onTurn: () => {},
+      ledger, spaces, sessionEnv: {}, events: new InMemoryEventStore(), onTurn: () => {},
       providers: { get: () => provider, forSession: () => provider } as never,
     }, () => handoff)
     const terminal = { isRunning: () => false, end: async () => {} }
@@ -186,9 +198,9 @@ describe('the chat view in a space with its own agent', () => {
 
   it('the SDK runtime passes the strict flag only when asked', () => {
     const factory = createClaudeSdkRuntimes()
-    const start = { sessionId: 's', resume: false, cwd: '/work', env: {}, address: 'a', files: { mcpConfig: '/m', settings: '/s' }, onEvent: () => {} }
-    factory.start({ ...start, strictMcp: true })
-    factory.start({ ...start, strictMcp: false })
+    const start = { sessionId: 's', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: {}, address: 'a', launch: plainLaunch, space: plainSpace, onEvent: () => {} }
+    factory.start({ ...start, launch: limitedLaunch })
+    factory.start(start)
     const args = sdk.options.slice(-2).map((o) => o.extraArgs as Record<string, unknown>)
     expect(args[0]).toHaveProperty('strict-mcp-config', null)
     expect(args[0]['mcp-config']).toBe('/m')
@@ -197,7 +209,7 @@ describe('the chat view in a space with its own agent', () => {
 
   it('the SDK runtime turns Artifact on unless the session already set it', () => {
     const factory = createClaudeSdkRuntimes()
-    const start = { sessionId: 's', resume: false, cwd: '/work', address: 'a', files: { mcpConfig: '/m', settings: '/s' }, onEvent: () => {} }
+    const start = { sessionId: 's', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', address: 'a', launch: plainLaunch, space: plainSpace, onEvent: () => {} }
     factory.start({ ...start, env: { KEEP: 'x' } })
     factory.start({ ...start, env: { CLAUDE_CODE_ARTIFACT: '0' } })
     const envs = sdk.options.slice(-2).map((o) => o.env as Record<string, string>)
@@ -209,7 +221,7 @@ describe('the chat view in a space with its own agent', () => {
     const factory = createClaudeSdkRuntimes()
     const dir = mkdtempSync(join(home, 'chrome-'))
     const env = { CLAUDE_CONFIG_DIR: dir }
-    const start = { sessionId: 's', resume: false, cwd: '/work', env, address: 'a', files: { mcpConfig: '/m', settings: '/s' }, onEvent: () => {} }
+    const start = { sessionId: 's', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env, address: 'a', launch: plainLaunch, space: plainSpace, onEvent: () => {} }
     const chromeArg = () => (sdk.options.at(-1)?.extraArgs as Record<string, unknown>)
 
     factory.start(start)
@@ -223,11 +235,11 @@ describe('the chat view in a space with its own agent', () => {
     factory.start(start)
     expect(chromeArg()).toHaveProperty('chrome', null)
 
-    factory.start({ ...start, strictMcp: true })
+    factory.start({ ...start, launch: limitedLaunch })
     expect(chromeArg()).not.toHaveProperty('chrome')
 
     writeFileSync(join(dir, '.claude.json'), JSON.stringify({}))
-    factory.start({ ...start, strictMcp: true, chrome: true })
+    factory.start({ ...start, launch: { ...limitedLaunch, chrome: true } })
     expect(chromeArg()).toHaveProperty('chrome', null)
   })
 
@@ -243,8 +255,8 @@ describe('the chat view in a space with its own agent', () => {
       const events: RuntimeEvent[] = []
       const stream = scriptedStream()
       const runtime = createClaudeSdkRuntimes(fake).start({
-        sessionId: 's', resume: false, cwd: '/work', env: { CLAUDE_CONFIG_DIR: configDir }, address: 'a',
-        files: { mcpConfig: '/m', settings: '/s' }, onEvent: (event) => events.push(event),
+        sessionId: 's', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: { CLAUDE_CONFIG_DIR: configDir }, address: 'a',
+        launch: plainLaunch, space: plainSpace, onEvent: (event) => events.push(event),
       })
       return { watches, events, stream, runtime }
     }
@@ -312,12 +324,13 @@ describe('the chat view in a space with its own agent', () => {
   it('reads history from each session\'s own folder, one read at a time', async () => {
     const factory = createClaudeSdkRuntimes()
     const runtime = spaces.get(SPACE)?.runtime
+    const stored = (sessionId: string, of?: SessionRef['runtime']): SessionRef => ({ sessionId, providerSessionId: null, projectPath: '/work', greeted: null, ...(of ? { runtime: of } : {}) })
     await Promise.all([
-      factory.history('a', '/work', runtime),
-      factory.history('b', '/work'),
-      factory.history('c', '/work', runtime),
+      factory.history(stored('a', runtime)),
+      factory.history(stored('b')),
+      factory.history(stored('c', runtime)),
     ])
     expect(sdk.dirs).toEqual([configDir, join(home, 'claude-config'), configDir])
-    await expect(factory.history('d', '/work', { ...runtime, configDirs: {} } as never)).rejects.toThrow(/no config folder/)
+    await expect(factory.history(stored('d', { ...runtime, configDirs: {} } as never))).rejects.toThrow(/no config folder/)
   })
 })

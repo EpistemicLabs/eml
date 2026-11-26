@@ -30,7 +30,7 @@ describe('spawning a worker with a task', () => {
     const spawns = new mods.SpawnQueue()
     const space = { main: true, id: 'main', registry: { get: (id: string) => (id.startsWith('bp-') || id === 'notes-folder' ? { projectId: id } : undefined), list: () => [] }, projects: { list: async () => [{ id: 'lohmann', name: 'Lohmann' }] } }
     const created: Array<{ title: string; content: string; scope: string }> = []
-    const provider = { id: 'claude', messaging: true, workerRunsInChat: () => true }
+    const provider = { id: 'claude', capabilities: { messaging: { supported: true } }, workerRunsInChat: () => true }
     const deps = {
       ledger, spawns, spawnToken: 't', deliver: async () => 'delivered' as const,
       spaces: { resolve: () => space }, providers: { get: () => undefined, default: () => provider, all: () => [provider] },

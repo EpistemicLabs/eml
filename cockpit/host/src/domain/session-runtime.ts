@@ -8,7 +8,7 @@ import type { CheckFix, CheckTime, DerivedTurn, EndTurn, Missing } from './turn-
  *
  * Domain layer: types only, no I/O.
  */
-import type { SessionAgentRuntime } from './agent-provider.js'
+import type { LaunchSpec, SessionRef, SessionSpace } from './agent-provider.js'
 
 /** Which of a session's two ways of running holds it. Not a provider: both are the same conversation. */
 export type SessionRuntimeKind = 'terminal' | 'sdk'
@@ -127,6 +127,11 @@ export type RuntimeEvent =
   | { kind: 'shell_task'; taskId: string; toolId?: string | null; description?: string; status?: AgentTaskStatus }
   /** A tool call inside a subagent; `title` and `toolKind` come with the call, a later `status` updates it. */
   | { kind: 'agent_tool'; parentToolId: string; toolId: string; toolKind?: ToolKind; title?: string; status: ToolStatus }
+  /**
+   * The id the agent itself knows the conversation by, for a runtime whose agent assigns it (AgentProvider.adoptsSessionId
+   * false). For the ledger alone: the bridge binds it and passes nothing on, so no view sees this event.
+   */
+  | { kind: 'conversation'; conversationId: string }
   /** The agent dropped the conversation and goes on in a new one under this id (`/clear`). */
   | { kind: 'conversation_reset'; conversationId: string }
   /** `images`: what came with it; `url` null for one that can only be counted (a stored conversation). */
@@ -205,14 +210,13 @@ export interface SessionRuntimeStart {
   env: Record<string, string>
   /** The session's address for cross-session messaging. */
   address: string
-  /** The session's brain space, as the agent CLI takes it. */
-  files: { mcpConfig: string; settings: string }
-  /** Exactly the servers of `files.mcpConfig`, nothing else the agent CLI knows of: a space with a runtime of its own. */
-  strictMcp: boolean
-  /** Browser control for a strict session: only a runtime that is given it. */
-  chrome?: boolean
-  /** Built-in tools this session may not use (its tool profile). */
-  deniedTools?: string[]
+  /**
+   * What the provider's launch() made of this session. A runtime reads from it what its agent CLI takes
+   * beside `env`: the session's limits from its tool profile, browser control.
+   */
+  launch: LaunchSpec
+  /** The brain space the session runs in: its files, and the runtime of a space that has its own. */
+  space: SessionSpace
   onEvent: (event: RuntimeEvent) => void
   /** The agent CLI's process started: the host puts it under the session's memory ceiling (session-memory.ts). */
   onSpawn?: (pid: number) => void
@@ -249,9 +253,11 @@ export interface EndTurnRecorded {
 }
 
 export interface SessionRuntimeFactory {
+  /** The mode a worker runs in, one of those its `capabilities` offer: nobody is there to answer. */
+  readonly workerMode: string
   start(request: SessionRuntimeStart): SessionRuntime
-  /** The stored conversation as events, oldest first; `runtime`: it is in that runtime's folder. */
-  history(conversationId: string, cwd: string, runtime?: SessionAgentRuntime | null): Promise<RuntimeEvent[]>
+  /** The session's stored conversation as events, oldest first, ending with `history_end`. */
+  history(session: SessionRef): Promise<RuntimeEvent[]>
 }
 
 export interface StoredEvent {

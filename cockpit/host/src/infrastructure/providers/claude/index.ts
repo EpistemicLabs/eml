@@ -1,13 +1,15 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
-  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
+  AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, ProviderCapabilities, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
 import { claudeLoginStatus, invalidateAccountCache, readChatView, readPermissionMode, readRemoteControl, readRenderer, sessionToken, writeChatView } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
+import { lastReplyInTranscript } from './last-reply.js'
+import { createClaudeSdkRuntimes } from './sdk-runtime.js'
 
 /**
  * Claude Code as an agent provider: the cockpit's own `claude` (runtime.ts,
@@ -49,10 +51,17 @@ class ClaudeProvider implements AgentProvider {
   readonly id = 'claude' as const
   readonly label = 'Claude Code'
   readonly adoptsSessionId = true
-  readonly messaging = true
-  /** Its chat runtime registers the tool (sdk-runtime.ts workerOptions). */
-  readonly endTurnTool = true
+  /** Its chat runtime registers the end_turn tool (sdk-runtime.ts workerOptions). */
+  readonly capabilities: ProviderCapabilities = {
+    chat: { supported: true },
+    endTurnTool: { supported: true },
+    messaging: { supported: true },
+    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+  }
   private isolation: IsolationFiles | null = null
+
+  /** Claude Code through the Agent SDK (sdk-runtime.ts). */
+  readonly chatRuntime = createClaudeSdkRuntimes()
 
   readonly runtime = asAgentRuntime(claudeRuntime, 'Settings › Models › Claude Code › "Check now" sets it up; then reopen this pane.')
 
@@ -203,7 +212,7 @@ class ClaudeProvider implements AgentProvider {
     const providerSessionId = payload.session_id
     if (typeof providerSessionId !== 'string' || !providerSessionId) return null
     switch (payload.hook_event_name) {
-      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working' }
+      case 'UserPromptSubmit': return { kind: 'turn', providerSessionId, state: 'working', prompt: true }
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       case 'Notification': {
         const type = payload.notification_type
@@ -213,6 +222,12 @@ class ClaudeProvider implements AgentProvider {
       }
       default: return null
     }
+  }
+
+  /** The Stop hook's last_assistant_message, else the last assistant text in the transcript it names. */
+  lastReply(payload: Record<string, unknown>): string {
+    if (typeof payload.last_assistant_message === 'string') return payload.last_assistant_message
+    return lastReplyInTranscript(payload.transcript_path)
   }
 
   summary(session: SessionRef): SessionSummary {
