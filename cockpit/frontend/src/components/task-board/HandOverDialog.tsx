@@ -8,7 +8,7 @@
 import { useState } from 'react';
 
 import { BUTTON, Dialog, DialogContent, DialogTitle, FOCUS, LABEL, LINK, PRIMARY, RadioCard } from '@/shared/view/ui';
-import { agentName, type BoardTask, type HandOverInput, type HandOverMode, scheduleZone, snoozeTimes, taskName, when as whenText } from '@/lib/task-board';
+import { agentName, type BoardTask, type HandOverInput, type HandOverMode, snoozeTimes, taskName, when as whenText } from '@/lib/task-board';
 import { inputStamp, useTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 
@@ -65,14 +65,16 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
   // The host takes over the task's own session whenever it has one (host domain/hand-over.ts), delegated or not.
   const takeOver = Boolean(task.ownSession);
   const question = task.group === 'asked' ? task.waitingOn?.why : undefined;
-  // A task's repeating times share one zone (the host's rule): one more joins it, whatever zone the user reads in.
-  const otherZone = task.schedule?.crons?.length ? scheduleZone(task.schedule, timeZone) : null;
+  // A task's repeating times share one zone, and the host refuses one more given in another (domain/task-schedule.ts
+  // cronZoneRefusal). So on a task that has repeating times, a new one is read in THEIR zone, and the dialog says so.
+  const taskZone = task.schedule?.crons?.length ? task.schedule.time_zone ?? null : null;
+  const cronZone = taskZone ?? timeZone;
 
   const schedule = (): HandOverInput['schedule'] => {
     const at = when === 'pick' ? `${picked.date}T${picked.time}` : (() => { const s = localStamp(when === 'tomorrow' ? times.tomorrow : times.monday); return `${s.date}T${s.time}`; })();
     if (then !== 'repeat') return { at, timeZone };
     const [hour, minute] = at.slice(11, 16).split(':').map(Number);
-    return { cron: `${minute} ${hour} * * ${repeat === 'weekdays' ? '1-5' : '1'}`, timeZone };
+    return { cron: `${minute} ${hour} * * ${repeat === 'weekdays' ? '1-5' : '1'}`, timeZone: cronZone };
   };
 
   const submit = () => {
@@ -132,7 +134,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                       <div className="flex flex-wrap gap-2">
                         <input type="date" aria-label="Date" value={picked.date} min={inputStamp(now, timeZone).date} onChange={(e) => setPicked({ ...picked, date: e.target.value })} className={FIELD} />
                         <input type="time" aria-label="Time" value={picked.time} onChange={(e) => setPicked({ ...picked, time: e.target.value })} className={FIELD} />
-                        <span className="self-center text-caption text-muted-foreground">{timeZone}</span>
+                        <span className="self-center text-caption text-muted-foreground">{then === 'repeat' ? cronZone : timeZone}</span>
                       </div>
                     )}
                   </div>
@@ -148,6 +150,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                         <option value="weekdays">Every weekday</option><option value="mondays">Every Monday</option>
                       </select>
                     )}
+                    {then === 'repeat' && taskZone && <span className="text-caption text-muted-foreground">Times of this task are in {taskZone}.</span>}
                   </div>
                 </>
               )}
@@ -181,7 +184,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                     ? `${agentName(agent)} carries on in the task's session, with what was said there, once the few seconds to undo are over.`
                     : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in a terminal' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
                   : then === 'repeat'
-                    ? `${agentName(agent)} works on it on that rhythm until you end it, each time in a new session.${task.schedule?.crons?.length ? ` The time is added to those the task repeats at${otherZone ? `, and read in their time zone (${otherZone}), not yours` : ''}.` : ''} The task sits in Agent scheduled under Routines, on every device and for every member.`
+                    ? `${agentName(agent)} works on it on that rhythm until you end it, each time in a new session.${task.schedule?.crons?.length ? ' The time is added to those the task repeats at.' : ''} The task sits in Agent scheduled under Routines, on every device and for every member.`
                     : `${agentName(agent)} is woken on this task at that time.${task.schedule?.at ? ` It replaces the wake-up set for ${whenText(task.schedule.at, now)}.` : ''} Until then the card sits in Agent scheduled, with the date.`}
               </p>
             </>

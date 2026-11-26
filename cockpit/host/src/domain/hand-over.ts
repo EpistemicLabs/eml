@@ -1,7 +1,7 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
 import { parseAt, isTimeZone, formatInZone } from './schedule.js'
-import { addCron, cronRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
+import { addCron, cronRefusal, cronZoneRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 import { PLACEHOLDER_TITLE } from './task-title.js'
 
@@ -94,6 +94,8 @@ export type HandOverRefusal =
   | 'schedule_required'
   /** The schedule cannot be added to the task's: not a time, or the task has as many repeating times as it can hold. */
   | 'schedule_invalid'
+  /** A repeating time written in another zone than the task's repeating times are read in (the answer's message names it). */
+  | 'schedule_zone'
   /** Take over without a desk (from the chip or the panel), but the task has no open session of its own (any more). */
   | 'no_session'
   /** Delegate now or Schedule on a task without a name or a goal: an agent alone needs to know what done means. */
@@ -126,7 +128,7 @@ export interface HandOverContext {
 
 const CHECKPOINTS = new Set(['before', 'after', 'none'])
 
-export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: HandOverContext): { ok: true; plan: HandOverPlan } | { ok: false; refusal: HandOverRefusal } {
+export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: HandOverContext): { ok: true; plan: HandOverPlan } | { ok: false; refusal: HandOverRefusal; message?: string } {
   if (task.status === 'resolved' || task.status === 'invalidated') return { ok: false, refusal: 'task_closed' }
   if (!ctx.agents.includes(req.delegate)) return { ok: false, refusal: 'delegate_not_in_space' }
   if (req.mode !== 'together' && (!req.checkpoint || !CHECKPOINTS.has(req.checkpoint))) return { ok: false, refusal: 'checkpoint_required' }
@@ -145,6 +147,9 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   // Its schedule starts it at its time; no request for the runner.
   if (req.mode === 'schedule') {
     const spec = req.schedule!
+    // The same rule as the schedule tool's: a repeating time joins the task's others only in their zone.
+    const theirs = spec.cron !== undefined ? cronZoneRefusal(schedule, spec.timeZone) : null
+    if (theirs) return { ok: false, refusal: 'schedule_zone', message: `Times of this task are in ${theirs}, and this one was given in ${spec.timeZone}: give it in ${theirs}.` }
     try {
       const next = spec.at !== undefined ? setWake(schedule, { at: spec.at, timeZone: spec.timeZone }) : addCron(schedule, spec.cron, spec.timeZone)
       patch.delegation = withSchedule({ agent: req.delegate, checkpoint: req.checkpoint }, next)

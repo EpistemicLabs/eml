@@ -8,7 +8,7 @@ import {
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
 } from '../domain/schedule-tool.js'
 import {
-  addCron, cronRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
+  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
 } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
@@ -424,8 +424,8 @@ export class Jobs {
    */
   private cron(input: Record<string, unknown>, current: ScheduleFields | null, zone: string): string {
     const cron = str(input.cron) ?? refuse('cron: five fields (minute hour day-of-month month day-of-week)')
-    const joined = current?.crons?.length ? current.time_zone : undefined
-    if (joined && joined !== zone) refuse(`the task's repeating times are read in ${joined}, and this cron was written in ${zone}: write it in ${joined} and pass timezone "${joined}"`)
+    const joined = cronZoneRefusal(current, zone)
+    if (joined) refuse(`the task's repeating times are read in ${joined}, and this cron was written in ${zone}: write it in ${joined} and pass timezone "${joined}"`)
     const refusal = cronRefusal(cron, zone, this.now(), JOB_LIMITS.minGapMs)
     return refusal ? refuse(refusal) : cron
   }

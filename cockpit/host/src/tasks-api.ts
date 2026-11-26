@@ -97,6 +97,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   not_ready: 'Give the task a name and a goal first: an agent working on it alone needs to know what done means.',
   schedule_required: 'Pick when the agent starts.',
   schedule_invalid: 'That time cannot be added to its schedule: a task holds at most 10 repeating times.',
+  schedule_zone: 'The task\'s repeating times are read in another time zone: give the new one in theirs.',
   no_session: 'The task has no open session to take over: pick a desk to start one.',
   bound_items: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.',
   open_steps: 'This task still has open steps: close or move them first.',
@@ -146,7 +147,7 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
-  scheduled: 409, not_scheduled: 409, unknown_time: 409, run_open: 409, task_working: 409, needs_approval: 409,
+  scheduled: 409, not_scheduled: 409, unknown_time: 409, schedule_zone: 409, run_open: 409, task_working: 409, needs_approval: 409,
   no_brain: 503,
 }
 

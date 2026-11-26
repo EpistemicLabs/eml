@@ -115,7 +115,7 @@ describe('planning a hand-over', () => {
     const once = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' } }, ctx)
     if (!once.ok) throw new Error(once.refusal)
     expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *'], at: '2026-11-25T01:00:00.000Z', time_zone: 'Europe/Berlin' } })
-    const more = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'Asia/Singapore' } }, ctx)
+    const more = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'Europe/Berlin' } }, ctx)
     if (!more.ok) throw new Error(more.refusal)
     expect(more.plan.patch.delegation?.schedule).toEqual({ crons: ['0 8 * * *', '0 18 * * *'], at: '2026-11-24T12:00:00.000Z', why: 'Check the reply', by_session: 's1', time_zone: 'Europe/Berlin' })
     const same = planHandOver(has, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 8 * * *', timeZone: 'Europe/Berlin' } }, ctx)
@@ -123,6 +123,19 @@ describe('planning a hand-over', () => {
     expect(same.plan.patch.delegation?.schedule?.crons).toEqual(['0 8 * * *'])
     const full = task({ delegation: { agent: 'motti', schedule: { crons: Array.from({ length: 10 }, (_, i) => `0 ${i} * * *`) } } })
     expect(planHandOver(full, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'UTC' } }, ctx)).toEqual({ ok: false, refusal: 'schedule_invalid' })
+  })
+
+  it('a repeating time given in another zone than the task\'s repeating times is refused, by the schedule tool\'s rule', () => {
+    const berlin = task({ delegation: { agent: 'motti', schedule: { crons: ['0 8 * * *'], time_zone: 'Europe/Berlin' } } })
+    const cron = (t: HandOverTask, timeZone: string) => planHandOver(t, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone } }, ctx)
+    expect(cron(berlin, 'Asia/Singapore')).toEqual({ ok: false, refusal: 'schedule_zone', message: 'Times of this task are in Europe/Berlin, and this one was given in Asia/Singapore: give it in Europe/Berlin.' })
+    expect(cron(berlin, 'Europe/Berlin').ok).toBe(true)
+    // A wake-up is an instant: its zone never matters. A task with only a wake-up has no zone to join.
+    expect(planHandOver(berlin, { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', timeZone: 'Asia/Singapore' } }, ctx).ok).toBe(true)
+    const wakeOnly = task({ delegation: { agent: 'motti', schedule: { at: '2026-11-24T12:00:00.000Z', time_zone: 'Europe/Berlin' } } })
+    const first = cron(wakeOnly, 'Asia/Singapore')
+    if (!first.ok) throw new Error(first.refusal)
+    expect(first.plan.patch.delegation?.schedule).toMatchObject({ crons: ['0 18 * * *'], time_zone: 'Asia/Singapore' })
   })
 
   it('a delegation written without the task\'s schedule would end it: delegate now carries it, work on it now keeps the agent as its holder', () => {

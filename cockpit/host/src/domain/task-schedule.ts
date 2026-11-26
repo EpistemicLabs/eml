@@ -260,6 +260,17 @@ export function addCron(schedule: ScheduleFields | null | undefined, cron: strin
   return tidy({ ...schedule, crons: [...crons, text], ...(zone ? { time_zone: zone } : {}) })!
 }
 
+/**
+ * The zone a cron must be written in to join the schedule, when `zone` is another one: a task's repeating times are
+ * read in ONE zone, so a cron written elsewhere would join it at other hours than its writer meant. Null when the
+ * cron can be added as it is (the schedule has no repeating time yet, or theirs is this zone). The one rule for every
+ * way a repeating time is added: the schedule tool and the page's hand-over.
+ */
+export function cronZoneRefusal(schedule: ScheduleFields | null | undefined, zone: string): string | null {
+  const theirs = schedule?.crons?.length ? schedule.time_zone : undefined
+  return theirs && theirs !== zone ? theirs : null
+}
+
 /** Remove a repeating time. Removing the last one of a schedule without a wake-up leaves no schedule: null. */
 export function removeCron(schedule: ScheduleFields | null | undefined, cron: string): ScheduleFields | null {
   if (!schedule) return null

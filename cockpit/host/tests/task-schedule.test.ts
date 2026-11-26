@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  addCron, clearWake, cronRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, runComingAt, sameInstant, sameSchedule, scheduleIsOff, scheduleOf, ScheduleError,
+  addCron, clearWake, cronRefusal, cronZoneRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, runComingAt, sameInstant, sameSchedule, scheduleIsOff, scheduleOf, ScheduleError,
   scheduleText, setCrons, setEndsAt, setPaused, setWake, withSchedule,
 } from '../src/domain/task-schedule.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
@@ -159,6 +159,14 @@ describe('editing a schedule', () => {
     expect(addCron({ at: '2026-11-26T02:00:00.000Z', time_zone: 'UTC' }, '0 8 * * *', 'Asia/Makassar').time_zone).toBe('Asia/Makassar')
     expect(addCron(full, '0 18 * * *', 'Asia/Makassar').time_zone).toBe('Europe/Berlin')
     expect(addCron({ crons: ['0 8 * * *'] }, '0 18 * * *', 'Asia/Makassar').time_zone).toBe('Asia/Makassar')
+  })
+  it('a cron written in another zone than the task\'s repeating times does not join them: the rule names their zone', () => {
+    expect(cronZoneRefusal(full, 'Asia/Makassar')).toBe('Europe/Berlin')
+    expect(cronZoneRefusal(full, 'Europe/Berlin')).toBeNull()
+    // no repeating time yet (none at all, or only a wake-up), or theirs name no zone: any zone is taken
+    expect(cronZoneRefusal(null, 'Asia/Makassar')).toBeNull()
+    expect(cronZoneRefusal({ at: '2026-11-26T02:00:00.000Z', time_zone: 'UTC' }, 'Asia/Makassar')).toBeNull()
+    expect(cronZoneRefusal({ crons: ['0 8 * * *'] }, 'Asia/Makassar')).toBeNull()
   })
   it('a task holds at most ten repeating times', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `0 ${i} * * *`)
