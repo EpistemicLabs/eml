@@ -71,7 +71,7 @@ import { runRemoteCommand } from './remote.js'
 import { runAgentCommand } from './agent-command.js'
 import { scheduleUpdateChecks } from './app-update.js'
 import { platform } from './infrastructure/platform/index.js'
-import { JobStore } from './job-store.js'
+import { JobStore, unreadableJobsNotice } from './job-store.js'
 import { JobRunner, runProjectOf, type RunnerSpace, type RunnerTask } from './application/job-runner.js'
 import { sessionsOnTask } from './domain/firing-order.js'
 import { createTaskRecords } from './application/task-record.js'
@@ -1211,6 +1211,13 @@ async function main() {
     },
   })
   workers.start()
+  // A jobs.json that could not be parsed is set aside, never overwritten, and the user is told once (job-store.ts).
+  try {
+    const aside = jobStore.setAsideUnreadable()
+    if (aside) notifier.notify(unreadableJobsNotice(aside))
+  } catch (err) {
+    log(`[jobs] jobs.json could not be read and could not be set aside: ${(err as Error).message}`)
+  }
   jobRunner.start()
   // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
   void taskRouter.adoptHeldWaits()

@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { JOBS_FILE } from './paths.js'
 import { JOB_LIMITS, type Job, type JobRun } from './domain/job.js'
 import type { JobV1 } from './domain/job-v1.js'
+import type { NotificationInput } from './notifications.js'
 
 /**
  * jobs.json, version 2: the local record of every scheduled task and the last runs of each (domain/job.ts), plus
@@ -15,7 +16,19 @@ import type { JobV1 } from './domain/job-v1.js'
  * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
  * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`): the migration looks
  * through every space of such a home once for schedules left without a job, also a space that has no job.
+ *
+ * A file that is there and cannot be parsed (cut off in a write, edited by hand) is never overwritten: the store
+ * starts empty at version 2 — not as a home that was on version 1, so no look for left-over schedules removes
+ * anything — and the file is renamed aside (<file>.unreadable-<UTC stamp>) when the host asks at its start
+ * (setAsideUnreadable), or before the first write. Reading alone moves nothing: the dry run by hand reads through
+ * the store too.
  */
+
+/** What the user is told at start when jobs.json could not be read and was set aside (`aside`: where it is now). */
+export const unreadableJobsNotice = (aside: string): NotificationInput => ({
+  kind: 'failed', title: 'Schedules', jobId: 'jobs-unreadable', sessionId: null, spaceId: null,
+  body: `jobs.json could not be read and was set aside as ${path.basename(aside)}; schedules made before are not running. Restore it or set them again.`,
+})
 
 /** What a version 1 file held, as far as it is not migrated yet. */
 export interface JobsV1Data {
@@ -77,11 +90,19 @@ function empty(): JobsFile {
   return { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }
 }
 
-/** The file as it is read, and whether what is on disk is still a version 1 file. */
-function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
+/** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that cannot be parsed. */
+function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; unreadable?: boolean } {
   if (!file) return { data: empty(), v1OnDisk: false }
+  let text: string
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+    text = fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    // No file yet: a new home. A file that is there and cannot be read is kept like one that cannot be parsed.
+    return { data: empty(), v1OnDisk: false, unreadable: (err as NodeJS.ErrnoException).code !== 'ENOENT' }
+  }
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return { data: empty(), v1OnDisk: false, unreadable: true }
     const timeZone = typeof parsed.timeZone === 'string' ? parsed.timeZone : null
     if (parsed.version === 1) {
       const v1: JobsV1Data = { jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys) }
@@ -102,19 +123,42 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean } {
       v1OnDisk: false,
     }
   } catch {
-    return { data: empty(), v1OnDisk: false }
+    return { data: empty(), v1OnDisk: false, unreadable: true }
   }
 }
+
+const stamp = (at: Date) => at.toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')
 
 /** `file` null: nothing is read or written (a store in memory, for tests). */
 export class JobStore {
   private data: JobsFile
   private v1OnDisk: boolean
+  /** The file on disk could not be parsed and still stands where it was. */
+  private unreadableOnDisk: boolean
+  /** Where the unreadable file was set aside; null: there was none, or it is not set aside yet. */
+  private aside: string | null = null
 
   constructor(private file: string | null = JOBS_FILE) {
     const loaded = load(file)
     this.data = loaded.data
     this.v1OnDisk = loaded.v1OnDisk
+    this.unreadableOnDisk = loaded.unreadable === true
+  }
+
+  /**
+   * A jobs.json that could not be parsed is renamed aside, with its permissions, and logged by its path; the store
+   * goes on from empty. Returns where the file is now, also when it was set aside before; null when the file was
+   * readable (or there was none). The host calls it at its start and tells the user; a write does it first too, so
+   * the file is never overwritten.
+   */
+  setAsideUnreadable(now: Date = new Date()): string | null {
+    if (!this.unreadableOnDisk || !this.file) return this.aside
+    const aside = `${this.file}.unreadable-${stamp(now)}`
+    fs.renameSync(this.file, aside)
+    this.unreadableOnDisk = false
+    this.aside = aside
+    process.stderr.write(`[jobs] ${this.file} could not be read: set aside as ${aside}; the cockpit starts without the schedules it held\n`)
+    return aside
   }
 
   /** The jobs of a version 1 file that are not migrated yet, with their runs and keys; null when none is left. */
@@ -292,6 +336,8 @@ export class JobStore {
     if (!this.file) return
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 })
+      // A file that could not be parsed is never overwritten: it is set aside first.
+      this.setAsideUnreadable()
       // The version 1 file is kept as it was before it is rewritten for the first time.
       if (this.v1OnDisk) {
         const backup = `${this.file}.v1-backup`

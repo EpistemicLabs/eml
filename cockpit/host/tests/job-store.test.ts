@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { JobStore } from '../src/job-store.js'
+import { JobStore, unreadableJobsNotice } from '../src/job-store.js'
 import { newRecord, type JobRun } from '../src/domain/job.js'
 
 const run = (jobId: string, id: string, status: JobRun['status'] = 'finished'): JobRun => ({
@@ -179,6 +179,53 @@ describe('jobs.json', () => {
     expect(new JobStore(join(dir, 'bad.json')).list()).toEqual([])
     writeFileSync(join(dir, 'later.json'), JSON.stringify({ version: 9, jobs: { x: {} } }))
     expect(new JobStore(join(dir, 'later.json')).list()).toEqual([])
+  })
+
+  it('a jobs.json that cannot be parsed is never overwritten: it is set aside under a dated name, and the store starts empty at version 2, not as a home that was on version 1', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
+    const file = join(dir, 'jobs.json')
+    // a file cut off in the middle of a write
+    const truncated = '{\n  "version": 1,\n  "timeZone": "UTC",\n  "jobs": {\n    "j1": { "id": "j1", "name": "Daily br'
+    writeFileSync(file, truncated)
+    chmodSync(file, 0o600)
+    const store = new JobStore(file)
+    expect([store.list(), store.pendingV1(), store.fromV1(), store.awaitsLeftoverLook(null)]).toEqual([[], null, false, false])
+    // reading alone moves nothing: the dry run by hand reads through the store too
+    expect(readdirSync(dir)).toEqual(['jobs.json'])
+    const aside = store.setAsideUnreadable(new Date('2026-11-26T10:00:05.000Z'))
+    expect(aside).toBe(`${file}.unreadable-20261126-100005`)
+    expect(readFileSync(aside!, 'utf8')).toBe(truncated)
+    expect(statSync(aside!).mode & 0o777).toBe(0o600)
+    expect(existsSync(file)).toBe(false)
+    // asked again it names the same file, and sets nothing more aside
+    expect(store.setAsideUnreadable(new Date('2026-11-26T11:00:00.000Z'))).toBe(aside)
+    store.put(newRecord({ id: 't1', spaceId: null }, '2026-11-26T10:00:00.000Z'))
+    expect(read(file)).toMatchObject({ version: 2, jobs: { t1: { id: 't1' } } })
+    expect(read(file).fromV1).toBeUndefined()
+    expect(readFileSync(aside!, 'utf8')).toBe(truncated)
+    // a readable file is never set aside
+    expect(new JobStore(file).setAsideUnreadable()).toBeNull()
+    expect(readdirSync(dir).sort()).toEqual(['jobs.json', 'jobs.json.unreadable-20261126-100005'])
+  })
+
+  it('a write that comes before anyone set the unreadable file aside sets it aside first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
+    const file = join(dir, 'jobs.json')
+    writeFileSync(file, '{"version": 2, "jobs": {')
+    const store = new JobStore(file)
+    store.setTimeZone('UTC')
+    const kept = readdirSync(dir).filter((name) => name.startsWith('jobs.json.unreadable-'))
+    expect(kept).toHaveLength(1)
+    expect(readFileSync(join(dir, kept[0]), 'utf8')).toBe('{"version": 2, "jobs": {')
+    expect(read(file)).toMatchObject({ version: 2, timeZone: 'UTC' })
+    expect(store.setAsideUnreadable()).toBe(join(dir, kept[0]))
+  })
+
+  it('the notice of a jobs.json set aside names the file and what to do', () => {
+    expect(unreadableJobsNotice('/home/someone/.eml-cockpit/jobs.json.unreadable-20261126-100005')).toEqual({
+      kind: 'failed', title: 'Schedules', jobId: 'jobs-unreadable', sessionId: null, spaceId: null,
+      body: 'jobs.json could not be read and was set aside as jobs.json.unreadable-20261126-100005; schedules made before are not running. Restore it or set them again.',
+    })
   })
 
   it('without a file it keeps everything in memory and writes nothing', () => {
