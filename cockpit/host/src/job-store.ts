@@ -79,10 +79,7 @@ function load<J>(file: string | null): { data: JobsFile<J>; v1OnDisk: boolean } 
   }
 }
 
-/**
- * `J` is the record's shape: the task's local record. SEAM (part B3): the schedule tool and a turn's check, which are
- * not rebuilt yet, keep a store of version 1 jobs in memory (`file` null: nothing is read or written, index.ts legacyJobStore).
- */
+/** `J` is the record's shape: the task's local record. `file` null: nothing is read or written (a store in memory, for tests). */
 export class JobStore<J extends { id: string; runCount: number } = Job> {
   private data: JobsFile<J>
   private v1OnDisk: boolean

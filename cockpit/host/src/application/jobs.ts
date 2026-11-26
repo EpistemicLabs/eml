@@ -1,80 +1,125 @@
 import { randomUUID } from 'node:crypto'
+import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
+import type { ScheduleFields } from '../domain/delegation.js'
+import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool } from '../domain/job.js'
+import { isTimeZone, parseAt } from '../domain/schedule.js'
 import {
-  ENDED_BEFORE_START, isOpenRun, JOB_LIMITS, mailKeys,
-  activeGrants, type ChannelTrigger, type GrantTool, type JobNotify, type JobRun, type ReplyChannel, type ReplyMode,
-} from '../domain/job.js'
-// SEAM (part B3): the schedule tool still makes and changes version 1 jobs (domain/job-v1.ts); see the comment below.
-import { describeTrigger, jobTimeZone, nextDue, type JobV1 as Job, type JobEnd, type JobTarget, type ScheduleTrigger } from '../domain/job-v1.js'
-import { formatInZone, isTimeZone, parseAt, parseCron, shortestGap } from '../domain/schedule.js'
+  APPROVAL_NOTE, describeTask, everyParagraph, findTask, ID_PREFIX, isOpenTask, JOB_ACTIONS, limitRefusal, mailParagraph, mailTrigger,
+  nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
+} from '../domain/schedule-tool.js'
+import {
+  addCron, cronRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
+} from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
+import { endTaskRecord } from './end-task-record.js'
 import { limitedJobRefusal } from './limited-job-scope.js'
+import { editTaskSchedule, ScheduleWriteError, writeTaskSchedule } from './task-schedule-write.js'
+import { makeRoutineTask, routineTask } from './task-state-migration.js'
 
 /**
- * What a session (the schedule tool, its CLI) or the user (the page) does with
- * jobs: create, list, update, pause, resume, delete, run now. A session reaches
- * only the jobs of its own space, and a job it makes runs in that space with at
- * most the tools the session has. Answers are text the agent reads.
+ * The schedule tool: what a session does with the schedules of its space's tasks (the chat's tool, its CLI, the
+ * spawn inbox and POST /api/jobs all end here). A schedule lives on a task (domain/task-schedule.ts): repeating
+ * times and at most one wake-up. So every action names a task:
  *
- * SEAM (part B3 of "a task holds its schedule"): this still is the version 1 tool. It keeps jobs with their own
- * schedule, prompt and target (domain/job-v1.ts) in a store the host keeps empty, and the host answers every call
- * of the tool with SCHEDULE_TOOL_REBUILT before it gets here (index.ts). Part B3 rebuilds the actions on the task's
- * schedule (domain/task-schedule.ts, application/task-schedule-write.ts) and the local record (domain/job.ts).
+ *   create   adds a repeating time (cron) to the task, or sets its wake-up (at, which replaces the one it had).
+ *            The task is task_id, else the caller's own for target self, else a new task made from name and prompt.
+ *   update   replaces the repeating times with one cron, or the wake-up; sets the end, the goal, the settings.
+ *   pause, resume   the task's whole schedule.
+ *   delete, finish  end the schedule: it is cleared on the task, which stays open.
+ *   run_now  one run now, through the engine (application/job-runner.ts).
+ *   list     the space's open tasks that have a schedule or listen on a channel.
+ *
+ * What a time is for is said in the task's text: a cron's prompt becomes its own paragraph there, a wake-up's prompt
+ * is its reason. What only this machine needs (who hears of a run, an end after so many runs, the mail channel, the
+ * tools of the task's sessions, where a new session starts) goes on the task's record (domain/job.ts), written after
+ * the schedule so the record is never left without what keeps it.
+ *
+ * A session reaches only the tasks of its own space and never widens what a task's sessions may use. A limited
+ * task's session reaches only its own task (limited-job-scope.ts). Answers are text the agent reads.
  */
 
-/** What the schedule tool and a turn's check answer until part B3 has rebuilt them on the task's schedule. */
-export const SCHEDULE_TOOL_REBUILT = 'Schedules now live on the task, and the schedule tool is being rebuilt for that: it cannot set or change a time in this build. The task board\'s hand-over sets a task\'s schedule.'
-
-export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'] as const
-export type JobAction = typeof JOB_ACTIONS[number]
+export { JOB_ACTIONS, type JobAction } from '../domain/schedule-tool.js'
 
 export interface JobCaller {
   /** Null: the user, from the page. */
   sessionId: string | null
   spaceId: string | null
-  /** The caller's project: a worker job runs there unless it names another. */
+  /** The caller's project: a new task is made there unless the call names another. */
   projectId: string | null
   toolProfile: ToolProfile | null
-  /** The job whose run started the caller's session, if any. */
+  /** The task whose run started the caller's session (the ledger's jobId: the task's record), if any. */
   jobId?: string | null
-  /** That job is limited: the caller reaches only it (limited-job-scope.ts). */
+  /** That task is limited: the caller reaches only it (limited-job-scope.ts). */
   limited?: boolean
-  /** The brain task the caller works on (task system): a job it makes belongs to it unless it names another. */
+  /** The brain task the caller works on: target self means this task. */
   taskId?: string | null
 }
 
+/** What the tool asks of the engine that fires the schedules (application/job-runner.ts). */
+export interface ScheduleEngine {
+  /** One run of the task now; a word when it cannot start. */
+  runNow(spaceId: string | null, task: ToolTask): Promise<JobRun | 'run_open' | 'task_working' | 'needs_approval'>
+  /** The task's schedule was paused or resumed: the engine knows before its next read. */
+  paused(taskId: string): void
+  resumed(taskId: string): void
+}
+
 export interface JobsDeps {
-  store: JobStore<Job>
-  /** What ran a version 1 job by hand. The engine fires tasks' schedules now (application/job-runner.ts), so the host passes one that starts nothing. */
-  runner: { runNow(job: Job): JobRun | null; tick(): Promise<void> }
+  store: JobStore
   now?: () => number
+  /** This cockpit's member: a task the tool makes is theirs. */
+  me: string
+  /** The brain of the space; null: none to ask. */
+  brain(spaceId: string | null): Pick<EmlApi, 'get' | 'post'> | null
+  /** The space's agent: it holds the schedule of a task that is not delegated yet. */
+  agent(spaceId: string | null): string | null
+  engine: ScheduleEngine
+  /** The task still has jobs of before brain schema 24 that are moving onto it: its schedule is not written until they have. */
+  moving?(taskId: string): boolean
   /** A project of the space as a session names it (registry id, brain project id or name, known folder). */
   resolveProject(spaceId: string | null, input: string): Promise<string | null>
-  /** A session of the space by id or address; null when unknown or in another space. */
-  findSession(spaceId: string | null, target: string): string | null
-  addressOf(sessionId: string): string
   /** A project's name as the user sees it; the id when unknown. */
   projectName?(spaceId: string | null, projectId: string): string
   providerKnown(id: string): boolean
-  /** A shared space (or one the host could not ask about): its jobs get no channel, so no mail reaches its brain's other members. */
+  /** A shared space (or one the host could not ask about): its tasks get no channel, so no mail reaches its brain's other members. */
   sharedSpace?(spaceId: string | null): boolean
-  /** The zone times read in when a job names none: the user's (from their browser), else the host's. */
+  /** The zone times read in when neither the call nor the task names one: the user's. */
   defaultTimeZone(): string
-  /** A grant was stored: the job's session should pick the tool up (restart it and tell it). */
-  onGrant?(job: Job, tool: GrantTool): void
-  /** The user took a lent tool back: the host takes it from the session (the runner calls its own for expiry and done). */
-  onGrantEnd?(job: Job, tools: GrantTool[]): void
+  /** Lent tools went back with the schedule's end: the host takes them from the session. */
+  onGrantEnd?(record: Job, tools: GrantTool[]): void
+  /** A task's schedule changed: whatever shows it is built again. */
+  changed?(spaceId: string | null): void
 }
 
 export interface JobAnswer {
   status: number
   text: string
-  job?: Job
+  /** The task the action was about. */
+  taskId?: string
+  /** Its schedule after the action; null: none. */
+  schedule?: ScheduleFields | null
+  /** Its record after the action, when this cockpit keeps one. */
+  record?: Job
 }
 
 const str = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined
 const bad = (text: string): JobAnswer => ({ status: 400, text })
-const SHARED_NO_CHANNEL = 'a job in a shared space cannot watch mail for now; schedules work there, mail jobs only in a local space'
+const iso = (at: number) => new Date(at).toISOString()
+
+const SHARED_NO_CHANNEL = 'a task in a shared space cannot watch mail for now; schedules work there, mail only in a local space'
+const ONE_TIME = 'give exactly one of cron (repeating) or at (one time)'
+const TARGET_SESSION = 'a schedule belongs to a task, not to a session: name the task instead (task_id); target self means the task this session works on'
+const NO_BRAIN: JobAnswer = { status: 503, text: 'this space has no brain to hold a schedule right now; try again' }
+const OPEN_TASKS_LIMIT = 500
+/** What update may not change: said by the brain's task tools, or by a new create. */
+const NOT_UPDATED = ['name', 'task_id', 'target', 'session'] as const
+
+/** A refusal on the way through an action: caught at the top and answered. */
+class Refusal extends Error {
+  constructor(readonly answer: JobAnswer) { super(answer.text) }
+}
+const refuse = (text: string, status = 400): never => { throw new Refusal({ status, text }) }
 
 export class Jobs {
   private readonly now: () => number
@@ -84,406 +129,398 @@ export class Jobs {
   }
 
   async handle(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
+    try {
+      return await this.act(caller, input)
+    } catch (err) {
+      if (err instanceof Refusal) return err.answer
+      if (err instanceof ScheduleError || err instanceof ScheduleWriteError) return bad(err.message)
+      return { status: 502, text: `the task's schedule could not be read or written (${(err as Error).message}); try again` }
+    }
+  }
+
+  private async act(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
     const action = input.action
-    if (caller.limited) {
-      const own = caller.jobId ? this.deps.store.get(caller.jobId) : undefined
-      // The same lookup the action uses, so a key reaches its own job or nothing.
+    if (!JOB_ACTIONS.includes(action as never)) return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
+    const brain = this.deps.brain(caller.spaceId)
+    if (!brain) return NO_BRAIN
+    const tasks = await this.openTasks(brain)
+    // Its own task, looked up as a task: the record of a task with only a wake-up comes and goes, the task stays.
+    const own = caller.limited && caller.jobId ? tasks.find((task) => task.id === caller.jobId) : undefined
+    // A limited record stays while its task is open (domain/job.ts recordKeeping): an open task without a record was
+    // not limited. A task that is closed or gone fails closed: its session reaches nothing.
+    const kept = caller.limited && caller.jobId ? this.deps.store.get(caller.jobId) : undefined
+    if (caller.limited && (kept ? kept.limited === true : !own)) {
+      // The same lookup the action uses, so a key reaches its own task or nothing.
       const refusal = own
-        ? limitedJobRefusal(input, (key) => { const found = this.findJob(caller.spaceId, key); return !('status' in found) && found.id === own.id })
-        : 'this session\'s job no longer exists'
+        ? limitedJobRefusal(input, (key) => { const found = findTask(tasks, key, (task) => this.listed(task)); return 'id' in found && found.id === own.id })
+        : 'this session\'s task is closed or gone'
       if (refusal) return { status: 403, text: refusal }
       if (action === 'list') return { status: 200, text: `- ${this.describe(own!)}` }
     }
+    if (action === 'create') return this.create(caller, brain, tasks, input)
+    if (action === 'list') return this.list(tasks)
+    const task = await this.taskOf(brain, tasks, input.job)
+    if (this.deps.moving?.(task.id)) refuse(`"${nameOfTask(task)}" still has jobs from before that are moving onto it; try again in a minute`, 503)
     switch (action) {
-      case 'create': return this.create(caller, input)
-      case 'list': return this.list(caller)
-      case 'update': return this.withJob(caller, input, (job) => this.update(job, input))
-      case 'pause': return this.withJob(caller, input, (job) => this.setPaused(job, true))
-      case 'resume': return this.withJob(caller, input, (job) => this.setPaused(job, false))
-      case 'delete': return this.withJob(caller, input, (job) => this.remove(job))
-      case 'run_now': return this.withJob(caller, input, (job) => this.runNow(job))
-      case 'finish': return this.withJob(caller, input, (job) => this.finish(job))
-      default: return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
+      case 'update': return this.update(caller, brain, tasks, task, input)
+      case 'pause': return this.setPaused(caller, brain, task, true)
+      case 'resume': return this.setPaused(caller, brain, task, false)
+      case 'run_now': return this.runNow(caller, task)
+      default: return this.end(caller, brain, task)
     }
   }
 
-  /** The caller's space's jobs, newest first (all spaces for the page when spaceId is undefined). */
-  jobsOf(spaceId: string | null | undefined): Job[] {
-    return this.deps.store.list()
-      .filter((job) => spaceId === undefined || (job.spaceId ?? null) === (spaceId ?? null))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  // ── Reading ────────────────────────────────────────────────────────────────
+
+  /** The space's open tasks, as the engine lists them: two reads, none per task. */
+  private async openTasks(brain: Pick<EmlApi, 'get'>): Promise<ToolTask[]> {
+    const lists = await Promise.all(['planned', 'active'].map((status) => brain.get('/list', { type: 'task', status, limit: OPEN_TASKS_LIMIT }) as Promise<{ engrams?: ToolTask[] }>))
+    return lists.flatMap((list) => list.engrams ?? [])
   }
 
-  private async create(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
-    const name = str(input.name)
+  /** One task by its id, also a closed one; null when the brain has none. */
+  private async taskById(brain: Pick<EmlApi, 'get'>, id: string): Promise<ToolTask | null> {
+    try {
+      const found = await brain.get(`/engram/${encodeURIComponent(id)}`) as ToolTask | null
+      return found?.id && (found.type === undefined || found.type === 'task') ? found : null
+    } catch (err) {
+      if (err instanceof EmlApiError && err.status === 404) return null
+      throw err
+    }
+  }
+
+  /** The tool lists it: it has a schedule, or this cockpit's record of it listens on a channel. */
+  private listed(task: ToolTask): boolean {
+    return hasSchedule(task) || (this.deps.store.get(task.id)?.triggers.length ?? 0) > 0
+  }
+
+  /** The task a key names: its id (or the first 8 characters) or its exact display title. Refuses when none or several fit. */
+  private async taskOf(brain: Pick<EmlApi, 'get'>, tasks: ToolTask[], input: unknown, what = 'job'): Promise<ToolTask> {
+    const key = str(input)
+    if (!key) return refuse(`${what} is required: the task's id (or its first ${ID_PREFIX} characters) or its exact name`)
+    const found = findTask(tasks, key, (task) => this.listed(task))
+    if ('id' in found) return found
+    if ('many' in found) return refuse(`"${key}" fits ${found.many} tasks; use the id`)
+    // Not among the open tasks: a closed one is named by its whole id, so the answer can say it is closed.
+    const closed = /^[\w-]{16,}$/.test(key) ? await this.taskById(brain, key) : null
+    if (closed) return closed
+    return refuse(`No task "${key}" in this space. The list action shows the ones with a schedule.`, 404)
+  }
+
+  // ── Create ─────────────────────────────────────────────────────────────────
+
+  private async create(caller: JobCaller, brain: Pick<EmlApi, 'get' | 'post'>, tasks: ToolTask[], input: Record<string, unknown>): Promise<JobAnswer> {
     const prompt = str(input.prompt)
-    if (!name || name.length > JOB_LIMITS.nameChars) return bad(`name is required (at most ${JOB_LIMITS.nameChars} characters)`)
-    if (!prompt || prompt.length > JOB_LIMITS.promptChars) return bad(`prompt is required (at most ${JOB_LIMITS.promptChars} characters): what the woken session should do`)
-    const active = this.jobsOf(caller.spaceId).filter((job) => !job.endedAt)
-    if (active.length >= JOB_LIMITS.perSpace) return bad(`this space already has ${active.length} jobs; delete one first (at most ${JOB_LIMITS.perSpace})`)
-    if (active.some((job) => job.name.toLowerCase() === name.toLowerCase())) return bad(`a job named "${name}" exists; pick another name or update it`)
+    if (!prompt || prompt.length > SCHEDULE_LIMITS.whyChars) return bad(`prompt is required (at most ${SCHEDULE_LIMITS.whyChars} characters): what the run should do. It becomes part of the task's text, or the wake-up's reason`)
+    const target = str(input.target) ?? (input.session !== undefined ? 'session' : 'worker')
+    if (target === 'session') return bad(TARGET_SESSION)
+    if (target !== 'worker' && target !== 'self') return bad('target must be worker or self')
+    if (target === 'self' && !caller.sessionId) return bad('target self needs a session')
 
     const mail = mailTrigger(input.mail)
     if (typeof mail === 'string') return bad(mail)
     if (mail && this.deps.sharedSpace?.(caller.spaceId)) return bad(SHARED_NO_CHANNEL)
-    // A mail job needs no schedule; with one it is woken by both.
-    const scheduled = !mail || input.cron !== undefined || input.at !== undefined
-    const trigger = scheduled ? this.trigger(input, undefined) : null
-    if (typeof trigger === 'string') return bad(trigger)
-    const end = this.end(input, trigger?.timeZone ?? this.deps.defaultTimeZone())
-    if (typeof end === 'string') return bad(end)
-    // A fresh worker per run, mail jobs too: the task's goal and journal carry what earlier runs did
-    // (decision jobs-two-modes-worker-default-drop-job-session).
-    const target = await this.target(caller, input)
-    if (typeof target === 'string') return bad(target)
-    const notify = this.notify(input.notify)
-    if (notify === null) return bad('notify must be needs-me, always or never')
-    const toolProfile = narrowed(caller.toolProfile, input.deny_tools)
-    if (toolProfile === 'invalid') return bad('deny_tools is a list of tool names')
-    const goal = str(input.goal)
-    if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
+    const [wantsCron, wantsAt] = [input.cron !== undefined, input.at !== undefined]
+    // A mail channel needs no time; with one the task is woken by both.
+    if (wantsCron && wantsAt || (!mail && !wantsCron && !wantsAt)) return bad(ONE_TIME)
+    const settings = await this.settings(caller, input)
+    const goal = this.goal(input)
 
-    const at = new Date(this.now()).toISOString()
-    const draft: Job = {
-      id: randomUUID(), name, kind: mail && !trigger ? 'standing' : 'routine', spaceId: caller.spaceId, createdBy: caller.sessionId, createdAt: at, updatedAt: at,
-      taskId: str(input.task_id) ?? caller.taskId ?? null, prompt, ...(goal ? { goal } : {}), target, triggers: [...(trigger ? [trigger] : []), ...(mail ? [mail] : [])], toolProfile,
-      // Drafts until the user switches a channel to send in the Jobs view; a session never can.
-      reply: mail ? { mail: 'draft' } : {}, end, notify,
-      paused: false, pausedReason: null, ...(mail ? { pendingApproval: true } : {}), endedAt: null, nextRunAt: null, runCount: 0, failures: 0,
-    }
-    const next = nextDue(draft, this.now())
-    if (next === null && trigger) return bad('that schedule has no run before its end')
-    const job = { ...draft, nextRunAt: next === null ? null : new Date(next).toISOString() }
-    this.deps.store.put(job)
-    const waits = mail ? `\n${APPROVAL_NOTE}` : ''
-    return { status: 201, job, text: `Created job "${job.name}" (${job.id.slice(0, 8)}).\n${this.describe(job)}${waits}` }
-  }
-
-  private list(caller: JobCaller): JobAnswer {
-    const jobs = this.jobsOf(caller.spaceId)
-    if (jobs.length === 0) return { status: 200, text: 'No jobs in this space.' }
-    return { status: 200, text: jobs.map((job) => `- ${this.describe(job)}`).join('\n') }
-  }
-
-  private async update(job: Job, input: Record<string, unknown>): Promise<JobAnswer> {
-    let next: Job = { ...job }
+    const named = str(input.task_id) ?? (target === 'self' ? caller.taskId ?? undefined : undefined)
+    let task = named ? await this.taskOf(brain, tasks, named, 'task_id') : null
+    if (task && !isOpenTask(task)) return bad(`"${nameOfTask(task)}" is closed, and nothing fires on a closed task: reopen it or name another`)
+    if (task && this.deps.moving?.(task.id)) return { status: 503, text: `"${nameOfTask(task)}" still has jobs from before that are moving onto it; try again in a minute` }
     const name = str(input.name)
-    if (name !== undefined) {
-      if (name.length > JOB_LIMITS.nameChars) return bad(`name: at most ${JOB_LIMITS.nameChars} characters`)
-      next.name = name
+    if (!task) {
+      if (!name || name.length > JOB_LIMITS.nameChars) return bad(`name is required for a new task (at most ${JOB_LIMITS.nameChars} characters); to put the time on a task that exists, pass task_id`)
+      if (tasks.some((t) => this.listed(t) && nameOfTask(t).toLowerCase() === name.toLowerCase())) return bad(`a task named "${name}" already has a schedule; pass its task_id to add a time to it, or pick another name`)
     }
+
+    const current = task ? scheduleOf(task) : null
+    const zone = this.zone(input)
+    const cron = wantsCron ? this.cron(input, current, zone) : null
+    const at = wantsAt ? this.at(input, zone) : null
+    const endsAt = this.endsAt(input, zone)
+    if ((cron || at) && !current) {
+      const full = limitRefusal(scheduledCount(tasks), JOB_LIMITS.perSpace)
+      if (full) return bad(full)
+    }
+    // A wake-up continues the session that set it when that session works on the task; any other one starts anew.
+    const bySession = task && caller.sessionId && caller.taskId === task.id ? caller.sessionId : null
+    const edit = (schedule: ScheduleFields | null): ScheduleFields | null => {
+      const timed = cron ? addCron(schedule, cron, zone) : at ? setWake(schedule, { at, why: prompt, bySession, timeZone: zone }) : schedule
+      return endsAt !== undefined && timed ? setEndsAt(timed, endsAt) : timed
+    }
+    const planned = edit(current)
+    if ((cron || at) && planned && !planned.paused && nextRunOfSchedule(planned, this.now()) === null) return bad('that schedule has no run before its end')
+    if (endsAt && !planned) return bad('ends_at needs a time to end: give cron or at')
+
+    const made = !task
+    if (!task) {
+      if (!this.deps.agent(caller.spaceId)) return bad('this space has no agent to hold a schedule')
+      const draft = routineTask({ id: randomUUID(), name: name!, prompt }, settings.projectId ?? caller.projectId, this.deps.me)
+      if (!draft) return bad('a new task needs a project of the brain: pass project, or put the time on a task that exists (task_id)')
+      task = (await this.taskById(brain, (await makeRoutineTask(brain, draft)).id)) ?? refuse('the new task could not be read back; try again', 502)
+    }
+    // What the time is for goes into the task's text: a new task has the prompt as its text already.
+    const paragraph = made ? null : cron ? everyParagraph(cron, prompt) : !at ? mailParagraph(prompt) : null
+    const content = paragraph ? withParagraph(task.content, paragraph) : null
+    const setGoal = goal && !task.properties?.goal ? goal : null
+    // A repeating time the task already has is not added twice: then only its text may still be new.
+    const same = sameSchedule(planned, current)
+    const what = same ? null : cron ? `added the repeating time "${cron}"` : at ? `set the wake-up for ${at}` : null
+    const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
+    const written = await editTaskSchedule(brain, task.id, edit, {
+      agent: this.deps.agent(caller.spaceId),
+      ...(said ? { text: said } : {}),
+      fields: { ...(content ? { content } : {}), ...(setGoal ? { goal: setGoal } : {}) },
+    })
+    const after = withSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, written.schedule)
+    // The schedule is on the task: now what this cockpit keeps for it.
+    const { record, waits } = this.keep(caller, after, settings, mail ?? undefined, true)
+    this.deps.changed?.(caller.spaceId)
+    const notes = [
+      ...(cron && same && !made ? ['The task already has that repeating time.'] : []),
+      ...(goal && !setGoal ? [`The task keeps its goal ("${task.properties?.goal}").`] : []),
+      ...(waits ? [APPROVAL_NOTE] : []),
+    ]
+    const opening = made ? `Made task "${nameOfTask(after)}" (${after.id.slice(0, ID_PREFIX)}) with its schedule.` : `Scheduled "${nameOfTask(after)}" (${after.id.slice(0, ID_PREFIX)}).`
+    return { status: 201, taskId: after.id, schedule: written.schedule, record, text: [opening, this.describe(after), ...notes].join('\n') }
+  }
+
+  // ── Update ─────────────────────────────────────────────────────────────────
+
+  private async update(caller: JobCaller, brain: Pick<EmlApi, 'get' | 'post'>, tasks: ToolTask[], task: ToolTask, input: Record<string, unknown>): Promise<JobAnswer> {
+    if (!isOpenTask(task)) return bad(`"${nameOfTask(task)}" is closed, and nothing fires on a closed task`)
+    const fixed = NOT_UPDATED.filter((key) => input[key] !== undefined)
+    if (fixed.length) return bad(`update cannot change ${fixed.join(', ')}: a task is renamed with the brain's task tools, and a time for another task is a new create`)
+    const [wantsCron, wantsAt] = [input.cron !== undefined, input.at !== undefined]
     const prompt = str(input.prompt)
-    if (prompt !== undefined) {
-      if (prompt.length > JOB_LIMITS.promptChars) return bad(`prompt: at most ${JOB_LIMITS.promptChars} characters`)
-      next.prompt = prompt
+    if (prompt !== undefined && prompt.length > SCHEDULE_LIMITS.whyChars) return bad(`prompt: at most ${SCHEDULE_LIMITS.whyChars} characters`)
+    if (prompt !== undefined && !wantsCron && !wantsAt) return bad('prompt goes with cron or at: it says what that time is for. The task\'s own text you change with the brain\'s task tools')
+    const read = input.mail === undefined ? undefined : mailTrigger(input.mail)
+    if (typeof read === 'string') return bad(read)
+    // undefined: the call says nothing of mail; null: it takes the channel off.
+    const mail = read
+    if (mail && this.deps.sharedSpace?.(caller.spaceId)) return bad(SHARED_NO_CHANNEL)
+    const settings = await this.settings(caller, input)
+    const goal = this.goal(input)
+
+    const current = scheduleOf(task)
+    const zone = this.zone(input)
+    const explicitZone = str(input.timezone)
+    const cron = wantsCron ? this.cron(input, null, zone) : null
+    const at = wantsAt ? this.at(input, zone) : null
+    const endsAt = this.endsAt(input, zone)
+    if ((cron || at) && !current) {
+      const full = limitRefusal(scheduledCount(tasks), JOB_LIMITS.perSpace)
+      if (full) return bad(full)
     }
-    if (input.goal !== undefined) {
-      const goal = str(input.goal)
-      if (goal && goal.length > JOB_LIMITS.goalChars) return bad(`goal: at most ${JOB_LIMITS.goalChars} characters`)
-      next.goal = goal ?? null
+    const bySession = caller.sessionId && caller.taskId === task.id ? caller.sessionId : null
+    const edit = (schedule: ScheduleFields | null): ScheduleFields | null => {
+      let next = schedule
+      // The one cron replaces the list, so the zone it is written in is the zone the task's repeating times are read in.
+      if (cron) next = setCrons(next, [cron], zone)
+      else if (explicitZone && next) next = setCrons(next, next.crons ?? [], explicitZone)
+      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, bySession, timeZone: zone })
+      if (endsAt !== undefined) next = next ? setEndsAt(next, endsAt) : next
+      return next
     }
-    const current = job.triggers.find((t): t is ScheduleTrigger => t.type === 'schedule')
-    const scheduleChanged = input.cron !== undefined || input.at !== undefined || input.timezone !== undefined
-    if (scheduleChanged) {
-      const trigger = this.trigger(input, current)
-      if (typeof trigger === 'string') return bad(trigger)
-      next.triggers = [...job.triggers.filter((t) => t.type !== 'schedule'), trigger]
+    const planned = edit(current)
+    if (endsAt && !planned) return bad('the task has no schedule to end at a time: give cron or at')
+    if ((cron || at) && planned && !planned.paused && nextRunOfSchedule(planned, this.now()) === null) return bad('that schedule has no run before its end')
+    const changesTask = cron !== null || at !== null || endsAt !== undefined || explicitZone !== undefined || goal !== null
+    const changesRecord = mail !== undefined || Object.values(settings.given).some(Boolean)
+    if (!changesTask && !changesRecord) return bad('nothing to update: give cron, at, timezone, ends_at, goal, max_runs, notify, mail, deny_tools, project or provider')
+
+    const paragraph = cron && prompt ? everyParagraph(cron, prompt) : null
+    const content = paragraph ? withParagraph(task.content, paragraph) : null
+    const setGoal = goal && !task.properties?.goal ? goal : null
+    let schedule = current
+    if (changesTask) {
+      const what = [cron ? `set the repeating time "${cron}" (it replaces the ones before)` : null, at ? `set the wake-up for ${at}` : null].filter(Boolean).join(' and ')
+      const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
+      const written = await editTaskSchedule(brain, task.id, edit, {
+        agent: this.deps.agent(caller.spaceId),
+        ...(said ? { text: said } : {}),
+        fields: { ...(content ? { content } : {}), ...(setGoal ? { goal: setGoal } : {}) },
+      })
+      schedule = written.schedule
     }
-    if (input.max_runs !== undefined || input.ends_at !== undefined) {
-      const end = this.end(input, jobTimeZone(next, this.deps.defaultTimeZone()))
-      if (typeof end === 'string') return bad(end)
-      next.end = end
-    }
-    if (input.notify !== undefined) {
-      const notify = this.notify(input.notify)
-      if (notify === null) return bad('notify must be needs-me, always or never')
-      next.notify = notify
-    }
-    if (input.task_id !== undefined) next.taskId = str(input.task_id) ?? null
-    // The one target change: a job-session job moves to a fresh worker per run in the same project.
-    if (input.target !== undefined) {
-      if (str(input.target) !== 'worker' || job.target.type !== 'job-session') return bad('target only moves a job-session job to a worker; make a new job for another target')
-      const { projectId, provider } = job.target
-      next.target = { type: 'worker', projectId, ...(provider ? { provider } : {}) }
-    }
-    let waits = ''
-    if (input.mail !== undefined) {
-      const mail = mailTrigger(input.mail)
-      if (typeof mail === 'string') return bad(mail)
-      if (mail && this.deps.sharedSpace?.(job.spaceId)) return bad(SHARED_NO_CHANNEL)
-      next.triggers = [...next.triggers.filter((t) => t.type !== 'mail'), ...(mail ? [mail] : [])]
-      if (mail) next.reply = { ...next.reply, mail: next.reply.mail ?? 'draft' }
-      // Fewer addresses need nobody's OK; a new one does.
-      const before = mailKeys(job)
-      if ([...mailKeys(next)].some((key) => !before.has(key))) {
-        next.pendingApproval = true
-        waits = `\n${APPROVAL_NOTE}`
-      }
-    }
-    const due = nextDue(next, this.now())
-    next = { ...next, nextRunAt: due === null ? null : new Date(due).toISOString(), updatedAt: new Date(this.now()).toISOString() }
-    // A new time can bring an ended job back.
-    if (due !== null) next.endedAt = null
-    this.deps.store.put(next)
-    return { status: 200, job: next, text: `Updated job "${next.name}".\n${this.describe(next)}${waits}` }
+    const after = withSchedule({ ...task, ...(content ? { content } : {}), properties: { ...task.properties, ...(setGoal ? { goal: setGoal } : {}) } }, schedule)
+    const { record, waits } = this.keep(caller, after, settings, mail, changesRecord || cron !== null || at !== null)
+    this.deps.changed?.(caller.spaceId)
+    const notes = [...(goal && !setGoal ? [`The task keeps its goal ("${task.properties?.goal}").`] : []), ...(waits ? [APPROVAL_NOTE] : [])]
+    return { status: 200, taskId: task.id, schedule, ...(record ? { record } : {}), text: [`Updated the schedule of "${nameOfTask(task)}".`, this.describe(after), ...notes].join('\n') }
   }
 
-  private setPaused(job: Job, paused: boolean): JobAnswer {
-    if (job.endedAt && !paused) return bad(`job "${job.name}" has ended; give it a new time with update`)
-    const at = this.now()
-    // Resumed, it goes on from now: what fell due during the pause is not made up.
-    const due = paused ? null : nextDue(job, at)
-    const next: Job = {
-      ...job, paused, pausedReason: null, failures: paused ? job.failures : 0, updatedAt: new Date(at).toISOString(),
-      ...(paused ? {} : { nextRunAt: due === null ? null : new Date(due).toISOString() }),
-    }
-    this.deps.store.put(next)
-    return { status: 200, job: next, text: `${paused ? 'Paused' : 'Resumed'} job "${job.name}".\n${this.describe(next)}` }
+  // ── The other actions ──────────────────────────────────────────────────────
+
+  private list(tasks: ToolTask[]): JobAnswer {
+    const listed = tasks.filter((task) => this.listed(task)).sort((a, b) => nameOfTask(a).localeCompare(nameOfTask(b)))
+    if (listed.length === 0) return { status: 200, text: 'No task in this space has a schedule.' }
+    return { status: 200, text: listed.map((task) => `- ${this.describe(task)}`).join('\n') }
   }
 
-  private remove(job: Job): JobAnswer {
-    this.deps.store.remove(job.id)
-    return { status: 200, text: `Deleted job "${job.name}" and its history.` }
+  private async setPaused(caller: JobCaller, brain: Pick<EmlApi, 'get' | 'post'>, task: ToolTask, paused: boolean): Promise<JobAnswer> {
+    const name = nameOfTask(task)
+    if (!isOpenTask(task)) return bad(`"${name}" is closed, and nothing fires on a closed task`)
+    // A task without a schedule can still be held: the cockpit paused its channel after failures.
+    const heldAfterFailures = (this.deps.store.get(task.id)?.pausedReason ?? null) !== null
+    if (!hasSchedule(task) && !(heldAfterFailures && !paused)) return bad(`"${name}" has no schedule to ${paused ? 'pause' : 'resume'}`)
+    const written = await editTaskSchedule(brain, task.id, (schedule) => setPaused(schedule, paused), {
+      text: paused ? 'Its schedule was paused with the schedule tool.' : 'Its schedule was resumed with the schedule tool: it goes on from now.',
+    })
+    // Resumed, it goes on from now: what fell due during the pause is not made up. A channel still waits for the user's OK.
+    if (paused) this.deps.engine.paused(task.id)
+    else this.deps.engine.resumed(task.id)
+    this.deps.changed?.(caller.spaceId)
+    const after = withSchedule(task, written.schedule)
+    return { status: 200, taskId: task.id, schedule: written.schedule, text: `${paused ? 'Paused' : 'Resumed'} the schedule of "${name}".\n${this.describe(after)}` }
   }
 
   /**
-   * Its goal is reached: it runs no more and its channels no longer wake it; a new time brings it back. A run that
-   * was due but had not started is skipped: it would start on a job that has ended. One a session already has goes on.
-   * The board's End schedule calls it too; an ended job stays as it ended, so calling it again is safe.
+   * delete and finish: the task's schedule ends. It is cleared on the task, its channels no longer wake it, lent
+   * tools go back and a run that was due but had not started is skipped; a run a session already has goes on. The
+   * task stays open: its owner closes it. Ending what has ended is safe.
    */
-  finish(job: Job): JobAnswer {
-    const at = new Date(this.now()).toISOString()
-    const lent = activeGrants(job, this.now()).map((g) => g.tool)
-    const next: Job = { ...job, endedAt: job.endedAt ?? at, nextRunAt: null, grants: [], updatedAt: at }
-    this.deps.store.put(next)
-    for (const run of this.deps.store.runs(job.id)) {
-      if (run.status === 'waiting') this.deps.store.updateRun({ ...run, status: 'skipped', note: ENDED_BEFORE_START, finishedAt: at })
+  private async end(caller: JobCaller, brain: Pick<EmlApi, 'get' | 'post'>, task: ToolTask): Promise<JobAnswer> {
+    const name = nameOfTask(task)
+    const had = scheduleOf(task)
+    if (!had && !this.listed(task)) return { status: 200, taskId: task.id, schedule: null, text: `"${name}" has no schedule: nothing to end.` }
+    if (!isOpenTask(task)) {
+      // A closed task is not written to: what this cockpit kept for it ends, and nothing fires on it anyway.
+      endTaskRecord(this.deps.store, task.id, this.now(), this.deps.onGrantEnd)
+      return { status: 200, taskId: task.id, schedule: had, text: `"${name}" is closed: nothing fires on a closed task.` }
     }
-    if (lent.length) this.deps.onGrantEnd?.(next, lent)
-    return { status: 200, job: next, text: `Finished job "${job.name}": it wakes no more. A new time (update with at) brings it back.` }
+    if (had) await writeTaskSchedule(brain, task.id, null, { text: `Its schedule (${scheduleText(had)}) was ended with the schedule tool: nothing wakes it any more. The task stays open.` })
+    endTaskRecord(this.deps.store, task.id, this.now(), this.deps.onGrantEnd)
+    this.deps.changed?.(caller.spaceId)
+    return { status: 200, taskId: task.id, schedule: null, text: `Ended the schedule of "${name}": nothing wakes it any more. The task stays open; a new time (update with cron or at) brings its schedule back.` }
   }
 
-  private runNow(job: Job): JobAnswer {
-    if (job.endedAt) return bad(`job "${job.name}" has ended`)
-    if (job.pendingApproval) return bad(`job "${job.name}" waits for the user's OK in the Jobs view`)
-    const run = this.deps.runner.runNow(job)
-    if (!run) return { status: 409, text: `Job "${job.name}" has a run still going; wait for it to finish.` }
-    return { status: 202, job, text: `Run ${run.number} of "${job.name}" starts as soon as there is room.` }
+  private async runNow(caller: JobCaller, task: ToolTask): Promise<JobAnswer> {
+    const name = nameOfTask(task)
+    if (!isOpenTask(task)) return bad(`"${name}" is closed, and nothing fires on a closed task`)
+    if (!this.listed(task)) return bad(`"${name}" has no schedule to run`)
+    const run = await this.deps.engine.runNow(caller.spaceId, task)
+    if (run === 'needs_approval') return bad(`"${name}" waits for the user's OK on the task first`)
+    if (run === 'run_open') return { status: 409, text: `"${name}" has a run still going; wait for it to finish.` }
+    if (run === 'task_working') return { status: 409, text: `A session of "${name}" is working right now: nothing is started beside it.` }
+    return { status: 202, taskId: task.id, text: `Run ${run.number} of "${name}" starts as soon as there is room.` }
   }
 
-  private async withJob(caller: JobCaller, input: Record<string, unknown>, act: (job: Job) => JobAnswer | Promise<JobAnswer>): Promise<JobAnswer> {
-    const found = this.findJob(caller.spaceId, input.job)
-    return 'status' in found ? found : act(found)
+  // ── The parts of a call ────────────────────────────────────────────────────
+
+  /** The zone the call's times read in: its own, else the user's (a session writes every time in it). */
+  private zone(input: Record<string, unknown>): string {
+    const zone = str(input.timezone) ?? this.deps.defaultTimeZone()
+    return isTimeZone(zone) ? zone : refuse(`unknown time zone "${zone}"; use an IANA name such as Europe/Berlin`)
   }
 
-  /** The job a key names in a space: its id (or at least its first 6 characters), else its exact name. */
-  private findJob(spaceId: string | null, input: unknown): Job | JobAnswer {
-    const key = str(input)
-    if (!key) return bad('job is required: its id (or the first 8 characters) or its exact name')
-    const jobs = this.jobsOf(spaceId)
-    const byId = jobs.filter((job) => job.id === key || (key.length >= 6 && job.id.startsWith(key)))
-    const matches = byId.length ? byId : jobs.filter((job) => job.name.toLowerCase() === key.toLowerCase())
-    if (matches.length === 0) return { status: 404, text: `No job "${key}" in this space. The list action shows them.` }
-    if (matches.length > 1) return bad(`"${key}" fits ${matches.length} jobs; use the id`)
-    return matches[0]
+  /**
+   * The call's cron, checked. `current`: the schedule it joins. A task's repeating times are read in one zone, so a
+   * cron written in another is refused instead of joining it silently at other hours.
+   */
+  private cron(input: Record<string, unknown>, current: ScheduleFields | null, zone: string): string {
+    const cron = str(input.cron) ?? refuse('cron: five fields (minute hour day-of-month month day-of-week)')
+    const joined = current?.crons?.length ? current.time_zone : undefined
+    if (joined && joined !== zone) refuse(`the task's repeating times are read in ${joined}, and this cron was written in ${zone}: write it in ${joined} and pass timezone "${joined}"`)
+    const refusal = cronRefusal(cron, zone, this.now(), JOB_LIMITS.minGapMs)
+    return refusal ? refuse(refusal) : cron
   }
 
-  /** The schedule trigger from the input; `current` fills in what an update leaves out. */
-  private trigger(input: Record<string, unknown>, current: ScheduleTrigger | undefined): ScheduleTrigger | string {
-    const timeZone = str(input.timezone) ?? current?.timeZone ?? this.deps.defaultTimeZone()
-    if (!isTimeZone(timeZone)) return `unknown time zone "${timeZone}"; use an IANA name such as Europe/Berlin`
-    const cron = str(input.cron) ?? (input.at === undefined && current?.cron !== undefined ? current.cron : undefined)
-    const atText = str(input.at) ?? (input.cron === undefined && current?.at !== undefined ? current.at : undefined)
-    if ((cron === undefined) === (atText === undefined)) return 'give exactly one of cron (repeating) or at (one time)'
-    if (cron !== undefined) {
-      let spec
-      try { spec = parseCron(cron) } catch (err) { return `cron: ${(err as Error).message}` }
-      const gap = shortestGap(spec, timeZone, this.now())
-      if (gap === null && nextDue({ triggers: [{ type: 'schedule', cron, timeZone }], end: null, runCount: 0 }, this.now()) === null) return 'that cron never fires'
-      if (gap !== null && gap < JOB_LIMITS.minGapMs) return `that cron fires every ${Math.round(gap / 60_000)} min; at most every ${JOB_LIMITS.minGapMs / 60_000} min`
-      return { type: 'schedule', cron, timeZone }
+  private at(input: Record<string, unknown>, zone: string): string {
+    const read = readAt(str(input.at) ?? '', zone, this.now(), JOB_LIMITS.maxAheadMs)
+    return 'error' in read ? refuse(read.error) : read.at
+  }
+
+  /** The schedule's end from the call: an instant, null to take it off, undefined when the call says nothing. */
+  private endsAt(input: Record<string, unknown>, zone: string): string | null | undefined {
+    if (input.ends_at === undefined) return undefined
+    const text = str(input.ends_at)
+    if (!text) return null
+    const at = parseAt(text, zone)
+    return at === null ? refuse(`ends_at: "${text}" is not a date and time`) : iso(at)
+  }
+
+  private goal(input: Record<string, unknown>): string | null {
+    const goal = str(input.goal)
+    if (goal && goal.length > JOB_LIMITS.goalChars) refuse(`goal: at most ${JOB_LIMITS.goalChars} characters`)
+    return goal ?? null
+  }
+
+  /** What of a call goes on the task's record; `given` says which of them the call names. */
+  private async settings(caller: JobCaller, input: Record<string, unknown>) {
+    const notify = input.notify === undefined || input.notify === null ? undefined : input.notify
+    if (notify !== undefined && notify !== 'needs-me' && notify !== 'always' && notify !== 'never') refuse('notify must be needs-me, always or never')
+    let maxRuns: number | null | undefined
+    if (input.max_runs !== undefined) {
+      if (input.max_runs !== null && (!Number.isInteger(input.max_runs) || (input.max_runs as number) < 1)) refuse('max_runs is a whole number from 1')
+      maxRuns = input.max_runs as number | null
     }
-    const at = parseAt(atText!, timeZone)
-    if (at === null) return `at: "${atText}" is not a date and time; write it like 2026-11-13T10:00 (read in ${timeZone})`
-    if (at <= this.now()) return `at: ${formatInZone(at, timeZone)} (${timeZone}) has passed`
-    if (at - this.now() > JOB_LIMITS.maxAheadMs) return 'at: at most a year ahead'
-    return { type: 'schedule', at: new Date(at).toISOString(), timeZone }
-  }
-
-  private end(input: Record<string, unknown>, timeZone: string): JobEnd | null | string {
-    const end: JobEnd = {}
-    if (input.max_runs !== undefined && input.max_runs !== null) {
-      if (!Number.isInteger(input.max_runs) || (input.max_runs as number) < 1) return 'max_runs is a whole number from 1'
-      end.afterRuns = input.max_runs as number
-    }
-    const endsAt = str(input.ends_at)
-    if (endsAt) {
-      const at = parseAt(endsAt, timeZone)
-      if (at === null) return `ends_at: "${endsAt}" is not a date and time`
-      end.at = new Date(at).toISOString()
-    }
-    return Object.keys(end).length ? end : null
-  }
-
-  private notify(value: unknown): JobNotify | null {
-    if (value === undefined || value === null) return 'needs-me'
-    return value === 'needs-me' || value === 'always' || value === 'never' ? value : null
-  }
-
-  private async target(caller: JobCaller, input: Record<string, unknown>): Promise<JobTarget | string> {
-    const kind = str(input.target) ?? (input.session !== undefined ? 'session' : 'worker')
-    if (kind === 'self') {
-      if (!caller.sessionId) return 'target self needs a session'
-      return { type: 'session', sessionId: caller.sessionId }
-    }
-    if (kind === 'session') {
-      const name = str(input.session)
-      if (!name) return 'target session needs session: its address'
-      const sessionId = this.deps.findSession(caller.spaceId, name)
-      return sessionId ? { type: 'session', sessionId } : `no session "${name}" in this space`
-    }
-    if (kind === 'job-session') return 'job-session is gone: a worker per run (the default) keeps its memory in the task\'s goal and journal; self wakes this session, session another one'
-    if (kind !== 'worker') return 'target must be worker, self or session'
+    if (narrowedProfile(null, null, input.deny_tools) === 'invalid') refuse('deny_tools is a list of tool names')
     const projectInput = str(input.project)
-    const projectId = projectInput ? await this.deps.resolveProject(caller.spaceId, projectInput) : caller.projectId
-    if (!projectId) return projectInput ? `unknown project "${projectInput}"` : 'project is required for a worker'
+    const projectId = projectInput ? await this.deps.resolveProject(caller.spaceId, projectInput) ?? refuse(`unknown project "${projectInput}"`) : null
     const provider = str(input.provider)
-    if (provider && !this.deps.providerKnown(provider)) return `unknown provider "${provider}"`
-    return { type: 'worker', projectId, ...(provider ? { provider: provider as never } : {}) }
-  }
-
-  /** The user's OK in the Jobs view: the job's channel addresses may wake it. Only the page calls this. */
-  approve(job: Job): JobAnswer {
-    if (!job.pendingApproval) return { status: 200, job, text: `Job "${job.name}" needs no OK.` }
-    const next: Job = { ...job, pendingApproval: false, updatedAt: new Date(this.now()).toISOString() }
-    const due = nextDue(next, this.now())
-    next.nextRunAt = due === null ? null : new Date(due).toISOString()
-    this.deps.store.put(next)
-    return { status: 200, job: next, text: `Approved job "${job.name}".` }
-  }
-
-  /** Send freely or draft for review, per channel. Only the page calls this: a session never widens it. */
-  setReply(job: Job, channel: ReplyChannel, mode: ReplyMode): JobAnswer {
-    if (!job.triggers.some((t) => t.type === channel)) return bad(`job "${job.name}" does not listen on ${channel}`)
-    const next: Job = { ...job, reply: { ...job.reply, [channel]: mode }, updatedAt: new Date(this.now()).toISOString() }
-    this.deps.store.put(next)
-    return { status: 200, job: next, text: `Job "${job.name}" ${mode === 'send' ? 'sends' : 'drafts'} ${channel} replies.` }
-  }
-
-  /** Limited or free (the user's switch in the Jobs view). Only the page calls this. */
-  setLimited(job: Job, limited: boolean): JobAnswer {
-    const next: Job = { ...job, limited, updatedAt: new Date(this.now()).toISOString() }
-    this.deps.store.put(next)
-    return { status: 200, job: next, text: `Job "${job.name}" is ${limited ? 'limited' : 'no longer limited'}.` }
-  }
-
-  /** Lend a limited job a tool for `minutes` (the user's click). Only the page calls this. */
-  grant(job: Job, tool: GrantTool, minutes: number, reason: string | null): JobAnswer {
-    if (!Number.isFinite(minutes) || minutes < GRANT_MINUTES.min || minutes > GRANT_MINUTES.max) {
-      return bad(`minutes is from ${GRANT_MINUTES.min} to ${GRANT_MINUTES.max}`)
-    }
-    const now = this.now()
-    const until = new Date(now + minutes * 60_000).toISOString()
-    const grants = [...activeGrants(job, now).filter((g) => g.tool !== tool), { tool, until, reason }]
-    const next: Job = { ...job, grants, updatedAt: new Date(now).toISOString() }
-    this.deps.store.put(next)
-    this.deps.onGrant?.(next, tool)
-    return { status: 200, job: next, text: `Job "${job.name}" may use ${tool} until ${until}.` }
-  }
-
-  /** Take a lent tool back (the user's click). Only the page calls this. */
-  revoke(job: Job, tool: GrantTool): JobAnswer {
-    const had = activeGrants(job, this.now()).some((g) => g.tool === tool)
-    const next: Job = { ...job, grants: (job.grants ?? []).filter((g) => g.tool !== tool), updatedAt: new Date(this.now()).toISOString() }
-    this.deps.store.put(next)
-    if (had) this.deps.onGrantEnd?.(next, [tool])
-    return { status: 200, job: next, text: `Job "${job.name}" no longer has ${tool}.` }
-  }
-
-  /** What the page shows of a job: its schedule and target in words, its next run times. */
-  summary(job: Job): { schedule: string; wakes: string; nextRuns: string[] } {
+    if (provider && !this.deps.providerKnown(provider)) refuse(`unknown provider "${provider}"`)
     return {
-      schedule: job.triggers.map(describeTrigger).join(' + '),
-      wakes: this.describeTarget(job),
-      nextRuns: job.paused || job.endedAt ? [] : this.nextRuns(job, 3).map((at) => new Date(at).toISOString()),
+      notify: notify as JobNotify | undefined, maxRuns, deny: input.deny_tools, projectId, provider,
+      given: { notify: notify !== undefined, maxRuns: maxRuns !== undefined, deny: input.deny_tools !== undefined && input.deny_tools !== null, project: projectId !== null, provider: provider !== undefined },
     }
   }
 
-  /** One job in a few lines: schedule, next runs, target, last run. */
-  describe(job: Job): string {
-    const zone = jobTimeZone(job, this.deps.defaultTimeZone())
-    const schedule = job.triggers.map(describeTrigger).join(' + ')
-    const lines = [`"${job.name}" (${job.id.slice(0, 8)}): ${schedule}`]
-    const state = job.endedAt ? 'ended'
-      : job.pendingApproval ? "waiting for the user's OK in the Jobs view"
-        : job.paused ? `paused${job.pausedReason ? ` (${job.pausedReason})` : ''}` : null
-    if (state) lines.push(`  state: ${state}`)
-    if (job.goal) lines.push(`  goal: ${job.goal}`)
-    if (job.limited) {
-      const lent = activeGrants(job, this.now()).map((g) => g.tool)
-      lines.push(`  limited: no shell, no messages to sessions, only the brain MCP; the schedule tool reaches only this job${lent.length ? `; lent for now: ${lent.join(', ')}` : ''}`)
+  /**
+   * Bring the task's record in line with the call. Called after the schedule is on the task: a record with nothing
+   * that keeps it (a schedule, a channel, a limit) goes at the engine's next read. `make`: the task gets a record
+   * when it has none; without it only one that exists is changed.
+   */
+  private keep(caller: JobCaller, task: ToolTask, settings: Awaited<ReturnType<Jobs['settings']>>, mail: ChannelTrigger | null | undefined, make: boolean): { record?: Job; waits: boolean } {
+    const before = this.deps.store.get(task.id)
+    if (!before && !make) return { waits: false }
+    const at = iso(this.now())
+    const base = before ?? newRecord({ id: task.id, spaceId: caller.spaceId }, at, caller.sessionId)
+    // A session never widens what the task's sessions may use: the record keeps the narrowest of what it had, what the caller has, and what the call denies.
+    const toolProfile = narrowedProfile(before ? before.toolProfile : undefined, caller.toolProfile, settings.deny) as ToolProfile | null
+    // A task without a project of its own starts its sessions where its maker works.
+    const ownProject = task.scope?.startsWith('project.') === true
+    let next: Job = {
+      ...base, toolProfile,
+      projectId: settings.projectId ?? base.projectId ?? (ownProject ? null : caller.projectId),
+      ...(settings.provider ? { provider: settings.provider as never } : {}),
+      ...(settings.notify ? { notify: settings.notify } : {}),
+      // An end after so many runs counts from now: the runs the task had before are not part of it.
+      ...(settings.maxRuns !== undefined ? { end: settings.maxRuns === null ? null : { afterRuns: base.runCount + settings.maxRuns } } : {}),
     }
-    else if (job.nextRunAt) lines.push(`  next: ${this.nextRuns(job, 3).map((at) => formatInZone(at, zone)).join(', ')}`)
-    lines.push(`  wakes: ${this.describeTarget(job)}`)
-    const last = [...this.deps.store.runs(job.id)].reverse().find((run) => run.number > 0 || !isOpenRun(run))
-    if (last) lines.push(`  last run: ${describeRun(last, zone)}`)
-    return lines.join('\n')
-  }
-
-  private nextRuns(job: Job, count: number): number[] {
-    const out: number[] = []
-    let at = job.nextRunAt ? Date.parse(job.nextRunAt) : null
-    let runCount = job.runCount
-    while (at !== null && out.length < count) {
-      out.push(at)
-      runCount += 1
-      at = nextDue({ ...job, runCount }, at)
+    let waits = false
+    if (mail !== undefined) {
+      next = { ...next, triggers: [...next.triggers.filter((t) => t.type !== 'mail'), ...(mail ? [mail] : [])] }
+      // Drafts until the user switches the channel to send on the task; a session never can.
+      if (mail) next.reply = { ...next.reply, mail: next.reply.mail ?? 'draft' }
+      // Fewer addresses need nobody's OK; a new one does.
+      const had = mailKeys(base)
+      if ([...mailKeys(next)].some((key) => !had.has(key))) {
+        next.pendingApproval = true
+        waits = true
+      }
     }
-    return out
+    if (before && JSON.stringify(before) === JSON.stringify(next)) return { record: before, waits }
+    next = { ...next, updatedAt: at }
+    this.deps.store.put(next)
+    return { record: next, waits }
   }
 
-  private describeTarget({ target, spaceId }: Job): string {
-    if (target.type === 'session') return `session ${this.deps.addressOf(target.sessionId)}`
-    const project = this.deps.projectName?.(spaceId, target.projectId) ?? target.projectId
-    if (target.type === 'job-session') return target.sessionId ? `its own session ${this.deps.addressOf(target.sessionId)}` : `its own session (started on the first run) in ${project}`
-    return `a new worker per run in ${project}`
+  /** One task's schedule in a few lines (domain/schedule-tool.ts describeTask). */
+  private describe(task: ToolTask): string {
+    const record = this.deps.store.get(task.id)
+    const spaceId = record?.spaceId ?? null
+    const project = record?.projectId ? this.deps.projectName?.(spaceId, record.projectId) ?? record.projectId : null
+    return describeTask(task, record, this.deps.store.runs(task.id), this.now(), this.deps.defaultTimeZone(), project)
   }
 }
 
-function describeRun(run: JobRun, zone: string): string {
-  const when = formatInZone(Date.parse(run.startedAt ?? run.dueAt), zone)
-  const how = run.status === 'finished' ? (run.outcome ?? 'ended without a status') : run.status
-  return `${when}, ${how}${run.note ? ` (${run.note})` : ''}`
-}
-
-const GRANT_MINUTES = { min: 5, max: 24 * 60 }
-
-const APPROVAL_NOTE = "It reacts to mail only after the user's OK in the Jobs view; until then mail for it waits. Replies are drafts the user approves."
-const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const DOMAIN = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i
-const MAX_MAIL_MATCHES = 50
-
-/** The mail trigger from `mail: { addresses?, domains? }`; null when not given, or why it is wrong. */
-function mailTrigger(value: unknown): ChannelTrigger | null | string {
-  if (value === undefined || value === null) return null
-  if (typeof value !== 'object' || Array.isArray(value)) return 'mail is { addresses?: [...], domains?: [...] }'
-  const { addresses = [], domains = [] } = value as { addresses?: unknown; domains?: unknown }
-  if (!Array.isArray(addresses) || !Array.isArray(domains)) return 'mail.addresses and mail.domains are lists'
-  const bad = [...addresses.filter((a) => typeof a !== 'string' || !ADDRESS.test(a)), ...domains.filter((d) => typeof d !== 'string' || !DOMAIN.test(d))]
-  if (bad.length) return `not a mail address or domain: ${bad.map(String).join(', ')} (a domain is written without @, e.g. example.com)`
-  const match = [
-    ...[...new Set((addresses as string[]).map((a) => a.toLowerCase()))].map((address) => ({ kind: 'address', address })),
-    ...[...new Set((domains as string[]).map((d) => d.toLowerCase()))].map((domain) => ({ kind: 'domain', domain })),
-  ]
-  if (match.length === 0) return 'mail needs at least one address or domain'
-  if (match.length > MAX_MAIL_MATCHES) return `at most ${MAX_MAIL_MATCHES} mail addresses and domains`
-  return { type: 'mail', match }
-}
-
-/** The caller's profile with more tools denied; never fewer. */
-function narrowed(profile: ToolProfile | null, deny: unknown): ToolProfile | null | 'invalid' {
-  if (deny === undefined || deny === null) return profile ? { ...profile, deniedTools: [...profile.deniedTools] } : null
-  if (!Array.isArray(deny) || !deny.every((name) => typeof name === 'string' && /^[\w.:*()-]+$/.test(name))) return 'invalid'
-  const deniedTools = [...new Set([...(profile?.deniedTools ?? []), ...deny as string[]])]
-  return { deniedTools, mcpServers: profile?.mcpServers ?? null }
+/** The task with this schedule, for describing it after a write. */
+function withSchedule(task: ToolTask, schedule: ScheduleFields | null): ToolTask {
+  const { schedule: _old, ...delegation } = task.properties?.delegation ?? { agent: '' }
+  return { ...task, properties: { ...task.properties, delegation: schedule ? { ...delegation, schedule } : delegation } }
 }

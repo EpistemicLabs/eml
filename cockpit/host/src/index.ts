@@ -75,7 +75,7 @@ import { JobStore } from './job-store.js'
 import { JobRunner, type RunnerSpace, type RunnerTask } from './application/job-runner.js'
 import { createTaskRecords } from './application/task-record.js'
 import { editTaskSchedule } from './application/task-schedule-write.js'
-import { Jobs, SCHEDULE_TOOL_REBUILT, type JobAnswer, type JobCaller } from './application/jobs.js'
+import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
@@ -85,7 +85,6 @@ import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
-import type { JobV1 } from './domain/job-v1.js'
 import { createJobMigration } from './application/job-migration.js'
 import { endTaskRecord } from './application/end-task-record.js'
 import { hasSchedule } from './domain/task-schedule.js'
@@ -637,12 +636,6 @@ async function main() {
   })
   // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2).
   const jobStore = new JobStore()
-  // SEAM (part B3 of "a task holds its schedule"): the schedule tool (Jobs) and a turn's check (turn-check) still are
-  // the version 1 ones, on jobs with their own schedule (domain/job-v1.ts). They get this store of their own, in
-  // memory and never filled, so they make nothing and show nothing, and never see a task's record. What a session
-  // asks of them is answered by scheduleTool before it gets there. The engine itself (JobRunner) fires the tasks'
-  // schedules from jobStore. Part B3 rebuilds the tool and end_turn; then this store and domain/job-v1.ts's helpers go.
-  const legacyJobStore = new JobStore<JobV1>(null)
   // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({
@@ -682,9 +675,9 @@ async function main() {
   const jobCaller = (sessionId: string): JobCaller | null => {
     const entry = ledger.get(sessionId)
     if (!entry) return null
-    // A limited job's session reaches only its own job, and nothing once that job is gone (limited-job-scope.ts).
+    // A limited task's session reaches only its own task's schedule; one whose record is gone counts as limited (limited-job-scope.ts).
     const facts = sessionJobFacts(entry.jobId ?? null, entry.jobId ? jobStore.get(entry.jobId) : undefined)
-    // A job belongs to the task its maker works on.
+    // Target self means the task the session works on.
     return { sessionId, spaceId: entry.spaceId ?? null, projectId: entry.projectId, toolProfile: entry.toolProfile, taskId: entry.taskId, ...facts }
   }
   // Tools lent to a job reach its sessions at their next start: stop them after the turn (lend-job-tool.ts).
@@ -833,13 +826,19 @@ async function main() {
     },
     onGrant, onGrantEnd,
   })
-  const jobs = new Jobs({
-    // The version 1 tool ran its jobs by hand through the version 1 engine, which is gone: it starts nothing.
-    store: legacyJobStore, runner: { runNow: () => null, tick: async () => {} }, defaultTimeZone: userTimeZone,
+  // The schedule tool (application/jobs.ts): a session's tool, its CLI, the spawn inbox and POST /api/jobs all end here.
+  const scheduleTool = new Jobs({
+    store: jobStore, me: owner, defaultTimeZone: userTimeZone,
+    brain: (spaceId) => taskBrain(spaces.resolve(spaceId)),
+    agent: (spaceId) => spaces.resolve(spaceId).agent ?? null,
+    engine: {
+      runNow: (spaceId, task) => jobRunner.runNow(runnerSpaceOf(spaces.resolve(spaceId)), task as RunnerTask),
+      paused: (taskId) => jobRunner.paused(taskId),
+      resumed: (taskId) => jobRunner.resumed(taskId),
+    },
+    // A task's version 1 jobs move onto it first: the migration replaces its schedule with what its jobs say.
+    moving: (taskId) => Object.values(jobStore.pendingV1()?.jobs ?? {}).some((job) => job.taskId === taskId),
     resolveProject: (spaceId, input) => resolveProject(spaces.resolve(spaceId), input),
-    findSession: (spaceId, target) => ledger.list(undefined, spaceId)
-      .find((entry) => entry.sessionId === target || sessionAddress(entry.sessionId, entry.projectId) === target)?.sessionId ?? null,
-    addressOf: (sessionId) => sessionAddress(sessionId, ledger.get(sessionId)?.projectId ?? null),
     projectName: (spaceId, projectId) => {
       const project = spaces.resolve(spaceId).registry.get(projectId)
       return project ? project.customName ?? project.displayName : projectId
@@ -850,11 +849,9 @@ async function main() {
       const space = spaces.resolve(spaceId)
       return !space.main && space.shared !== false
     },
-    onGrant, onGrantEnd,
+    onGrantEnd,
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
   })
-  // SEAM (part B3): every call of the schedule tool, from a session's tool, its CLI, the spawn inbox or end_turn's
-  // next.when, is answered here that the tool is being rebuilt; `jobs` itself only serves the Jobs page's empty list.
-  const scheduleTool = { handle: async (_caller: JobCaller, _input: Record<string, unknown>): Promise<JobAnswer> => ({ status: 503, text: SCHEDULE_TOOL_REBUILT }) }
   const turnWake = createTurnWake({
     where: (sessionId) => {
       const entry = ledger.get(sessionId)
@@ -1137,12 +1134,7 @@ async function main() {
   const host = createHostServer(
     { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, sessionTask, sessionNamed, turnEnded, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
-      jobs: { jobs, tool: scheduleTool, store: legacyJobStore, zones: jobStore, spawnToken, callerOf: jobCaller, spaceName: (spaceId) => spaces.resolve(spaceId).name,
-        sessionInfo: (sessionId) => {
-          const entry = ledger.get(sessionId)
-          return entry ? { projectId: entry.projectId, chat: entry.runtime === 'sdk', attention: entry.attention?.kind ?? null } : null
-        },
-      },
+      jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {
         const entry = ledger.get(sessionId)

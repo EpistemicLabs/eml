@@ -333,4 +333,14 @@ describe('the schedule tool\'s description', () => {
     expect(scheduleToolDescription('Asia/Bangkok (UTC+7)')).toContain('Times read in timezone (an IANA name), by default the user\'s own (Asia/Bangkok (UTC+7)); pass it when the user names another.')
     expect(scheduleToolDescription()).toContain('by default the user\'s own; pass it when the user names another.')
   })
+
+  it('says what the tool does now: a schedule on a task, a repeating time or the one wake-up, and no other session to wake', () => {
+    const text = scheduleToolDescription()
+    expect(text.startsWith('Schedule work for later. A schedule belongs to a task: repeating times and at most one wake-up.')).toBe(true)
+    expect(text).toContain('or at (the wake-up, e.g. "2026-11-13T10:00"; it replaces the one the task had)')
+    expect(text).toContain('The task: task_id (one that exists), or target self (the task this session works on); without either a new task is made from name and prompt')
+    expect(text).toContain('delete and finish end it and leave the task open')
+    expect(text).toContain('The answer shows the next run times in words: check them against what the user asked.')
+    expect(text).not.toMatch(/another session|by address|Jobs view|job-session/)
+  })
 })

@@ -1,6 +1,5 @@
 import type { ProviderId } from './agent-provider.js'
 import type { ToolProfile } from './tool-profile.js'
-import { formatInZone, nextCronTime, parseCron } from './schedule.js'
 import type { ChannelTrigger, JobGrant, JobNotify, ReplyChannel, ReplyMode } from './job.js'
 
 /**
@@ -8,15 +7,9 @@ import type { ChannelTrigger, JobGrant, JobNotify, ReplyChannel, ReplyMode } fro
  * schedule triggers. Since 24 all of that is read from the task, and the local record (domain/job.ts) keeps only what
  * this machine needs.
  *
- * Two things still read this shape:
- *   - the migration of a version 1 file (domain/job-migration.ts), which is why the type stays;
- *   - SEAM (part B3 of "a task holds its schedule"): the schedule tool and a turn's check, which are not rebuilt yet
- *     (application/jobs.ts, application/turn-check.ts, jobs-api.ts). They work on a store of these jobs that the host
- *     keeps empty and never writes (index.ts legacyJobStore). Once part B3 has them on the task's schedule and the
- *     local record, everything below the type goes. The engine that fired these jobs is gone: the tasks' schedules
- *     are fired by application/job-runner.ts.
+ * Only the migration of a version 1 file reads this shape (domain/job-migration.ts, job-store.ts): the type stays for
+ * it. Nothing makes, changes or fires such a job any more.
  */
-
 
 /** routine: on a schedule. errand: ends when its goal is met. standing: never ends on its own. */
 export type JobKind = 'routine' | 'errand' | 'standing'
@@ -50,8 +43,7 @@ export interface JobV1 {
   /** The session that made it; null when the user did. */
   createdBy: string | null
   /**
-   * Set on the check an end_turn call's next.when made (application/turn-check.ts): the session's
-   * later calls move or remove it. A job the agent made with the schedule tool has none and is its own.
+   * Set on the check an end_turn call's next.when made: a one-time job like any other for the migration.
    */
   origin?: 'end_turn'
   createdAt: string
@@ -98,42 +90,3 @@ export interface JobV1 {
 }
 
 export const isScheduleTrigger = (trigger: JobTriggerV1): trigger is ScheduleTrigger => trigger.type === 'schedule'
-
-/** The first time after `after` (exclusive) a schedule trigger is due; null if none. */
-export function nextTriggerTime(trigger: ScheduleTrigger, after: number): number | null {
-  if (trigger.at !== undefined) {
-    const at = Date.parse(trigger.at)
-    return at > after ? at : null
-  }
-  return nextCronTime(parseCron(trigger.cron), trigger.timeZone, after)
-}
-
-/** When the job is due next after `after`: its earliest schedule trigger, within its end. */
-export function nextDue(job: Pick<JobV1, 'triggers' | 'end' | 'runCount'>, after: number): number | null {
-  if (job.end?.afterRuns !== undefined && job.runCount >= job.end.afterRuns) return null
-  let next: number | null = null
-  for (const trigger of job.triggers) {
-    if (!isScheduleTrigger(trigger)) continue
-    const at = nextTriggerTime(trigger, after)
-    if (at !== null && (next === null || at < next)) next = at
-  }
-  if (next !== null && job.end?.at && next > Date.parse(job.end.at)) return null
-  return next
-}
-
-/** "every 0 8 * * 1-5 (Asia/Makassar)" or "once, Fri 13 Nov 10:00 (Asia/Makassar)". */
-export function describeTrigger(trigger: JobTriggerV1): string {
-  if (trigger.type === 'mail') {
-    const from = (trigger.match as Array<Record<string, unknown>>).map((m) => String(m.address ?? m.domain ?? '')).filter(Boolean)
-    return `on mail from ${from.join(', ')}`
-  }
-  if (!isScheduleTrigger(trigger)) return `on ${trigger.type}`
-  return trigger.cron !== undefined
-    ? `cron "${trigger.cron}" (${trigger.timeZone})`
-    : `once, ${formatInZone(Date.parse(trigger.at), trigger.timeZone)} (${trigger.timeZone})`
-}
-
-/** The zone a job's times read in: its first schedule's. */
-export function jobTimeZone(job: Pick<JobV1, 'triggers'>, fallback: string): string {
-  return job.triggers.find(isScheduleTrigger)?.timeZone ?? fallback
-}

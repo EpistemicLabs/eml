@@ -705,7 +705,7 @@ export class ChatBridge {
     return {
       deniedTools, mcpServers,
       job: job ? { id: job.id, name: job.name } : null,
-      // A limited channel job's limits are worked out at each start; the user lends it tools in the Jobs view.
+      // A limited channel job's limits are worked out at each start; the user lends it tools on the task.
       liftable: (deniedTools.length > 0 || mcpServers !== null) && !job?.limited,
     }
   }
