@@ -644,6 +644,10 @@ starts a session with either). The cockpit owns its copy the same way
   workers and task runs start in the chat too (in Auto), a session in the chat can be sent a message — a stopped
   one resumes its thread for it — and answers with `send_message` of the MCP server `cockpit`; a Codex session
   that ran in a terminal still takes no message. Tool limits cannot be held: a Codex worker given them is refused.
+  The session's turn state comes from app-server's own turns (`reportsTurns`), not from the hooks: app-server
+  runs the cockpit's hooks only once they were trusted in a terminal ("Trust all") and never asks, so a chat
+  whose hooks are not trusted says so in the conversation. It then runs without the brain boot, project and
+  task context.
 - **Workers and task runs:** a Codex session can request a worker and run a task like a Claude Code
   session. Its sandbox has no network, so `cockpit-spawn` hands the request over as a file in
   `~/.eml-cockpit/spawn-inbox` (owner-only; the request carries the same per-boot token as the HTTP
