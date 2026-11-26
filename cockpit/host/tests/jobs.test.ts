@@ -804,5 +804,10 @@ describe('a limited task\'s session looking after its own schedule', () => {
     const session: JobCaller = { ...caller, sessionId: 'v1-run', jobId: 'v1-job', taskId: own.id, limited: true }
     expect((await act({ action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(403)
     expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session)).status).toBe(403)
+    // Its task gets an unlimited record meanwhile (a wake-up set on it): the session keeps its waiting job's limits.
+    world.store.put(newRecord({ id: own.id, spaceId: null }, ''))
+    expect((await act({ action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: other.id, at: '2026-11-11T09:00' }, session)).status).toBe(403)
+    expect((await act({ action: 'update', job: own.id, at: '2026-11-11T09:00' }, session)).status).toBe(200)
   })
 })

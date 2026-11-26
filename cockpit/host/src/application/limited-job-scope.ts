@@ -38,14 +38,20 @@ export function sessionJobFacts(jobId: string | null, job: { limited?: boolean }
 /** A session as the ledger has it, for its record. */
 export interface SessionLink { jobId?: string | null; taskId?: string | null }
 
+/** The version 1 job the ledger's jobId names while it still waits to move, if it does. */
+const waitingJob = (entry: SessionLink, store: Pick<JobStore, 'pendingV1'>) => (entry.jobId ? store.pendingV1()?.jobs[entry.jobId] : undefined)
+
 /**
  * The record a run's session is read by, for its limits, its channel tools and bridge, and the tools lent to it: the
- * record its ledger jobId names; when that names none, the record of its task (a record's id is its task's id).
- * Undefined: no run started it, or neither has a record.
+ * record its ledger jobId names; when the jobId names a version 1 job that still waits to move, none (that job's
+ * limits hold, sessionScope); otherwise the record of its task (a record's id is its task's id). Undefined: no run
+ * started it, or none applies.
  */
-export function recordOfSession(entry: SessionLink, store: Pick<JobStore, 'get'>): Job | undefined {
+export function recordOfSession(entry: SessionLink, store: Pick<JobStore, 'get' | 'pendingV1'>): Job | undefined {
   if (!entry.jobId) return undefined
-  return store.get(entry.jobId) ?? (entry.taskId ? store.get(entry.taskId) : undefined)
+  const named = store.get(entry.jobId)
+  if (named || waitingJob(entry, store)) return named
+  return entry.taskId ? store.get(entry.taskId) : undefined
 }
 
 /**
@@ -55,6 +61,6 @@ export function recordOfSession(entry: SessionLink, store: Pick<JobStore, 'get'>
  */
 export function sessionScope(entry: SessionLink, store: Pick<JobStore, 'get' | 'pendingV1'>): { ownTaskId: string | null; limits: { limited?: boolean } | undefined } {
   const record = recordOfSession(entry, store)
-  const waiting = !record && entry.jobId ? store.pendingV1()?.jobs[entry.jobId] : undefined
-  return { ownTaskId: record?.taskId ?? entry.taskId ?? entry.jobId ?? null, limits: record ?? waiting }
+  const limits = record ?? waitingJob(entry, store)
+  return { ownTaskId: record?.taskId ?? entry.taskId ?? entry.jobId ?? null, limits }
 }

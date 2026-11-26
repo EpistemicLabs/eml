@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { recordOfSession, sessionJobFacts } from '../src/application/limited-job-scope.js'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { recordOfSession, sessionJobFacts, sessionScope } from '../src/application/limited-job-scope.js'
 import { JobStore } from '../src/job-store.js'
 import { newRecord } from '../src/domain/job.js'
 import { requestJobs } from '../src/jobs-api.js'
@@ -39,6 +42,27 @@ describe('recordOfSession', () => {
     expect(recordOfSession({ jobId: 'job-1', taskId: null }, store)).toBeUndefined()
     // No run started it: no record, whatever task it works on.
     expect(recordOfSession({ jobId: null, taskId: 'task-t' }, store)).toBeUndefined()
+  })
+})
+
+describe('a session of a version 1 job that still waits to move', () => {
+  it('takes that job\'s limits, never the record of its task', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'cockpit-limited-scope-')), 'jobs.json')
+    const job = {
+      id: 'v1-job', name: 'Refund', kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'task-t',
+      prompt: 'p', target: { type: 'worker', projectId: 'bp-eml' }, triggers: [{ type: 'mail', match: [] }], toolProfile: null, reply: {}, end: null, notify: 'needs-me',
+      paused: false, pausedReason: null, endedAt: null, nextRunAt: null, runCount: 1, failures: 0, limited: true,
+    }
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: { 'v1-job': job }, runs: {}, keys: {} }))
+    const store = new JobStore(file, [null])
+    // Its task got an unlimited record meanwhile (a wake-up set on it).
+    store.put(newRecord({ id: 'task-t', spaceId: null }, ''))
+    const entry = { jobId: 'v1-job', taskId: 'task-t' }
+    // Launch limits and channel tools: not the task's unlimited record.
+    expect(recordOfSession(entry, store)).toBeUndefined()
+    // The schedule tool's caller: limited (fails closed), and its scope takes the waiting job's limits.
+    expect(sessionJobFacts(entry.jobId, recordOfSession(entry, store))).toEqual({ jobId: 'v1-job', limited: true })
+    expect(sessionScope(entry, store)).toMatchObject({ ownTaskId: 'task-t', limits: { id: 'v1-job', limited: true } })
   })
 })
 
