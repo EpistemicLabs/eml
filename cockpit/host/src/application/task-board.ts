@@ -11,6 +11,7 @@ import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import { taskNameOf } from '../domain/task-title.js'
 import type { TaskWaitsSeen } from '../domain/session-attention.js'
+import type { RunningCommand } from '../domain/session-runtime.js'
 import {
   coverageOf, isImportant, turnOf, urgencyOf,
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
@@ -93,6 +94,8 @@ export interface BoardTask {
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
   /** Reopened on the board: the decisions and notes that closed with it, which come back only through the chat. */
   reopenedWith?: ReopenItem[]
+  /** Background shells its sessions here started that still run, oldest first: their session goes on when they end. */
+  commands?: RunningCommand[]
 }
 
 /** Where a step another task waits for stands, as the board shows it. */
@@ -182,8 +185,8 @@ export interface TaskBoardDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get'> | null
   /** The person looking: whose turn "Needs you" means. */
   viewer: string
-  /** The sessions on a task that are not put away. */
-  sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean }>
+  /** The sessions on a task that are not put away, and the background shells each started that still run. */
+  sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean; commands?: RunningCommand[] }>
   /** The next run of a job of the task, if any. */
   nextRunOf(taskId: string): string | null
   /** The schedule this cockpit's jobs give the task (domain/task-schedule.ts scheduleOfJobs), if any. */
@@ -663,6 +666,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           ...(() => {
             const items = row.status === 'active' ? deps.reopenedWith?.(row.id) ?? [] : []
             return items.length ? { reopenedWith: items } : {}
+          })(),
+          ...(() => {
+            const commands = CLOSED_STATUSES.has(row.status) ? [] : sessions.flatMap((s) => s.commands ?? []).sort((a, b) => a.since.localeCompare(b.since))
+            return commands.length ? { commands } : {}
           })(),
         })
         if (row.status !== 'resolved') slice.inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })

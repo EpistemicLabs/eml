@@ -62,6 +62,12 @@ export interface ImageInput {
 
 export type AgentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
 
+/** A background shell command a session started, as its views show it: what it does and since when it runs. */
+export interface RunningCommand {
+  description: string
+  since: string
+}
+
 /** A workflow run in the background, as a session waiting on it shows it: its agents started dynamically, so no total. */
 export interface WorkflowWait {
   name: string

@@ -6,6 +6,7 @@ import { keepPreviousData, type QueryClient, type QueryKey, useQueries, useQuery
 import { DAY_MS } from '@/lib/time';
 import { clock, dayNumber, formatInZone, userTimeZone, wallClock, zonedTime } from '@/lib/time-zone';
 import type { Hue } from '@/shared/view/ui/hue';
+import type { RunningCommand } from '@/stores/useTurnStateStore';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
 export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale';
@@ -109,6 +110,8 @@ export interface BoardTask {
   pending?: { opId: string; kind: string; undoUntil: string };
   /** Reopened on the board: decisions and notes that closed with it and come back only through the chat. */
   reopenedWith?: ReopenItem[];
+  /** Background commands its sessions here still run, oldest first; missing when none, or from an older host. */
+  commands?: RunningCommand[];
   /** Only on a closed task (from Board.closed): when it closed, how it ended, and why Reopen would be refused. */
   closedAt?: string | null;
   outcome?: string;

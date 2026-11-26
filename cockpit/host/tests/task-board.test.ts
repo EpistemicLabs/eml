@@ -44,7 +44,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[] } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>> } ) {
   const main = { id: 'main', name: 'Main', shared: false, main: true }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -55,7 +55,9 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
   })
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(opts.main), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
-  const sessions = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
+  const sessions: Array<{ sessionId: string; taskId: string; working: boolean; commands?: Array<{ description: string; since: string }> }> = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
+  // Sessions whose turn is over while the background commands they started still run, per task.
+  for (const [taskId, lists] of Object.entries(opts.commands ?? {})) lists.forEach((commands, i) => sessions.push({ sessionId: `${taskId}-c${i}`, taskId, working: false, commands }))
   const deps: TaskBoardDeps = {
     spaces: () => [main as never, ebisu as never],
     brain: (space) => brains.get(space.id) ?? null,
@@ -87,6 +89,22 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
 const mine = (id: string, props: Record<string, unknown> = {}, status = 'active'): Row => ({ id, status, properties: { assignee_ids: ['lasse'], ...props } })
 
 describe('the task board', () => {
+  it('gives a task the commands its sessions still run, oldest first, and none to a closed task', async () => {
+    const tests = { description: 'Run the tests', since: '2026-11-19T09:40:00.000Z' }
+    const build = { description: 'Build the app', since: '2026-11-19T09:10:00.000Z' }
+    const { board } = setup({
+      main: [mine('r', { delegate: 'atlas' }), mine('q'), mine('done', {}, 'resolved')],
+      commands: { r: [[tests], [build]], done: [[tests]] },
+    })
+    const tasks = (await board.refresh()).tasks
+    const r = tasks.find((x) => x.id === 'r')!
+    expect(r.commands).toEqual([build, tests])
+    // Display only: a task whose session waits for a command is not working.
+    expect(r.working).toBe(false)
+    expect(tasks.find((x) => x.id === 'q')!.commands).toBeUndefined()
+    expect(tasks.find((x) => x.id === 'done')!.commands).toBeUndefined()
+  })
+
   it('sends a task\'s ended sessions, newest first, at most ten, without the one still running', async () => {
     const ended = (id: string, member: string, started: string, reason: string, result: string | null) =>
       ({ id, task_id: 'r', member, agent: member === 'lasse' ? 'atlas' : 'motti', state: 'ended', started_at: started, ended_at: started, end_reason: reason, result })

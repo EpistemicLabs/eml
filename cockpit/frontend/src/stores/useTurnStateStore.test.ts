@@ -61,6 +61,18 @@ describe('the turn event stream', () => {
     disconnect();
   });
 
+  it('keeps the commands a session still runs in any state, and drops them once none runs', () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const disconnect = connectTurnEvents();
+    const since = '2026-02-01T11:00:00.000Z';
+    const tests = { description: 'Run the tests', since };
+    FakeEventSource.last!.send('snapshot', [{ sessionId: 'a', state: 'done', since, commands: [tests] }]);
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'done', since, commands: [tests] });
+    FakeEventSource.last!.send('turn', { sessionId: 'a', state: 'done', since, commands: [] });
+    expect(getTurnSnapshot().turns.a).toEqual({ state: 'done', since });
+    disconnect();
+  });
+
   it('passes a tasks event on to the board', () => {
     vi.stubGlobal('EventSource', FakeEventSource);
     const seen: unknown[] = [];

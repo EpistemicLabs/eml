@@ -1,8 +1,9 @@
 // The Inbox's Working now: a column left of the list on a wide screen, a strip of cards above it on a
 // narrow one. A row opens in the Inbox split as an Inbox item does. Grey: agents working need nothing.
+// A session waiting for a command it started is a row too, with the working hue but no pulse.
 import { type BoardTask, taskName, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { type WorkingRow, workingFor } from '@/lib/working-now';
+import { commandLine, type WorkingRow, workingCount, workingFor } from '@/lib/working-now';
 import { Chip, Dot, FOCUS, LABEL, LINK } from '@/shared/view/ui';
 
 /** How many scheduled runs the column lists; the rest are in Now. */
@@ -12,12 +13,15 @@ function Letter({ row, small }: { row: WorkingRow; small?: boolean }) {
   return (
     <span title={row.agent} className={cn('relative inline-grid shrink-0 place-items-center rounded-full bg-status-agent font-bold text-background', small ? 'size-5 text-caption' : 'size-6 text-ui')}>
       {row.letter}
-      <span className="absolute -right-0.5 -bottom-0.5 inline-grid rounded-full bg-card p-px"><Dot hue="agent" live /></span>
+      <span className="absolute -right-0.5 -bottom-0.5 inline-grid rounded-full bg-card p-px"><Dot hue="agent" live={!row.command} /></span>
     </span>
   );
 }
 
 const kindLabel = (row: WorkingRow) => (row.kind === 'member' ? `on ${row.member}'s cockpit` : row.kind);
+
+/** Some row works itself, not only waits for a command: the header's dot pulses. */
+const someWork = (rows: WorkingRow[]) => rows.some((row) => !row.command);
 
 export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, onShowNow }: {
   rows: WorkingRow[];
@@ -33,9 +37,9 @@ export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, on
   return (
     <aside aria-label="Working now" className="flex flex-col overflow-hidden rounded-xl border border-border bg-card">
       <header className="flex items-center gap-2 bg-muted px-3 py-2">
-        {rows.length > 0 && <Dot hue="agent" live />}
+        {rows.length > 0 && <Dot hue="agent" live={someWork(rows)} />}
         <span className={LABEL}>Working now</span>
-        <span className="text-caption tabular-nums text-foreground">{rows.length}</span>
+        <span className="text-caption tabular-nums text-foreground">{workingCount(rows)}</span>
         <span className="ml-auto text-caption text-muted-foreground">all spaces</span>
       </header>
       {rows.length === 0 && (
@@ -57,10 +61,10 @@ export function WorkingColumn({ rows, next, now, current, onOpen, onOpenTask, on
           <span className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-caption text-muted-foreground">
             {row.where && <span className="min-w-0 truncate">{row.where}</span>}
             <Chip>{kindLabel(row)}</Chip>
-            {row.since && <time title="Working since the turn started" className="tabular-nums">{workingFor(row.since, now)}</time>}
+            {row.since && !row.command && <time title="Working since the turn started" className="tabular-nums">{workingFor(row.since, now)}</time>}
           </span>
           <span className="col-start-2 line-clamp-1 text-caption text-muted-foreground">
-            {row.waiting ?? (row.step ? <><span className="font-medium text-foreground">Now:</span> {row.step}</> : 'No status line yet')}
+            {row.command ? commandLine(row.command, now) : row.waiting ?? (row.step ? <><span className="font-medium text-foreground">Now:</span> {row.step}</> : 'No status line yet')}
           </span>
         </button>
       ))}
@@ -87,7 +91,7 @@ export function WorkingStrip({ rows, now, onOpen }: { rows: WorkingRow[]; now: n
   if (rows.length === 0) return null;
   return (
     <section aria-label="Working now" className="flex min-w-0 flex-col gap-2">
-      <span className={cn(LABEL, 'flex items-center gap-2')}><Dot hue="agent" live />Working now · {rows.length}</span>
+      <span className={cn(LABEL, 'flex items-center gap-2')}><Dot hue="agent" live={someWork(rows)} />Working now · {workingCount(rows)}</span>
       <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1">
         {rows.map((row) => (
           <button
@@ -98,8 +102,8 @@ export function WorkingStrip({ rows, now, onOpen }: { rows: WorkingRow[]; now: n
           >
             <Letter row={row} small />
             <span className="truncate text-ui font-semibold">{row.name}</span>
-            <time className="text-caption tabular-nums text-muted-foreground">{workingFor(row.since, now)}</time>
-            <span className="col-span-2 col-start-2 truncate text-caption text-muted-foreground">{row.waiting ?? row.step ?? row.where}</span>
+            {!row.command && <time className="text-caption tabular-nums text-muted-foreground">{workingFor(row.since, now)}</time>}
+            <span className="col-span-2 col-start-2 truncate text-caption text-muted-foreground">{row.command ? commandLine(row.command, now) : row.waiting ?? row.step ?? row.where}</span>
           </button>
         ))}
       </div>

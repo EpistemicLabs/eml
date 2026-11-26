@@ -5,7 +5,7 @@ import type { SpaceInfo } from '@/stores/useSpaceStore';
 import type { TurnInfo } from '@/stores/useTurnStateStore';
 
 import type { Board, BoardTask } from './task-board';
-import { nextRuns, workingFor, workingNow } from './working-now';
+import { commandLine, commandsNote, nextRuns, workingCount, workingFor, workingNow } from './working-now';
 
 const NOW = Date.parse('2026-02-01T12:00:00.000Z');
 const space = { id: 'space', name: 'Main', main: true, agent: 'atlas', upgrade: null, shared: false, agentName: 'Atlas' } as SpaceInfo;
@@ -69,6 +69,60 @@ describe('workingNow', () => {
   });
 });
 
+describe('a session waiting for a command', () => {
+  const tests = { description: 'Run the tests', since: '2026-02-01T11:48:00.000Z' };
+  const build = { description: 'Build the app', since: '2026-02-01T09:30:00.000Z' };
+  const done = (commands = [tests]): TurnInfo => ({ state: 'done', since: '2026-02-01T11:50:00.000Z', commands });
+
+  it('is a row while its command runs, named like a working one, and leaves once the command ended', () => {
+    const t = task({ sessionIds: ['w'], working: false, turn: 'agent_scheduled' });
+    const [row] = workingNow([session('w', { state: 'running' })], { w: done() }, board([t]), [space]);
+    expect(row).toMatchObject({ key: 'w', name: 'Rescue Acme', since: tests.since, waiting: null, command: { label: 'Waiting for a command', ...tests } });
+    expect(commandLine(row.command!, NOW)).toBe('Waiting for a command · Run the tests · 12 min');
+    expect(workingNow([session('w', { state: 'running' })], { w: { state: 'done', since: tests.since } }, board([t]), [space])).toEqual([]);
+  });
+
+  it('names the longest-running of several commands, and sorts by it', () => {
+    const rows = workingNow(
+      [session('busy'), session('w', { state: 'running' })],
+      { busy: working('2026-02-01T10:00:00.000Z'), w: done([tests, build]) },
+      board([]), [space],
+    );
+    expect(rows.map((r) => r.key)).toEqual(['w', 'busy']);
+    expect(rows[0].command).toEqual({ label: 'Waiting for 2 commands', ...build });
+    expect(commandLine(rows[0].command!, NOW)).toBe('Waiting for 2 commands · Build the app · 2 h 30');
+  });
+
+  it('stays a row however long the command runs', () => {
+    const old = { description: 'Watch the logs', since: '2026-01-29T08:00:00.000Z' };
+    const [row] = workingNow([session('w', { state: 'running' })], { w: done([old]) }, board([]), [space]);
+    expect(commandLine(row.command!, NOW)).toBe('Waiting for a command · Watch the logs · 3 d 4 h');
+  });
+
+  it('is no row while it asks the user or a working turn runs, where the working row says the rest', () => {
+    const asks = session('q', { state: 'running', attention: { kind: 'question', reason: null, at: '2026-02-01T11:55:00.000Z' } });
+    expect(workingNow([asks], { q: done() }, board([]), [space])).toEqual([]);
+    const [row] = workingNow([session('w')], { w: { ...done(), state: 'working', since: '2026-02-01T11:59:00.000Z' } }, board([]), [space]);
+    expect(row).toMatchObject({ command: null, since: '2026-02-01T11:59:00.000Z' });
+  });
+
+  it('is counted apart in the header', () => {
+    const rows = workingNow([session('a'), session('b'), session('w', { state: 'running' })], { a: working(tests.since), b: working(tests.since), w: done() }, board([]), [space]);
+    expect(workingCount(rows)).toBe('2 working · 1 waiting for a command');
+    expect(workingCount(rows.filter((r) => !r.command))).toBe('2');
+  });
+});
+
+describe('commandsNote', () => {
+  it('adds one line to a task whose session waits for its commands', () => {
+    const tests = { description: 'Run the tests', since: '2026-02-01T11:48:00.000Z' };
+    const build = { description: 'Build the app', since: '2026-02-01T09:30:00.000Z' };
+    expect(commandsNote(task(), NOW)).toBeNull();
+    expect(commandsNote(task({ commands: [tests] }), NOW)).toBe('A command is still running (Run the tests, 12 min); the session continues when it finishes.');
+    expect(commandsNote(task({ commands: [build, tests] }), NOW)).toBe('2 commands are still running; the session continues when they finish.');
+  });
+});
+
 describe('nextRuns', () => {
   it('lists scheduled tasks soonest first, without the ones working now', () => {
     const list = nextRuns({ tasks: [
@@ -82,9 +136,11 @@ describe('nextRuns', () => {
 });
 
 describe('workingFor', () => {
-  it('says minutes, then hours', () => {
-    expect(workingFor('2026-02-01T11:56:00.000Z', NOW)).toBe('4 min');
+  it('says minutes, then hours, then days', () => {
+    expect(workingFor('2026-02-01T11:15:00.000Z', NOW)).toBe('45 min');
     expect(workingFor('2026-02-01T10:55:00.000Z', NOW)).toBe('1 h 05');
+    expect(workingFor('2026-01-31T12:01:00.000Z', NOW)).toBe('23 h 59');
+    expect(workingFor('2026-01-30T08:00:00.000Z', NOW)).toBe('2 d 4 h');
     expect(workingFor(null, NOW)).toBe('');
   });
 });

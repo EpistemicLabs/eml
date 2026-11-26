@@ -11,7 +11,7 @@ import { SessionHandoff } from '../src/application/session-handoff.js'
 import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
 import { reminder, type EndTurn } from '../src/domain/turn-end.js'
-import type { ImageInput, PermissionAnswer, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
+import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
 
 /**
  * The bridge against a harness that has nothing to do with Claude: no message ids,
@@ -89,6 +89,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   const turns: Array<[string, string] | [string, string, number]> = []
   const helpers: number[] = []
   const workflows: WorkflowWait[][] = []
+  const commands: RunningCommand[][] = []
   const ctx = {
     ledger: {
       has: (id: string) => ledgerEntries.has(id),
@@ -122,6 +123,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
       opts.tracker?.apply({ sessionId: id, state, settleMs })
     },
     onHelpers: (id: string, count: number, waits: WorkflowWait[]) => { helpers.push(count); workflows.push(waits); opts.tracker?.waitOn(id, count, waits) },
+    onCommands: (id: string, list: RunningCommand[]) => { commands.push(list); opts.tracker?.commandsOn(id, list) },
     terminalBusy: opts.busy,
     handoffBeforeStop: opts.handoffBeforeStop,
     turnDone: opts.turnDone,
@@ -141,7 +143,7 @@ function setup(opts: { transcript?: boolean; history?: RuntimeEvent[]; runtimeOf
   let handoff: SessionHandoff
   const bridge = new ChatBridge(ctx, () => handoff)
   handoff = new SessionHandoff({ terminal, sdk: bridge })
-  return { bridge, runtimes, ledgerEntries, turns, helpers, workflows, terminal, handoff }
+  return { bridge, runtimes, ledgerEntries, turns, helpers, workflows, commands, terminal, handoff }
 }
 
 function connect(bridge: ChatBridge, init: object = {}): FakeSocket {
@@ -671,6 +673,63 @@ describe('ChatBridge', () => {
     runtime.emit({ kind: 'turn_end', reason: 'success' })
     expect(attention()).toEqual({ kind: 'review', reason: 'Report ready' })
     expect(done).toEqual(['Report is ready to check.'])
+  })
+
+  describe('a background shell', () => {
+    const shell = (taskId: string, description = 'Run the tests'): RuntimeEvent => ({ kind: 'shell_task', taskId, toolId: null, description, status: 'running' })
+
+    it('shows as a running command from its start until it ends, without holding the turn open', async () => {
+      const done: string[] = []
+      const tracker = new TurnTracker()
+      const { bridge, runtimes, commands, helpers, turns } = setup({ tracker, turnDone: (_id, text) => done.push(text) })
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      const runtime = runtimes[0]
+      const before = Date.now()
+      runtime.emit(shell('sh1'))
+      // Said again by the runtime: nothing new.
+      runtime.emit(shell('sh1'))
+      expect(commands).toHaveLength(1)
+      expect(commands[0]).toEqual([{ description: 'Run the tests', since: expect.any(String) }])
+      expect(Date.parse(commands[0][0].since)).toBeGreaterThanOrEqual(before - 1000)
+      runtime.emit(shell('sh2', 'Build the app'))
+      expect(commands[1].map((c) => c.description)).toEqual(['Run the tests', 'Build the app'])
+
+      // The turn ends while both run: done as usual, handed off, nothing held.
+      runtime.start.worker!.report('done', null)
+      expect(bridge.holdTurnOpen('s1')).toBe(false)
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Tests are running.' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(done).toEqual(['Tests are running.'])
+      expect(helpers).toEqual([])
+      tracker.apply({ sessionId: 's1', state: 'done' })
+      expect(tracker.get('s1')).toMatchObject({ state: 'done', commands: [{ description: 'Run the tests' }, { description: 'Build the app' }] })
+      expect(turns.at(-1)).toEqual(['s1', 'working'])
+
+      runtime.emit({ kind: 'shell_task', taskId: 'sh1', status: 'completed' })
+      expect(commands.at(-1)?.map((c) => c.description)).toEqual(['Build the app'])
+      // An end it never saw start says nothing.
+      runtime.emit({ kind: 'shell_task', taskId: 'other', status: 'completed' })
+      expect(commands).toHaveLength(3)
+      runtime.emit({ kind: 'shell_task', taskId: 'sh2', status: 'stopped' })
+      expect(commands.at(-1)).toEqual([])
+      expect(tracker.get('s1')?.commands).toBeUndefined()
+    })
+
+    it('ends with the process: its commands are cleared on an exit, and when the session ends without one', async () => {
+      const crashed = setup()
+      crashed.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      crashed.runtimes[0].emit(shell('sh1'))
+      crashed.runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+      expect(crashed.commands.at(-1)).toEqual([])
+
+      const { bridge, runtimes, commands } = setup()
+      bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+      // A runtime that closes without saying its process exited.
+      runtimes[0].close = async () => { runtimes[0].closed = true }
+      runtimes[0].emit(shell('sh1'))
+      await bridge.end('s1', 'archived')
+      expect(commands).toEqual([[{ description: 'Run the tests', since: expect.any(String) }], []])
+    })
   })
 
   it('keeps a status unrouted, and a turn that ends while the session closes leaves it for after the restart', async () => {
