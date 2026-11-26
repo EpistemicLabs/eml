@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import './setup-home.js'
 import type { RuntimeEvent, SessionRuntime, SessionRuntimeStart } from '../src/domain/session-runtime.js'
-import { createCodexChatRuntimes, startingMode, threadPermissions, type CodexChatHost } from '../src/infrastructure/providers/codex/chat-runtime.js'
+import { createCodexChatRuntimes, startingMode, threadPermissions, type CodexChatHost, OPEN_ELSEWHERE } from '../src/infrastructure/providers/codex/chat-runtime.js'
 import { historyEvents } from '../src/infrastructure/providers/codex/event-mapper.js'
 import type { Turn } from '../src/infrastructure/providers/codex/protocol.js'
 import { codexRuntime } from '../src/infrastructure/providers/codex/runtime.js'
@@ -92,6 +92,21 @@ describe('the Codex chat runtime, a start', () => {
     expect(kinds(gone.events)).toEqual(['notice', 'conversation', 'capabilities', 'commands', 'settings'])
     expect(gone.events[1]).toEqual({ kind: 'conversation', conversationId: gone.server.threadId })
     await gone.runtime.close()
+  })
+
+  it('does not fork a conversation another process still writes to, and reports any other refused resume', async () => {
+    const busy = start({ resume: true, conversationId: 'thread-9' }, (server) => {
+      server.answer('thread/resume', () => { throw new RefusedRequest(-32600, 'thread thread-9 already has an active writer') })
+    })
+    await flush()
+    expect(methods(busy.server)).toEqual(['initialize', 'initialized', 'thread/resume'])
+    expect(busy.events).toEqual([{ kind: 'error', message: `Codex did not start: ${OPEN_ELSEWHERE}` }, { kind: 'runtime_exit', expected: false }])
+    const odd = start({ resume: true, conversationId: 'thread-9' }, (server) => {
+      server.answer('thread/resume', () => { throw new RefusedRequest(-32603, 'internal error') })
+    })
+    await flush()
+    expect(methods(odd.server)).toEqual(['initialize', 'initialized', 'thread/resume'])
+    expect(odd.events).toEqual([{ kind: 'error', message: 'Codex did not start: internal error' }, { kind: 'runtime_exit', expected: false }])
   })
 
   it('reads a mode as the terminal does: the session\'s own, else the setting, with the network and the space\'s plugin servers', async () => {
@@ -387,6 +402,14 @@ describe('the Codex chat runtime, a stored conversation', () => {
     expect(await runtimes.history({ ...ref, providerSessionId: null })).toEqual([{ kind: 'history_end' }])
     expect(servers).toHaveLength(0)
     expect(await runtimes.history(ref)).toEqual([{ kind: 'history_end' }])
+    expect(servers[0].exited).toBe(true)
+  })
+
+  it('reports a history it could not read instead of showing an empty conversation', async () => {
+    const { spawn, servers } = fakeSpawn((server) => {
+      server.answer('thread/turns/list', () => { throw new RefusedRequest(-32603, 'database is locked') })
+    })
+    await expect(createCodexChatRuntimes(spawn).history(ref)).rejects.toThrow('database is locked')
     expect(servers[0].exited).toBe(true)
   })
 

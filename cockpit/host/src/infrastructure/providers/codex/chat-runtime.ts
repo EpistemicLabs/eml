@@ -196,7 +196,11 @@ class CodexChatRuntime implements SessionRuntime {
     }
   }
 
-  /** The stored thread, or a new one: also when the stored one is gone, as a terminal session starts fresh then. */
+  /**
+   * The stored thread, or a new one when nothing is stored under its id, as a terminal session starts fresh then.
+   * Any other refusal ends the start: a thread another process still writes to (a terminal pane, a second
+   * app-server) must not be forked into a new conversation behind the user's back.
+   */
   private async openThread(client: AppServerClient): Promise<ThreadStartResponse> {
     const { resume, conversationId } = this.request
     if (resume && conversationId) {
@@ -204,6 +208,8 @@ class CodexChatRuntime implements SessionRuntime {
         return await client.request('thread/resume', { threadId: conversationId, ...this.threadSettings(), excludeTurns: true })
       } catch (error) {
         if (!(error instanceof AppServerError)) throw error
+        if (ACTIVE_WRITER.test(error.message)) throw new Error(OPEN_ELSEWHERE)
+        if (!notStored(error)) throw error
         this.emit({ kind: 'notice', text: `Codex could not continue the earlier conversation (${error.message}). This is a new one.` })
       }
     }
@@ -384,13 +390,25 @@ async function readTurns(spawnProcess: SpawnAppServer, codexHome: string, thread
     } while (cursor)
     return turns
   } catch (error) {
-    // The server knows no such thread: nothing was stored under this id.
-    if (error instanceof AppServerError) return null
+    // Nothing was stored under this id; any other failure is one, not an empty conversation.
+    if (error instanceof AppServerError && notStored(error)) return null
     throw error
   } finally {
     await client.close()
   }
 }
+
+/**
+ * How app-server says a thread id has nothing stored under it (codex-cli 0.172.0; all with code -32600):
+ * "no rollout found for thread id …" (thread/resume), "thread not loaded: …" (thread/turns/list),
+ * "invalid thread id: …". Matched narrowly: anything else is a real failure.
+ */
+const NOT_STORED = /no rollout found for thread id|thread not loaded|invalid thread id/i
+const notStored = (error: AppServerError) => NOT_STORED.test(error.message)
+
+/** Another process writes to the thread: "thread … already has an active writer". */
+const ACTIVE_WRITER = /already has an active writer/i
+export const OPEN_ELSEWHERE = 'this conversation is still open in another process (a terminal pane of this session, or a Codex that did not exit). Close it there, then send your message again.'
 
 export function createCodexChatRuntimes(spawnProcess: SpawnAppServer = spawnAppServer, host: CodexChatHost = {}): SessionRuntimeFactory {
   return {
