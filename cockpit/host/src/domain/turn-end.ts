@@ -251,13 +251,14 @@ const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HA
 
 /**
  * How a session has end_turn: built in (true, a chat session), not at all (false), or from an MCP server of this
- * name (a terminal session, cockpit-mcp.ts). A server may not have connected, so such a session keeps the block.
+ * name (a terminal session, cockpit-mcp.ts). Such a session is told the tool's name and its whole rule: an agent CLI
+ * may list an MCP server's tools without loading their descriptions, and then never reads the rule (tried with Codex:
+ * told only that the description is the rule, it did not call).
  */
 export type EndTurnAccess = boolean | { mcpServer: string }
 
 /** The tool as an agent CLI lists it when it comes from an MCP server. */
 const mcpTool = (server: string) => `mcp__${server}__${END_TURN_TOOL}`
-const notListed = (server: string) => `If ${mcpTool(server)} is not in your tool list (the MCP server ${server} did not connect)`
 
 /**
  * The tool's description. `zone`: the user's time zone as a session is told it (domain/schedule.ts zoneLabel,
@@ -302,12 +303,12 @@ function missingText(missing: readonly Missing[]): string {
 /**
  * The one reminder a stop can get: it names exactly what is missing. With
  * `tool: false` (a session that cannot call) it adds the way without the tool,
- * with a tool from an MCP server the way when that server did not connect.
+ * with a tool from an MCP server the name it goes by there.
  */
 export function reminder(missing: readonly Missing[], opts: { tool?: EndTurnAccess } = {}): string {
   const named = missingText(missing)
   if (opts.tool === undefined || opts.tool === true || !missing.some((m) => m !== 'reply' && m !== 'questions')) return named
-  return opts.tool === false ? `${named} ${NO_TOOL}` : `${named} ${notListed(opts.tool.mcpServer)}, end your reply with the ${HANDOFF_LABELS.heading} block instead.`
+  return opts.tool === false ? `${named} ${NO_TOOL}` : `${named} The tool is ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}.`
 }
 
 /** The time a check was saved for: the zone its when was read in and the instant. */
@@ -383,7 +384,7 @@ export const userZoneLine = (zone: string) => `Times: the user's time zone is ${
  * The section of a session's start context about ending a turn. `tool` says
  * whether the session has end_turn: one that has it reads the tool's
  * description, one without it (a terminal, another provider's chat) the block,
- * one that gets it from an MCP server both: the block is its way when the server did not connect.
+ * one that gets it from an MCP server the tool's name and its rule in full (see EndTurnAccess).
  * `zone`: the user's time zone as the session is told it ("Asia/Bangkok (UTC+7)").
  */
 export function turnEndRules(opts: { owner: string; agent?: string | null; tool: EndTurnAccess; zone?: string | null }): string {
@@ -393,9 +394,9 @@ export function turnEndRules(opts: { owner: string; agent?: string | null; tool:
   const lines = opts.tool === true ? [rule]
     : opts.tool === false ? [`End your reply with this block ${onStop}`, ...template]
       : [
-        `${rule} The tool is ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}.`,
-        `${notListed(opts.tool.mcpServer)}, end your reply with this block instead, ${onStop}`,
-        ...template,
+        `End a turn with the ${END_TURN_TOOL} tool: ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}. This is its whole rule:`,
+        endTurnDescription(opts.zone),
+        'A note on the task does not replace the call: only the call says whose move it is.',
       ]
   // The handles a who can name here: the tool's description says what a who is, this line who is who.
   const handles = `Handles for who: the user is ${opts.owner}${opts.agent ? `, you are ${opts.agent}` : ''}.`
