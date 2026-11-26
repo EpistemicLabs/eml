@@ -86,6 +86,11 @@ export interface CockpitMcpDeps {
   addressOf(sessionId: string): string | null
   /** The one way to reach a session (application/deliver-message.ts). */
   deliver(request: MessageRequest): Promise<DeliveryOutcome>
+  /**
+   * Whether a message sent back would reach the caller (domain/agent-provider.ts sessionMessaging): a Codex session in
+   * the chat, as a Claude Code one there. Absent: a session in the chat does, one in a terminal does not.
+   */
+  receives?: (sessionId: string) => boolean
   /** The user's time zone as a session is told it (domain/schedule.ts zoneLabel). */
   timeZone?: () => string
   serverVersion?: string
@@ -121,8 +126,8 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
       async (input) => answered(await sendMessage({
         directory: () => deps.directory(sessionId),
         from: deps.addressOf(sessionId),
-        // A sender that runs in a terminal: a message sent back would not reach it (deliver-message.ts).
-        noReply: !inChat(sessionId),
+        // A sender a message sent back would not reach, such as one in a terminal (deliver-message.ts).
+        noReply: !(deps.receives ? deps.receives(sessionId) : inChat(sessionId)),
         deliver: deps.deliver,
       }, input)))
     server.registerTool(T.listSessions.name, { description: T.listSessions.description(), inputSchema: T.listSessions.input },

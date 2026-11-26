@@ -1,4 +1,4 @@
-import type { SessionRuntimeFactory } from './session-runtime.js'
+import type { SessionRuntimeFactory, SessionRuntimeKind } from './session-runtime.js'
 import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
@@ -289,10 +289,13 @@ export type Capability = { supported: true } | { supported: false; reason: strin
  *                  which also reads their earlier conversation
  *   endTurnTool    its sessions have the end_turn tool (domain/turn-end.ts): in the chat, or in a terminal
  *                  with terminalTools; a session without it says how its turn ends in the text of its reply
- *   messaging      another session can send to its sessions by their address (LaunchRequest.address)
+ *   messaging      another session can send to its sessions by their address (LaunchRequest.address); one
+ *                  session may be narrower (AgentProvider.messagingOf, sessionMessaging)
  *   terminalTools  its terminal sessions get the cockpit's tools from the host's MCP endpoint (cockpit-mcp.ts)
+ *   toolLimits     its chat sessions hold a tool profile's limits (LaunchRequest.toolProfile): a worker given one
+ *                  starts only where it holds
  */
-export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging', 'terminalTools'] as const
+export const CAPABILITY_IDS = ['chat', 'endTurnTool', 'messaging', 'terminalTools', 'toolLimits'] as const
 export type CapabilityId = (typeof CAPABILITY_IDS)[number]
 export type ProviderCapabilities = Record<CapabilityId, Capability>
 
@@ -321,6 +324,11 @@ export interface AgentProvider {
   trustProject(projectPath: string, space?: SessionSpace): void
   /** Whether a worker of this space runs through the chat runtime rather than a terminal. */
   workerRunsInChat(space: SessionSpace): boolean
+  /**
+   * Whether this one session can be handed a message, by where it ran last (the ledger's runtime; undefined: a
+   * session not started yet). Absent: as `capabilities.messaging` says for every session of the provider.
+   */
+  messagingOf?(session: { runtime: SessionRuntimeKind } | undefined): Capability
   launch(req: LaunchRequest): LaunchSpec
   /** Whether the provider has a stored conversation for this session. */
   canResume(session: SessionRef): boolean
@@ -333,4 +341,13 @@ export interface AgentProvider {
   summary(session: SessionRef): SessionSummary
   /** Delete the stored conversation (best-effort). */
   deleteTranscript(session: SessionRef): void
+}
+
+/**
+ * Whether a session can be handed a message: what its provider says of that session (messagingOf), else of all its
+ * sessions (capability messaging). What the directory lists, what a spawn answers with an address and what a delivery
+ * to a stopped session goes by.
+ */
+export function sessionMessaging(provider: Pick<AgentProvider, 'capabilities' | 'messagingOf'>, session: { runtime: SessionRuntimeKind } | undefined): Capability {
+  return provider.messagingOf ? provider.messagingOf(session) : provider.capabilities.messaging
 }

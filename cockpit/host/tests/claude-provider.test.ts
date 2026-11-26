@@ -162,6 +162,7 @@ describe('Claude Code provider', () => {
     expect(provider.capabilities).toEqual({
       chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true },
       terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+      toolLimits: { supported: true },
     })
   })
 

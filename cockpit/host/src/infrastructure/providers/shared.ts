@@ -242,25 +242,32 @@ export function installManagedSkills(sourceDirs: string[], configDir: string): v
   }
 }
 
+/** Why a session of a provider whose sessions get no message in a terminal cannot be sent one. */
+export const noMessageInTerminal = (label: string) => `${label} sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.`
+
 /**
  * What a provider whose sessions run in the terminal only can do: no chat
  * view; the cockpit's tools, end_turn among them, from the host's MCP endpoint
- * (COCKPIT_MCP_SERVER); no address another session could send to.
+ * (COCKPIT_MCP_SERVER); no address another session could send to; no tool
+ * limits, which only a chat runtime could hold.
  */
 export function terminalOnly(label: string): ProviderCapabilities {
   return {
     // The chat's refusal for such a session, word for word (chat-bridge.ts init).
     chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
     endTurnTool: { supported: true },
-    messaging: { supported: false, reason: `${label} sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.` },
+    messaging: { supported: false, reason: noMessageInTerminal(label) },
     terminalTools: { supported: true },
+    toolLimits: { supported: false, reason: `${label} sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.` },
   }
 }
 
 /**
- * The same provider with its chat view switched on (Codex, codex/chat-runtime.ts): everything else stays as it is.
- * Its chat sessions get the cockpit's tools from the same endpoint as its terminal sessions (cockpit-mcp.ts).
+ * The same provider with its chat view switched on (Codex, codex/chat-runtime.ts): a session in the chat can be
+ * handed a message, as the chat bridge delivers it (chat-bridge.ts deliver); one that ran in a terminal still
+ * cannot (the provider's messagingOf). Its chat sessions get the cockpit's tools from the same endpoint as its
+ * terminal sessions (cockpit-mcp.ts). Tool limits stay unsupported: the chat runtime has no way to hold them.
  */
 export function withChat(capabilities: ProviderCapabilities): ProviderCapabilities {
-  return { ...capabilities, chat: { supported: true } }
+  return { ...capabilities, chat: { supported: true }, messaging: { supported: true } }
 }

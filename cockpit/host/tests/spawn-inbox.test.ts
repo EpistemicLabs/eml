@@ -37,8 +37,8 @@ describe('spawn inbox', () => {
       spaces: new BrainSpaces(main),
       ledger: new SessionLedger(),
       providers: new ProviderRegistry({ providers: [
-        { id: 'claude', capabilities: { messaging: { supported: true } } } as AgentProvider,
-        { id: 'codex', capabilities: { messaging: { supported: false, reason: 'no address' } } } as AgentProvider,
+        { id: 'claude', capabilities: { messaging: { supported: true } }, workerRunsInChat: () => true } as unknown as AgentProvider,
+        { id: 'codex', capabilities: { messaging: { supported: false, reason: 'no address' } }, workerRunsInChat: () => false } as unknown as AgentProvider,
       ] }),
     })
   })
@@ -66,7 +66,7 @@ describe('spawn inbox', () => {
     expect(outcome.status).toBe(202)
     expect(existsSync(join(inbox, `${id}.json`))).toBe(false)
     expect(spawns.list()).toMatchObject([{ prompt: 'Do the thing', title: 'Worker', provider: 'codex', fromSessionId: 's-1', projectId: outcome.payload.projectId }])
-    // A codex worker cannot be messaged — no address.
+    // A worker of a provider without messaging (here: Codex with its chat view off) has no address.
     expect(outcome.payload).not.toHaveProperty('address')
   })
 

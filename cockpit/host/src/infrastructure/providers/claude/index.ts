@@ -58,6 +58,8 @@ class ClaudeProvider implements AgentProvider {
     endTurnTool: { supported: true },
     messaging: { supported: true },
     terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+    // Its launch writes the profile's denied tools and MCP servers, which the Agent SDK takes as they are.
+    toolLimits: { supported: true },
   }
   private isolation: IsolationFiles | null = null
 

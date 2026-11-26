@@ -17,8 +17,8 @@ import { readAgentSettings, writeAgentSettings } from '../../../provider-setting
  *
  *   chatView          off (default): Codex sessions run in the terminal only.
  *                     on: they can run in the chat view too, through
- *                     `codex app-server` (chat-runtime.ts). Workers stay in
- *                     the terminal either way.
+ *                     `codex app-server` (chat-runtime.ts), workers as well,
+ *                     and a session in the chat can be sent a message.
  *   reasoningEffort   default (default): each model thinks as hard as it does
  *                     by default. Otherwise an effort id ("low", "high", …):
  *                     what a chat session starts with, unless it chose its own

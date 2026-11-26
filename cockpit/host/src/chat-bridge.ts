@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
-import type { AgentProvider, ProviderId, TurnState } from './domain/agent-provider.js'
+import { sessionMessaging, type AgentProvider, type ProviderId, type TurnState } from './domain/agent-provider.js'
 import type {
   EventStore, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
@@ -917,6 +917,9 @@ export class ChatBridge {
       ...merged,
       ...(this.ctx.limits && this.ctx.memory?.unavailable === null ? heapCapEnv(this.ctx.limits().session, merged.NODE_OPTIONS) : {}),
       COCKPIT_SESSION_ID: sessionId,
+      // A session another one can message knows its own address: a worker it spawns is told where to answer (skill
+      // spawn-session). Claude Code's launch sets it too; a Codex session has it only here, in the chat.
+      ...(sessionMessaging(provider, { runtime: 'sdk' }).supported ? { COCKPIT_SESSION_ADDRESS: address } : {}),
       ...(brainId ? { EML_PROJECT_SCOPE: `project.${brainId}` } : {}),
     }
     const stored = this.ctx.ledger.get(sessionId)

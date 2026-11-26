@@ -95,7 +95,10 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
   const provider = {
     id: opts.provider ?? 'claude',
     chatRuntime: factory,
-    capabilities: { chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true } },
+    capabilities: {
+      chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true },
+      messaging: { supported: true },
+    },
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},

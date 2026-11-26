@@ -6,6 +6,7 @@ function setup(patch: Partial<DeliverMessageDeps> = {}) {
   const sent: string[] = []
   const deps: DeliverMessageDeps = {
     find: () => ({ sessionId: 's1', wakeable: false }),
+    canReceive: () => true,
     terminalRuns: () => false,
     runsInChat: () => true,
     chatRuns: () => false,
@@ -72,6 +73,21 @@ describe('deliverMessage', () => {
   it('a stopped session that cannot run in chat is refused; a running one is not', async () => {
     expect(await deliverMessage(setup({ runsInChat: () => false }).deps, request)).toBe('refused')
     expect(await deliverMessage(setup({ runsInChat: () => false, chatRuns: () => true }).deps, request)).toBe('resumed')
+  })
+
+  it('a session that cannot be handed a message where it ran is refused, running or stopped, and gets nothing', async () => {
+    // A Codex session that ran in a terminal: never typed into, and not moved to the chat for a message.
+    for (const patch of [{}, { terminalRuns: () => true }, { chatRuns: () => true }]) {
+      const { deps, sent } = setup({ canReceive: () => false, ...patch })
+      expect(await deliverMessage(deps, request)).toBe('refused')
+      expect(sent).toEqual([])
+    }
+  })
+
+  it('says to answer with the tool the receiving session has', async () => {
+    const { deps, sent } = setup({ replyTool: () => 'mcp__cockpit__send_message' })
+    await deliverMessage(deps, { ...request, from: 'eml-1234' })
+    expect(sent[0]).toBe('[Message from eml-1234, another session, not your user. To answer, use mcp__cockpit__send_message to eml-1234.]\n\nhello')
   })
 
   describe('only if stopped (the SendMessage hook)', () => {

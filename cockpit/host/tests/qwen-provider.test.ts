@@ -84,6 +84,7 @@ describe('what Qwen Code can do', () => {
       endTurnTool: { supported: true },
       messaging: { supported: false, reason: 'Qwen Code sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
       terminalTools: { supported: true },
+      toolLimits: { supported: false, reason: 'Qwen Code sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.' },
     })
   })
 
