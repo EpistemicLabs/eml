@@ -142,6 +142,21 @@ describe('the schedule section of a task', () => {
     expect(section().getByText('Its end has passed (yesterday 09:00): nothing runs any more.')).toBeTruthy();
   });
 
+  it('past its end the repeating times have ended, and a wake-up that is still set runs at its time', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    show(task({ nextRunAt: at(23, 9), schedule: { crons: ['0 8 * * 1-5'], at: at(23, 9), why: 'Check the answer', ends_at: at(18, 9) } }));
+    expect(section().queryByText(/nothing runs any more/)).toBeNull();
+    expect(section().getByText('Its end has passed (yesterday 09:00): the repeating times no longer run, the wake-up still does. Next run Mon 09:00')).toBeTruthy();
+    cleanup();
+    // the wake-up's time has come and it has not started yet
+    show(task({ nextRunAt: at(19, 9), schedule: { crons: ['0 8 * * 1-5'], at: at(19, 9), ends_at: at(18, 9) } }));
+    expect(section().getByText('Its end has passed (yesterday 09:00): the repeating times no longer run, the wake-up still does. Run due since 09:00')).toBeTruthy();
+    cleanup();
+    // an end on a schedule without a repeating time ends nothing
+    show(task({ nextRunAt: at(23, 9), schedule: { at: at(23, 9), ends_at: at(18, 9) } }));
+    expect(section().getByText('Next run Mon 09:00')).toBeTruthy();
+  });
+
   it('asks this cockpit for the task\'s record in its space; the newest run reads without opening the fold, four more inside', async () => {
     setTimeZoneForTest('Asia/Bangkok');
     const runs = [

@@ -66,7 +66,8 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
   const crons = schedule?.crons ?? [];
   const zone = scheduleZone(schedule);
   const paused = Boolean(schedule?.paused);
-  const ended = isDue(schedule?.ends_at, now);
+  // The end is the repeating times' end: a wake-up fires at its own time, also after it.
+  const ended = crons.length > 0 && isDue(schedule?.ends_at, now);
   const channels = REPLY_CHANNELS.filter((c) => record?.triggers.some((t) => t.type === c));
   const grants = activeGrants(record, now);
   const runs = (data?.runs ?? []).slice(0, RUNS_SHOWN);
@@ -75,10 +76,12 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
 
   const newest = runs[0] ? runLine(runs[0], now, true) : { text: '', tone: 'muted' as const };
 
+  const next = task.nextRunAt ? (isDue(task.nextRunAt, now) ? `Run ${nextRunText(task.nextRunAt, now)}` : `Next run ${when(task.nextRunAt, now)}`) : '';
   let stands: ReactNode = null;
   if (paused) stands = record?.pausedReason ? <span className="text-you-ink">Paused by the cockpit: {record.pausedReason}</span> : 'Paused: nothing runs until you resume it.';
+  else if (ended && schedule?.at) stands = `Its end has passed (${when(schedule.ends_at, now)}): the repeating times no longer run, the wake-up still does.${next ? ` ${next}` : ''}`;
   else if (ended) stands = `Its end has passed (${when(schedule?.ends_at, now)}): nothing runs any more.`;
-  else if (task.nextRunAt) stands = <>{isDue(task.nextRunAt, now) ? `Run ${nextRunText(task.nextRunAt, now)}` : `Next run ${when(task.nextRunAt, now)}`}{schedule?.ends_at ? ` · ends ${when(schedule.ends_at, now)}` : ''}</>;
+  else if (next) stands = `${next}${crons.length > 0 && schedule?.ends_at ? ` · ends ${when(schedule.ends_at, now)}` : ''}`;
 
   return (
     <section aria-label="Schedule" className="flex flex-col gap-2 rounded-xl border border-border px-3 py-2.5 text-body">

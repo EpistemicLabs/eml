@@ -265,6 +265,8 @@ describe('the task state screens (v0.23)', () => {
     const at = new Date(NOW + DAY_MS).toISOString();
     expect(cardLine(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', nextRunAt: at }), NOW)).toMatch(/^Until the goal is reached\. Atlas checks again /);
     expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: at, schedule: { crons: ['0 8 * * 1-5'] } }), NOW)).toMatch(/^Repeats on weekdays at 08:00\. Next /);
+    // past its end the repeating times repeat no more; a wake-up ahead is still its next run
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: local(23, 9), schedule: { crons: ['0 8 * * 1-5'], at: local(23, 9), ends_at: local(18, 9) } }), NOW)).toBe('Its repeating times have ended. Next Mon 09:00.');
     expect(repeatsText({ crons: ['30 9 * * 1'] })).toBe('Repeats every Monday at 09:30');
     expect(repeatsText({ crons: ['0 7 1 1 *'] })).toBe('Repeats (0 7 1 1 *)');
   });

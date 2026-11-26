@@ -351,8 +351,8 @@ async function post(path: string, body: unknown): Promise<CommandAnswer> {
 export type HandOverMode = 'now' | 'schedule' | 'together';
 /**
  * A task's schedule (host delegation.schedule, brain schema 24): repeating times (crons, read in time_zone) and at
- * most one wake-up (at) with its reason (why) and the session that set it (by_session). paused and ends_at hold for
- * the whole schedule. The next run is worked out by the host (BoardTask.nextRunAt), never stored. A repeating time
+ * most one wake-up (at) with its reason (why) and the session that set it (by_session). paused holds for the whole
+ * schedule; ends_at ends the repeating times only, a wake-up still fires at its time. The next run is worked out by the host (BoardTask.nextRunAt), never stored. A repeating time
  * starts a new session; a wake-up continues the session that set it.
  */
 export interface TaskSchedule {
@@ -807,7 +807,8 @@ export function cardLine(task: BoardTask, now: number): string {
   }
   if (task.turn === 'agent_scheduled' && task.waitingOn?.kind === 'outside') return `${sentence(waitText(task))}; ${runs('checks again')}.`;
   if (task.group === 'mission') return `Until the goal is reached. ${sentence(runs('checks again'))}.`;
-  if (task.group === 'routine') return `${repeatsText(task.schedule)}. ${sentence(nextRunText(task.nextRunAt, now))}.`;
+  // Past its end (ends_at) the repeating times repeat no more; what is next then is its wake-up.
+  if (task.group === 'routine') return `${isDue(task.schedule?.ends_at, now) ? 'Its repeating times have ended' : repeatsText(task.schedule)}. ${sentence(nextRunText(task.nextRunAt, now))}.`;
   if (task.group === 'at_time') return `${sentence(runs('starts'))}.`;
   if (task.group === 'runner') return runnerLine(task) ?? `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
