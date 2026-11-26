@@ -166,9 +166,13 @@ describe('task board routes', () => {
   it('takes Run now, and answers each of its refusals with its status', async () => {
     expect((await post('/api/v1/tasks/daily/run-now', { opId: 'op-rn', spaceId: 'main' })).status).toBe(202)
     expect(submitted.at(-1)).toEqual({ opId: 'op-rn', spaceId: 'main', kind: 'run_now', taskId: 'daily' })
-    const refused = async (code: string) => { const r = await post(`/api/v1/tasks/${code}/run-now`, { spaceId: 'main' }); return [r.status, r.body.error.code] }
-    expect(await refused('needs_approval')).toEqual([409, 'needs_approval'])
-    expect(await refused('not_scheduled')).toEqual([409, 'not_scheduled'])
+    const refused = async (code: string) => { const r = await post(`/api/v1/tasks/${code}/run-now`, { spaceId: 'main' }); return [r.status, r.body.error.code, r.body.error.retry] }
+    // its last run ends and a working session stops: trying again later can help
+    expect(await refused('run_open')).toEqual([409, 'run_open', true])
+    expect(await refused('task_working')).toEqual([409, 'task_working', true])
+    // the user's OK comes first: trying again does not bring it
+    expect(await refused('needs_approval')).toEqual([409, 'needs_approval', false])
+    expect(await refused('not_scheduled')).toEqual([409, 'not_scheduled', false])
     // no session could start for it: not a conflict that passes, the task has to be moved into a project
     expect(await post('/api/v1/tasks/no_project/run-now', { spaceId: 'main' }))
       .toEqual({ status: 422, body: { error: { code: 'no_project', message: 'The task has no project to run in: move it into a project first.', retry: false } } })

@@ -199,8 +199,8 @@ describe('the routes under the task', () => {
   })
 
   it('answers each refusal with its code, a sentence, and 409', async () => {
-    expect(await post('/api/v1/tasks/busy/run-now', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'task_working', message: 'A session of the task is working right now: nothing is started beside it.', retry: false } } })
-    expect(await post('/api/v1/tasks/open-run/run-now', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'run_open', message: 'Its last run is still going: wait for it to finish.', retry: false } } })
+    expect(await post('/api/v1/tasks/busy/run-now', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'task_working', message: 'A session of the task is working right now: nothing is started beside it.', retry: true } } })
+    expect(await post('/api/v1/tasks/open-run/run-now', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'run_open', message: 'Its last run is still going: wait for it to finish.', retry: true } } })
     expect(await post('/api/v1/tasks/mail/run-now', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'needs_approval', message: 'Its channel waits for your OK first.', retry: false } } })
     expect(await post('/api/v1/tasks/plain/pause-schedule', { spaceId: 'main' })).toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule.', retry: false } } })
   })

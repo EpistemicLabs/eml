@@ -161,8 +161,11 @@ function answerRecord(json: Json, res: http.ServerResponse, result: RecordAnswer
   else json(res, RECORD_STATUS[result.refusal] ?? 400, { error: { code: result.refusal, message: result.message, retry: result.refusal === 'no_brain' } })
 }
 
+/** The refusals that pass on their own, so trying again later can help: a brain that does not answer, a run still going, a session at work. */
+const RETRY: ReadonlySet<CommandRefusal> = new Set(['no_brain', 'run_open', 'task_working'])
+
 function refuse(json: Json, res: http.ServerResponse, refusal: CommandRefusal, message?: string): void {
-  json(res, STATUS[refusal] ?? 400, { error: { code: refusal, message: message ?? MESSAGES[refusal], retry: refusal === 'no_brain' } })
+  json(res, STATUS[refusal] ?? 400, { error: { code: refusal, message: message ?? MESSAGES[refusal], retry: RETRY.has(refusal) } })
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
