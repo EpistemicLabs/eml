@@ -29,7 +29,10 @@ export interface Question {
   question: string
   header: string
   multiSelect: boolean
+  /** Empty: the answer is free text. */
   options: QuestionOption[]
+  /** The answer is a secret (a password, a key): the view does not show it as typed. Absent: false. */
+  secret?: boolean
 }
 
 /** A command the agent takes as a message, written `/name`. */
@@ -40,18 +43,55 @@ export interface CommandInfo {
   aliases: string[]
 }
 
+/** How hard a model thinks before it answers ("low", "high", …): the runtime's own ids. */
+export interface EffortOption {
+  id: string
+  label: string
+  description: string
+}
+
 export interface ModelOption {
   id: string
   label: string
   description: string
   /** The model id this option stands for now (an alias resolves to one). */
   resolved: string | null
+  /** The reasoning efforts it takes, for a runtime with the `reasoningEffort` feature. Absent: none to choose. */
+  efforts?: EffortOption[]
+  /** The effort it runs with when none is chosen. */
+  defaultEffort?: string | null
 }
 
 export interface ModeOption {
   id: string
   label: string
   description: string
+  /** False: Shift+Tab passes over it, it can only be picked from the list (a mode without a safety net). Absent: true. */
+  cycle?: boolean
+}
+
+/**
+ * Something a runtime may or may not offer; a view shows a control only for what its runtime lists in
+ * `capabilities.features`, instead of showing it and failing.
+ *
+ *   commands              the agent takes `/name` commands of its own (the `commands` event lists them)
+ *   stopAgent             a running subagent can be stopped on its own (stopAgent)
+ *   toolServerToggle      a tool server can be switched on and off (setToolServerEnabled)
+ *   toolServerReconnect   a tool server can be connected again (reconnectToolServer)
+ *   toolServerSignIn      a tool server that needs a sign-in can be signed in to from the view (signInToolServer)
+ *   reasoningEffort       the effort can be chosen per session (setEffort; the models list theirs)
+ */
+export type RuntimeFeature =
+  | 'commands'
+  | 'stopAgent'
+  | 'toolServerToggle'
+  | 'toolServerReconnect'
+  | 'toolServerSignIn'
+  | 'reasoningEffort'
+
+/** Where to sign in to a tool server: a page the user opens; the runtime notices when it is done. */
+export interface ToolServerSignIn {
+  url: string
 }
 
 /** An image going into a message: base64. */
@@ -88,9 +128,14 @@ export interface ToolServer {
 
 export type RuntimeEvent =
   /** What the session runs with now; a field left out did not change. */
-  | { kind: 'settings'; model?: string | null; mode?: string }
-  /** What can be chosen in this session. */
-  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[] }
+  | { kind: 'settings'; model?: string | null; mode?: string; effort?: string | null }
+  /**
+   * What can be chosen in this session, and what the runtime can do (`features`). An event without
+   * `features` comes from before they were named, when every runtime in the chat was Claude Code: it
+   * means what Claude Code offers (commands, stopAgent, toolServerToggle, toolServerReconnect), so
+   * nothing a view showed then disappears.
+   */
+  | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[]; features?: RuntimeFeature[] }
   /** Replaces the command list. */
   | { kind: 'commands'; commands: CommandInfo[] }
   | { kind: 'context'; usedTokens: number; maxTokens: number }
@@ -142,6 +187,8 @@ export type RuntimeEvent =
   | { kind: 'thinking_delta'; blockId: string; delta: string }
   | { kind: 'thinking'; blockId: string; text: string }
   | { kind: 'tool_call'; toolId: string; name: string; toolKind: ToolKind; title: string; input: Record<string, unknown> }
+  /** Output of a running call as it comes (a shell command's lines); its `tool_result` replaces all of it. */
+  | { kind: 'tool_output_delta'; toolId: string; delta: string }
   | { kind: 'tool_result'; toolId: string; status: Exclude<ToolStatus, 'running'>; output: string }
   | {
     kind: 'permission_request'
@@ -153,6 +200,8 @@ export type RuntimeEvent =
     reason: string | null
     /** What "Always" would allow, in words; null when the agent offers no such grant. */
     alwaysScope: string | null
+    /** Refusing this call also ends the turn: the agent offers no refusal it could go on after. Absent: false. */
+    denyStopsTurn?: boolean
   }
   | { kind: 'question'; requestId: string; questions: Question[] }
   /** A permission or question is over. `cancelled`: the runtime took it back (its turn ended, the session closed). */
@@ -174,7 +223,11 @@ export type RuntimeEvent =
 export type PermissionAnswer =
   | { decision: 'allow' }
   | { decision: 'always' }
-  | { decision: 'deny'; message?: string }
+  /**
+   * `message`: why, for the agent. `interrupt`: the turn stops as well; without it the agent goes on
+   * without this call.
+   */
+  | { decision: 'deny'; message?: string; interrupt?: boolean }
   /** For a question: the chosen label(s) per question text. */
   | { decision: 'answer'; answers: Record<string, string> }
 
@@ -188,10 +241,20 @@ export interface SessionRuntime {
   /** Rejects when the agent refuses it; a change shows up as a `settings` event. */
   setMode(mode: string): Promise<void>
   setModel(model: string): Promise<void>
+  /** Feature `reasoningEffort`; a change shows up as a `settings` event. */
+  setEffort(effort: string): Promise<void>
+  /** Feature `stopAgent`. */
   stopAgent(taskId: string): Promise<void>
   toolServers(): Promise<ToolServer[]>
+  /** Feature `toolServerToggle`. */
   setToolServerEnabled(name: string, enabled: boolean): Promise<void>
+  /** Feature `toolServerReconnect`. */
   reconnectToolServer(name: string): Promise<void>
+  /**
+   * Feature `toolServerSignIn`: starts a sign-in to a server in status needs-auth. Resolves with the page to
+   * open; a `notice` says when it is done, and the server's status changes then. Rejects where unsupported.
+   */
+  signInToolServer(name: string): Promise<ToolServerSignIn>
   /** Ends the run; resolves once its process has exited. Open requests settle as cancelled. */
   close(): Promise<void>
 }
@@ -205,6 +268,8 @@ export interface SessionRuntimeStart {
   /** The mode and model the session last ran with; null: the agent's default. */
   mode: string | null
   model: string | null
+  /** The reasoning effort the session last ran with; null: the runtime's default. */
+  effort?: string | null
   cwd: string
   /** The session's complete environment; a runtime inherits nothing else. */
   env: Record<string, string>

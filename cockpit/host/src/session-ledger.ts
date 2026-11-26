@@ -71,6 +71,8 @@ export interface LedgerEntry {
   /** The permission mode and model chosen in the chat view; a resume starts with them. */
   chatMode: string | null
   chatModel: string | null
+  /** The reasoning effort chosen in the chat view, for a runtime that takes one; absent: its default. */
+  chatEffort?: string | null
   /** An outside service may send it messages (cockpit message endpoint). */
   wakeable: boolean
   /** How it stands for someone, why, and since when; null when nobody has anything to do. */
@@ -154,6 +156,7 @@ function load(): LedgerFile {
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
           chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
           chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
+          ...(typeof entry.chatEffort === 'string' && entry.chatEffort ? { chatEffort: entry.chatEffort } : {}),
           wakeable: entry.wakeable === true,
           attention: entry.attention && typeof entry.attention.kind === 'string'
             ? { kind: entry.attention.kind, reason: typeof entry.attention.reason === 'string' ? entry.attention.reason : null, at: typeof entry.attention.at === 'string' ? entry.attention.at : entry.lastAttached }
@@ -246,6 +249,7 @@ export class SessionLedger {
       runtime: prev?.runtime ?? 'terminal',
       chatMode: prev?.chatMode ?? null,
       chatModel: prev?.chatModel ?? null,
+      ...(prev?.chatEffort ? { chatEffort: prev.chatEffort } : {}),
       wakeable: prev?.wakeable ?? false,
       attention: prev?.attention ?? null,
       lastStatus: prev?.lastStatus ?? null,
@@ -500,14 +504,16 @@ export class SessionLedger {
   }
 
   /** Remember what the chat view runs with. */
-  setChatSettings(sessionId: string, patch: { mode?: string; model?: string }): void {
+  setChatSettings(sessionId: string, patch: { mode?: string; model?: string; effort?: string }): void {
     const entry = this.data.sessions[sessionId]
     if (!entry) return
     const chatMode = patch.mode ?? entry.chatMode
     const chatModel = patch.model ?? entry.chatModel
-    if (entry.chatMode === chatMode && entry.chatModel === chatModel) return
+    const chatEffort = patch.effort ?? entry.chatEffort ?? null
+    if (entry.chatMode === chatMode && entry.chatModel === chatModel && (entry.chatEffort ?? null) === chatEffort) return
     entry.chatMode = chatMode
     entry.chatModel = chatModel
+    if (chatEffort) entry.chatEffort = chatEffort
     this.persist()
   }
 

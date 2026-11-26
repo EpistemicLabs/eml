@@ -340,6 +340,40 @@ export interface ContextCompactionItem {
   id: string
 }
 
+export type CollabAgentTool =
+  | 'spawnAgent' | 'sendInput' | 'resumeAgent' | 'wait' | 'closeAgent' | 'sendMessage' | 'followupTask' | 'interruptAgent' | 'listAgents'
+
+export type CollabAgentStatus = 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored' | 'shutdown' | 'notFound'
+
+/** A call of one of the agent's tools for its subagents. A subagent is a thread of its own, its id in `receiverThreadIds`. */
+export interface CollabAgentToolCallItem {
+  type: 'collabAgentToolCall'
+  id: string
+  tool: CollabAgentTool
+  status: 'inProgress' | 'completed' | 'failed' | 'interrupted'
+  senderThreadId: string
+  /** For spawnAgent: the new subagent's thread. */
+  receiverThreadIds: string[]
+  prompt: string | null
+  model: string | null
+  reasoningEffort: string | null
+  agentsStates: Record<string, { status: CollabAgentStatus; message: string | null } | undefined>
+}
+
+/**
+ * Something that happened to a subagent, in its parent's thread: started, interacted, interrupted, completed.
+ * `agentPath` names it ("/root/list_entries"); its own work runs in the thread `agentThreadId`.
+ */
+export interface SubAgentActivityItem {
+  type: 'subAgentActivity'
+  id: string
+  kind: 'started' | 'interacted' | 'interrupted' | 'completed'
+  agentThreadId: string
+  agentPath: string
+  model: string | null
+  reasoningEffort: string | null
+}
+
 /** The item kinds the runtime reads. Every item also carries `startedAtMs` and `completedAtMs`. */
 export type ThreadItem =
   | UserMessageItem
@@ -350,6 +384,8 @@ export type ThreadItem =
   | McpToolCallItem
   | WebSearchItem
   | ContextCompactionItem
+  | CollabAgentToolCallItem
+  | SubAgentActivityItem
 
 // ── Notifications (server → client) ─────────────────────────────────────────
 
@@ -392,6 +428,10 @@ export interface ServerNotifications {
   }
   /** A server request is over: answered by this client, or taken back. */
   'serverRequest/resolved': { threadId: string; requestId: RequestId }
+  /** Output of a running command as it comes; the item's `aggregatedOutput` at its end holds all of it. */
+  'item/commandExecution/outputDelta': { threadId: string; turnId: string; itemId: string; delta: string }
+  /** A sign-in started with `mcpServer/oauth/login` is over. */
+  'mcpServer/oauthLogin/completed': { name: string; threadId: string | null; loginId?: string | null; success: boolean; error?: string }
 }
 
 export type ServerNotificationMethod = keyof ServerNotifications
@@ -465,16 +505,97 @@ export interface PermissionsRequestApprovalResponse {
   scope: 'turn' | 'session'
 }
 
+/** One question of `item/tool/requestUserInput`. `options` null: the answer is free text. */
+export interface ToolRequestUserInputQuestion {
+  id: string
+  header: string
+  question: string
+  /** An answer of the user's own words is welcome beside the options. */
+  isOther: boolean
+  isSecret: boolean
+  options: Array<{ label: string; description: string }> | null
+}
+
+/** Marked experimental in the generated types, but part of the stable request list. */
+export interface ToolRequestUserInputParams {
+  threadId: string
+  turnId: string
+  itemId: string
+  questions: ToolRequestUserInputQuestion[]
+  isBlocking: boolean
+}
+
+/** The answers by question id. */
+export interface ToolRequestUserInputResponse {
+  answers: Record<string, { answers: string[] }>
+}
+
 /** By method. */
 export interface ServerRequests {
   'item/commandExecution/requestApproval': { params: CommandExecutionRequestApprovalParams; result: CommandExecutionRequestApprovalResponse }
   'item/fileChange/requestApproval': { params: FileChangeRequestApprovalParams; result: FileChangeRequestApprovalResponse }
   'item/permissions/requestApproval': { params: PermissionsRequestApprovalParams; result: PermissionsRequestApprovalResponse }
+  'item/tool/requestUserInput': { params: ToolRequestUserInputParams; result: ToolRequestUserInputResponse }
 }
 
 export type ServerRequestMethod = keyof ServerRequests
 
-export type ApprovalResponse = ServerRequests[ServerRequestMethod]['result']
+export type ApprovalResponse = ServerRequests[Exclude<ServerRequestMethod, 'item/tool/requestUserInput'>]['result']
+
+export type ServerRequestResponse = ServerRequests[ServerRequestMethod]['result']
+
+// ── Tool servers ────────────────────────────────────────────────────────────
+
+/** `null`: not known (no thread named, or its configuration changed). */
+export type McpServerConnectionStatus = 'notStarted' | 'starting' | 'connected' | 'authenticationRequired' | 'failed' | 'cancelled' | 'disabled'
+
+export type McpAuthStatus = 'unknown' | 'unsupported' | 'notLoggedIn' | 'bearerToken' | 'oAuth'
+
+export interface ListMcpServerStatusParams {
+  cursor?: string | null
+  limit?: number | null
+  /** Left out: "full", every resource and template as well. */
+  detail?: 'full' | 'toolsAndAuthOnly' | null
+  /** With it, the thread's own connections and their state. */
+  threadId?: string | null
+  serverName?: string | null
+}
+
+/** One tool server, as the server reports it: the parts read here. */
+export interface McpServerStatus {
+  name: string
+  runtimeStatus: McpServerConnectionStatus | null
+  pluginId: string | null
+  /** The endpoint's origin, without credentials or path; null for a process on this machine. */
+  httpOrigin: string | null
+  tools: Record<string, unknown>
+  /** Tool discovery failed; null when a catalog came back. */
+  toolsError: string | null
+  authStatus: McpAuthStatus
+}
+
+export interface ListMcpServerStatusResponse {
+  data: McpServerStatus[]
+  nextCursor: string | null
+}
+
+export interface McpServerOauthLoginParams {
+  name: string
+  threadId?: string | null
+}
+
+/** Completion comes as `mcpServer/oauthLogin/completed`, with the same `loginId`. */
+export interface McpServerOauthLoginResponse {
+  authorizationUrl: string
+  loginId?: string
+}
+
+/** Adds input to the running turn; refused when `expectedTurnId` is not the one running. */
+export interface TurnSteerParams {
+  threadId: string
+  input: UserInput[]
+  expectedTurnId: string
+}
 
 // ── Requests (client → server) ──────────────────────────────────────────────
 
@@ -487,6 +608,12 @@ export interface ClientRequests {
   'thread/turns/list': { params: ThreadTurnsListParams; result: ThreadTurnsListResponse }
   'turn/start': { params: TurnStartParams; result: TurnStartResponse }
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
+  'turn/steer': { params: TurnSteerParams; result: { turnId: string } }
+  'mcpServerStatus/list': { params: ListMcpServerStatusParams; result: ListMcpServerStatusResponse }
+  /** Reads the tool servers' configuration again; a loaded thread connects anew at its next turn. */
+  'config/mcpServer/reload': { params: undefined; result: Record<string, never> }
+  /** Only for a server over streamable HTTP. */
+  'mcpServer/oauth/login': { params: McpServerOauthLoginParams; result: McpServerOauthLoginResponse }
 }
 
 export type ClientRequestMethod = keyof ClientRequests
