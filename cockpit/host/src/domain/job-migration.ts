@@ -28,7 +28,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *     time, which the engine fires late; when the task gets its wake-up from another job, its prompt goes into the
  *     journal, and the report says so. One that has run has nothing to carry over. A run that waited to start, or
  *     was starting, never reached a session: by it the job has not run, and the run is closed, so the wake-up fires
- *     in its place, once. A repeating job's run of that kind is carried, naming its due time as a firing of its cron;
+ *     in its place, once. A repeating job's run of that kind is carried, naming its due time as a firing of its cron,
+ *     only when the job's time is on the task: of a job left out (below) it is settled as history under the job's id;
  *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
  *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
  *     one-time job next to running ones is left out, with a journal line;
@@ -228,6 +229,9 @@ export const MIGRATED_AWAY = 'its job ended when schedules moved onto tasks'
 
 /** The note of a one-time job's open run that never reached a session: its time is the task's wake-up, which fires in its place. */
 export const NOT_REACHED = 'it had not started when schedules moved onto tasks: its time is the task\'s wake-up now, which fires in its place'
+
+/** The note of an open run of a job that was not moved onto its task (left out): it never started, and nothing fires it now. */
+export const NOT_MOVED = 'it had not started when schedules moved onto tasks, and its job was not moved onto the task: nothing fires it now'
 
 /** The prompt a scheduled hand-over gave its job: built from the task itself (application/task-runner.ts stepPrompt), so the task's text says it already. */
 const builtFromTask = (prompt: string, taskId: string) => prompt.startsWith('A scheduled job started you for "') && prompt.includes(`(task ${taskId})`)
@@ -451,13 +455,17 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   // A one-time job that never ran is the task's wake-up (or noted in the journal): its open run that never reached a
   // session is closed, not carried, so the wake-up fires once, through the engine's own path. An open run of a
   // repeating job that never reached a session is carried, and names the time that fired: its due time, of its cron.
+  // Only a job that moved onto the task carries such a run: one left out (another zone, past the limit of repeating
+  // times) is settled as history under its own id, since the task has no time of it that could fire it.
   const notRun = new Set([...ahead, ...overdueOnce].map((j) => j.id))
+  const notMoved = new Set(lines.filter((l) => l.kind === 'lost').map((l) => l.id))
   const settled = new Map<string, JobRun[]>()
+  const settle = (j: JobV1, r: JobRun, note: string) => settled.set(j.id, [...(settled.get(j.id) ?? []), { ...r, status: 'skipped', note, finishedAt: iso(now) }])
   const cronOf = new Map(kept.filter((j) => scheduleTriggerOf(j)?.cron !== undefined).map((j) => [j.id, scheduleTriggerOf(j)!.cron!.trim()]))
   const allRuns = live.flatMap((j) => (input.runs[j.id] ?? []).flatMap((r): JobRun[] => {
     if (!unreached(r)) return [r]
-    if (notRun.has(j.id)) {
-      settled.set(j.id, [...(settled.get(j.id) ?? []), { ...r, status: 'skipped', note: NOT_REACHED, finishedAt: iso(now) }])
+    if (notRun.has(j.id) || notMoved.has(j.id)) {
+      settle(j, r, notRun.has(j.id) ? NOT_REACHED : NOT_MOVED)
       return []
     }
     const cron = cronOf.get(j.id)

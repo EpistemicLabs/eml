@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { changedMeanwhile, jobMigrationReport, leftoverNote, MIGRATED_AWAY, NOT_REACHED, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { changedMeanwhile, jobMigrationReport, leftoverNote, MIGRATED_AWAY, NOT_MOVED, NOT_REACHED, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
@@ -556,6 +556,24 @@ describe('planning jobs onto their tasks', () => {
       expect(t.runs).toMatchObject([{ id: 'r1', jobId: 't1', status: 'waiting', fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: PAST }], timeZone: 'Europe/Berlin' } }])
       // the job's prompt is in the task's text, where a new session of the task reads it
       expect(t.brain?.appended).toEqual(['Every 0 8 * * 1-5: Write the brief.'])
+    })
+
+    it('a repeating job that is left out does not carry its run: it is settled as history under the job\'s id, and its cron is not on the task', () => {
+      const first = job({ triggers: [{ type: 'schedule', cron: '0 8 * * 1-5', timeZone: 'Asia/Makassar' }] })
+      const berlin = cron('0 9 * * 1-5', { name: 'Berlin brief', runCount: 1 })
+      const [t] = plan([first, berlin], [task()], { runs: { [berlin.id]: [unreached(berlin.id, 'r1', 'waiting')] } }).tasks
+      expect(t.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Asia/Makassar' })
+      expect(t.jobs.find((j) => j.id === berlin.id)).toMatchObject({ kind: 'lost' })
+      expect(t.runs).toEqual([])
+      expect(t.history[berlin.id]).toMatchObject([{ id: 'r1', jobId: berlin.id, status: 'skipped', note: NOT_MOVED }])
+      // its run is no run of the task: the record's count holds none of it
+      expect(t.record).toMatchObject({ id: 't1', runCount: 0 })
+      // the same past the limit of repeating times
+      const many = Array.from({ length: 10 }, (_, i) => cron(`0 ${i} * * *`))
+      const over = cron('0 23 * * *', { runCount: 1 })
+      const [full] = plan([...many, over], [task()], { runs: { [over.id]: [unreached(over.id, 'r2', 'starting')] } }).tasks
+      expect(full.runs).toEqual([])
+      expect(full.history[over.id]).toMatchObject([{ id: 'r2', status: 'skipped', note: NOT_MOVED }])
     })
   })
 

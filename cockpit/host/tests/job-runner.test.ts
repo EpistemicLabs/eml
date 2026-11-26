@@ -432,6 +432,46 @@ describe('deriving what is due', () => {
     expect(world.alerts).toEqual([])
   })
 
+  describe('a waiting run of version 1, moved onto its task', () => {
+    const v1 = (id: string, cron: string, timeZone: string, patch: Record<string, unknown> = {}) => ({
+      id, name: id, kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'brief',
+      prompt: `Do ${id}.`, target: { type: 'worker', projectId: 'eml' }, triggers: [{ type: 'schedule', cron, timeZone }],
+      toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt: '2026-11-10T00:00:00.000Z', runCount: 1, failures: 0, ...patch,
+    })
+    const waiting = (jobId: string, dueAt: string, attempts: number): JobRun => ({
+      id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt, createdAt: dueAt, status: 'waiting', attempts,
+      nextAttemptAt: attempts > 0 ? dueAt : null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: attempts > 0 ? 'a session of the task was busy' : null,
+    })
+    /** Plans the jobs onto the task 'brief' at `now` and writes what the migration writes: the schedule, the record, the carried runs. */
+    const migrate = (jobs: Array<Record<string, unknown>>, runsOf: Record<string, JobRun[]>, now: number) => {
+      const task = world.task('brief', null)
+      const [planned] = planJobMigration({
+        jobs: jobs as never, runs: runsOf, keys: {}, space: { key: null, name: 'Main', shared: false }, me: 'member', now,
+        tasks: { brief: { id: 'brief', status: 'active', content: task.content, properties: task.properties as never } }, routineTaskOf: () => null,
+      }).tasks
+      world.setSchedule('brief', planned.schedule)
+      world.store.put({ ...planned.record!, updatedAt: '2026-11-01T00:00:00.000Z' })
+      for (const run of planned.runs) world.store.addRun(run)
+      world.now = now
+      return planned
+    }
+
+    it('of a repeating job left out (another time zone than the task\'s): it is not carried, so nothing fires for its cron', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate(
+        [v1('makassar', '0 8 * * 1-5', ZONE), v1('berlin', '0 9 * * 1-5', 'Europe/Berlin')],
+        { berlin: [waiting('berlin', '2026-11-09T08:00:00.000Z', 0)] }, now,
+      )
+      expect(planned.schedule?.crons).toEqual(['0 8 * * 1-5'])
+      await runner.tick()
+      world.now = Date.parse('2026-11-09T09:00:30Z')
+      await runner.tick()
+      expect(world.started).toEqual([])
+      expect(runs('brief')).toEqual([])
+      expect(planned.history.berlin).toMatchObject([{ id: 'run-berlin', status: 'skipped' }])
+    })
+  })
+
   it('a pause seen after the schedule ran forgets the cursor, so the times of the pause are never made up', async () => {
     world.task('hourly', HOURLY)
     await runner.tick()
