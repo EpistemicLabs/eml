@@ -86,6 +86,7 @@ import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
+import { createMigrationWatch } from './application/job-migration-watch.js'
 import { endRunCount, endTaskRecord } from './application/end-task-record.js'
 import { keepRecord } from './application/record-profile.js'
 import { hasSchedule } from './domain/task-schedule.js'
@@ -1220,13 +1221,21 @@ async function main() {
   // Brain schema 23: waits held back in held-waits.json move into their tasks' waits, once.
   void taskRouter.adoptHeldWaits()
   // Brain schema 24: the jobs of a version 1 jobs.json move onto their tasks, once (application/job-migration.ts).
-  // What a brain did not take (it was not up yet, or a write failed) is tried again a few times, then at the next start.
-  const migrateJobs = (attempt: number): void => {
-    void jobMigration.run()
-      .then((result) => { if (result.failed.length > 0 && attempt < JOB_MIGRATION_RETRY_MS.length) setTimeout(() => migrateJobs(attempt + 1), JOB_MIGRATION_RETRY_MS[attempt]).unref?.() })
-      .catch((err: unknown) => log(`[jobs] migration failed: ${(err as Error).message}`))
-  }
-  migrateJobs(0)
+  // What a brain did not take (it was not up or not migrated yet, or a write failed) is tried again for as long as
+  // jobs wait, and the user is told of a space whose schedules do not fire meanwhile (application/job-migration-watch.ts).
+  createMigrationWatch({
+    run: () => jobMigration.run(),
+    pending: () => {
+      const waiting = new Map<string | null, number>()
+      for (const job of Object.values(jobStore.pendingV1()?.jobs ?? {})) waiting.set(job.spaceId ?? null, (waiting.get(job.spaceId ?? null) ?? 0) + 1)
+      const nameOf = (key: string | null) => spaces.list().find((space) => (space.main ? null : space.id) === key)?.name ?? 'A space this cockpit no longer has'
+      return [...waiting].map(([key, jobs]) => ({ key, name: nameOf(key), jobs }))
+    },
+    notify: (input) => notifier.notify(input),
+    now: () => Date.now(),
+    log,
+    later: (fn, ms) => { setTimeout(fn, ms).unref?.() },
+  }).start()
   // What a session said in a turn that ended while the host went down, or whose route failed, reaches its task now
   // (application/unrouted-turns.ts): first once the brain and the resumed sessions have settled, then every minute.
   const routeLeftovers = () => routeUnrouted({ ledger, router: taskRouter, working: (sessionId) => turns.get(sessionId)?.state === 'working', log })
@@ -1273,8 +1282,6 @@ const NEXT_STEP_TICK_MS = 10_000
 // Run records: a sync writes only what changed; the first waits for the sessions a restart brings back.
 const RUN_SYNC_MS = 60_000
 const RUN_FIRST_SYNC_MS = 30_000
-// When the migration of a version 1 jobs.json is tried again after a part of it failed.
-const JOB_MIGRATION_RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000]
 /** Pending task board commands are applied once their undo window is over. */
 const TASK_COMMAND_TICK_MS = 1000
 /**
