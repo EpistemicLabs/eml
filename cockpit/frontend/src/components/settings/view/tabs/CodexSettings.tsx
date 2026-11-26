@@ -135,7 +135,7 @@ export default function CodexSettings({ codex }: { codex: AgentProviderInfo; onC
             label="Codex in the chat view"
             description={
               chatView
-                ? 'On — a Codex session can open in the chat view. Worker sessions stay in the terminal.'
+                ? 'On — a Codex session can open in the chat view, workers run there, and other sessions can send it messages.'
                 : 'Off — Codex sessions run in the terminal only.'
             }
           >
