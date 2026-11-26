@@ -79,8 +79,9 @@ export interface Job {
   /** Why the cockpit paused the task's schedule (failures in a row); null when it did not. The pause itself is on the task. */
   pausedReason: string | null
   /**
-   * New channel addresses wait for the user's OK; until then the channel does not wake the task. Only the user clears
-   * it, never a session.
+   * New channel addresses wait for the user's OK; until then the record holds what it fires from outside the task's
+   * sessions: the channel does not wake the task, Run now is refused, and the repeating times do not fire (nothing of
+   * them is made up after the OK). The wake-up still fires: a session set it. Only the user clears it, never a session.
    */
   pendingApproval?: boolean
   /**

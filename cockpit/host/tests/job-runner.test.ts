@@ -10,6 +10,7 @@ import { withSchedule } from '../src/domain/task-schedule.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
 import type { WorkerStatus } from '../src/domain/session-attention.js'
 import { SCHEDULE_TASK_RULE } from '../src/domain/run-text.js'
+import { planJobMigration } from '../src/domain/job-migration.js'
 
 // The engine fires the tasks' schedules: it reads the open tasks of each space, works out what is due against the
 // task's local record, and carries a firing out by the four-line order. It starts only with room, retries a busy
@@ -370,6 +371,64 @@ describe('deriving what is due', () => {
     world.now = Date.parse('2026-11-11T00:00:30Z')
     await runner.tick()
     expect(world.started).toHaveLength(1)
+  })
+
+  it('a record that waits for the user\'s OK holds the task\'s repeating times as it holds the channel; the wake-up still fires, and once approved nothing of the hold is made up', async () => {
+    world.task('mail', { crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], time_zone: ZONE })
+    await runner.tick()
+    world.store.put({ ...world.store.get('mail')!, pendingApproval: true, updatedAt: '2026-11-01T00:00:00.000Z' })
+    world.now = Date.parse('2026-11-09T05:00:30Z') // 13:00 in Asia/Makassar
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    expect(world.alerts).toEqual([])
+    // the wake-up is set by a session, not by an outside sender: it fires
+    world.setSchedule('mail', { crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', time_zone: ZONE })
+    world.now = Date.parse('2026-11-09T06:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')[0].fired).toEqual({ wake: { at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', bySession: null }, timeZone: ZONE })
+    // approved after 18:00: that time is not made up; 22:00 fires
+    const { pendingApproval: _ok, ...approved } = world.store.get('mail')!
+    world.store.put(approved)
+    world.now = Date.parse('2026-11-09T10:30:00Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    world.now = Date.parse('2026-11-09T14:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(2)
+    expect(runs('mail').at(-1)!.fired?.crons).toEqual([{ cron: '0 18,22 * * 1-5', dueAt: '2026-11-09T14:00:00.000Z' }])
+  })
+
+  it('the reviewer\'s case: a mail routine and a job that waited for the OK on one task, moved at 13:30, fire no 09:00 run, no second 13:00 and no missed time', async () => {
+    const now = Date.parse('2026-11-09T05:30:00Z') // Monday 13:30 in Asia/Makassar
+    const v1 = (id: string, cron: string, nextRunAt: string, patch: Record<string, unknown> = {}) => ({
+      id, name: id, kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'mail',
+      prompt: `Do ${id}.`, target: { type: 'worker', projectId: 'eml' }, triggers: [{ type: 'schedule', cron, timeZone: ZONE }],
+      toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt, runCount: 3, failures: 0, ...patch,
+    })
+    const jobs = [
+      v1('noon', '0 13 * * 1-5', '2026-11-10T05:00:00.000Z'),
+      v1('evening', '0 18,22 * * 1-5', '2026-11-09T10:00:00.000Z'),
+      // v1 never fired it: it waited for the user's OK, and its time stood at 09:00 today
+      v1('morning', '0 9 * * *', '2026-11-09T01:00:00.000Z', { pendingApproval: true, triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: ZONE }, { type: 'mail', match: [] }] }),
+    ]
+    const task = world.task('mail', null)
+    const [planned] = planJobMigration({
+      jobs: jobs as never, runs: {}, keys: {}, space: { key: null, name: 'Main', shared: false }, me: 'member', now,
+      tasks: { mail: { id: 'mail', status: 'active', content: task.content, properties: task.properties as never } }, routineTaskOf: () => null,
+    }).tasks
+    // the held job's time is not counted as overdue: the cursor is the migration's now
+    expect(planned.record).toMatchObject({ cursor: '2026-11-09T05:30:00.000Z', pendingApproval: true })
+    world.setSchedule('mail', planned.schedule)
+    world.store.put({ ...planned.record!, updatedAt: '2026-11-01T00:00:00.000Z' })
+    world.now = now
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T10:00:30Z')
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    expect(world.alerts).toEqual([])
   })
 
   it('a pause seen after the schedule ran forgets the cursor, so the times of the pause are never made up', async () => {

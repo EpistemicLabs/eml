@@ -464,8 +464,10 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     for (const grant of live.flatMap((j) => activeGrants(j, now))) if (!grants.has(grant.tool) || grants.get(grant.tool)!.until < grant.until) grants.set(grant.tool, grant)
     const counted = kept.length === 1 && kept[0].end?.afterRuns !== undefined ? kept[0] : null
     if (!counted && kept.some((j) => j.end?.afterRuns !== undefined)) settings.push('a number of runs to end after is not carried over: the task has more than one time')
-    // A repeating time that came due before the migration (the cockpit was down) is still seen as due or missed.
-    const overdue = kept.filter((j) => !allPaused && scheduleTriggerOf(j)?.cron !== undefined && j.nextRunAt && Date.parse(j.nextRunAt) <= now).map((j) => Date.parse(j.nextRunAt!))
+    // A repeating time that came due before the migration (the cockpit was down) is still seen as due or missed. Not
+    // the time of a job version 1 held (paused, or waiting for the user's OK): it never fired one, so its time is no
+    // run that is owed, and it never sets the cursor back.
+    const overdue = kept.filter((j) => !allPaused && !j.paused && !j.pendingApproval && scheduleTriggerOf(j)?.cron !== undefined && j.nextRunAt && Date.parse(j.nextRunAt) <= now).map((j) => Date.parse(j.nextRunAt!))
     const started = allRuns.map((r) => r.startedAt).filter((s): s is string => Boolean(s)).sort()
     const reason = allPaused ? timed.find((j) => j.pausedReason)?.pausedReason ?? null : null
     const toolProfile = live.reduce<ToolProfile | null>((kept, j) => narrowedProfile(kept, j.toolProfile, undefined) as ToolProfile | null, null)

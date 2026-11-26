@@ -362,7 +362,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   schedule is never closed by a run: its owner ends the schedule and closes it. Nothing fires on a closed task.
 - **Mail:** the schedule tool's `mail: { domains, addresses }` puts a mail channel on the task's record: the channel
   bridge then wakes the task when such mail arrives. Replies are drafts, and it reacts only once the user gave their OK
-  on the task (Approve in the task panel's Schedule section); adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
+  on the task (Approve in the task panel's Schedule section); until then its repeating times and Run now are held
+  too (nothing of them is made up afterwards), while its wake-up still fires. Adding addresses later asks again. Switching a channel to send is the user's alone, never a session's.
   A session a firing starts carries the task's id in its ledger entry (`jobId`, the record's id), so its channel tools
   act for that task on every resume. A shared space's tasks get no mail channel.
 - **Limited tasks and grants:** a task's sessions start with its maker's tools: a session whose own tools are narrowed

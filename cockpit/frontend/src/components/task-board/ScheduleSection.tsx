@@ -94,7 +94,7 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
       {record?.pendingApproval && (
         // A safety step: new addresses do not wake the task until the user says so.
         <div role="group" aria-label="Waiting for your OK" className="flex flex-col gap-2 rounded-xl border border-status-you/40 bg-status-you/10 px-3 py-2.5">
-          <span><b className="text-you-ink">This task wants to be woken by {channels.length > 0 ? channels.join(' and ') : 'messages'}.</b> Messages for it wait, and Run now is held, until you approve.</span>
+          <span><b className="text-you-ink">This task wants to be woken by {channels.length > 0 ? channels.join(' and ') : 'messages'}.</b> Messages for it wait, and its repeating times and Run now are held, until you approve.</span>
           <span><button type="button" className={PRIMARY} disabled={busy} onClick={() => void change({ kind: 'approve' })}>Approve</button></span>
         </div>
       )}

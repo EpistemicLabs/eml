@@ -542,6 +542,16 @@ describe('planning jobs onto their tasks', () => {
     })
   })
 
+  it('a job that waited for the user\'s OK never fired in version 1: its time is not overdue, and its hold is the record\'s', () => {
+    const held = cron('0 9 * * *', { pendingApproval: true, nextRunAt: '2026-11-26T08:00:00.000Z' })
+    const [t] = plan([cron('0 13 * * 1-5', { nextRunAt: '2026-11-26T12:00:00.000Z' }), held]).tasks
+    expect(t.record).toMatchObject({ cursor: '2026-11-26T10:00:00.000Z', pendingApproval: true })
+    // a paused one is not overdue either (and pauses the whole schedule)
+    expect(plan([cron('0 13 * * 1-5'), cron('0 9 * * *', { paused: true, nextRunAt: '2026-11-26T08:00:00.000Z' })]).tasks[0].record?.cursor).toBe('2026-11-26T10:00:00.000Z')
+    // a time that is due and not held still is
+    expect(plan([cron('0 9 * * *', { nextRunAt: '2026-11-26T08:00:00.000Z' }), held]).tasks[0].record?.cursor).toBe('2026-11-26T07:59:59.999Z')
+  })
+
   it('a job without a task gets a task made for it; without a project of the brain it stays as it is; one that is over is dropped', () => {
     const loose = cron('0 8 * * 1-5', { taskId: null })
     const [t] = plan([loose], []).tasks

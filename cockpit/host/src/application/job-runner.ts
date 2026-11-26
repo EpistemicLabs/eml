@@ -541,9 +541,18 @@ export class JobRunner {
         return
       }
     }
+    // Waiting for the user's OK holds what the record fires from outside the task's sessions: the channel, Run now and
+    // the repeating times. The wake-up is not held (a session set it, not an outside sender). As in a pause, nothing
+    // that falls due meanwhile is made up once the OK is given: the cursor is forgotten.
+    const waitsForOk = record.pendingApproval === true
+    if (waitsForOk && timed.crons?.length) {
+      timed = setCrons(timed, [])
+      if (!timed) return rests()
+    }
     const due = dueOf(timed, record, now, JOB_LIMITS.lateLimitMs)
     if (ended && !due.firing && due.missed.length === 0) return rests()
-    if (!sameInstant(due.cursor, record.cursor)) record = { ...record, cursor: due.cursor }
+    const cursor = waitsForOk ? null : due.cursor
+    if (!sameInstant(cursor, record.cursor)) record = { ...record, cursor }
     const timeZone = schedule.time_zone
     for (const missed of due.missed) {
       const late = formatDuration(now - Date.parse(missed.dueAt))
