@@ -312,7 +312,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
           // Checked again at the write: it is removed only while the task still has the schedule the plan saw and
           // still no record. Otherwise someone set it meanwhile, and it is left alone.
           const still = (current: ScheduleFields | null) => sameSchedule(current, left.schedule) && deps.store.get?.(left.taskId) === undefined
-          const written = await editTaskSchedule(brain, left.taskId, (current) => (still(current) ? null : current), { text: leftoverNote(left.schedule), onlyWithChange: true })
+          const written = await editTaskSchedule(brain, left.taskId, (current) => (still(current) ? null : current), { text: leftoverNote(left.schedule, left.shared === true), onlyWithChange: true })
           if (written.changed) {
             result.leftovers += 1
             deps.log(`[jobs] migration, ${spaceTag(space)}: task ${left.taskId.slice(0, 8)}: a schedule without a job was left on this task; removed`)

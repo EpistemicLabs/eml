@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { changedMeanwhile, jobMigrationReport, MIGRATED_AWAY, NOT_REACHED, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
+import { changedMeanwhile, jobMigrationReport, leftoverNote, MIGRATED_AWAY, NOT_REACHED, planJobMigration, scheduleAtSchema24, stepOf, type JobMigrationInput, type JobMigrationTask } from '../src/domain/job-migration.js'
 import type { JobV1 } from '../src/domain/job-v1.js'
 import type { JobRun } from '../src/domain/job.js'
 import { everyParagraph, withParagraph } from '../src/domain/schedule-tool.js'
@@ -355,9 +355,12 @@ describe('planning jobs onto their tasks', () => {
       const j = cron('0 8 * * 1-5')
       const shared: Partial<JobMigrationInput> = { space: { key: null, name: 'Team', shared: true }, members: ['member', 'other'] }
       const p = plan([j], [task()], { ...shared, scheduled: [leftover('t2'), leftover('t3', {}, { assignee_ids: ['other'] }), leftover('t4', { ingested_by: 'atlas' }, { assignee_ids: [] })], records: new Set() })
-      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }])
+      expect(p.leftovers).toEqual([{ taskId: 't2', title: 'Task t2', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, shared: true }])
+      // the other member's old cockpit may have run it: the report claims only what this cockpit knows
       const report = jobMigrationReport(p, { space: 'Team', at: 'now', dryRun: false })
-      expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
+      expect(report).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)). No job on this cockpit ran it; it is removed so nothing starts to run it now.')
+      expect(leftoverNote({ crons: ['0 7 * * *'], time_zone: 'UTC' }, true)).toBe('A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. No job on this cockpit ran it; it is removed so nothing starts to run it now. Set a new time if the task should run at one.')
+      expect(leftoverNote({ crons: ['0 7 * * *'], time_zone: 'UTC' }, false)).toContain('Nothing ran it then')
       expect(report).not.toContain('t3')
       expect(report).not.toContain('In a shared space')
     })

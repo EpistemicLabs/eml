@@ -194,11 +194,18 @@ export interface LeftoverSchedule {
   schedule: ScheduleFields
   /** Set by the writer: at its removal the task had another schedule than the plan saw, or a record by then. It was left alone. */
   changed?: boolean
+  /** A shared space: the other member's old cockpit may have run it, so only this cockpit's jobs are spoken for. */
+  shared?: true
 }
 
-/** The journal line of a left-over schedule that is removed. */
-export const leftoverNote = (schedule: ScheduleFields) =>
-  `A schedule without a job was left on this task (${scheduleText(schedule)}) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.`
+/** What is said of a left-over schedule that is removed: in a shared space only what this cockpit knows. */
+const leftoverWhy = (shared: boolean) => (shared
+  ? 'No job on this cockpit ran it; it is removed so nothing starts to run it now.'
+  : 'Nothing ran it then, so it is removed and nothing starts to run it now.')
+
+/** The journal line of a left-over schedule that is removed; `shared`: the task is in a shared space. */
+export const leftoverNote = (schedule: ScheduleFields, shared = false) =>
+  `A schedule without a job was left on this task (${scheduleText(schedule)}) from before schedules moved onto tasks. ${leftoverWhy(shared)} Set a new time if the task should run at one.`
 
 export interface JobMigrationPlan {
   tasks: TaskMigration[]
@@ -593,7 +600,7 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
     // Only a task this cockpit fires (the one rule, in every space; none of these has a record): never another
     // member's, nor one no member owns.
     if (!firesHere(firingOf(input.space.shared, task, input.me, input.members ?? null), false)) continue
-    leftovers.push({ taskId: task.id, title: nameOfTask(task), schedule })
+    leftovers.push({ taskId: task.id, title: nameOfTask(task), schedule, ...(input.space.shared ? { shared: true as const } : {}) })
   }
   return { tasks, leftovers, elsewhere: input.jobs.length - mine.length }
 }
@@ -669,7 +676,9 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
   const leftovers = plan.leftovers ?? []
   for (const left of leftovers) {
     out.push(`## ${left.title} (${left.taskId.slice(0, 8)}) — a schedule without a job`, '')
-    out.push(`- A schedule without a job was left on this task (${scheduleText(left.schedule)}); ${left.changed ? 'changed meanwhile, left alone' : 'removed'}.`)
+    out.push(left.shared && !left.changed
+      ? `- A schedule without a job was left on this task (${scheduleText(left.schedule)}). ${leftoverWhy(true)}`
+      : `- A schedule without a job was left on this task (${scheduleText(left.schedule)}); ${left.changed ? 'changed meanwhile, left alone' : 'removed'}.`)
     out.push('')
   }
   if (plan.tasks.length === 0 && leftovers.length === 0) out.push('Nothing to move.', '')
