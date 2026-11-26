@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { editTaskSchedule, scheduleWrite, ScheduleWriteError, writeTaskSchedule, type ScheduledTask } from '../src/application/task-schedule-write.js'
-import { addCron, clearWake, setWake } from '../src/domain/task-schedule.js'
+import { editTaskSchedule, scheduleWrite, scheduleWritesQueued, ScheduleWriteError, writeTaskSchedule, type ScheduledTask } from '../src/application/task-schedule-write.js'
+import { addCron, clearWake, setPaused, setWake } from '../src/domain/task-schedule.js'
 
 function brainWith(task: ScheduledTask) {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -74,5 +74,84 @@ describe('writing a task\'s schedule to the brain', () => {
     const w = brainWith(delegated(daily))
     await expect(editTaskSchedule(w.brain, 't1', (schedule, task) => addCron(schedule, task.status === 'active' ? 'not a cron' : '0 9 * * *'))).rejects.toThrow('cron:')
     expect(w.posts).toEqual([])
+  })
+})
+
+// A brain whose reads and writes take a moment, as the real one does: a write lands some ticks after the read.
+function slowBrain(task: ScheduledTask & { rev?: number }, opts: { conflicts?: number } = {}) {
+  const state = structuredClone(task)
+  const posts: Array<Record<string, unknown>> = []
+  let conflicts = opts.conflicts ?? 0
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 1))
+  return {
+    state, posts,
+    brain: {
+      async get() { await tick(); return structuredClone(state) },
+      async post(_path: string, body: Record<string, unknown>) {
+        await tick()
+        posts.push(body)
+        if (conflicts > 0) {
+          conflicts -= 1
+          // someone else wrote the task in between
+          state.rev = (state.rev ?? 0) + 1
+          state.properties = { ...state.properties, delegation: { ...state.properties!.delegation!, checkpoint: 'before' } }
+          throw Object.assign(new Error('the engram changed since it was read'), { status: 409 })
+        }
+        if (typeof body.base_rev === 'number' && body.base_rev !== state.rev) throw Object.assign(new Error('the engram changed since it was read'), { status: 409 })
+        if (body.delegation) state.properties = { ...state.properties, delegation: body.delegation as never }
+        if (typeof state.rev === 'number') state.rev += 1
+        return {}
+      },
+    },
+  }
+}
+
+describe('schedule writes of one task never overlap', () => {
+  it('two edits made at the same moment both land: the second reads what the first wrote', async () => {
+    const w = slowBrain(delegated(daily))
+    // the engine sets the wake-up while the owner pauses the schedule
+    const [woken, paused] = await Promise.all([
+      editTaskSchedule(w.brain, 't1', (schedule) => setWake(schedule, { at: '2026-11-27T02:00:00Z', why: 'Look again' })),
+      editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true), { text: 'The owner paused its schedule.' }),
+    ])
+    expect(w.state.properties?.delegation?.schedule).toEqual({ crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z', why: 'Look again', time_zone: 'UTC', paused: true })
+    expect(woken.schedule).not.toHaveProperty('paused')
+    expect(paused.schedule).toMatchObject({ at: '2026-11-27T02:00:00.000Z', paused: true })
+    // in the order they were asked for, one after the other
+    expect(w.posts.map((body) => Object.keys((body.delegation as { schedule: object }).schedule).includes('paused'))).toEqual([false, true])
+  })
+
+  it('writes to different tasks do not wait for each other, and a write that fails holds nothing up', async () => {
+    const a = slowBrain(delegated(daily))
+    const order: string[] = []
+    const slow = editTaskSchedule({ ...a.brain, get: async () => { await new Promise((resolve) => setTimeout(resolve, 20)); order.push('t1 read'); return structuredClone(a.state) } }, 't1', (s) => setPaused(s, true))
+    const other = editTaskSchedule(a.brain, 't2', (s) => setPaused(s, true)).then(() => order.push('t2 written'))
+    await Promise.all([slow, other])
+    expect(order).toEqual(['t2 written', 't1 read'])
+
+    const failing = editTaskSchedule({ ...a.brain, get: async () => { throw new Error('the brain does not answer') } }, 't1', (s) => s)
+    const after = editTaskSchedule(a.brain, 't1', (s) => setPaused(s, false))
+    await expect(failing).rejects.toThrow('the brain does not answer')
+    expect((await after).schedule).not.toHaveProperty('paused')
+    // nothing is kept for a task once its writes are through
+    await Promise.resolve()
+    expect(scheduleWritesQueued()).toBe(0)
+  })
+
+  it('carries the rev the task was read at, and reads again once when the task changed in between', async () => {
+    const w = slowBrain({ ...delegated(daily), rev: 7 }, { conflicts: 1 })
+    const written = await editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true))
+    expect(w.posts.map((body) => body.base_rev)).toEqual([7, 8])
+    // the second try wrote onto what the other writer had left
+    expect(w.posts[1].delegation).toMatchObject({ checkpoint: 'before', schedule: { paused: true } })
+    expect(written).toMatchObject({ changed: true, schedule: { paused: true } })
+    // a task that keeps changing: the second conflict is the caller's to see
+    const busy = slowBrain({ ...delegated(daily), rev: 7 }, { conflicts: 2 })
+    await expect(editTaskSchedule(busy.brain, 't1', (schedule) => setPaused(schedule, true))).rejects.toMatchObject({ status: 409 })
+    expect(busy.posts).toHaveLength(2)
+    // a brain that gives no rev gets none back
+    const plain = slowBrain(delegated(daily))
+    await editTaskSchedule(plain.brain, 't1', (schedule) => setPaused(schedule, true))
+    expect(plain.posts[0]).not.toHaveProperty('base_rev')
   })
 })

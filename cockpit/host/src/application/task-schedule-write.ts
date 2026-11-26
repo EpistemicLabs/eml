@@ -12,11 +12,20 @@ import { sameSchedule, withSchedule } from '../domain/task-schedule.js'
  *
  * A task without a delegation gets one for `agent` when it gets a schedule (no checkpoint, no request: its schedule
  * starts it, not the runner).
+ *
+ * The write is a read-modify-write of the whole delegation, and several parts of the host make it for the same task:
+ * the engine (a fired wake-up cleared, a pause after failures), a session ending its turn, the schedule tool, the
+ * page's commands. So in this process the writes of one task run one after the other, in the order they were asked
+ * for: each reads what the one before wrote, and none is lost. Against a writer outside this process (another
+ * cockpit on a shared brain, an agent's own brain tool) the write carries the rev the task was read at (the brain's
+ * base_rev precondition); when the task changed in between, it is read again and the edit made once more.
  */
 
 export interface ScheduledTask {
   id: string
   status: string
+  /** The engram's revision as read; the write names it so the brain refuses it when the task changed in between. */
+  rev?: number
   title?: string | null
   content?: string
   ingested_by?: string | null
@@ -55,15 +64,45 @@ export function scheduleWrite(task: ScheduledTask, schedule: ScheduleFields | nu
   return { delegation: withSchedule({ agent }, schedule) }
 }
 
-export async function editTaskSchedule(brain: Pick<EmlApi, 'get' | 'post'>, taskId: string, edit: ScheduleEdit, opts: ScheduleWriteOptions = {}): Promise<ScheduleWritten> {
-  const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as ScheduledTask
-  const current = delegationOf(task)?.schedule ?? null
-  const next = edit(current, task)
-  const write = scheduleWrite(task, next, opts.agent)
-  const { delegation: _never, ...fields } = opts.fields ?? {}
-  const body = { ...fields, ...(write ?? {}), ...(opts.text ? { text: opts.text } : {}) }
-  if (Object.keys(body).length > 0) await brain.post(`/task/${encodeURIComponent(taskId)}/track`, body)
-  return { task, schedule: write ? write.delegation.schedule ?? null : current, changed: write !== null }
+/**
+ * The schedule writes under way or waiting, per task. A task's id is the key: ids are unique across spaces, and two
+ * spaces that did share one would only wait for each other. An entry goes once its last write is over.
+ */
+const queues = new Map<string, Promise<unknown>>()
+
+/** Run `work` after every write of the task that was asked for before it; a write that failed holds nothing up. */
+function inTurn<T>(taskId: string, work: () => Promise<T>): Promise<T> {
+  const run = (queues.get(taskId) ?? Promise.resolve()).then(work, work)
+  const tail = run.then(() => {}, () => {})
+  queues.set(taskId, tail)
+  void tail.then(() => { if (queues.get(taskId) === tail) queues.delete(taskId) })
+  return run
+}
+
+/** How many tasks have a schedule write under way or waiting (for tests: nothing is kept for an idle task). */
+export const scheduleWritesQueued = (): number => queues.size
+
+const isConflict = (err: unknown) => (err as { status?: number })?.status === 409
+
+export function editTaskSchedule(brain: Pick<EmlApi, 'get' | 'post'>, taskId: string, edit: ScheduleEdit, opts: ScheduleWriteOptions = {}): Promise<ScheduleWritten> {
+  return inTurn(taskId, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const task = await brain.get(`/engram/${encodeURIComponent(taskId)}`) as ScheduledTask
+      const current = delegationOf(task)?.schedule ?? null
+      const next = edit(current, task)
+      const write = scheduleWrite(task, next, opts.agent)
+      const { delegation: _never, base_rev: _rev, ...fields } = opts.fields ?? {}
+      const body = { ...fields, ...(write ?? {}), ...(opts.text ? { text: opts.text } : {}) }
+      if (Object.keys(body).length === 0) return { task, schedule: current, changed: false }
+      try {
+        await brain.post(`/task/${encodeURIComponent(taskId)}/track`, typeof task.rev === 'number' ? { ...body, base_rev: task.rev } : body)
+        return { task, schedule: write ? write.delegation.schedule ?? null : current, changed: write !== null }
+      } catch (err) {
+        // The task changed between the read and the write: once more, on the task as it is now.
+        if (attempt > 0 || !isConflict(err)) throw err
+      }
+    }
+  })
 }
 
 /** Set the task's schedule as a whole (null ends it): for a caller that has worked the new one out already. */
