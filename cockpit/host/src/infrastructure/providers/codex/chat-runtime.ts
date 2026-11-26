@@ -551,6 +551,9 @@ export const OPEN_ELSEWHERE = 'this conversation is still open in another proces
 export function createCodexChatRuntimes(spawnProcess: SpawnAppServer = spawnAppServer, host: CodexChatHost = {}): SessionRuntimeFactory {
   return {
     workerMode: WORKER_MODE,
+    // app-server runs the cockpit's hooks only once the user trusted them (hooks.state in config.toml): its own turns
+    // say when the session works.
+    reportsTurns: true,
     start: (request) => new CodexChatRuntime(request, spawnProcess, host),
     // Every Codex session keeps its conversation in the one Codex home (index.ts launch).
     async history({ providerSessionId }: SessionRef) {

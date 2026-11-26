@@ -85,10 +85,11 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRuntimeFactory; endTurnTool?: ChatContext['endTurnTool']; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRuntimeFactory; reportsTurns?: boolean; endTurnTool?: ChatContext['endTurnTool']; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     workerMode: 'auto',
+    ...(opts.reportsTurns ? { reportsTurns: true } : {}),
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
@@ -1935,4 +1936,74 @@ describe('ChatBridge with a Codex session in the chat', () => {
     expect(server.turnTexts().at(-1)).toEqual(['And the summary?'])
     await bridge.end('s1')
   })
+
+  it('says working when a message starts a turn and done when it ends, with no done between a turn and the follow-up it was sent back with', async () => {
+    const { spawn, servers } = fakeSpawn((server) => { server.turnsEnd = false })
+    const { bridge, turns } = setup({ provider: 'codex', chatRuntime: createCodexChatRuntimes(spawn), worksAlone: async () => true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: 'r', createdAt: '' })
+    await settle()
+    const server = sessionServer(servers)!
+    expect(bridge.reportsTurns('s1')).toBe(true)
+    expect(turns.at(-1)).toEqual(['s1', 'working'])
+    // No end_turn call: the chat sends the turn back, and the session works on.
+    server.completeTurn()
+    await settle()
+    expect(server.turnTexts()).toHaveLength(2)
+    expect(turns.map(([, state]) => state)).not.toContain('done')
+    server.completeTurn()
+    await settle()
+    expect(turns.at(-1)).toEqual(['s1', 'done'])
+    expect(turns.filter(([, state]) => state === 'done')).toHaveLength(1)
+    // A message starts the next turn.
+    expect(await bridge.deliver('s1', 'One more thing.')).toBe('delivered')
+    expect(turns.at(-1)).toEqual(['s1', 'working'])
+    await bridge.end('s1')
+  })
 })
+
+/** The bridge's own turn state for a runtime that reports its turns (SessionRuntimeFactory.reportsTurns), its helpers too. */
+describe('ChatBridge with a runtime that reports its turns', () => {
+  const agent = (taskId: string, status: 'running' | 'completed' = 'running'): RuntimeEvent => ({ kind: 'agent_task', taskId, status, description: 'Look it up' } as RuntimeEvent)
+
+  it('ends the turn state at the turn\'s end; a runtime whose hooks say it does not', () => {
+    const own = setup({ reportsTurns: true })
+    own.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(own.turns).toEqual([['s1', 'working'], ['s1', 'done']])
+    // An error ends it too: no hook would.
+    own.runtimes[0].emit({ kind: 'activity', state: 'working' })
+    own.runtimes[0].emit({ kind: 'turn_end', reason: 'error' })
+    expect(own.turns.slice(2)).toEqual([['s1', 'working'], ['s1', 'done']])
+    const hooked = setup()
+    hooked.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    hooked.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(hooked.turns).toEqual([['s1', 'working']])
+    expect(hooked.bridge.reportsTurns('s1')).toBe(false)
+  })
+
+  it('says working when a turn starts without a message, but not over a card that waits for the user', () => {
+    const { bridge, runtimes, turns } = setup({ reportsTurns: true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    turns.length = 0
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    expect(turns).toEqual([['s1', 'working']])
+    runtimes[0].emit({ kind: 'permission_request', requestId: 'r1', toolName: 'Bash', input: {}, title: 'Run it?' } as RuntimeEvent)
+    runtimes[0].emit({ kind: 'activity', state: 'idle' })
+    runtimes[0].emit({ kind: 'activity', state: 'working' })
+    expect(turns).toEqual([['s1', 'working'], ['s1', 'waiting']])
+  })
+
+  it('stays working while its helpers run, and is done a moment after the last came back', () => {
+    const { bridge, runtimes, turns } = setup({ reportsTurns: true })
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
+    runtimes[0].emit(agent('a1'))
+    // A hook's done would not be held here: the hooks are left out for this session.
+    expect(bridge.holdTurnOpen('s1')).toBe(false)
+    runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
+    expect(turns).toEqual([['s1', 'working']])
+    runtimes[0].emit(agent('a1', 'completed'))
+    expect(turns).toEqual([['s1', 'working'], ['s1', 'done', HELPERS_BACK_SETTLE_MS]])
+  })
+})
+
