@@ -319,7 +319,11 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   bridge's tools); while another session of the task works the bridge is asked to try again. The jobs of a
   `jobs.json` from before brain schema 24 move onto their tasks at start (`application/job-migration.ts`): tried
   again every 15 minutes while jobs wait, with each run's report appended to `<home>/jobs-migration-report.md` and
-  the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`).
+  the user told when a job did not move; the bridge follows a moved job's id (`POST /v1/jobs/<id>/rename`). In a home
+  that had such a file, each space is looked through once for a schedule left on a task without a job, also a space
+  without jobs: in a local space it is removed, in a shared one left and reported; until then no schedule is taken up
+  there by being seen. A record made or changed in the last few minutes is left as it is by a pass that finds no
+  schedule on its task (`domain/job.ts` `RECORD_GRACE_MS`).
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself
   (`infrastructure/channel-bridge/`). A session started for a task that listens on a channel gets, at every launch, the bridge's tools `msg_read`, `msg_new` and
