@@ -273,8 +273,9 @@ export function jobIdsContract(name: string, make: () => { ids: JobIds; store: M
 
       const renamed = await ids.rename('job-1', 'task-1')
       expect(renamed).toMatchObject({ outbox: 1, wakeEntries: 1, wakeRetries: 0 })
+      // a retry state is no clash: one of the two is kept under the new id (see the next case)
       expect([...renamed.clashes].sort((a, b) => a.store.localeCompare(b.store))).toEqual([
-        { store: 'outbox', key: 'k-1' }, { store: 'wake_entries', key: 'message:a' }, { store: 'wake_retries', key: 'job-1' },
+        { store: 'outbox', key: 'k-1' }, { store: 'wake_entries', key: 'message:a' },
       ])
       // the rows the new id had are the ones kept
       expect((await outbox.byKey('task-1', 'k-1'))?.id).toBe('o-new')
@@ -283,8 +284,28 @@ export function jobIdsContract(name: string, make: () => { ids: JobIds; store: M
       const wake = (await wakes.pending()).find((p) => p.wake.jobId === 'task-1')?.wake
       expect(wake?.entries).toEqual(expect.arrayContaining([{ kind: 'message', messageId: 'a' }, { kind: 'message', messageId: 'b' }]))
       expect(wake).toMatchObject({ attempts: 1, retryAt: '2026-11-08T10:01:00.000Z' })
+      // the new id's retry was the earlier one: it is kept, and none is left under the old id (its entry that stayed waits for no retry)
+      expect((await wakes.pending()).find((p) => p.wake.jobId === 'job-1')?.wake).toMatchObject({ attempts: 0, retryAt: null })
       // again: nothing moves, the same clashes are still there to see
       expect(await ids.rename('job-1', 'task-1')).toMatchObject({ messages: 0, wakeEntries: 0, wakeRetries: 0, outbox: 0, clashes: expect.arrayContaining([{ store: 'outbox', key: 'k-1' }]) })
+    })
+
+    it('two jobs that merged onto one task both wait for a retry: the earlier one is kept under the new id, and no retry is left under a dead id', async () => {
+      const { ids, wakes } = make()
+      // the old id's entry stays behind too (the same entry in both wakes), so its wake shows what retry it still has
+      for (const jobId of ['job-1', 'job-2', 'task-1']) await wakes.add({ jobId, space: 'support' }, { kind: 'message', messageId: 'a' }, at)
+      const retryOf = async (jobId: string) => { const wake = (await wakes.pending()).find((p) => p.wake.jobId === jobId)?.wake; return wake ? [wake.attempts, wake.retryAt] : null }
+      // the old id's retry is the earlier one: it replaces the new id's
+      await wakes.retryLater('task-1', 1, '2026-11-08T12:00:00.000Z')
+      await wakes.retryLater('job-1', 5, '2026-11-08T11:00:00.000Z')
+      expect(await ids.rename('job-1', 'task-1')).toMatchObject({ wakeRetries: 1, clashes: [{ store: 'wake_entries', key: 'message:a' }] })
+      expect(await retryOf('task-1')).toEqual([5, '2026-11-08T11:00:00.000Z'])
+      expect(await retryOf('job-1')).toEqual([0, null])
+      // the second job's retry is the later one: the new id keeps what it has, and the old row goes all the same
+      await wakes.retryLater('job-2', 2, '2026-11-08T11:30:00.000Z')
+      expect(await ids.rename('job-2', 'task-1')).toMatchObject({ wakeRetries: 0, clashes: [{ store: 'wake_entries', key: 'message:a' }] })
+      expect(await retryOf('task-1')).toEqual([5, '2026-11-08T11:00:00.000Z'])
+      expect(await retryOf('job-2')).toEqual([0, null])
     })
   })
 }

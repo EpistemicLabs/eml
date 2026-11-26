@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as http from 'node:http'
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -25,6 +25,7 @@ const record = (id: string, patch: Partial<Job> = {}): Job => ({ ...newRecord({ 
 
 describe('job contract v1', () => {
   let store: JobStore
+  let file: string
   let dir: string
   let server: http.Server
   let base: string
@@ -40,7 +41,8 @@ describe('job contract v1', () => {
   beforeEach(async () => {
     const home = mkdtempSync(join(tmpdir(), 'job-contract-'))
     dir = join(home, 'job-tokens')
-    store = new JobStore(join(home, 'jobs.json'))
+    file = join(home, 'jobs.json')
+    store = new JobStore(file)
     started = []
     delivered = []
     working = []
@@ -158,6 +160,26 @@ describe('job contract v1', () => {
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
     expect(delivered).toEqual([])
     expect(started).toEqual([])
+  })
+
+  it('answers retry, never refused, to a wake under an id that is moving: a version 1 job that waits for its task, then the old id until the bridge has confirmed the new one', async () => {
+    const OLD = 'aaaaaaaa-1111-4222-8333-444444444444'
+    const wakeOld = async (space = SPACE) => (await call(`/v1/jobs/${OLD}/wake`, space, fixture.wake.request.body)).body
+    // a version 1 file: the job has not moved onto its task yet
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: 'UTC', jobs: { [OLD]: { id: OLD, name: 'Customer mail', spaceId: null, taskId: JOB_ID, triggers: [{ type: 'mail', match: MATCH }] } }, runs: {}, keys: {} }))
+    store = new JobStore(file)
+    expect(await wakeOld()).toEqual(fixture.wake.responses.retry)
+    // another space's token learns nothing of it
+    expect(await wakeOld(OTHER)).toEqual(fixture.wake.responses.refused)
+    // it moved: the record has the task's id, and the bridge still asks under the old one
+    store.migrateV1({ jobIds: [OLD], record: record(JOB_ID), renames: { [OLD]: JOB_ID } })
+    expect(store.pendingV1()).toBeNull()
+    expect(await wakeOld()).toEqual(fixture.wake.responses.retry)
+    expect(await wakeOld(OTHER)).toEqual(fixture.wake.responses.refused)
+    // the bridge has the new id: the old one names nothing any more
+    store.renameConfirmed(OLD)
+    expect(await wakeOld()).toEqual(fixture.wake.responses.refused)
+    expect([started, delivered]).toEqual([[], []])
   })
 
   it('asks the events of a held record and of a paused schedule to come back later, and refuses those of a closed or unknown task', async () => {

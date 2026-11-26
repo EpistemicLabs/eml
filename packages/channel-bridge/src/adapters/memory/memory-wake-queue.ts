@@ -37,8 +37,11 @@ export class MemoryWakeQueue implements WakeQueue {
     this.retries.delete(jobId)
   }
 
-  /** The job's entries and retry state go to another job id (MemoryJobIds); what the new id already holds stays. */
-  renameJob(from: string, to: string): { entries: number; retries: number; entryClashes: string[]; retryClash: boolean } {
+  /**
+   * The job's entries and retry state go to another job id (MemoryJobIds). An entry the new id already holds stays.
+   * Of two retry states the one that comes due earlier is kept under the new id; the other goes.
+   */
+  renameJob(from: string, to: string): { entries: number; retries: number; entryClashes: string[] } {
     const entryClashes: string[] = []
     let entries = 0
     for (const queued of this.entries) {
@@ -53,12 +56,11 @@ export class MemoryWakeQueue implements WakeQueue {
       }
     }
     const retry = this.retries.get(from)
-    const retryClash = retry !== undefined && this.retries.has(to)
-    if (retry && !retryClash) {
-      this.retries.delete(from)
-      this.retries.set(to, retry)
-    }
-    return { entries, retries: retry && !retryClash ? 1 : 0, entryClashes, retryClash }
+    const held = this.retries.get(to)
+    const moves = retry !== undefined && (held === undefined || retry.retryAt < held.retryAt)
+    this.retries.delete(from)
+    if (retry && moves) this.retries.set(to, retry)
+    return { entries, retries: moves ? 1 : 0, entryClashes }
   }
 
   /** The entries no delivery could place, for a person to see. */

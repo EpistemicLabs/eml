@@ -22,7 +22,6 @@ export class MemoryJobIds implements JobIds {
       outbox: outbox.moved,
       clashes: [
         ...wakes.entryClashes.map((key) => ({ store: 'wake_entries' as const, key })),
-        ...(wakes.retryClash ? [{ store: 'wake_retries' as const, key: from }] : []),
         ...outbox.clashes.map((key) => ({ store: 'outbox' as const, key })),
       ],
     }
