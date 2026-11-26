@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool, type RunNowRefusal } from '../domain/job.js'
-import { isTimeZone, parseAt } from '../domain/schedule.js'
+import { isTimeZone, parseAt, unknownTimeZone } from '../domain/schedule.js'
 import {
   APPROVAL_NOTE, describeTask, everyParagraph, findTask, ID_PREFIX, isOpenTask, JOB_ACTIONS, limitRefusal, mailParagraph, mailTrigger,
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
@@ -419,7 +419,7 @@ export class Jobs {
   /** The zone the call's times read in: its own, else the user's (a session writes every time in it). */
   private zone(input: Record<string, unknown>): string {
     const zone = str(input.timezone) ?? this.deps.defaultTimeZone()
-    return isTimeZone(zone) ? zone : refuse(`unknown time zone "${zone}"; use an IANA name such as Europe/Berlin`)
+    return isTimeZone(zone) ? zone : refuse(unknownTimeZone(zone))
   }
 
   /**

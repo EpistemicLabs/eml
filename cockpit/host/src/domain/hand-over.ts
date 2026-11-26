@@ -1,7 +1,8 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
 import { cronInWords } from './run-text.js'
-import { parseAt, isTimeZone, formatInZone } from './schedule.js'
+import { isTimeZone, formatInZone, unknownTimeZone } from './schedule.js'
+import { readAt } from './schedule-tool.js'
 import { addCron, cronRefusal, cronZoneRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 import { PLACEHOLDER_TITLE } from './task-title.js'
@@ -46,14 +47,11 @@ export function readScheduleSpec(input: unknown, now: number, limits: ScheduleSp
   const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined)
   const timeZone = text(s?.timeZone)
   if (!s || !timeZone) return undefined
-  if (!isTimeZone(timeZone)) return { error: `unknown time zone "${timeZone}"; use an IANA name such as Europe/Berlin` }
+  if (!isTimeZone(timeZone)) return { error: unknownTimeZone(timeZone) }
   const at = text(s.at), cron = text(s.cron)
   if (at && !cron) {
-    const when = parseAt(at, timeZone)
-    if (when === null) return { error: `at: "${at}" is not a date and time; write it like 2026-11-13T10:00 (read in ${timeZone})` }
-    if (when <= now) return { error: `at: ${formatInZone(when, timeZone)} (${timeZone}) has passed` }
-    if (when - now > limits.maxAheadMs) return { error: 'at: at most a year ahead' }
-    return { at: new Date(when).toISOString(), timeZone }
+    const read = readAt(at, timeZone, now, limits.maxAheadMs)
+    return 'error' in read ? read : { at: read.at, timeZone }
   }
   if (cron && !at) {
     const refusal = cronRefusal(cron, timeZone, now, limits.minGapMs)
