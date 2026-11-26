@@ -70,6 +70,8 @@ describe('searching sessions', () => {
     const wording = { retry: 'list_sessions with other words', archived: 'list_sessions with archived true', recent: 'list_sessions without words' }
     expect(searchResult([], { words: ['zebra'] }, wording))
       .toBe('No session matches "zebra". Retry with other words from what your user called it: list_sessions with other words. Archived sessions: list_sessions with archived true. The most recent sessions: list_sessions without words.')
+    // Without words there is nothing to retry with.
+    expect(searchResult([], { words: [] }, wording)).toBe('There is no session you can message. Archived sessions: list_sessions with archived true.')
     const found = searchSessions(sessions, { words: ['catalogue'] })
     expect(searchResult(found, { words: ['catalogue'] }, wording)).toBe(searchResult(found, { words: ['catalogue'] }))
   })

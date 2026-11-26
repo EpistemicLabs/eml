@@ -153,6 +153,8 @@ const COMMAND_WORDING: SearchWording = { retry: `${SEARCH} <other words>`, archi
 /** What the search command prints; `wording`: for a reader that searches another way (the list_sessions tool). */
 export function searchResult(found: DirectoryEntry[], query: DirectoryQuery, wording: SearchWording = COMMAND_WORDING): string {
   if (found.length === 0) {
+    // Asked without words: there is nothing to retry with.
+    if (query.words.length === 0) return `There is no session you can message. Archived sessions: ${wording.archived}.`
     return [
       `No session matches "${query.words.join(' ')}". Retry with other words from what your user called it: ${wording.retry}.`,
       `Archived sessions: ${wording.archived}. The most recent sessions: ${wording.recent}.`,
