@@ -2,40 +2,31 @@ import type * as http from 'node:http'
 import type { JobCaller, Jobs } from './application/jobs.js'
 import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
-import type { WorkerStatus } from './domain/session-attention.js'
-import { JOB_ACTIONS } from './application/jobs.js'
-import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 
 /**
- * Jobs over HTTP (application/jobs.ts):
+ * The schedule tool and the user's time zone over HTTP:
  *   POST /api/jobs            from a session (schedule-cli.ts); X-Cockpit-Token = the
  *                             per-boot spawn token. Body: fromSession plus the schedule
- *                             tool's input. Answer: { text, job? }.
- *   GET  /api/jobs            the page: every space's jobs (with their goal) and runs; each run's
- *                             session as it stands now, with its attention (Needs you, Check this).
+ *                             tool's input (application/jobs.ts). Answer: { text, taskId? }.
  *   GET  /api/jobs/time-zone  the page: the user's time zone (Settings › Preferences); null until one is saved.
  *   PUT  /api/jobs/time-zone  the page: { timeZone, explicit? }. Only an explicit one (the user chose it in
  *                             Settings) replaces a saved zone; without it a browser fills in the zone only
  *                             while none is saved, so the last page loaded never moves the user's times.
- *   POST /api/jobs/<id>/<pause|resume|delete|run_now|finish>   the page (Jobs view).
- *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
- *                             for new channel addresses, and send vs draft per channel.
- *   POST /api/jobs/<id>/limited { limited }, /grant { tool, minutes?, reason? }, /revoke { tool }
- *                             the page only: the Limited switch and tools lent for a while.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
+ *
+ * A schedule's controls sit on its task (tasks-api.ts): pause, resume, run now, remove one repeating time and End
+ * schedule are task commands, and the user's own decisions (their OK for new channel addresses, send or draft, the
+ * Limited switch, lent tools) are under /api/v1/tasks/<id>/record.
  */
 
 export interface JobsApiDeps {
-  jobs: Jobs
-  store: JobStore
+  /** The schedule tool: what answers a session's call (application/jobs.ts). */
+  tool: Pick<Jobs, 'handle'>
+  /** The user's time zone (jobs.json). */
+  zones: Pick<JobStore, 'timeZone' | 'setTimeZone'>
   spawnToken: string
-  /** The session as a caller: its space, project and tool profile; null when unknown. */
+  /** The session as a caller: its space, project, task and tool profile; null when unknown. */
   callerOf(sessionId: string): JobCaller | null
-  /** A space's name for the page; null = main. */
-  spaceName(spaceId: string | null): string
-  /** Where the page opens a session: its project and whether it runs in the chat view; null when unknown. */
-  /** The run's session as it stands now; attention: what it waits for from the user (Needs you, Check this). */
-  sessionInfo(sessionId: string): { projectId: string | null; chat: boolean; attention: WorkerStatus | null } | null
 }
 
 type Json = (res: http.ServerResponse, status: number, payload: unknown) => void
@@ -43,12 +34,12 @@ type ReadJson = (req: http.IncomingMessage) => Promise<Record<string, unknown>>
 
 /** A session's request — the one rule for both ways it arrives. The caller has checked the token. */
 export async function requestJobs(deps: { jobs: Pick<Jobs, 'handle'>; callerOf: JobsApiDeps['callerOf'] }, body: Record<string, unknown>): Promise<{ status: number; payload: unknown }> {
-  // The envelope says who asks and how it came; the job tool gets only the tool's own fields.
+  // The envelope says who asks and how it came; the schedule tool gets only the tool's own fields.
   const { fromSession, kind: _kind, token: _token, ...input } = body
   const caller = typeof fromSession === 'string' ? deps.callerOf(fromSession) : null
-  if (!caller) return { status: 403, payload: { error: { code: 'UNKNOWN_SESSION', message: 'Only a cockpit session can schedule jobs' } } }
+  if (!caller) return { status: 403, payload: { error: { code: 'UNKNOWN_SESSION', message: 'Only a cockpit session can schedule' } } }
   const answer = await deps.jobs.handle(caller, input)
-  return { status: answer.status, payload: { text: answer.text, ...(answer.job ? { job: answer.job } : {}) } }
+  return { status: answer.status, payload: { text: answer.text, ...(answer.taskId ? { taskId: answer.taskId } : {}) } }
 }
 
 export async function handleJobsApi(
@@ -56,81 +47,15 @@ export async function handleJobsApi(
 ): Promise<boolean> {
   if (pathname === '/api/jobs' && method === 'POST') {
     if (req.headers['x-cockpit-token'] !== deps.spawnToken) {
-      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can schedule jobs' } })
+      json(res, 403, { error: { code: 'FORBIDDEN', message: 'Only a cockpit session can schedule' } })
       return true
     }
-    const result = await requestJobs(deps, await readJson(req))
+    const result = await requestJobs({ jobs: deps.tool, callerOf: deps.callerOf }, await readJson(req))
     json(res, result.status, result.payload)
     return true
   }
-  if (pathname === '/api/jobs' && method === 'GET') {
-    const jobs = deps.jobs.jobsOf(undefined).map((job) => ({
-      ...job, ...deps.jobs.summary(job), spaceName: deps.spaceName(job.spaceId),
-      runs: [...deps.store.runs(job.id)].reverse().slice(0, 20).map((run) => ({ ...run, session: run.sessionId ? deps.sessionInfo(run.sessionId) : null })),
-    }))
-    json(res, 200, { timeZone: deps.store.timeZone(), jobs })
-    return true
-  }
-  // The user's own decisions: never reachable from a session's tool.
-  const decide = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/(approve|reply|limited|grant|revoke)$/)
-  if (decide && method === 'POST') {
-    const job = deps.store.get(decide[1])
-    if (!job) {
-      json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such job' } })
-      return true
-    }
-    if (decide[2] === 'approve') {
-      const answer = deps.jobs.approve(job)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    const body = await readJson(req)
-    if (decide[2] === 'limited') {
-      if (typeof body.limited !== 'boolean') {
-        json(res, 400, { error: { code: 'INVALID', message: 'limited is true or false' } })
-        return true
-      }
-      const answer = deps.jobs.setLimited(job, body.limited)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    if (decide[2] === 'grant' || decide[2] === 'revoke') {
-      const tool = body.tool
-      if (!(GRANT_TOOLS as readonly unknown[]).includes(tool)) {
-        json(res, 400, { error: { code: 'INVALID_TOOL', message: `tool is one of ${GRANT_TOOLS.join(', ')}` } })
-        return true
-      }
-      const answer = decide[2] === 'grant'
-        ? deps.jobs.grant(job, tool as GrantTool, body.minutes === undefined ? 60 : Number(body.minutes), typeof body.reason === 'string' ? body.reason.slice(0, 200) : null)
-        : deps.jobs.revoke(job, tool as GrantTool)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    const channel = body.channel
-    const mode = body.mode
-    if ((channel !== 'mail' && channel !== 'slack' && channel !== 'whatsapp') || (mode !== 'send' && mode !== 'draft')) {
-      json(res, 400, { error: { code: 'INVALID_REPLY', message: 'channel is mail, slack or whatsapp; mode is send or draft' } })
-      return true
-    }
-    const answer = deps.jobs.setReply(job, channel, mode)
-    json(res, answer.status, { text: answer.text })
-    return true
-  }
-  const act = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/([a-z_]+)$/)
-  if (act && method === 'POST') {
-    const job = deps.store.get(act[1])
-    const action = act[2]
-    if (!job || !(JOB_ACTIONS as readonly string[]).includes(action) || action === 'create' || action === 'list' || action === 'update') {
-      json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such job or action' } })
-      return true
-    }
-    // The user acts on any space's job: as a caller of that space.
-    const answer = await deps.jobs.handle({ sessionId: null, spaceId: job.spaceId, projectId: null, toolProfile: null }, { action, job: job.id })
-    json(res, answer.status, { text: answer.text })
-    return true
-  }
   if (pathname === '/api/jobs/time-zone' && method === 'GET') {
-    json(res, 200, { timeZone: deps.store.timeZone() })
+    json(res, 200, { timeZone: deps.zones.timeZone() })
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'PUT') {
@@ -140,9 +65,9 @@ export async function handleJobsApi(
       json(res, 400, { error: { code: 'INVALID_TIME_ZONE', message: 'timeZone must be an IANA time zone' } })
       return true
     }
-    const saved = deps.store.timeZone()
+    const saved = deps.zones.timeZone()
     const take = body.explicit === true || saved === null
-    if (take) deps.store.setTimeZone(zone)
+    if (take) deps.zones.setTimeZone(zone)
     json(res, 200, { timeZone: take ? zone : saved, changed: take && saved !== zone })
     return true
   }

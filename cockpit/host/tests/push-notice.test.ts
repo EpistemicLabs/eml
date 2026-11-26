@@ -56,6 +56,6 @@ describe('pushMessage', () => {
 
   it('opens the cockpit for a job notice without a session', () => {
     const message = pushMessage({ ...input, kind: 'paused', sessionId: null, jobId: 'j1', title: 'Daily brief', project: undefined }, 'https://cockpit.example')
-    expect(message.notification).toMatchObject({ title: 'Job paused · Daily brief', tag: 'job:j1', navigate: 'https://cockpit.example/' })
+    expect(message.notification).toMatchObject({ title: 'Schedule paused · Daily brief', tag: 'job:j1', navigate: 'https://cockpit.example/' })
   })
 })

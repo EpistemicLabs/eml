@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { recordEndTurn, saidReason, type RecordEndTurnDeps, type SaidTurn } from '../src/application/record-end-turn.js'
-import { deriveTurn, type EndTurn } from '../src/domain/turn-end.js'
+import { checkPrompt, deriveTurn, type EndTurn, type WakeEdit } from '../src/domain/turn-end.js'
 
 const NOW = Date.parse('2026-11-25T08:00:00Z')
 const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
@@ -8,26 +8,30 @@ const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
 function setup(patch: Partial<RecordEndTurnDeps> = {}, task: { open: boolean } | null = { open: true }) {
   const steps: string[] = []
   const kept: Array<{ sessionId: string; said: SaidTurn }> = []
-  const checks: Array<{ sessionId: string; at: string | null }> = []
+  const checks: Array<{ sessionId: string; edit: WakeEdit; why: string }> = []
   const deps: RecordEndTurnDeps = {
     turnOf: async () => ({ ctx, task: task && { id: 't1', name: 'Refund from Acme', open: task.open } }),
     callTime: () => ({ now: NOW, zone: 'UTC' }),
     keep: (sessionId, said) => { steps.push('keep'); kept.push({ sessionId, said }) },
-    turnCheck: async (sessionId, check) => { steps.push('check'); checks.push({ sessionId, at: check.at }); return null },
-    checkSaved: () => null,
+    turnWake: async (sessionId, wake) => {
+      steps.push('wake')
+      checks.push({ sessionId, edit: wake.edit, why: checkPrompt(wake.call, wake.turn.ctx) })
+      return { problem: null, saved: null, nextRun: false }
+    },
     ...patch,
   }
   return { deps, kept, checks, steps }
 }
 
 describe('recording an end_turn call', () => {
-  it('keeps the call with its context and what was derived, then settles the check', async () => {
+  it('keeps the call with its context and what was derived, then settles the task\'s wake-up', async () => {
     const { deps, kept, checks, steps } = setup()
     const call: EndTurn = { result: 'Draft ready', questions: ['Send it today?'] }
     const recorded = await recordEndTurn(deps, 's1', call)
     expect(kept).toEqual([{ sessionId: 's1', said: { call, ctx, derived: deriveTurn(call, ctx) } }])
-    expect(checks).toEqual([{ sessionId: 's1', at: null }])
-    expect(steps).toEqual(['keep', 'check'])
+    // No time: the wake-up goes only if this session set it.
+    expect(checks).toEqual([{ sessionId: 's1', edit: { kind: 'clear', whose: 'own' }, why: checkPrompt(call, ctx) }])
+    expect(steps).toEqual(['keep', 'wake'])
     expect(recorded).toEqual({ derived: deriveTurn(call, ctx), missing: [] })
   })
 
@@ -46,41 +50,65 @@ describe('recording an end_turn call', () => {
     expect(checks).toEqual([])
   })
 
-  it('does not look at the time of a step for the owner: it sets no check', async () => {
+  it('does not look at the time of a step for the owner: it sets no wake-up and clears the task\'s, whoever set it', async () => {
     const { deps, kept, checks } = setup()
     const recorded = await recordEndTurn(deps, 's1', { result: 'Done', next: { who: 'lasse', what: 'review', when: '2020-01-01T10:00' } })
     expect(recorded.derived).toMatchObject({ status: 'review', checkAt: null })
     expect(kept).toHaveLength(1)
-    expect(checks).toEqual([{ sessionId: 's1', at: null }])
+    expect(checks.map((c) => c.edit)).toEqual([{ kind: 'clear', whose: 'any' }])
   })
 
-  it('asks for the check at next.when and names the time it was saved for', async () => {
+  it('sets the task\'s wake-up at next.when and names the time it was saved for', async () => {
     const saved = { at: Date.parse('2026-11-27T10:00:00Z'), zone: 'UTC' }
-    const { deps, checks } = setup({ checkSaved: () => saved })
+    const checks: WakeEdit[] = []
+    const { deps } = setup({ turnWake: async (_id, wake) => { checks.push(wake.edit); return { problem: null, saved, nextRun: true } } })
     const recorded = await recordEndTurn(deps, 's1', { result: 'Sent', next: { who: 'me', what: 'look', when: '2026-11-27T10:00' } })
-    expect(checks).toEqual([{ sessionId: 's1', at: '2026-11-27T10:00' }])
+    expect(checks).toEqual([{ kind: 'set', when: '2026-11-27T10:00' }])
     expect(recorded).toMatchObject({ missing: [], checkTime: saved })
     expect(recorded).not.toHaveProperty('checkProblem')
   })
 
-  it('a check that could not be set is named, the call is kept all the same, and no saved time is read', async () => {
-    const { deps, kept } = setup({ turnCheck: async () => 'at: at most a year ahead', checkSaved: () => { throw new Error('not read') } })
+  it('a wake-up that could not be set is named with what helps, and the call is kept all the same', async () => {
+    const { deps, kept } = setup({ turnWake: async () => ({ problem: 'at: at most a year ahead', fix: 'time', saved: null, nextRun: false }) })
     const recorded = await recordEndTurn(deps, 's1', { result: 'Sent', next: { who: 'me', what: 'look', when: '2028-01-01T10:00' } })
     expect(recorded.checkProblem).toBe('at: at most a year ahead')
+    expect(recorded.checkFix).toBe('time')
     expect(recorded).not.toHaveProperty('checkTime')
     expect(kept).toHaveLength(1)
   })
 
-  it('a problem with a check the call did not ask for is not named', async () => {
-    const recorded = await recordEndTurn(setup({ turnCheck: async () => 'not removed' }).deps, 's1', { result: 'Done' })
+  it('a problem with a wake-up the call did not ask for is not named', async () => {
+    const recorded = await recordEndTurn(setup({ turnWake: async () => ({ problem: 'not removed', saved: null, nextRun: false }) }).deps, 's1', { result: 'Done' })
     expect(recorded).not.toHaveProperty('checkProblem')
   })
 
-  it('works without a clock, a check or a saved time', async () => {
-    const { deps, kept } = setup({ callTime: undefined, turnCheck: undefined, checkSaved: undefined })
+  it('works without a clock or a wake-up', async () => {
+    const { deps, kept } = setup({ callTime: undefined, turnWake: undefined })
     const recorded = await recordEndTurn(deps, 's1', { result: 'Sent', next: { who: 'me', what: 'look', when: '2999-01-01T10:00' } })
     expect(recorded).toEqual({ derived: { status: 'done', wait: null, checkAt: '2999-01-01T10:00' }, missing: [] })
     expect(kept).toHaveLength(1)
+  })
+})
+
+describe('a task that has a next run', () => {
+  const nextRun = async () => ({ problem: null, saved: null, nextRun: true })
+
+  it('needs no time for a step for someone else: nothing is missing, and the call is kept again with the context that says so', async () => {
+    const { deps, kept, steps } = setup({ turnWake: async () => { steps.push('wake'); return nextRun() } })
+    const call: EndTurn = { result: 'Sent', next: { who: 'outside:acme', what: 'answer' } }
+    const recorded = await recordEndTurn(deps, 's1', call)
+    const withRun = { ...ctx, nextRun: true }
+    expect(recorded).toEqual({ derived: deriveTurn(call, withRun), missing: [], nextRun: true })
+    expect(recorded.derived.wait).toMatchObject({ who: 'acme', kind: 'outside' })
+    expect(steps).toEqual(['keep', 'wake', 'keep'])
+    expect(kept.map((k) => k.said.ctx)).toEqual([ctx, withRun])
+    expect(kept[1].said.derived).toEqual(deriveTurn(call, withRun))
+  })
+
+  it('without a next run the same call still lacks its time', async () => {
+    const recorded = await recordEndTurn(setup().deps, 's1', { result: 'Sent', next: { who: 'outside:acme', what: 'answer' } })
+    expect(recorded.missing).toEqual(['when'])
+    expect(recorded).not.toHaveProperty('nextRun')
   })
 })
 

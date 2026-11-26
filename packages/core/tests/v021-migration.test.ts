@@ -142,7 +142,7 @@ describe('v0.21 migration — the op log starts with a genesis', () => {
       control.prepare(`INSERT INTO users (id, email) VALUES ('u1', 'a@b.de')`).run()
       control.prepare(`INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('${ID}', 'test', 'u1', 'brains/b1.db', 20)`).run()
       const report = runForwardMigrations({ control, dataDir, clock: () => NOW })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21, 22, 23] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [21, 22, 23, 24] })
     } finally { control.close() }
     expectGenesis(file, ID)
     read(file, db => { expect(withoutNew(stateDump(db))).toEqual(before); expectOrdInRowidOrder(db) })

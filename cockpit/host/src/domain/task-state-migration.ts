@@ -10,7 +10,7 @@ import { waitsOf } from './task-waits.js'
  *   - a delegate without a checkpoint → delegation { agent, checkpoint: after }
  *     without a request: nothing starts; the board offers "Hand to <agent>";
  *   - a checkpoint without a delegate → cleared;
- *   - a planned task with a delegate and a checkpoint, no request and no schedule — one the runner starts today →
+ *   - a planned task with a delegate and a checkpoint, no request and no schedule (its schedule would start it) — one the runner starts today →
  *     requested now, so it starts as before. Only in a space the migration has not run in yet: afterwards a task like
  *     that is one the migration gave its checkpoint (or one handed over without a start), and a second run would
  *     start it;
@@ -19,9 +19,9 @@ import { waitsOf } from './task-waits.js'
  *   - intent → appended to the goal where it says something the goal does not (the text is in the dry run);
  *   - a snooze in this cockpit's store → snoozed_until on the task's wait.
  *
- * Done elsewhere and listed here: the held waits of held-waits.json (adopted at the host's start), a job's timing
- * (application/schedule-mirror.ts), the live sessions on tasks (application/run-records.ts). A job without a task gets a
- * task of its own with the job's schedule.
+ * Done elsewhere and listed here: the held waits of held-waits.json (adopted at the host's start) and the live
+ * sessions on tasks (application/run-records.ts). The jobs of before brain schema 24 are not this migration's: they
+ * move onto their tasks at the host's start (domain/job-migration.ts), one without a task getting a task of its own.
  */
 
 export interface MigrationTask {
@@ -43,14 +43,8 @@ export interface MigrationTask {
 
 export interface MigrationInput {
   tasks: MigrationTask[]
-  /** Tasks a job of this cockpit runs at a time: they get no request (the job starts them). */
-  scheduledTaskIds: ReadonlySet<string>
   /** This cockpit's snoozes (task-commands.json), keyed task:<id>@<since>. */
   snoozes: ReadonlyArray<{ key: string; until: string }>
-  /** Jobs of this cockpit without a task: each gets a task with its schedule. */
-  taskless: ReadonlyArray<{ id: string; name: string }>
-  /** Jobs of this cockpit with a task: their timing goes into the task's delegation. */
-  jobsOnTasks: ReadonlyArray<{ id: string; name: string; taskId: string }>
   /** Tasks with waits in held-waits.json. */
   heldWaitTasks: ReadonlyArray<{ taskId: string; count: number }>
   /** Sessions on tasks, open now: a run each. */
@@ -79,8 +73,6 @@ export interface MigrationPlan {
   changes: TaskChange[]
   /** Done by the cockpit on its own (listed for the dry run). */
   elsewhere: {
-    jobsToTasks: ReadonlyArray<{ id: string; name: string }>
-    schedules: ReadonlyArray<{ id: string; name: string; taskId: string }>
     heldWaits: ReadonlyArray<{ taskId: string; count: number }>
     runs: ReadonlyArray<{ sessionId: string; taskId: string }>
   }
@@ -124,7 +116,7 @@ export function planTaskStateMigration(input: MigrationInput): MigrationPlan {
       patch.checkpoint = null
       rules.push('checkpoint_cleared')
       lines.push(`checkpoint ${p.checkpoint} cleared: no agent is delegated`)
-    } else if (!input.ranBefore && task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !delegation?.schedule && !input.scheduledTaskIds.has(task.id)) {
+    } else if (!input.ranBefore && task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !delegation?.schedule) {
       delegation = { ...delegation!, requested_at: input.now }
       rules.push('requested')
       lines.push(`requested now, so the runner starts ${p.delegate} as before`)
@@ -179,8 +171,6 @@ export function planTaskStateMigration(input: MigrationInput): MigrationPlan {
   return {
     changes,
     elsewhere: {
-      jobsToTasks: input.taskless,
-      schedules: input.jobsOnTasks,
       heldWaits: input.heldWaitTasks,
       runs: input.liveSessions,
     },
@@ -213,8 +203,6 @@ export function migrationReport(plan: MigrationPlan, opts: { space: string; at: 
   }
   const e = plan.elsewhere
   out.push('## Done by the cockpit on its own', '')
-  out.push(`- Jobs without a task → a task each with the job's schedule (${e.jobsToTasks.length})${e.jobsToTasks.length ? ': ' + e.jobsToTasks.map((j) => `"${j.name}"`).join(', ') : ''}`)
-  out.push(`- Jobs on a task → their timing into the task's delegation.schedule (${e.schedules.length})${e.schedules.length ? ': ' + e.schedules.map((j) => `"${j.name}" → ${j.taskId.slice(0, 8)}`).join(', ') : ''}`)
   out.push(`- Held waits (held-waits.json) → the tasks' waits (${e.heldWaits.length} task${e.heldWaits.length === 1 ? '' : 's'})`)
   out.push(`- Sessions open on tasks → a run each (${e.runs.length})`)
   return `${out.join('\n')}\n`

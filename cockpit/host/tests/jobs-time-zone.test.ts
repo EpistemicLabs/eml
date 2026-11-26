@@ -11,7 +11,7 @@ function setup(saved: string | null) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-time-zone-')), 'jobs.json')
   const store = new JobStore(file)
   if (saved) store.setTimeZone(saved)
-  const deps = { store } as unknown as JobsApiDeps
+  const deps = { store, zones: store } as unknown as JobsApiDeps
   const call = async (method: 'GET' | 'PUT', body: Record<string, unknown> = {}) => {
     let answer: { status: number; payload: unknown } | null = null
     const json = (_res: http.ServerResponse, status: number, payload: unknown) => { answer = { status, payload } }
@@ -43,6 +43,13 @@ describe('the user\'s time zone setting', () => {
     const { file, call } = setup('UTC')
     expect(await call('PUT', { timeZone: 'Asia/Bangkok', explicit: true })).toEqual({ status: 200, payload: { timeZone: 'Asia/Bangkok', changed: true } })
     expect(new JobStore(file).timeZone()).toBe('Asia/Bangkok')
+  })
+
+  it('lists no jobs: the Jobs page is gone, a schedule is read from its task', async () => {
+    const { store } = setup('Asia/Bangkok')
+    const deps = { store, zones: store } as unknown as JobsApiDeps
+    const handled = await handleJobsApi({ headers: {} } as http.IncomingMessage, {} as http.ServerResponse, deps, '/api/jobs', 'GET', () => { throw new Error('answered') }, async () => ({}))
+    expect(handled).toBe(false)
   })
 
   it('refuses what is no IANA zone', async () => {

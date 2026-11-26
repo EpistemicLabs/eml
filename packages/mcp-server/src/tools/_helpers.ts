@@ -245,7 +245,8 @@ export function handOver(before: TaskLike | null, args: { delegate?: unknown; ch
   const checkpoint = args.checkpoint !== undefined ? args.checkpoint : old.checkpoint
   if (typeof agent !== 'string' || agent === '' || typeof checkpoint !== 'string') return null
   if (old.delegate && old.checkpoint && old.delegate === agent) return null
-  const kept = old.delegate === agent ? old.delegation : undefined
-  if (kept?.schedule !== undefined || kept?.requested_at !== undefined) return null
+  // v0.24: the schedule is the task's and stays with a new agent, so a task that has one is never handed over here
+  if (old.delegation?.schedule !== undefined) return null
+  if (old.delegate === agent && old.delegation?.requested_at !== undefined) return null
   return { agent, checkpoint, requested_at: now.toISOString() }
 }

@@ -9,14 +9,20 @@ process.env.EML_COCKPIT_HOME = home
 
 type Mod = typeof import('../src/application/task-runner.js')
 
-type T = { id: string; status: string; goal?: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
+type T = { id: string; status: string; goal?: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; schedule?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
+const DAILY = { crons: ['0 9 * * *'], time_zone: 'UTC' }
+/** The task's delegation: as given, else requested when planned with a delegate and a checkpoint; its schedule rides in it. */
+const delegationOf = (t: T): { delegation?: Record<string, unknown> } => {
+  const base = t.delegation ?? (t.status === 'planned' && t.delegate && t.checkpoint ? { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } : t.schedule ? { agent: t.delegate ?? 'atlas' } : null)
+  return base ? { delegation: { ...base, ...(t.schedule ? { schedule: t.schedule } : {}) } } : {}
+}
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
 function brainOf(list: T[], runs: Array<Record<string, unknown>> = []) {
   const byId = new Map(list.map((t) => [t.id, t]))
   const view = (t: T) => ({
     id: t.id, title: t.title ?? t.id, content: `do ${t.id}`, status: t.status, scope: t.scope ?? 'project.eml', parent_id: t.parent ?? null, ingested_by: t.author ?? null,
-    properties: { ...(t.goal ? { goal: t.goal } : {}), ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...(t.delegation ? { delegation: t.delegation } : t.status === 'planned' && t.delegate && t.checkpoint ? { delegation: { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } } : {}), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
+    properties: { ...(t.goal ? { goal: t.goal } : {}), ...(t.checkpoint ? { checkpoint: t.checkpoint } : {}), ...(t.depends_on ? { depends_on: t.depends_on } : {}), ...(t.assignee_ids ? { assignee_ids: t.assignee_ids } : {}), ...(t.delegate ? { delegate: t.delegate } : {}), ...delegationOf(t), ...(t.waiting_on ? { waiting_on: t.waiting_on } : {}) },
     relations: list.filter((o) => o.parent === t.id || t.parent === o.id).map((o) => (o.parent === t.id
       ? { source_id: o.id, target_id: t.id, relation: 'part_of' }
       : { source_id: t.id, target_id: o.id, relation: 'part_of' })),
@@ -45,7 +51,7 @@ describe('task runner', () => {
   beforeAll(async () => { mod = await import('../src/application/task-runner.js') })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
-  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; scheduled?: (id: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; question?: (id: string) => string | undefined; continuedFor?: (id: string, requestedAt: string) => boolean; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
+  const run = async (list: T[], space: { shared: boolean | null; name: string } = { shared: false, name: 'Main' }, start: (step: { id: string }) => string | null = () => null, busy: (id: string) => boolean = () => false, more: { held?: (id: string, requestedAt?: string) => boolean; working?: (id: string) => boolean; ownSession?: (id: string) => string | null; question?: (id: string) => string | undefined; continuedFor?: (id: string, requestedAt: string) => boolean; resume?: (sessionId: string, step: { id: string }) => Promise<{ kind: 'continued' } | { kind: 'retry' | 'fallback'; why: string }> } = {}, runs: Array<Record<string, unknown>> = []) => {
     const brain = brainOf(list, runs)
     const started: Array<{ id: string; projectId: string; checkpoint: string }> = []
     const logs: string[] = []
@@ -169,14 +175,47 @@ describe('task runner', () => {
     expect(started).toEqual([])
   })
 
-  it('starts a delegated task whose owner is a person, but not while someone is waited on, its hand-over can be undone, or a job will start it', async () => {
+  it('starts a delegated task whose owner is a person, but not while someone is waited on, its hand-over can be undone, or its schedule will start it', async () => {
     const { started } = await run([
       { id: 'owned', status: 'planned', checkpoint: 'after', assignee_ids: ['lasse'], delegate: 'atlas' },
       { id: 'asked', status: 'planned', checkpoint: 'after', delegate: 'atlas', waiting_on: { who: 'lasse', kind: 'question' } },
       { id: 'held', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
-      { id: 'at-nine', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
-    ], undefined, () => null, () => false, { held: (id) => id === 'held', scheduled: (id) => id === 'at-nine' })
-    expect(started.map((s) => s.id)).toEqual(['owned'])
+      { id: 'at-nine', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: DAILY },
+      { id: 'paused', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: { ...DAILY, paused: true } },
+    ], undefined, () => null, () => false, { held: (id) => id === 'held' })
+    // a paused schedule has no run coming up: the request starts it
+    expect(started.map((s) => s.id)).toEqual(['owned', 'paused'])
+  })
+
+  it('is held off a task whose schedule starts it now: a wake-up that is due and not fired yet, a run that waits to start', async () => {
+    const now = Date.now()
+    const passed = { at: new Date(now - 60_000).toISOString() }
+    const facts: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null }> = {
+      // this cockpit fired that wake-up already: clearing it on the task has not arrived, nothing is coming
+      'fired-wake': { firedWake: passed.at },
+      'waiting-run': { waitingRunDueAt: new Date(now - 120_000).toISOString() },
+    }
+    const { started } = await run([
+      { id: 'due-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: passed },
+      { id: 'fired-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: passed },
+      { id: 'waiting-run', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'paused-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: { ...passed, paused: true } },
+    ], undefined, () => null, () => false, { scheduleFacts: (id: string) => facts[id] ?? {} } as never)
+    expect(started.map((s) => s.id)).toEqual(['fired-wake', 'paused-wake'])
+  })
+
+  it('is not held off a task by a repeating time its record holds for the user\'s OK; a wake-up ahead still holds it off', async () => {
+    const now = Date.now()
+    const hourly = { crons: ['0 * * * *'], time_zone: 'UTC' }
+    const facts: Record<string, { cursor?: string | null; needsOk?: boolean }> = {
+      held: { cursor: new Date(now).toISOString(), needsOk: true },
+      'held-wake': { cursor: new Date(now).toISOString(), needsOk: true },
+    }
+    const { started } = await run([
+      { id: 'held', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: hourly },
+      { id: 'held-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: { ...hourly, at: new Date(now + 3_600_000).toISOString() } },
+    ], undefined, () => null, () => false, { scheduleFacts: (id: string) => facts[id] ?? {} } as never)
+    expect(started.map((s) => s.id)).toEqual(['held'])
   })
 
   it('starts a standalone task with a checkpoint, at most five at a time, and none a session already works on', async () => {
@@ -209,7 +248,7 @@ describe('task runner', () => {
       { id: 'step-job-4', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
       { id: 'step-job-5', status: 'active', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
       { id: 'step-free', status: 'planned', parent: 'plan', checkpoint: 'none', delegate: 'atlas' },
-    ], undefined, () => null, () => false, { scheduled: (id) => id.includes('job-') })
+    ].map((t) => (t.id.includes('job-') ? { ...t, schedule: DAILY } : t)))
     expect(started.map((s) => s.id).sort()).toEqual(['free', 'step-free'])
   })
 
@@ -423,7 +462,7 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
         if (d) { t.delegation = d; t.delegate = d.agent; t.checkpoint = d.checkpoint }
         return brain.post(path, body)
       } }),
-      agentsOf: async () => ['atlas'], createJob: async () => ({ jobId: 'j' }), changed: () => {}, now: () => now, log: () => {},
+      agentsOf: async () => ['atlas'], changed: () => {}, now: () => now, log: () => {},
     })
     await commands.submit({ opId: 'op-b3', kind: 'hand_over', spaceId: 'main', taskId: 'own-task', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
     now += UNDO_WINDOW_MS + 1

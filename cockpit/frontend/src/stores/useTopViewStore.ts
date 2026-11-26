@@ -1,13 +1,13 @@
-// What the main area shows: the desk/pane grid, a space's brain dashboard, the task views or Jobs. Same module-
+// What the main area shows: the desk/pane grid, a space's brain dashboard, the task views. Same module-
 // store + useSyncExternalStore pattern as usePaneStore; persisted so a
 // reload lands where you were.
 import { useSyncExternalStore } from 'react';
 
-export type TopView = 'desks' | 'brain' | 'jobs' | 'tasks';
+export type TopView = 'desks' | 'brain' | 'tasks';
 
 const STORAGE_KEY = 'cockpit-top-view';
 
-const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain' || value === 'jobs' || value === 'tasks';
+const isTopView = (value: unknown): value is TopView => value === 'desks' || value === 'brain' || value === 'tasks';
 
 function load(): TopView {
   try {
@@ -16,6 +16,11 @@ function load(): TopView {
     if (raw === 'spaces') {
       localStorage.setItem(STORAGE_KEY, 'desks');
       return 'desks';
+    }
+    // A stored view of 'jobs' opens the task views: a schedule sits on its task.
+    if (raw === 'jobs') {
+      localStorage.setItem(STORAGE_KEY, 'tasks');
+      return 'tasks';
     }
     return isTopView(raw) ? raw : 'desks';
   } catch {

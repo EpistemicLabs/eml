@@ -23,6 +23,22 @@ export class MemoryOutboxStore implements OutboxStore {
     return [...this.items.values()].filter((item) => item.jobId === jobId && item.state === 'draft')
   }
 
+  /** The job's items go to another job id (MemoryJobIds); one whose key the new id already holds stays. */
+  renameJob(from: string, to: string): { moved: number; clashes: string[] } {
+    const clashes: string[] = []
+    let moved = 0
+    for (const item of [...this.items.values()]) {
+      if (item.jobId !== from) continue
+      const held = [...this.items.values()].some((other) => other.jobId === to && other.idempotencyKey === item.idempotencyKey)
+      if (held) clashes.push(item.idempotencyKey)
+      else {
+        this.items.set(item.id, { ...item, jobId: to })
+        moved += 1
+      }
+    }
+    return { moved, clashes }
+  }
+
   async update(item: OutboxItem): Promise<void> {
     this.items.set(item.id, item)
   }

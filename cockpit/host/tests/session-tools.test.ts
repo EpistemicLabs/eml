@@ -28,6 +28,23 @@ describe('the tool definitions', () => {
     expect(SESSION_TOOLS.schedule.description()).toContain('by default the user\'s own; pass it')
   })
 
+  it('the schedule tool is the task\'s: repeating times and one wake-up on a task, no session as a target', () => {
+    const text = SESSION_TOOLS.schedule.description()
+    expect(text.startsWith('Schedule work for later. A schedule belongs to a task: repeating times and at most one wake-up.')).toBe(true)
+    expect(text).not.toMatch(/another session|by address|Jobs view|job-session|its own session/)
+    const input = SESSION_TOOLS.schedule.input
+    expect(input).not.toHaveProperty('session')
+    // Any word is taken for target, so the tool can answer an unknown one (application/jobs.ts).
+    expect(input.target.safeParse('session').success).toBe(true)
+    expect(input.job.description).toBe('The task whose schedule to act on: its id (or the first 8 characters) or its exact name.')
+  })
+
+  it('end_turn says that a task with a next run needs no time, and to keep working when nothing is waited for', () => {
+    const text = SESSION_TOOLS.endTurn.description()
+    expect(text).toContain('or the task has a next run from its schedule')
+    expect(text).toContain('If the next step is yours and you wait for nothing, do not end the turn: keep working.')
+  })
+
   it('send_message says what a terminal session cannot get back, and list_sessions where the address comes from', () => {
     const send = SESSION_TOOLS.sendMessage.description()
     expect(send).toContain('A stopped session is resumed first.')

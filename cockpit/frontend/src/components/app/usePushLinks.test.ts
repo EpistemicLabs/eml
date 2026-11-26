@@ -2,13 +2,13 @@
 import { cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { openSession } from '@/components/jobs/jobs';
+import { openSession } from '@/lib/open-session';
 import { openLinkedSession, usePushLinks } from './usePushLinks';
 
 // A tap on a notification opens its session: from the URL the service worker
 // opens, or from its message to a cockpit that is open already.
 
-vi.mock('@/components/jobs/jobs', () => ({ openSession: vi.fn() }));
+vi.mock('@/lib/open-session', () => ({ openSession: vi.fn() }));
 vi.mock('@/stores/useSpaceStore', () => ({
   getSpaces: () => [{ id: 'main-id', name: 'Main', main: true }, { id: 'other-id', name: 'Other', main: false }],
   loadSpaces: async () => [],

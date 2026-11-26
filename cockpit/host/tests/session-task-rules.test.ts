@@ -68,7 +68,7 @@ describe('what a session reads about its task', () => {
       const text = taskContext(handed, false, WHO, worker)
       expect(text).toContain('## Until it is done')
       expect(text).toContain('- Reached: hand the result over for review (next names the owner). Do not close it yourself.')
-      expect(text).toContain('- Not reached: name yourself as next, with the time you look again (when). The cockpit wakes you then: a simple check needs no schedule tool call.')
+      expect(text).toContain('- Not reached: name yourself as next, with the time you look again (when); a task that has a next run from its schedule needs no time. The cockpit wakes you then: a simple check needs no schedule tool call.')
       expect(taskContext(own, false, WHO, worker)).not.toContain('## Until it is done')
     }
   })
@@ -86,7 +86,7 @@ describe('what a session reads about its task', () => {
       const text = taskContext({ id: 't1', title: 'daily-brief', content: 'Write it.', status: 'active', properties: { checkpoint, delegate: 'atlas' } } as never, false, WHO, true)
       const closing = text.split('\n').find((line) => line.startsWith('- Closing:'))!
       expect(closing).toContain('A task with checkpoint none, or one an agent owns, you close yourself when it is done.')
-      expect(closing.endsWith('A task whose schedule is still on (a job of it has not ended: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, end its job first, then hand the result over for review (next names the owner): a job you made with the schedule tool you end with it (action finish), a check you set by ending a turn with a time the cockpit removes once you end a turn without one; its owner closes it.')).toBe(true)
+      expect(closing.endsWith('A task whose schedule is still on (it has a repeating time or a wake-up: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, end its schedule first, then hand the result over for review (next names the owner): repeating times you end with the schedule tool (action finish), a wake-up the cockpit clears with the hand-over; its owner closes it.')).toBe(true)
     }
   })
 

@@ -18,7 +18,8 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { END_TURN_TOOL, LEGACY_STATUS_TOOL, reminder, type EndTurn, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
+import type { WakeSettled } from './application/turn-wake.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
 import { recordEndTurn, saidReason, type SaidTurn } from './application/record-end-turn.js'
@@ -125,7 +126,7 @@ export function liftNotice(limits: Pick<SessionLimitsView, 'deniedTools' | 'mcpS
     ...(limits.deniedTools.length ? [`the blocked tools (${limits.deniedTools.map(label).join(', ')})`] : []),
     ...(limits.mcpServers !== null ? ['the limit to some MCP servers'] : []),
   ]
-  const forJob = jobName ? ` Future runs of the job "${jobName}" start without them too.` : ''
+  const forJob = jobName ? ` Future runs of the task "${jobName}" start without them too.` : ''
   return `The user lifted this session's limits: ${parts.join(' and ')}. From this restart it may use all tools its space has.${forJob}`
 }
 
@@ -215,12 +216,11 @@ export interface ChatContext {
   /** The moment a call is read and the zone its next.when is read in (the user's); absent: now, in this machine's zone. */
   callTime?: () => { now: number; zone: string }
   /**
-   * The check a call's next.when asks for: set, moved, or removed when the call has none
-   * (application/turn-check.ts). Answers why it could not be set, or null.
+   * What a call does to the wake-up of the session's task: its next.when sets it, a call without one clears it
+   * (application/turn-wake.ts). Answers why it could not be set, the wake-up as saved, and whether the task has a
+   * next run now.
    */
-  turnCheck?: (sessionId: string, check: { at: string | null; call: EndTurn; turn: SessionTurn }) => Promise<string | null>
-  /** The session's check as the schedule saved it: the zone its time was read in and the instant (application/turn-check.ts saved). */
-  checkSaved?: (sessionId: string) => CheckTime | null
+  turnWake?: (sessionId: string, wake: { edit: WakeEdit; call: EndTurn; turn: SessionTurn }) => Promise<WakeSettled>
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
   /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
@@ -711,7 +711,7 @@ export class ChatBridge {
     return {
       deniedTools, mcpServers,
       job: job ? { id: job.id, name: job.name } : null,
-      // A limited channel job's limits are worked out at each start; the user lends it tools in the Jobs view.
+      // A limited channel job's limits are worked out at each start; the user lends it tools on the task.
       liftable: (deniedTools.length > 0 || mcpServers !== null) && !job?.limited,
     }
   }
@@ -970,8 +970,7 @@ export class ChatBridge {
         turnOf: () => this.turnOf(entry),
         ...(this.ctx.callTime ? { callTime: () => this.ctx.callTime!() } : {}),
         keep: (sessionId, said) => { this.said(sessionId, said) },
-        turnCheck: async (sessionId, check) => await this.ctx.turnCheck?.(sessionId, check) ?? null,
-        checkSaved: (sessionId) => this.ctx.checkSaved?.(sessionId) ?? null,
+        ...(this.ctx.turnWake ? { turnWake: this.ctx.turnWake } : {}),
       }, entry.sessionId, call),
       report: (status, reason) => {
         entry.declared = true

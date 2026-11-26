@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import * as http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { handleBridgeApi } from '../src/channel-bridge-api.js'
+import { handleBridgeApi, renameBridgeJob } from '../src/channel-bridge-api.js'
 
 // The page's way to a job's drafts: four routes through to the bridge, with the cockpit's token
 // added here, never handed to the page.
@@ -75,5 +75,21 @@ describe('handleBridgeApi', () => {
     bridgeUrl = null
     expect(await call('GET', '/api/bridge/jobs/job-1/drafts')).toMatchObject({ status: 503 })
     bridgeUrl = saved
+  })
+})
+
+describe('renameBridgeJob', () => {
+  it('tells the bridge a job\'s new id with the cockpit token, and says whether the bridge has it', async () => {
+    seen.length = 0
+    expect(await renameBridgeJob({ url: () => bridgeUrl, cockpitToken: () => 'cockpit-secret' }, 'job-1', 'task-1')).toBe('renamed')
+    expect(seen).toEqual([{ method: 'POST', path: '/v1/jobs/job-1/rename', auth: 'Bearer cockpit-secret', body: JSON.stringify({ to: 'task-1' }) }])
+    // the bridge answers with an error: not confirmed
+    expect(await renameBridgeJob({ url: () => bridgeUrl, cockpitToken: () => 'cockpit-secret' }, 'missing', 'task-1')).toBe('failed')
+  })
+
+  it('a bridge that does not run is not an error: the rename waits', async () => {
+    expect(await renameBridgeJob({ url: () => null, cockpitToken: () => 'cockpit-secret' }, 'job-1', 'task-1')).toBe('off')
+    expect(await renameBridgeJob({ url: () => bridgeUrl, cockpitToken: () => null }, 'job-1', 'task-1')).toBe('off')
+    expect(await renameBridgeJob({ url: () => 'http://127.0.0.1:9', cockpitToken: () => 'cockpit-secret' }, 'job-1', 'task-1')).toBe('off')
   })
 })

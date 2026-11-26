@@ -28,8 +28,8 @@ const GMAIL_FIELDS = ['address', 'credentialsFile', 'tokenFile'];
 
 const partNote = (plugin: PluginView, part: PluginView['parts'][number]) => ({
   pane: 'UI in a pane, next to the sessions',
-  mcp: plugin.channel ? 'Tools for your own sessions (jobs send through the bridge)' : 'Tools the agent can call',
-  channel: 'Incoming messages wake the matching job; replies leave through the bridge outbox',
+  mcp: plugin.channel ? 'Tools for your own sessions (a task woken by messages sends through the bridge)' : 'Tools the agent can call',
+  channel: 'Incoming messages wake the matching task; replies leave through the bridge outbox',
 }[part]);
 
 export default function PluginDetail({ plugin, spaces, connections, onBack }: {

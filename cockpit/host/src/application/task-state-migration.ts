@@ -1,25 +1,23 @@
 import * as fs from 'node:fs'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
-import type { Job } from '../domain/job.js'
-import { scheduleOfJob } from '../domain/task-schedule.js'
 import { brainIdFromProjectId } from '../project-registry.js'
 import { migrationReport, planTaskStateMigration, type MigrationPlan, type MigrationTask } from '../domain/task-state-migration.js'
 
 /**
  * The task state migration of one space (domain/task-state-migration.ts): a dry run that lists every change, and the
  * run that writes them. The run writes only after its owner has seen the dry run (decision task-state-migration-rules:
- * never against the shared brain without it). Each task changes in one track call with one journal line; a job without
- * a task gets one; the snoozes it moved leave this cockpit's store.
+ * never against the shared brain without it). Each task changes in one track call with one journal line; the snoozes
+ * it moved leave this cockpit's store.
+ *
+ * makeRoutineTask is the one way a schedule without a task gets one: the migration of the jobs of before brain
+ * schema 24 uses it (application/job-migration.ts), and the schedule tool for a schedule made without a task.
  */
 
 export interface TaskStateMigrationDeps {
   space(spaceId: string): BrainSpace | undefined
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   viewer: string
-  jobs(): Job[]
-  /** Give a job the task made for it. */
-  setJobTask(jobId: string, taskId: string): void
   snoozes(): Array<{ key: string; until: string }>
   setSnoozes(snoozes: Array<{ key: string; until: string }>): void
   /** held-waits.json, if a cockpit before 23 left one. */
@@ -32,9 +30,39 @@ export interface TaskStateMigrationDeps {
 export interface DryRun { ok: true; plan: MigrationPlan; report: string; at: string; ranBefore: string | null }
 export type Refusal = { ok: false; refusal: 'unknown_space' | 'no_brain' | 'in_flight'; message?: string }
 
-/** The task a job without one gets: its title names the job, so a run that is retried finds the task it made before. */
-export const routineTitle = (job: Pick<Job, 'id' | 'name'>) =>
-  `routine-${job.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)}-${job.id.slice(0, 8)}`
+/** What a routine's task is made from: a name people read, what a run does, and an id that tells two of one name apart. */
+export interface Routine { id: string; name: string; prompt: string }
+
+/** The task a schedule without one gets: its title names it, so a run that is retried finds the task it made before. */
+export const routineTitle = (routine: Pick<Routine, 'id' | 'name'>) =>
+  `routine-${routine.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)}-${routine.id.slice(0, 8)}`
+
+/**
+ * The task of a routine as the brain gets it; null when `projectId` is no project of the brain (a task belongs to one).
+ * Its text is the whole prompt: the brain sets no limit on a task's text (packages/core/src/fields.ts limits a task's
+ * fields, such as display_title, never the content), so nothing of a long prompt of a version 1 job is cut. The
+ * schedule tool limits its own prompt before it comes here (application/jobs.ts).
+ */
+export function routineTask(routine: Routine, projectId: string | null, owner: string): { title: string; display_title: string; content: string; scope: string; status: 'active'; assignee_ids: string[] } | null {
+  const brainProject = projectId ? brainIdFromProjectId(projectId) : null
+  if (!brainProject) return null
+  return {
+    title: routineTitle(routine),
+    display_title: routine.name.slice(0, 80),
+    content: routine.prompt,
+    scope: `project.${brainProject}`,
+    status: 'active',
+    assignee_ids: [owner],
+  }
+}
+
+/** Make the routine's task, or find the one an earlier try made (by its title); `made` says which. */
+export async function makeRoutineTask(brain: Pick<EmlApi, 'get' | 'post'>, task: NonNullable<ReturnType<typeof routineTask>>): Promise<{ id: string; made: boolean }> {
+  const before = await brain.get('/list', { type: 'task', title: task.title, limit: 1 }) as { engrams?: Array<{ id: string }> }
+  if (before.engrams?.[0]) return { id: before.engrams[0].id, made: false }
+  const made = await brain.post('/engram/task', task) as { id: string }
+  return { id: made.id, made: true }
+}
 
 /**
  * The note the first run leaves in the space's brain. A second run (a retry, another member's cockpit on a shared
@@ -42,8 +70,6 @@ export const routineTitle = (job: Pick<Job, 'id' | 'name'>) =>
  * runner used to start.
  */
 export const MIGRATION_MARKER = 'task-state-migration-v23'
-
-const inSpace = (job: Job, space: BrainSpace) => (job.spaceId ?? null) === (space.main ? null : space.id)
 
 export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
   /** Spaces a run is writing to now: a second run waits for it (409 in_flight), it never runs beside it. */
@@ -76,15 +102,10 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
     const brain = deps.brain(space)
     if (!brain) return { ok: false, refusal: 'no_brain' }
     const at = new Date(deps.now()).toISOString()
-    const jobs = deps.jobs().filter((j) => inSpace(j, space) && !j.endedAt)
-    const timed = jobs.filter((j) => scheduleOfJob(j) !== null)
     const before = await ranBefore(brain)
     const migration = planTaskStateMigration({
       tasks: await tasksOf(brain),
-      scheduledTaskIds: new Set(timed.flatMap((j) => (j.taskId ? [j.taskId] : []))),
       snoozes: deps.snoozes(),
-      taskless: timed.filter((j) => !j.taskId).map((j) => ({ id: j.id, name: j.name })),
-      jobsOnTasks: timed.filter((j) => j.taskId).map((j) => ({ id: j.id, name: j.name, taskId: j.taskId! })),
       heldWaitTasks: heldWaitTasks(),
       liveSessions: deps.liveSessions(space.id),
       viewer: deps.viewer,
@@ -99,7 +120,7 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
     dryRun: plan,
 
     /** The run: plans again (the brain may have moved since the dry run) and writes it. */
-    async run(spaceId: string): Promise<{ ok: true; written: number; failed: string[]; tasksMade: number; report: string } | Refusal> {
+    async run(spaceId: string): Promise<{ ok: true; written: number; failed: string[]; report: string } | Refusal> {
       if (running.has(spaceId)) return { ok: false, refusal: 'in_flight', message: 'A migration of this space is running; try again when it is done.' }
       running.add(spaceId)
       try {
@@ -111,10 +132,9 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
   }
 
   /**
-   * One run. Safe to retry: it plans again from the brain, so a change already written is not planned twice, and a
-   * job's task is found by its title before one is made.
+   * One run. Safe to retry: it plans again from the brain, so a change already written is not planned twice.
    */
-  async function runOnce(spaceId: string): Promise<{ ok: true; written: number; failed: string[]; tasksMade: number; report: string } | Refusal> {
+  async function runOnce(spaceId: string): Promise<{ ok: true; written: number; failed: string[]; report: string } | Refusal> {
       const planned = await plan(spaceId)
       if (!planned.ok) return planned
       const space = deps.space(spaceId)!
@@ -141,41 +161,8 @@ export function createTaskStateMigration(deps: TaskStateMigrationDeps) {
       // The snoozes now on the tasks' waits leave this cockpit's store.
       const moved = new Set(planned.plan.changes.filter((c) => c.rules.includes('snooze') && !failed.some((f) => f.startsWith(c.taskId.slice(0, 8)))).map((c) => c.taskId))
       deps.setSnoozes(deps.snoozes().filter((s) => !moved.has(/^task:([^@]+)@/.exec(s.key)?.[1] ?? '')))
-      // A job without a task gets one, with the job's schedule (application/schedule-mirror.ts keeps it in step).
-      let tasksMade = 0
-      for (const { id } of planned.plan.elsewhere.jobsToTasks) {
-        const job = deps.jobs().find((j) => j.id === id)
-        if (!job || job.taskId) continue
-        const projectId = job.target.type === 'session' ? null : job.target.projectId
-        const brainProject = projectId ? brainIdFromProjectId(projectId) : null
-        // A task belongs to a project of the brain: a job without one keeps running without a task.
-        if (!brainProject) {
-          failed.push(`job ${job.id.slice(0, 8)}: no project of the brain, so no task`)
-          continue
-        }
-        try {
-          const title = routineTitle(job)
-          const before = await brain.get('/list', { type: 'task', title, limit: 1 }) as { engrams?: Array<{ id: string }> }
-          if (before.engrams?.[0]) {
-            deps.setJobTask(job.id, before.engrams[0].id)
-            continue
-          }
-          const made = await brain.post('/engram/task', {
-            title,
-            display_title: job.name.slice(0, 80),
-            content: job.prompt.slice(0, 2000),
-            scope: `project.${brainProject}`,
-            status: 'active',
-            assignee_ids: [deps.viewer],
-          }) as { id: string }
-          deps.setJobTask(job.id, made.id)
-          tasksMade++
-        } catch (err) {
-          failed.push(`job ${job.id.slice(0, 8)}: ${(err as Error).message}`)
-        }
-      }
-      deps.log(`[migration] ${space.name}: ${written} task(s) changed, ${tasksMade} task(s) made for jobs, ${failed.length} failed`)
-      return { ok: true, written, failed, tasksMade, report: planned.report }
+      deps.log(`[migration] ${space.name}: ${written} task(s) changed, ${failed.length} failed`)
+      return { ok: true, written, failed, report: planned.report }
   }
 }
 

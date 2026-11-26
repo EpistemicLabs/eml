@@ -2,8 +2,9 @@
 import { Mail, Plug, Puzzle, type LucideIcon } from 'lucide-react';
 
 import { PANE_VIEW_DEFS } from '@/lib/pane-views';
-import { formatAgo, formatWhen } from '@/components/jobs/jobs';
 import type { ConnectionView, PluginPart, PluginTier, PluginView } from '@/lib/plugins-admin';
+import { formatAgo } from '@/lib/time';
+import { formatWhen } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 import { Chip, Input } from '@/shared/view/ui';
 

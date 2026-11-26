@@ -87,6 +87,7 @@ until it is renewed.
 | `POST /v1/outbox/<id>/edit` `{ text }` | cockpit | changes a draft's text; `edited` or `refused` |
 | `POST /v1/outbox/<id>/approve` | cockpit | sends a draft; `sent`, `failed` or `refused` |
 | `POST /v1/outbox/<id>/skip` | cockpit | drops a draft; `skipped` or `refused` |
+| `POST /v1/jobs/<jobId>/rename` `{ to }` | cockpit | the cockpit gave the job a new id: its messages, its open wake and its outbox go to `to` in one transaction. `renamed` with the rows moved per store and `clashes` (a row `to` already held under the same key is kept, the old one stays where it was; of two retry states the one due earlier is kept under `to` and the other is deleted); asking again moves nothing |
 
 A refusal carries `reason` and `retryable`; 4xx means a retry cannot help, 5xx that it may
 (`unavailable` when the cockpit cannot answer, `failed` with `retryable` for a channel that may take

@@ -55,6 +55,8 @@ const scheduled: Array<[string, Record<string, unknown>]> = []
 const delivered: MessageRequest[] = []
 const listed: string[] = []
 const checks: Array<[string, string | null]> = []
+/** The session's task has a next run from its schedule (application/turn-wake.ts settle). */
+let taskHasNextRun = false
 const ended: Ended[] = []
 
 const listen = (server: http.Server) =>
@@ -83,7 +85,7 @@ beforeAll(async () => {
     ledger, terminalTurns,
     turnOf: async () => ({ ctx: CTX, task: null }),
     callTime: () => ({ now: NOW, zone: 'UTC' }),
-    turnCheck: async (sessionId, { at }) => { checks.push([sessionId, at]); return null },
+    turnWake: async (sessionId, { edit }) => { checks.push([sessionId, edit.kind === 'set' ? edit.when : null]); return { problem: null, saved: null, nextRun: taskHasNextRun } },
     jobs: async (sessionId, input) => { scheduled.push([sessionId, input]); return `Jobs of ${sessionId}: none.` },
     directory: (sessionId) => { listed.push(sessionId); return [entry('eml-aaaa', 'Catalogue import'), entry('eml-bbbb', 'Release notes')] },
     addressOf: (sessionId) => `eml-${sessionId}`,
@@ -143,6 +145,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   for (const list of [scheduled, delivered, listed, checks, ended, saidInChat]) list.length = 0
+  taskHasNextRun = false
 })
 
 const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex', version: '1' } } }
@@ -365,7 +368,7 @@ describe('end_turn from a terminal session', () => {
     expect(ledger.get('term-2')!.unrouted).toBeUndefined()
   })
 
-  it('keeps the last call of a turn, and sets the check its next.when asks for', async () => {
+  it('keeps the last call of a turn, and sets the wake-up its next.when asks for on the task', async () => {
     const { client } = await connect('term-1')
     await call(client, 'end_turn', { result: 'Half way' })
     await call(client, 'end_turn', { result: 'Waiting for the build', next: { who: 'atlas', what: 'Check the build', when: '2026-11-25T10:00' } })
@@ -393,6 +396,17 @@ describe('end_turn from a terminal session', () => {
     hook('term-1', 'done', 'Nothing said.')
     expect(ended).toEqual([['term-1', 'Nothing said.']])
     expect(ledger.get('term-1')!.unrouted).toBeUndefined()
+    await client.close()
+  })
+
+  it('a task with a next run needs no time: the answer asks for none, and the turn ends with the context that says so', async () => {
+    taskHasNextRun = true
+    const { client } = await connect('term-1')
+    const answer = await call(client, 'end_turn', { result: 'Asked Acme', next: { who: 'outside:acme', what: 'Answer the offer' } })
+    expect(answer.isError).toBeFalsy()
+    expect(answer.text).not.toMatch(/next\.when/)
+    hook('term-1', 'done', 'Mailed.')
+    expect(ended[0][2]).toMatchObject({ call: { result: 'Asked Acme' }, ctx: { nextRun: true }, said: true })
     await client.close()
   })
 

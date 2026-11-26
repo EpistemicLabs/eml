@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, reviewDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, changeRecord, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, pauseSchedule, removeTime, resumeSchedule, reviewDone, runNow, type ScheduleAction, scheduleDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { useTimeZone } from '@/lib/time-zone';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
@@ -127,6 +127,21 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
   /** Looks good: closes the task, or on a task whose schedule is on approves that run only. */
   const review = useCallback(async (t: BoardTask, closed: string) => answered(await reviewDone(t), isScheduled(t) ? 'Run approved. The task stays open.' : closed), [answered]);
   const endTaskSchedule = useCallback(async (t: BoardTask) => answered(await endSchedule(t), 'Schedule ended, task closed.'), [answered]);
+
+  /**
+   * The schedule's controls and the settings this cockpit keeps for the task: they apply at once and cannot be undone,
+   * so the answer is said without Undo, a refusal in the host's words.
+   */
+  const scheduleAct = useCallback(async (t: BoardTask, action: ScheduleAction) => {
+    const answer = action.kind === 'pause' ? await pauseSchedule(t)
+      : action.kind === 'resume' ? await resumeSchedule(t)
+        : action.kind === 'run_now' ? await runNow(t)
+          : action.kind === 'remove_time' ? await removeTime(t, action.cron)
+            : await changeRecord(t, action.change);
+    void refetch();
+    say(answer.ok ? scheduleDone(t, action) : answer.message);
+    return answer.ok;
+  }, [refetch, say]);
 
   // A follow-up started from a closed task's chat: its panel opens once the board has the new task.
   const [followUpOf, setFollowUpOf] = useState<{ taskId: string; spaceId: string; since: number; until: number } | null>(null);
@@ -285,6 +300,7 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       }}
       onReview={(t) => void review(t, 'Closed as done.')}
       onEndSchedule={(t) => void endTaskSchedule(t)}
+      onSchedule={scheduleAct}
       onDrop={async (t) => answered(await closeTask(t), 'Closed: not needed.')}
       onReopen={async (t, reason) => answered(await reopenTask(t, reason), 'Reopened: active again, nothing started. Hand it over when an agent should go on.')}
       onContinue={continueFrom}

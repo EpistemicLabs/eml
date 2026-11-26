@@ -79,6 +79,9 @@ export function isTimeZone(zone: string): boolean {
   }
 }
 
+/** What a caller is told of a zone that is none. */
+export const unknownTimeZone = (zone: string): string => `unknown time zone "${zone}"; use an IANA name such as Europe/Berlin`
+
 interface WallClock { year: number; month: number; day: number; hour: number; minute: number }
 
 const formatters = new Map<string, Intl.DateTimeFormat>()

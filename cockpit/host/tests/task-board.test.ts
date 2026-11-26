@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { createTaskBoard, type TaskBoardDeps } from '../src/application/task-board.js'
-import { hasSchedule } from '../src/domain/task-schedule.js'
 
 type Row = { id: string; status: string; title?: string; scope?: string; parent_id?: string | null; origin_task_id?: string | null; updated_at?: string; latest_note?: { text: string; at: string } | null; properties?: Record<string, unknown> }
 
@@ -44,7 +43,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>> } ) {
+function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }> } ) {
   const main = { id: 'main', name: 'Main', shared: false, main: true }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -53,7 +52,15 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     return r.status === 'planned' && p.delegate && p.checkpoint && !p.delegation
       ? { ...r, properties: { ...p, delegation: { agent: p.delegate, checkpoint: p.checkpoint, requested_at: '2026-11-19T09:00:00.000Z' } } } : r
   })
-  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(opts.main), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
+  // The task holds its schedule: `jobs` gives a task a wake-up at that time, `openJobs` a paused repeating time,
+  // `schedules` the schedule as written.
+  const scheduled = (rows: Row[]) => rows.map((r) => {
+    const schedule = opts.schedules?.[r.id] ?? (opts.jobs?.[r.id] ? { at: opts.jobs[r.id] } : (opts.openJobs ?? []).includes(r.id) ? { crons: ['0 8 * * *'], time_zone: 'UTC', paused: true } : null)
+    if (!schedule) return r
+    const p = r.properties ?? {}
+    return { ...r, properties: { ...p, delegation: { agent: p.delegate ?? 'atlas', ...(p.checkpoint ? { checkpoint: p.checkpoint } : {}), ...(p.delegation as Record<string, unknown> | undefined), schedule } } } as Row
+  })
+  const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(scheduled(opts.main)), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
   const clock = { now: Date.parse('2026-11-19T10:00:00Z') }
   const sessions: Array<{ sessionId: string; taskId: string; working: boolean; commands?: Array<{ description: string; since: string }> }> = (opts.working ?? []).map((taskId, i) => ({ sessionId: `s${i}`, taskId, working: true }))
   // Sessions whose turn is over while the background commands they started still run, per task.
@@ -63,13 +70,6 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     brain: (space) => brains.get(space.id) ?? null,
     viewer: 'lasse',
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
-    nextRunOf: (taskId) => opts.jobs?.[taskId] ?? null,
-    scheduleOf: (taskId) => (opts.schedules?.[taskId] as never) ?? null,
-    // A job here that has not ended: one with a next run (jobs), or one without (openJobs: paused, woken by mail only).
-    hasSchedule: (task) => hasSchedule({
-      jobs: [...Object.keys(opts.jobs ?? {}), ...(opts.openJobs ?? [])].includes(task.id) ? [{ endedAt: null }] : [],
-      schedule: task.properties?.delegation?.schedule, owner: task.properties?.assignee_ids?.[0],
-    }, 'lasse', clock.now),
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
     releasedAgent: (taskId) => opts.released?.[taskId] ?? null,
@@ -81,6 +81,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     runnerHeld: (taskId, requestedAt) => (opts.held?.includes(taskId) ?? false) || (Boolean(requestedAt) && (opts.heldFor?.includes(requestedAt!) ?? false)),
     runnerStartedAt: (taskId) => opts.started?.[taskId] ?? null,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
+    ...(opts.scheduleFacts ? { scheduleFacts: (taskId: string) => opts.scheduleFacts![taskId] ?? {} } : {}),
   }
   const board = createTaskBoard(deps)
   return { board, brains, clock }
@@ -157,14 +158,90 @@ describe('the task board', () => {
     expect(tasks.find((x) => x.id === 'fresh')).toMatchObject({ group: 'blocked', runner: { kind: 'held' } })
   })
 
-  it('sends the task\'s goal, and the schedule of a job here ahead of the one in its delegation', async () => {
+  it('sends the task\'s goal and its schedule: a wake-up a session set for itself is a mission, a repeating time makes it a routine', async () => {
     const { board } = setup({
-      main: [mine('m', { goal: 'Orders sync both ways', delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1' } } })],
-      jobs: { m: '2026-11-20T09:00:00.000Z' },
-      schedules: { m: { at: '2026-11-20T09:00:00.000Z', session: 'resume' } },
+      main: [
+        mine('m', { goal: 'Orders sync both ways', delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-20T09:00:00.000Z', why: 'Check the reply', by_session: 's1' } } }),
+        mine('both', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], at: '2026-11-19T12:00:00.000Z', by_session: 's1', time_zone: 'UTC' } } }),
+      ],
     })
-    const t = (await board.refresh()).tasks.find((x) => x.id === 'm')!
-    expect(t).toMatchObject({ goal: 'Orders sync both ways', schedule: { at: '2026-11-20T09:00:00.000Z', session: 'resume' }, group: 'mission' })
+    const tasks = (await board.refresh()).tasks
+    expect(tasks.find((x) => x.id === 'm')).toMatchObject({ goal: 'Orders sync both ways', schedule: { at: '2026-11-20T09:00:00.000Z', why: 'Check the reply', by_session: 's1' }, group: 'mission', nextRunAt: '2026-11-20T09:00:00.000Z' })
+    // the next run is the earliest of its times
+    expect(tasks.find((x) => x.id === 'both')).toMatchObject({ group: 'routine', nextRunAt: '2026-11-19T12:00:00.000Z' })
+  })
+
+  it('shows a time that is due and not fired yet, and a run that waits to start, as the next run, by what this cockpit\'s record says', async () => {
+    const hourly = { crons: ['0 * * * *'], time_zone: 'UTC' }
+    const scheduled = (id: string, schedule: Record<string, unknown>) => mine(id, { delegate: 'atlas', delegation: { agent: 'atlas', schedule } })
+    const { board } = setup({
+      main: [
+        scheduled('due-wake', { at: '2026-11-19T09:58:00.000Z' }), scheduled('fired-wake', { at: '2026-11-19T09:58:00.000Z' }),
+        scheduled('due-cron', hourly), scheduled('ahead', hourly), scheduled('waiting', hourly), scheduled('paused', { at: '2026-11-19T09:58:00.000Z', paused: true }),
+        mine('mail', { delegate: 'atlas' }),
+        mine('closed', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-19T09:58:00.000Z' } } }, 'resolved'),
+      ],
+      scheduleFacts: {
+        'fired-wake': { firedWake: '2026-11-19T09:58:00.000Z' },
+        // the cursor stands before the hour: this pass has not fired 10:00 yet
+        'due-cron': { cursor: '2026-11-19T09:59:30.000Z' },
+        ahead: { cursor: '2026-11-19T10:00:00.000Z' },
+        waiting: { cursor: '2026-11-19T10:00:00.000Z', waitingRunDueAt: '2026-11-19T09:00:00.000Z' },
+        // a channel message waits for room: no schedule, still a run coming up
+        mail: { waitingRunDueAt: '2026-11-19T09:59:00.000Z' },
+        closed: { waitingRunDueAt: '2026-11-19T09:59:00.000Z' },
+      },
+    })
+    const model = await board.refresh()
+    const next = (id: string) => [...model.tasks, ...(model.closed ?? [])].find((t) => t.id === id)?.nextRunAt
+    expect(next('due-wake')).toBe('2026-11-19T09:58:00.000Z')
+    // fired already: clearing it on the task has not arrived, and nothing else is coming
+    expect(next('fired-wake')).toBeNull()
+    expect(next('due-cron')).toBe('2026-11-19T10:00:00.000Z')
+    expect(next('ahead')).toBe('2026-11-19T11:00:00.000Z')
+    expect(next('waiting')).toBe('2026-11-19T09:00:00.000Z')
+    expect(next('paused')).toBeNull()
+    expect(next('mail')).toBe('2026-11-19T09:59:00.000Z')
+    // nothing fires on a closed task
+    expect(next('closed') ?? null).toBeNull()
+    expect(model.tasks.find((t) => t.id === 'due-wake')).toMatchObject({ turn: 'agent_scheduled' })
+  })
+
+  it('shows no repeating time of a record that waits for the user\'s OK as its next run: they are held; its wake-up still is', async () => {
+    const hourly = { crons: ['0 * * * *'], time_zone: 'UTC' }
+    const scheduled = (id: string, schedule: Record<string, unknown>) => mine(id, { delegate: 'atlas', delegation: { agent: 'atlas', schedule } })
+    const { board } = setup({
+      main: [scheduled('held', hourly), scheduled('held-due', hourly), scheduled('held-wake', { ...hourly, at: '2026-11-19T12:30:00.000Z' })],
+      scheduleFacts: {
+        held: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true },
+        'held-due': { cursor: '2026-11-19T09:59:30.000Z', needsOk: true },
+        'held-wake': { cursor: '2026-11-19T10:00:00.000Z', needsOk: true },
+      },
+    })
+    const model = await board.refresh()
+    const next = (id: string) => model.tasks.find((t) => t.id === id)?.nextRunAt
+    expect(next('held')).toBeNull()
+    expect(next('held-due')).toBeNull()
+    expect(next('held-wake')).toBe('2026-11-19T12:30:00.000Z')
+  })
+
+  it('says which open tasks wait for the user\'s OK on a channel, from this cockpit\'s record', async () => {
+    const { board } = setup({
+      main: [
+        mine('mail', { delegate: 'atlas' }), mine('plain', { delegate: 'atlas' }),
+        mine('scheduled', { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 * * * *'], time_zone: 'UTC' } } }),
+        mine('closed', { delegate: 'atlas' }, 'resolved'),
+      ],
+      scheduleFacts: { mail: { needsOk: true }, scheduled: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true }, plain: { cursor: null }, closed: { needsOk: true } },
+    })
+    const model = await board.refresh()
+    const task = (id: string) => [...model.tasks, ...(model.closed ?? [])].find((t) => t.id === id)!
+    expect(task('mail').needsOk).toBe(true)
+    expect(task('scheduled').needsOk).toBe(true)
+    // absent, not false: most tasks have nothing waiting
+    expect(task('plain')).not.toHaveProperty('needsOk')
+    // a closed task's record stops listening: nothing waits for an OK
+    expect(task('closed')).not.toHaveProperty('needsOk')
   })
 
   it('offers "Hand to <agent>" for a delegated task that was never handed over, in Needs you', async () => {
@@ -173,42 +250,38 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'never')).toMatchObject({ turn: 'needs_you', group: 'nobody', reason: 'not_handed_over', handTo: 'atlas' })
   })
 
-  it('shows a schedule another member\'s cockpit mirrored into the delegation as scheduled, with its next run', async () => {
+  it('shows the schedule of a task another member owns as scheduled, with its next run', async () => {
     const { board } = setup({
       main: [
-        mine('theirs-weekly', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', session: 'new' } } }),
-        mine('paused', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { cron: '0 9 * * 1', time_zone: 'UTC', paused: true } } }),
+        mine('theirs-weekly', { assignee_ids: ['other'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC' } } }),
+        mine('paused', { assignee_ids: ['other'], delegate: 'atlas', delegation: { agent: 'atlas', schedule: { crons: ['0 9 * * 1'], time_zone: 'UTC', paused: true } } }),
       ],
     })
     const model = await board.refresh()
     // a repeat rule is a routine; the board carries the schedule for the card
-    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'routine', nextRunAt: '2026-11-23T09:00:00.000Z', schedule: { cron: '0 9 * * 1' } })
+    expect(model.tasks.find((t) => t.id === 'theirs-weekly')).toMatchObject({ turn: 'agent_scheduled', group: 'routine', nextRunAt: '2026-11-23T09:00:00.000Z', schedule: { crons: ['0 9 * * 1'] } })
     expect(model.tasks.find((t) => t.id === 'paused')!.nextRunAt).toBeNull()
   })
 
-  it('shows no next run from a schedule left in the delegation without a job: on one\'s own task, and on any closed task', async () => {
-    const schedule = { at: '2026-11-19T20:40:00.000Z', time_zone: 'UTC', session: 'resume' }
+  it('the task is the truth for its schedule: an open task shows it whoever owns it, a closed task shows none and no next run', async () => {
+    const schedule = { at: '2026-11-19T20:40:00.000Z', by_session: 's1', time_zone: 'UTC' }
     const { board } = setup({
       main: [
-        // Its check was removed: nothing here runs it any more.
-        mine('own-leftover', { delegate: 'atlas', delegation: { agent: 'atlas', schedule } }),
+        mine('own-open', { delegate: 'atlas', delegation: { agent: 'atlas', schedule } }),
         mine('own-closed', { delegate: 'atlas', delegation: { agent: 'atlas', schedule } }, 'resolved'),
         mine('theirs-closed', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule } }, 'resolved'),
         mine('theirs-open', { assignee_ids: ['dominik'], delegate: 'atlas', delegation: { agent: 'atlas', schedule } }),
-        // A job here still runs it: that counts, closed or not.
-        mine('job-closed', { delegate: 'atlas', delegation: { agent: 'atlas', schedule } }, 'resolved'),
       ],
-      jobs: { 'job-closed': '2026-11-19T20:40:00.000Z' },
-      schedules: { 'job-closed': schedule },
     })
     const model = await board.refresh()
     const of = (id: string) => model.tasks.find((t) => t.id === id)
-    for (const id of ['own-leftover', 'own-closed', 'theirs-closed']) {
+    for (const id of ['own-closed', 'theirs-closed']) {
       expect(of(id)?.nextRunAt, id).toBeNull()
       expect(of(id)?.schedule, id).toBeUndefined()
+      expect(of(id)?.hasSchedule, id).toBe(false)
     }
-    expect(of('theirs-open')).toMatchObject({ nextRunAt: '2026-11-19T20:40:00.000Z', schedule })
-    expect(of('job-closed')).toMatchObject({ nextRunAt: '2026-11-19T20:40:00.000Z', schedule })
+    expect(of('own-open')).toMatchObject({ nextRunAt: '2026-11-19T20:40:00.000Z', schedule, hasSchedule: true })
+    expect(of('theirs-open')).toMatchObject({ nextRunAt: '2026-11-19T20:40:00.000Z', schedule, hasSchedule: true })
   })
 
   it('says per task it read whether it is open and which sessions its waits came from, for the session lists', async () => {
@@ -330,7 +403,7 @@ describe('the task board', () => {
     expect(turn('asked')).toMatchObject({ turn: 'needs_you', group: 'asked', spaceName: 'Main', project: 'acme' })
     expect(turn('review')?.turn).toBe('review')
     expect(turn('working')).toMatchObject({ turn: 'agent_working', working: true, sessionIds: ['s0'] })
-    expect(turn('at-nine')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-20T01:00:00Z' })
+    expect(turn('at-nine')).toMatchObject({ turn: 'agent_scheduled', group: 'at_time', nextRunAt: '2026-11-20T01:00:00.000Z' })
     expect(turn('own')).toMatchObject({ turn: 'needs_you', group: 'own' })
     expect(turn('closed')?.turn).toBe('done')
     expect(model.counts).toEqual({ needsYou: 2, inbox: 2 })
@@ -500,13 +573,12 @@ describe('the task board', () => {
     expect((await board.refresh()).tasks.find((t) => t.id === 'bare')?.delegate).toBeUndefined()
   })
 
-  it('says whether a task\'s schedule is still on: a job here that has not ended, whatever its state, or another member\'s schedule; not a leftover on one\'s own', async () => {
-    const schedule = { cron: '0 8 * * *', time_zone: 'UTC' }
+  it('says whether a task has a schedule: whatever its state and whoever owns the task', async () => {
+    const schedule = { crons: ['0 8 * * *'], time_zone: 'UTC' }
     const { board } = setup({
       main: [
         mine('daily', { delegate: 'atlas' }), mine('paused', { delegate: 'atlas' }), mine('plain'),
-        // The schedule its ended job mirrored into it is still there: nothing runs it.
-        mine('leftover', { delegation: { agent: 'atlas', schedule } }),
+        mine('repeating', { delegation: { agent: 'atlas', schedule } }),
         { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'atlas', schedule } } },
       ],
       jobs: { daily: '2026-11-20T00:00:00.000Z' }, openJobs: ['paused'],
@@ -514,10 +586,10 @@ describe('the task board', () => {
     const model = await board.refresh()
     const of = (id: string) => model.tasks.find((t) => t.id === id)!
     expect(of('daily')).toMatchObject({ hasSchedule: true, nextRunAt: '2026-11-20T00:00:00.000Z' })
-    // No run is coming up, but its job could come back: it closes only by ending its schedule.
+    // No run is coming up, but it could be resumed: it closes only by ending its schedule.
     expect(of('paused')).toMatchObject({ hasSchedule: true, nextRunAt: null })
     expect(of('plain').hasSchedule).toBe(false)
-    expect(of('leftover').hasSchedule).toBe(false)
+    expect(of('repeating')).toMatchObject({ hasSchedule: true, nextRunAt: '2026-11-20T08:00:00.000Z' })
     expect(of('theirs').hasSchedule).toBe(true)
   })
 
@@ -529,11 +601,11 @@ describe('the task board', () => {
     const { board } = setup({
       main: [
         mine('daily', { delegate: 'atlas', waits: [review, kim], waiting_on: review }),
-        // Its only job is paused: no run is coming up, the schedule is on all the same.
+        // Its schedule is paused: no run is coming up, it has one all the same.
         mine('paused', { waits: [review], waiting_on: review }),
-        // Its schedule is another member's cockpit's, mirrored into the delegation.
-        { id: 'mirrored', status: 'active', properties: { assignee_ids: ['dominik'], waits: [review], waiting_on: review, delegation: { agent: 'atlas', schedule: { cron: '0 8 * * *', time_zone: 'UTC' } } } },
-        // Its job has ended, but its schedule was on when the owner chose Looks good.
+        // Another member's task: its schedule counts all the same.
+        { id: 'mirrored', status: 'active', properties: { assignee_ids: ['other'], waits: [review], waiting_on: review, delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } } },
+        // Its schedule has ended since, but it had one when the owner chose Looks good.
         mine('was-scheduled', { waits: [review], waiting_on: review }),
         // The next run asked for its review after the owner approved the one before: that one stays.
         mine('next-run', { waits: [later], waiting_on: later }),

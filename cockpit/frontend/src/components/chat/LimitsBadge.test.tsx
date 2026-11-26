@@ -43,7 +43,7 @@ describe('the limits badge', () => {
     setLimits('s-badge-1', { ...blocked, job });
     render(<LimitsBadge sessionId="s-badge-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
-    expect(screen.getByText('This job session can\'t use:')).toBeTruthy();
+    expect(screen.getByText('This session of a task\'s schedule can\'t use:')).toBeTruthy();
     expect(screen.getByText('Gmail · Send email')).toBeTruthy();
     expect(screen.getByText('Gmail · Reply to email')).toBeTruthy();
     expect(screen.queryByText('mcp__gmail__send_email')).toBeNull();
@@ -64,7 +64,7 @@ describe('the limits badge', () => {
     render(<LimitsBadge sessionId="s-badge-3" />);
     fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
     expect(screen.queryAllByRole('menuitem')).toEqual([]);
-    expect(screen.getByText(/Lend it tools in the Jobs view/)).toBeTruthy();
+    expect(screen.getByText(/It runs for a task that answers messages from outside\. Lend it tools in its task's panel, under Schedule/)).toBeTruthy();
   });
 
   it('is not there for a session without limits', () => {

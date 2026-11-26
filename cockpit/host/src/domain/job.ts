@@ -1,38 +1,30 @@
 import type { ProviderId } from './agent-provider.js'
 import type { WorkerStatus } from './session-attention.js'
+import type { DueCron, DueWake, ScheduleFacts } from './task-schedule.js'
 import type { ToolProfile } from './tool-profile.js'
-import { formatInZone, nextCronTime, parseCron } from './schedule.js'
-import { CHECK_RUN_RULE, JOB_HEADER_STATUS } from './turn-end.js'
 
 /**
- * A job: work the cockpit wakes a session for, without anyone asking at that
- * moment. Its triggers say when — a schedule now; later a mail, a Slack
- * conversation or WhatsApp numbers (the channel bridge, job-contract.ts) — and
- * its target says whom: a fresh worker per run (the default), or a session that
- * exists (decision jobs-two-modes-worker-default-drop-job-session). Each wake is a run (JobRun), kept as
- * the job's history. The runner (application/job-runner.ts) fires them; the
- * definitions and runs live in the host (job-store.ts), not in the brain: the
- * runner works without a brain server, and a job links its brain task by id.
+ * The local record of a scheduled task, and its runs (jobs.json version 2, job-store.ts).
+ *
+ * A task holds its schedule in the brain (delegation.schedule, domain/task-schedule.ts): when it runs, what a run is
+ * for and whether it is paused are read from the task. What only this machine needs sits here, ONE record per task
+ * with the task's id as its id — so a session's ledger entry (jobId), the channel bridge's routes, push tags, grants
+ * and the limited-profile lookup name the task. It keeps:
+ *
+ *   - where the schedule stands on this cockpit: the cursor the repeating times are due after, the wake-up it fired
+ *     last, how many runs it started and how many failed in a row;
+ *   - the user's per-machine settings: who hears of a run, the limited switch and lent tools, the tool profile, the
+ *     reply mode per channel, an end after so many runs, where a new session of the task starts;
+ *   - the channel triggers (mail, Slack, WhatsApp) the bridge wakes the task for.
+ *
+ * A record is made when the host first sees a schedule on a task it fires, and when the schedule tool or the user
+ * sets one of those settings. It goes when the task has no schedule this cockpit fires, no channel trigger and no open
+ * run (recordKeeping below, which also says what stays: a limit set on it). Each wake is a run (JobRun), kept as the
+ * task's history under the record's id; it goes with the record.
  */
 
-/** routine: on a schedule. errand: ends when its goal is met. standing: never ends on its own. */
-export type JobKind = 'routine' | 'errand' | 'standing'
-
-export type JobTarget =
-  /** A fresh worker per run, in a project of the job's space. */
-  | { type: 'worker'; projectId: string; provider?: ProviderId }
-  /** A session that exists: the one that made the job, or another of its space. */
-  | { type: 'session'; sessionId: string }
-  /**
-   * One worker of its own, started on the first run and woken again on the next ones. No longer
-   * created: the jobs made with it keep running until they move to a worker and a task.
-   */
-  | { type: 'job-session'; projectId: string; provider?: ProviderId; sessionId: string | null }
-
-export type ScheduleTrigger = { type: 'schedule'; timeZone: string } & ({ cron: string; at?: undefined } | { at: string; cron?: undefined })
 /** A channel trigger (the bridge's; not fired by the scheduler). `match` is the bridge's to read. */
 export type ChannelTrigger = { type: 'mail' | 'slack' | 'whatsapp'; match: unknown[] }
-export type JobTrigger = ScheduleTrigger | ChannelTrigger
 
 export type ReplyChannel = 'mail' | 'slack' | 'whatsapp'
 
@@ -47,73 +39,78 @@ export interface JobGrant {
 }
 
 /** The grants still running at `now`. */
-export const activeGrants = (job: Pick<Job, 'grants'>, now: number): JobGrant[] =>
+export const activeGrants = (job: { grants?: JobGrant[] }, now: number): JobGrant[] =>
   (job.grants ?? []).filter((grant) => Date.parse(grant.until) > now)
 export type ReplyMode = 'send' | 'draft'
-
-/** When the job ends on its own: after so many runs, or at a time. */
-export interface JobEnd {
-  afterRuns?: number
-  at?: string
-}
 
 /** Who hears of a run: only when someone is needed (review, question, failed), always, or never. */
 export type JobNotify = 'needs-me' | 'always' | 'never'
 
 export interface Job {
+  /** The task's id: one record per task. */
   id: string
-  name: string
-  kind: JobKind
   /** The brain space it runs in; null = the main space. */
   spaceId: string | null
-  /** The session that made it; null when the user did. */
+  /** The brain task it belongs to: the same as `id`. */
+  taskId: string
+  /** The session that set it up; null when the user or the cockpit did. */
   createdBy: string | null
-  /**
-   * Set on the check an end_turn call's next.when made (application/turn-check.ts): the session's
-   * later calls move or remove it. A job the agent made with the schedule tool has none and is its own.
-   */
-  origin?: 'end_turn'
   createdAt: string
   updatedAt: string
-  /** The brain task it belongs to, if any. */
-  taskId: string | null
-  /** What the woken session reads. */
-  prompt: string
-  /** What has to be true for the job to be over, set by the agent; every run is told it. */
-  goal?: string | null
-  target: JobTarget
-  triggers: JobTrigger[]
+  /** The channels that wake the task besides its schedule. */
+  triggers: ChannelTrigger[]
+  /** The project a new session of the task starts in; null: the task's own (its scope's project). */
+  projectId: string | null
+  /** The provider a new session of the task starts with; absent: the project's default. */
+  provider?: ProviderId
   /** What its sessions may use: copied from its maker when it was made, never wider. */
   toolProfile: ToolProfile | null
   /** Per channel: send freely or draft for review (the bridge enforces it). */
   reply: Partial<Record<ReplyChannel, ReplyMode>>
-  end: JobEnd | null
+  /**
+   * Its repeating times end on their own after so many runs (max_runs): once runCount reaches afterRuns they go off
+   * the task, and this with them; the wake-up is not theirs and stays. Only a run a repeating time fired counts: any
+   * other run (Run now, a channel message, the wake-up) raises afterRuns with runCount, so afterRuns - runCount is
+   * always the runs left. It goes whenever the repeating times are ended or replaced without a new count. A time to
+   * end at is the schedule's ends_at.
+   */
+  end: { afterRuns: number } | null
   notify: JobNotify
-  paused: boolean
-  /** Why it paused itself (failures in a row); null when paused by hand or running. */
+  /** Why the cockpit paused the task's schedule (failures in a row); null when it did not. The pause itself is on the task. */
   pausedReason: string | null
   /**
-   * New channel addresses wait for the user's OK in the Jobs view; until then the job
-   * holds still like a paused one. Only the user clears it, never a session.
+   * New channel addresses wait for the user's OK; until then the record holds what it fires from outside the task's
+   * sessions: the channel does not wake the task, Run now is refused, and the repeating times do not fire (nothing of
+   * them is made up after the OK). The wake-up still fires: a session set it. Only the user clears it, never a session.
    */
   pendingApproval?: boolean
   /**
-   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, of the
-   * space's MCP servers only the brain, and the schedule tool for their own job only
-   * (application/limited-job-scope.ts); web tools stay. A job starts free; only the user limits
-   * it, never a session.
+   * Limited (the user's switch): its sessions get no shell, no messages to other sessions, of the space's MCP servers
+   * only the brain, and the schedule tool for their own task only (application/limited-job-scope.ts); web tools stay.
+   * A record starts free; only the user limits it, never a session.
    */
   limited?: boolean
   /** Tools the user lent a limited job for a while; a grant ends at `until` or when its session reports done. */
   grants?: JobGrant[]
-  /** It will not run again. */
-  endedAt: string | null
-  /** When the schedule is due next; null when it has no further time. */
-  nextRunAt: string | null
+  /** Repeating times are due after it (ISO); set to "now" when the schedule is first seen, so past times never fire. Null: not seen yet. */
+  cursor: string | null
+  /** The wake-up (`at`) fired last, set when a run that carries it got to a session: it fires once, also when the brain write that clears it failed. */
+  firedWake: string | null
+  /** When its last run started; null before the first. */
+  lastRunAt: string | null
   /** Runs started or waiting to start, over its whole life. */
   runCount: number
   /** Failed runs in a row. */
   failures: number
+}
+
+/** A new record for a task, with nothing set: every setting at its default, the schedule not seen yet. */
+export function newRecord(task: { id: string; spaceId: string | null }, at: string, by: string | null = null): Job {
+  return {
+    id: task.id, spaceId: task.spaceId, taskId: task.id, createdBy: by, createdAt: at, updatedAt: at,
+    triggers: [], projectId: null, toolProfile: null, reply: {}, end: null, notify: 'needs-me', pausedReason: null,
+    cursor: null, firedWake: null, lastRunAt: null, runCount: 0, failures: 0,
+  }
 }
 
 export type RunStatus =
@@ -128,11 +125,12 @@ export type RunStatus =
   | 'failed'
   /** Due while the cockpit was down, too long ago to still run. */
   | 'missed'
-  /** Due while the previous run still worked. */
+  /** A repeating time due while a session of the task was working, or while its previous run had not started; or its task closed before it started. */
   | 'skipped'
 
 export interface JobRun {
   id: string
+  /** The record's id: the task's (a run from before schema 24 that ended with its job keeps that job's id). */
   jobId: string
   /** What fired it. */
   trigger: 'schedule' | 'manual' | ReplyChannel
@@ -151,15 +149,32 @@ export interface JobRun {
   outcome: WorkerStatus | null
   /** Why it failed, was skipped or missed, or waits. */
   note: string | null
+  /** Its session was started for this run (a new one); absent or false: a session that existed got it as a message. */
+  newSession?: boolean
   /** A channel event's key; the same key never wakes the job twice. */
   idempotencyKey?: string
   /** What a channel event says (counts, never content); the woken session reads it after the header. */
   message?: string
+  /** For a run the schedule fired: the times that came due, so the run's text names them whenever it starts. */
+  fired?: RunFired
+  /**
+   * The wake-up (its at) the text named that its session was given, set when the text is built for a start. Only that
+   * wake-up has fired once the run has started: one that joined the run after the text was built is not in it.
+   */
+  saidWake?: string
+}
+
+/** What of a task's schedule one firing names (domain/task-schedule.ts dueOf): the wake-up and every repeating time due. */
+export interface RunFired {
+  wake?: DueWake
+  crons?: DueCron[]
+  /** The zone the schedule's times are read in; absent when it names none. */
+  timeZone?: string
 }
 
 /** Limits on what sessions may schedule. */
 export const JOB_LIMITS = {
-  /** Jobs per space that have not ended. */
+  /** Open tasks with a schedule per space. */
   perSpace: 100,
   /** A repeating schedule fires at most this often. */
   minGapMs: 15 * 60_000,
@@ -175,7 +190,6 @@ export const JOB_LIMITS = {
   startsPerTick: 2,
   /** Runs kept per job. */
   history: 100,
-  promptChars: 20_000,
   nameChars: 60,
   goalChars: 500,
 } as const
@@ -187,17 +201,33 @@ export function retryDelay(attempts: number): number {
   return RETRY_STEPS_MS[Math.min(Math.max(attempts - 1, 0), RETRY_STEPS_MS.length - 1)]
 }
 
-export const isScheduleTrigger = (trigger: JobTrigger): trigger is ScheduleTrigger => trigger.type === 'schedule'
+/**
+ * This cockpit holds it back: it waits for the user's OK, or the cockpit paused it after failures. A pause the user
+ * set is on the task's schedule (delegation.schedule.paused), not here.
+ */
+export const isHeld = (job: Pick<Job, 'pendingApproval' | 'pausedReason'>): boolean => job.pendingApproval === true || job.pausedReason !== null
 
-/** It does not run now: paused, or waiting for the user's OK. */
-export const isHeld = (job: Pick<Job, 'paused' | 'pendingApproval'>): boolean => job.paused || job.pendingApproval === true
+/**
+ * What this cockpit's record says of a task's schedule (domain/task-schedule.ts runComingAt): the cursor and the
+ * wake-up it fired, the due time of a run that waits to start or is being started, and whether its channel waits for
+ * the user's OK. Nothing for a task without a record. It holds the task runner off the task, is the next-step check's
+ * next run and the board's.
+ */
+export function scheduleFactsOf(record: Pick<Job, 'cursor' | 'firedWake' | 'pendingApproval'> | undefined, runs: readonly JobRun[]): ScheduleFacts {
+  if (!record) return {}
+  // While the record waits for the user's OK a waiting run of a repeating time alone is skipped, not started
+  // (application/job-runner.ts attempt): it is no run coming up.
+  const held = (run: JobRun) => record.pendingApproval === true && run.status === 'waiting' && run.trigger === 'schedule' && !run.fired?.wake
+  const waiting = runs.find((run) => (run.status === 'waiting' || run.status === 'starting') && !held(run))
+  return { cursor: record.cursor, firedWake: record.firedWake, waitingRunDueAt: waiting?.dueAt ?? null, ...(record.pendingApproval ? { needsOk: true } : {}) }
+}
 
 /** The mail addresses and domains a job listens on, as "address:x" / "domain:y". */
-export function mailKeys(job: Pick<Job, 'triggers'>): Set<string> {
+export function mailKeys(job: { triggers: ReadonlyArray<{ type: string; match?: unknown[] }> }): Set<string> {
   const keys = new Set<string>()
   for (const trigger of job.triggers) {
     if (trigger.type !== 'mail') continue
-    for (const item of trigger.match as Array<Record<string, unknown>>) {
+    for (const item of (trigger.match ?? []) as Array<Record<string, unknown>>) {
       if (item?.kind === 'address' && typeof item.address === 'string') keys.add(`address:${item.address.toLowerCase()}`)
       if (item?.kind === 'domain' && typeof item.domain === 'string') keys.add(`domain:${item.domain.toLowerCase()}`)
     }
@@ -205,91 +235,59 @@ export function mailKeys(job: Pick<Job, 'triggers'>): Set<string> {
   return keys
 }
 
+/**
+ * How long a record that was just made or changed is left as it is by a pass that finds no schedule on its task.
+ * Whoever sets a schedule writes it to the task first and the record after it, but a pass may have read the tasks
+ * before that write and come to the record after it: removed then, the record's settings (an end after so many runs,
+ * who hears of a run, the project, the tools) would be lost. A pass reads the tasks about once a minute
+ * (application/job-runner.ts), so a few minutes cover the pass under way and the reads that follow it.
+ */
+export const RECORD_GRACE_MS = 5 * 60_000
+
+/** The record was made or changed within the grace: too new to be judged by a task read that may be older than it. */
+export const isNewRecord = (record: Pick<Job, 'updatedAt'>, now: number): boolean => now - Date.parse(record.updatedAt) < RECORD_GRACE_MS
+
+/** Where the task of a record stands when this cockpit fires no schedule of it: open, or closed (or gone). */
+export type TaskStanding = 'open' | 'closed'
+
+/**
+ * What a pass does with the record of a task whose schedule it does not fire (application/job-runner.ts); the
+ * record of one it fires is kept.
+ *
+ *   - `stopListening`: the task is closed, so nothing wakes it any more: its channel triggers, lent tools and a
+ *     pending approval go, and a run that waits to start is skipped (application/end-task-record.ts).
+ *   - `remove`: the record goes. For an open task that is when it has no schedule this cockpit fires, no channel
+ *     trigger and no open run, and holds no limit the user or its maker set: a limited record and one with a tool
+ *     profile stay while the task is open, so a schedule set later starts no session with more than was allowed.
+ *     For a closed task it goes once no run of it is open (a waiting one is skipped first).
+ *
+ * The pass asks this only of a record that is not new (isNewRecord), when its task is open.
+ */
+export function recordKeeping(
+  record: Pick<Job, 'triggers' | 'grants' | 'pendingApproval' | 'limited' | 'toolProfile'>, standing: TaskStanding, runs: readonly JobRun[],
+): { stopListening: boolean; remove: boolean } {
+  if (standing === 'closed') {
+    const listens = record.triggers.length > 0 || (record.grants?.length ?? 0) > 0 || record.pendingApproval === true
+    // A waiting run is skipped with the listening; one a session has goes on and keeps the record until it ends.
+    return { stopListening: listens || runs.some((run) => run.status === 'waiting'), remove: !runs.some((run) => run.status === 'starting' || run.status === 'started') }
+  }
+  const limits = record.limited === true || record.toolProfile !== null
+  return { stopListening: false, remove: record.triggers.length === 0 && !limits && !runs.some(isOpenRun) }
+}
+
+/** Why a run by hand (Run now) cannot start: the task's previous run is open, a session of it works, its channel waits for the user's OK, or no session could start for it. */
+export type RunNowRefusal = 'run_open' | 'task_working' | 'needs_approval' | 'no_project'
+
 /** A run that has not come to an end: the next one waits for it. */
 export const isOpenRun = (run: JobRun): boolean => run.status === 'waiting' || run.status === 'starting' || run.status === 'started'
 
-/** The note of a run that was due when its job was ended and so never started. */
-export const ENDED_BEFORE_START = 'its job was ended before it started'
-
-/** The first time after `after` (exclusive) a schedule trigger is due; null if none. */
-export function nextTriggerTime(trigger: ScheduleTrigger, after: number): number | null {
-  if (trigger.at !== undefined) {
-    const at = Date.parse(trigger.at)
-    return at > after ? at : null
-  }
-  return nextCronTime(parseCron(trigger.cron), trigger.timeZone, after)
-}
-
-/** When the job is due next after `after`: its earliest schedule trigger, within its end. */
-export function nextDue(job: Pick<Job, 'triggers' | 'end' | 'runCount'>, after: number): number | null {
-  if (job.end?.afterRuns !== undefined && job.runCount >= job.end.afterRuns) return null
-  let next: number | null = null
-  for (const trigger of job.triggers) {
-    if (!isScheduleTrigger(trigger)) continue
-    const at = nextTriggerTime(trigger, after)
-    if (at !== null && (next === null || at < next)) next = at
-  }
-  if (next !== null && job.end?.at && next > Date.parse(job.end.at)) return null
-  return next
-}
-
-/** Only schedules: nothing else can wake it once they have no time left. */
-export const onlyScheduled = (job: Pick<Job, 'triggers'>): boolean => job.triggers.every(isScheduleTrigger)
-
-/** A repeating schedule, not a single date. */
-export const repeats = (job: Pick<Job, 'triggers'>): boolean => job.triggers.some((t) => isScheduleTrigger(t) && t.cron !== undefined)
-
-/** "every 0 8 * * 1-5 (Asia/Makassar)" or "once, Fri 13 Nov 10:00 (Asia/Makassar)". */
-export function describeTrigger(trigger: JobTrigger): string {
-  if (trigger.type === 'mail') {
-    const from = (trigger.match as Array<Record<string, unknown>>).map((m) => String(m.address ?? m.domain ?? '')).filter(Boolean)
-    return `on mail from ${from.join(', ')}`
-  }
-  if (!isScheduleTrigger(trigger)) return `on ${trigger.type}`
-  return trigger.cron !== undefined
-    ? `cron "${trigger.cron}" (${trigger.timeZone})`
-    : `once, ${formatInZone(Date.parse(trigger.at), trigger.timeZone)} (${trigger.timeZone})`
-}
-
-/** The zone a job's times read in: its first schedule's. */
-export function jobTimeZone(job: Pick<Job, 'triggers'>, fallback: string): string {
-  return job.triggers.find(isScheduleTrigger)?.timeZone ?? fallback
-}
-
-/** The first line a woken session reads: who sends this and what it is. */
-export function runHeader(job: Job, run: JobRun, now: number, zone: string): string {
-  const late = now - Date.parse(run.dueAt)
-  const when = run.trigger === 'manual'
-    ? 'started by hand'
-    : run.trigger !== 'schedule'
-      ? `woken by ${run.trigger}`
-      : `due ${formatInZone(Date.parse(run.dueAt), zone)} ${zone}${late > 2 * 60_000 ? `, ${Math.round(late / 60_000)} min late` : ''}`
-  return `[Scheduled by the cockpit: job "${job.name}" (${job.id.slice(0, 8)}), run ${run.number}, ${when}. `
-    + `Not from your user, and nobody may be watching: ${JOB_HEADER_STATUS}. `
-    // A check set by ending a turn is moved and removed by ending a turn, not with the schedule tool.
-    + (job.origin === 'end_turn' ? CHECK_RUN_RULE : 'The schedule tool changes or stops this job.' + continuation(job) + taskRule(job)) + ']'
-}
-
-/**
- * What every run of a job on a task reads (runHeader): while the job has not ended, the task's schedule is on and the
- * task is not closed. The run ends its job first and hands the result over, so no later run lands on a closed task.
- */
-export const JOB_TASK_RULE = 'While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.'
-
-function taskRule(job: Job): string {
-  return job.taskId ? ` ${JOB_TASK_RULE}` : ''
-}
-
-/**
- * How a run goes on with unfinished work. A repeating job goes on at its next run; any other one
- * sets its own next wake-up, since a one-time wake-up would replace a repeating schedule.
- */
-function continuation(job: Job): string {
-  const repeating = job.triggers.some((trigger) => isScheduleTrigger(trigger) && trigger.cron !== undefined)
-  const next = 'set your next wake-up with the schedule tool (update with at)'
-  if (job.goal) {
-    return ` Goal: ${job.goal.replace(/[.\s]+$/, '')}. Report done only once it is reached; until then, `
-      + `${repeating ? 'the next scheduled run continues it' : `before you stop, ${next}`}. Once it is reached, end the job with finish.`
-  }
-  return repeating ? '' : ` If the work is not finished, ${next} before you stop.`
-}
+/** The note of a run that was due when its schedule was ended and so never started. */
+export const ENDED_BEFORE_START = 'its schedule was ended before it started'
+/** The note of a run that was due when its task was closed some other way and so never started. */
+export const CLOSED_BEFORE_START = 'its task was closed before it started'
+/** The note of a time that came due while a session of the task was in a turn (the four-line order, line a). */
+export const SKIPPED_WORKING = 'a session of the task was working'
+/** The note of a time that came due while the task's previous run still waited to start. */
+export const SKIPPED_NOT_STARTED = 'the previous run had not started yet'
+/** The note of a repeating time whose run still waited to start when the record came to wait for the user's OK. */
+export const HELD_FOR_OK = 'the task waits for the user\'s OK: its repeating times do not run until it is given'

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { runLabel, splitEnded, type LabelRun } from './job-run-label';
+import { runLabel, type LabelRun } from './job-run-label';
 
-// A job's last run reads as its session stands now: an answered question no
-// longer says "needs you", and ended jobs fold away.
+// A task's newest run reads as its session stands now: an answered question no
+// longer says "needs you".
 
 const finished = (outcome: LabelRun['outcome'], attention: LabelRun['attention'] = null, known = true): LabelRun =>
   ({ status: 'finished', outcome, attention, sessionKnown: known });
@@ -29,12 +29,5 @@ describe('runLabel', () => {
   it('labels runs that did not finish', () => {
     expect(runLabel({ status: 'missed', outcome: null, attention: null, sessionKnown: false }, true)).toEqual({ text: 'missed', tone: 'attention' });
     expect(runLabel({ status: 'started', outcome: null, attention: null, sessionKnown: true }, true)).toEqual({ text: 'running', tone: 'ok' });
-  });
-});
-
-describe('splitEnded', () => {
-  it('keeps running jobs in place and folds the ended ones apart', () => {
-    const jobs = [{ id: 'a', endedAt: null }, { id: 'b', endedAt: '2026-11-10T00:00:00Z' }, { id: 'c', endedAt: null }];
-    expect(splitEnded(jobs)).toEqual({ open: [jobs[0], jobs[2]], ended: [jobs[1]] });
   });
 });

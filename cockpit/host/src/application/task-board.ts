@@ -5,7 +5,8 @@ import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
-import { nextRunOfSchedule, scheduleFromElsewhere } from '../domain/task-schedule.js'
+import { hasSchedule, runComingAt, scheduleOf, type ScheduleFacts } from '../domain/task-schedule.js'
+import { JOB_LIMITS } from '../domain/job.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -34,7 +35,7 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
-  /** Its schedule (a job's here, else the one another member's cockpit fires) and its open runs. */
+  /** Its schedule (delegation.schedule, domain/task-schedule.ts): repeating times, a wake-up, paused or not. Only on an open task. */
   schedule?: ScheduleFields
   /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
   earlierRuns?: EarlierRun[]
@@ -78,11 +79,15 @@ export interface BoardTask {
   working: boolean
   nextRunAt: string | null
   /**
-   * Its schedule is still on (domain/task-schedule.ts hasSchedule): a job here that has not ended, also a paused one
-   * or one only mail wakes, or a schedule another member's cockpit fires. Such a task is not closed: Looks good
+   * It has a schedule (domain/task-schedule.ts hasSchedule), also a paused one. Such a task is not closed: Looks good
    * approves one run, and it closes with End schedule. Not the runner's `scheduled`, which is a run coming up.
    */
   hasSchedule: boolean
+  /**
+   * New channel addresses of the task wait for the user's OK on this cockpit (its record's pendingApproval): until
+   * then the channel does not wake it. The card and the Plan row say so; the OK is given in the panel's Schedule section.
+   */
+  needsOk?: true
   /** Work on it now ended and released this agent: the board offers "Hand to <agent>". Only while nobody is delegated. */
   handTo?: string
   /**
@@ -187,12 +192,6 @@ export interface TaskBoardDeps {
   viewer: string
   /** The sessions on a task that are not put away, and the background shells each started that still run. */
   sessionsOn(taskId: string): Array<{ sessionId: string; working: boolean; commands?: RunningCommand[] }>
-  /** The next run of a job of the task, if any. */
-  nextRunOf(taskId: string): string | null
-  /** The schedule this cockpit's jobs give the task (domain/task-schedule.ts scheduleOfJobs), if any. */
-  scheduleOf?(taskId: string): ScheduleFields | null
-  /** The task's schedule is still on (domain/task-schedule.ts hasSchedule; index.ts shares it with the commands). Without it none is. */
-  hasSchedule?(task: { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }): boolean
   snoozes(): Snooze[]
   pendingCommands(): TaskCommand[]
   /** The agent released when Work on it now on the task ended (application/task-commands.ts releasedAgent). */
@@ -209,6 +208,11 @@ export interface TaskBoardDeps {
   runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
   ledgerSessionsOn?(taskId: string): string[]
+  /**
+   * What this cockpit's record of the task says of its schedule (domain/job.ts): the cursor, the wake-up it fired, a
+   * run that waits to start. Without it the next run is the schedule's next time ahead.
+   */
+  scheduleFacts?(taskId: string): ScheduleFacts
   now(): number
   log(line: string): void
   /**
@@ -442,18 +446,22 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   const objects = async (brain: Pick<EmlApi, 'get'>, object: string) =>
     ((await orWhenRefused(brain.get(`/object/${object}`), { objects: [] })) as { objects?: Array<Record<string, unknown>> }).objects ?? []
 
+  /** The task's schedule, whoever's cockpit fires it. A closed task has none: nothing fires there, so it shows no next run. */
+  const scheduleOfRow = (row: Row) => (row.status === 'planned' || row.status === 'active' ? scheduleOf(row) : null)
   /**
-   * The schedule in the delegation where it stands for a job: an open task of another member's, whose cockpit mirrored
-   * it (domain/task-schedule.ts scheduleFromElsewhere). Elsewhere, without a job here, it is a leftover.
+   * The task's next run: its schedule's, read with what this cockpit's record knows (domain/task-schedule.ts
+   * runComingAt). A time that is due and not fired yet, and a run that waits for room, still count: the time shown is
+   * then the one it was due at.
    */
-  const elsewhereScheduleOf = (row: Row) => scheduleFromElsewhere({ schedule: row.properties?.delegation?.schedule, owner: row.properties?.assignee_ids?.[0], status: row.status }, deps.viewer)
-  /** The task's next run: a job here, else the schedule another member's cockpit fires. */
-  const nextRunOfRow = (row: Row, now: number) => deps.nextRunOf(row.id) ?? nextRunOfSchedule(elsewhereScheduleOf(row), now)
+  const nextRunOfRow = (row: Row, now: number) => {
+    const open = row.status === 'planned' || row.status === 'active'
+    return open ? runComingAt(scheduleOfRow(row), deps.scheduleFacts?.(row.id) ?? {}, now, JOB_LIMITS.lateLimitMs) : null
+  }
 
   /** A pending command's effect on the task, shown before it is applied. */
   const overlay = (row: Row, command: TaskCommand | undefined, agents: string[]): Row => {
     if (!command || command.state !== 'pending') return row
-    if (command.kind === 'review' && (command.runOnly || deps.hasSchedule?.(row))) {
+    if (command.kind === 'review' && (command.runOnly || hasSchedule(row))) {
       // Its schedule is on: the review approves that run and the task stays open, without the reviews it answers.
       const props = row.properties ?? {}
       const all = waitsOf(props)
@@ -603,8 +611,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           facts.requested = true
           facts.runner = await blockOf(row)
         }
-        // A job here, else the schedule another member's cockpit fires.
-        const schedule = deps.scheduleOf?.(row.id) ?? elsewhereScheduleOf(row)
+        const schedule = scheduleOfRow(row)
         const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], nextRunOfRow(row, now), now), schedule }
         const turn = turnOf(facts, live, deps.viewer, now)
         if (turn === null) continue
@@ -643,8 +650,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           sessionIds: CLOSED_STATUSES.has(row.status) ? deps.ledgerSessionsOn?.(row.id) ?? sessions.map((s) => s.sessionId) : sessions.map((s) => s.sessionId),
           working: live.working,
           nextRunAt: live.nextRunAt,
-          hasSchedule: deps.hasSchedule?.(row) ?? false,
+          hasSchedule: schedule !== null,
           ...(schedule ? { schedule } : {}),
+          ...(!CLOSED_STATUSES.has(row.status) && deps.scheduleFacts?.(row.id).needsOk ? { needsOk: true as const } : {}),
           ...(props.goal ? { goal: props.goal } : {}),
           // Its open runs, on this cockpit and the other members', for the panel and the card (domain/runs.ts).
           ...(() => {

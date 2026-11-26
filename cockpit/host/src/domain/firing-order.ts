@@ -1,0 +1,114 @@
+/**
+ * The four-line order (decision task-schedules-live-in-the-brain): what the cockpit does when a task comes due.
+ * The first line that applies decides.
+ *
+ *   a. A session of the task is working now → a repeating time that is due (and a run started by hand) is skipped
+ *      and recorded. The wake-up is not: it carries a reason, like a message, so it stays due on the task and fires
+ *      in the first pass where a later line can give it to a session (application/job-runner.ts deriveTask). A
+ *      channel message from the bridge is never skipped either: it goes to that session with its next turn when the
+ *      session has the bridge's tools (see below).
+ *   b. A session of the task waits on an answer (a wait of kind question or go, not a review) → that session
+ *      continues and gets the firing as a message.
+ *   c. Nothing is open and the wake-up is due → the session that set it continues; when it is gone or cannot be
+ *      woken, a new session starts.
+ *   d. Nothing is open and a repeating time or a message is due → a new session starts.
+ *
+ * A firing that names the wake-up and repeating times is one run, and goes where the wake-up goes: the session that
+ * set it knows what it wanted to check, and the firing's text names the repeating times too.
+ *
+ * A channel message is for a session that has the bridge's tools: only a session linked to the task's record was
+ * launched with them (application/channel-job-launch.ts), and without them a session can neither read nor answer the
+ * message. So for a message, lines a to c count linked sessions only: a linked session that works gets it; else a
+ * linked session that waits on an answer continues; else a new session starts, linked from its start — also while a
+ * session that is not linked works on the task or waits on an answer (the owner's own, or one on another cockpit).
+ * A message is never left unhandled for such a session: it cannot touch the message, so nothing is worked twice.
+ * The bridge is asked to try again (`retry`) only when a linked session works and cannot take the message now; the
+ * caller answers retry too while the record waits for the user's OK or the schedule is paused, and when there is no
+ * room to start a session. Times keep the order as it stands above: any session of the task counts.
+ *
+ * Pure: the caller says what it knows of the task's sessions, carries the answer out, and asks again without a
+ * session that turned out not to take a message.
+ */
+
+/** The wait kinds that hold a session open for an answer: its question, or its plan waiting for the go. */
+export const ANSWER_WAITS: readonly string[] = ['question', 'go']
+
+/** One of this cockpit's sessions on the task. A session that is put away or unknown here is left out, or not wakeable. */
+export interface FiringSession {
+  sessionId: string
+  /** It is in a turn now. */
+  working: boolean
+  /** The kind of the wait the task holds for it (the entry of the task's waits with its session id); null: none. */
+  wait: string | null
+  /** A message reaches it: it is known here, not put away, and has not refused one. */
+  wakeable: boolean
+  /**
+   * It was started for the task's record (its ledger entry names the record as its job), so every launch gives it
+   * the channel bridge's tools. A channel message only goes to such a session.
+   */
+  linked: boolean
+}
+
+/** A session as the cockpit's ledger has it, as far as the order reads it. */
+export interface LedgerSession { sessionId: string; taskId: string | null; createdAt: string; archivedAt: string | null; jobId: string | null }
+
+/**
+ * This cockpit's sessions on the task that the order may give a firing to: those not put away, newest first. Each is
+ * working when it is in a turn, and linked when it was started for the task's record (its jobId is the task's id).
+ */
+export function sessionsOnTask(entries: readonly LedgerSession[], taskId: string, working: (sessionId: string) => boolean): Array<{ sessionId: string; working: boolean; linked: boolean }> {
+  return entries.filter((entry) => entry.taskId === taskId && !entry.archivedAt)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((entry) => ({ sessionId: entry.sessionId, working: working(entry.sessionId), linked: entry.jobId === taskId }))
+}
+
+export interface Fired {
+  /** A time came due: a repeating time, the wake-up, or a run the owner started by hand. */
+  times: boolean
+  /** The wake-up is among what fired; bySession: the session that set it, if it said so. */
+  wake: { bySession: string | null } | null
+  /** A channel message from the bridge is among what fired. */
+  message: boolean
+}
+
+export interface FiringFacts {
+  fired: Fired
+  /** The task's sessions here, in the order the caller prefers them (newest first). */
+  sessions: readonly FiringSession[]
+  /** A session this cockpit does not have works on the task right now (another member's run, domain/runs.ts). */
+  workingElsewhere: boolean
+}
+
+export type FiringDecision =
+  /** Line a, a time: nothing runs now. The caller records a repeating time as skipped and keeps the wake-up due. */
+  | { kind: 'skip' }
+  /** Line a, a message: the working session gets it with its next turn. */
+  | { kind: 'deliver'; sessionId: string }
+  /** Lines b and c: this session continues with the firing as a message. `line` says which line decided. */
+  | { kind: 'resume'; sessionId: string; line: 'waiting' | 'wake' }
+  /** Lines c and d: a new session of the task starts. */
+  | { kind: 'start' }
+  /** Line a, a message: a linked session works and cannot take it now, so the bridge tries again. Never for a time, and never because of a session that is not linked. */
+  | { kind: 'retry' }
+
+export function decideFiring(facts: FiringFacts): FiringDecision {
+  const { fired, sessions } = facts
+  // Who may get this firing: any session of the task for a time, only a linked one for a message.
+  const takes = (s: FiringSession) => s.wakeable && (!fired.message || s.linked)
+  const working = sessions.filter((s) => s.working)
+  if (fired.message) {
+    // Only the work of a linked session counts for a message: it gets it, or the bridge waits for it.
+    const linked = working.filter((s) => s.linked)
+    const taker = linked.find(takes)
+    if (taker) return { kind: 'deliver', sessionId: taker.sessionId }
+    if (linked.length > 0) return { kind: 'retry' }
+  } else if (working.length > 0 || facts.workingElsewhere) return { kind: 'skip' }
+  // A question comes before a plan waiting for its go, as the task's most urgent wait does (domain/task-waits.ts).
+  for (const kind of ANSWER_WAITS) {
+    const waiting = sessions.find((s) => takes(s) && s.wait === kind)
+    if (waiting) return { kind: 'resume', sessionId: waiting.sessionId, line: 'waiting' }
+  }
+  const setter = fired.wake?.bySession ? sessions.find((s) => s.sessionId === fired.wake!.bySession && takes(s)) : undefined
+  if (setter) return { kind: 'resume', sessionId: setter.sessionId, line: 'wake' }
+  return { kind: 'start' }
+}

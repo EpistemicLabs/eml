@@ -155,6 +155,8 @@ export const SPAWN_INBOX_DIR = path.join(COCKPIT_HOME, 'spawn-inbox')
 export const MESSAGE_TOKEN_FILE = path.join(COCKPIT_HOME, 'message-token')
 // Jobs and their runs: what the cockpit wakes sessions for on a schedule (job-store.ts).
 export const JOBS_FILE = path.join(COCKPIT_HOME, 'jobs.json')
+// The reports of the migration of the jobs of before brain schema 24, one per run, next to the backup of jobs.json.
+export const JOBS_MIGRATION_REPORT_FILE = path.join(COCKPIT_HOME, 'jobs-migration-report.md')
 // Web push: the server's key pair and the devices that subscribed (push-store.ts).
 export const PUSH_FILE = path.join(COCKPIT_HOME, 'push.json')
 // The channel bridge's own folder: its database, its tokens and the accounts it watches.

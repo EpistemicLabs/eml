@@ -7,6 +7,7 @@ import { MemoryMessageStore } from '../src/adapters/memory/memory-message-store'
 import { MemoryWakeQueue } from '../src/adapters/memory/memory-wake-queue'
 import { MemoryOutboxStore } from '../src/adapters/memory/memory-outbox-store'
 import { MemoryJobDirectory } from '../src/adapters/memory/memory-job-directory'
+import { MemoryJobIds } from '../src/adapters/memory/memory-job-ids'
 import { FixedClock } from '../src/adapters/memory/fixed-clock'
 import { SequentialIds } from '../src/adapters/memory/sequential-ids'
 import { ScriptedChannel, ScriptedChannels } from '../src/adapters/fake-channel/scripted-channel'
@@ -23,11 +24,11 @@ let deps: Parameters<typeof createBridgeApi>[0]
 beforeEach(async () => {
   mailbox = new ScriptedChannel('acc-1', 'support')
   logged = []
+  const [store, wakes, outbox] = [new MemoryMessageStore(), new MemoryWakeQueue(), new MemoryOutboxStore()]
   deps = {
     channels: new ScriptedChannels([mailbox]),
-    store: new MemoryMessageStore(),
-    wakes: new MemoryWakeQueue(),
-    outbox: new MemoryOutboxStore(),
+    store, wakes, outbox,
+    jobIds: new MemoryJobIds(store, wakes, outbox),
     jobs: new MemoryJobDirectory([
       { jobId: 'job-1', space: 'support', matches: [{ kind: 'domain', domain: 'customer.example' }], reply: { mail: 'draft' } },
     ]),
@@ -191,6 +192,28 @@ describe('bridge API: health', () => {
     const response = await fetch(`${base}/health`)
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true })
+  })
+})
+
+describe('bridge API: a job that got a new id in the cockpit', () => {
+  it('moves what the bridge holds for it to the new id, for the cockpit only, and again changes nothing', async () => {
+    expect((await post('/v1/jobs/job-1/rename', null, { to: 'task-1' })).status).toBe(401)
+    expect((await post('/v1/jobs/job-1/rename', TOOL, { to: 'task-1' })).status).toBe(401)
+    const renamed = await post('/v1/jobs/job-1/rename', COCKPIT, { to: 'task-1' })
+    expect(renamed).toEqual({ status: 200, body: { kind: 'renamed', from: 'job-1', to: 'task-1', messages: 1, wakeEntries: 1, wakeRetries: 0, outbox: 0, clashes: [] } })
+    // the message waits under the new id, and nothing is left under the old one
+    expect(await deps.store.unreadForJob('task-1')).toHaveLength(1)
+    expect(await deps.store.unreadForJob('job-1')).toEqual([])
+    expect((await deps.wakes.pending()).map((p) => p.wake.jobId)).toEqual(['task-1'])
+    expect((await post('/v1/jobs/job-1/rename', COCKPIT, { to: 'task-1' })).body).toMatchObject({ kind: 'renamed', messages: 0, wakeEntries: 0, outbox: 0 })
+    expect(logged.filter((l) => l.event === 'job.rename').map((l) => l.fields)).toEqual([
+      { from: 'job-1', to: 'task-1', outcome: 'renamed', moved: 2, clashes: 0 }, { from: 'job-1', to: 'task-1', outcome: 'renamed', moved: 0, clashes: 0 },
+    ])
+  })
+
+  it('refuses a rename without a new id, or onto the same id', async () => {
+    expect((await post('/v1/jobs/job-1/rename', COCKPIT, {})).status).toBe(400)
+    expect(await post('/v1/jobs/job-1/rename', COCKPIT, { to: 'job-1' })).toEqual({ status: 403, body: { kind: 'refused', reason: 'same_id', retryable: false } })
   })
 })
 

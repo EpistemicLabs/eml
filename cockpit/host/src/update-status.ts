@@ -75,7 +75,8 @@ function newestReports(): Array<BrainUpdateStatus['report']> {
   return [...byBrain.values()]
 }
 
-function brainSchemaVersion(brainId: string): number | null {
+/** The schema version control.db holds for a brain; null when it has no such brain (or there is no control.db). */
+export function brainSchemaVersion(brainId: string): number | null {
   if (!fs.existsSync(CONTROL_DB)) return null
   const control = new Database(CONTROL_DB, { readonly: true, fileMustExist: true })
   try {

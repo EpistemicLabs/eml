@@ -74,11 +74,10 @@ export interface CockpitMcpDeps {
   terminalTurns: Pick<TerminalTurns, 'said'>
   /** What a chat session said, where the chat keeps it (chat-bridge.ts said); absent: no chat session is served. */
   chatTurns?: { said(sessionId: string, turn: SaidTurn): unknown }
-  /** Whom a call is read against, when it is read and the check its next.when sets: as a chat session's (chat-bridge.ts). */
+  /** Whom a call is read against, when it is read and the wake-up its next.when sets on the task: as a chat session's (chat-bridge.ts). */
   turnOf: RecordEndTurnDeps['turnOf']
   callTime?: RecordEndTurnDeps['callTime']
-  turnCheck?: RecordEndTurnDeps['turnCheck']
-  checkSaved?: RecordEndTurnDeps['checkSaved']
+  turnWake?: RecordEndTurnDeps['turnWake']
   /** The schedule tool's actions for the session that calls it (application/jobs.ts); absent: no tool. */
   jobs?: (sessionId: string, input: Record<string, unknown>) => Promise<string>
   /** The sessions the caller may message, without itself (http.ts directoryEntries). */
@@ -109,8 +108,7 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
       turnOf: deps.turnOf,
       ...(deps.callTime ? { callTime: deps.callTime } : {}),
       keep: (id, said) => { if (inChat(id) && deps.chatTurns) deps.chatTurns.said(id, said); else deps.terminalTurns.said(id, said) },
-      ...(deps.turnCheck ? { turnCheck: deps.turnCheck } : {}),
-      ...(deps.checkSaved ? { checkSaved: deps.checkSaved } : {}),
+      ...(deps.turnWake ? { turnWake: deps.turnWake } : {}),
     }
     server.registerTool(T.endTurn.name, { description: T.endTurn.description(zone), inputSchema: T.endTurn.input },
       async (input) => answered(await endTurn({ endTurn: (call) => recordEndTurn(recording, sessionId, call) }, input)))

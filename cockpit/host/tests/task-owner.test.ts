@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ownerOf, ownersFor, projectScope, runsHere } from '../src/domain/task-owner.js'
+import { firesHere, firingOf, ownerOf, ownersFor, projectScope, runsHere } from '../src/domain/task-owner.js'
 
 describe('who owns a task', () => {
   it('is the first assignee, else the author', () => {
@@ -27,5 +27,35 @@ describe('who owns a task', () => {
   it('goes into a project scope only', () => {
     expect(projectScope('project.eml')).toBe('project.eml')
     expect([projectScope('global'), projectScope('agent.sachi'), projectScope(undefined)]).toEqual([null, null, null])
+  })
+})
+
+describe('whose cockpit fires a task\'s schedule', () => {
+  const members = ['member', 'other']
+  const task = (assignees: string[], author: string | null) => ({ ingested_by: author, properties: { assignee_ids: assignees } })
+
+  it('in a local space every task is this member\'s', () => {
+    for (const t of [task(['other'], 'other'), task([], 'atlas'), task([], null)]) expect(firingOf(false, t, 'member', null)).toBe('mine')
+  })
+
+  it('in a shared space: mine by the first assignee, else by authorship; another member\'s is theirs', () => {
+    expect(firingOf(true, task(['member', 'other'], 'other'), 'member', members)).toBe('mine')
+    expect(firingOf(true, task([], 'member'), 'member', members)).toBe('mine')
+    expect(firingOf(true, task(['other', 'member'], 'member'), 'member', members)).toBe('theirs')
+    expect(firingOf(true, task([], 'other'), 'member', members)).toBe('theirs')
+    // an assignee decides without the member list
+    expect(firingOf(true, task(['other'], 'atlas'), 'member', null)).toBe('theirs')
+  })
+
+  it('a task nobody is assigned to that no member wrote is ownerless: the cockpit that holds its record fires it', () => {
+    expect(firingOf(true, task([], 'atlas'), 'member', members)).toBe('ownerless')
+    expect(firingOf(true, task([], null), 'member', null)).toBe('ownerless')
+    expect([firesHere('ownerless', true), firesHere('ownerless', false)]).toEqual([true, false])
+    expect([firesHere('mine', false), firesHere('theirs', true), firesHere('unknown', true)]).toEqual([true, false, false])
+  })
+
+  it('is unknown while the space\'s kind is, or while the members who would decide cannot be read', () => {
+    expect(firingOf(null, task(['member'], 'member'), 'member', members)).toBe('unknown')
+    expect(firingOf(true, task([], 'atlas'), 'member', null)).toBe('unknown')
   })
 })

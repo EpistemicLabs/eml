@@ -5,6 +5,7 @@ import { openBridgeDatabase } from '../adapters/sqlite/bridge-database'
 import { SqliteMessageStore } from '../adapters/sqlite/sqlite-message-store'
 import { SqliteWakeQueue } from '../adapters/sqlite/sqlite-wake-queue'
 import { SqliteOutboxStore } from '../adapters/sqlite/sqlite-outbox-store'
+import { SqliteJobIds } from '../adapters/sqlite/sqlite-job-ids'
 import { CockpitHttpClient } from '../adapters/cockpit-http/cockpit-http-client'
 import { z } from 'zod'
 import type { ChannelAccount, ChannelAccounts } from '../ports/channel'
@@ -43,6 +44,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<{ stop
     store: new SqliteMessageStore(db),
     wakes: new SqliteWakeQueue(db),
     outbox: new SqliteOutboxStore(db),
+    jobIds: new SqliteJobIds(db),
     jobs: cockpit,
     cockpit,
     channels,

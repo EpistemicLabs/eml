@@ -1,11 +1,12 @@
 /**
  * cockpit-schedule — the schedule tool for sessions that do not have it (a
- * terminal session, Codex): the same actions and fields (application/jobs.ts).
+ * terminal session, Codex): the same actions and fields (application/jobs.ts),
+ * on the schedule of a task.
  *
  *   node "$COCKPIT_SCHEDULE_JS" list
  *   node "$COCKPIT_SCHEDULE_JS" create --name 'Daily brief' --cron '0 8 * * 1-5' --prompt '…'
  *   node "$COCKPIT_SCHEDULE_JS" pause --job 'Daily brief'
- *   node "$COCKPIT_SCHEDULE_JS" '{"action":"create","name":"…","at":"2026-11-13T10:00","prompt":"…"}'
+ *   node "$COCKPIT_SCHEDULE_JS" '{"action":"create","target":"self","at":"2026-11-13T10:00","prompt":"…"}'
  *
  * Flags are the tool's fields with dashes (--max-runs, --ends-at, --task-id,
  * --deny-tools a,b); mail as --mail-domains a.com,b.com and --mail-addresses x@y.com.

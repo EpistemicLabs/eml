@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { activeGrants, changeRecord, cronWords, fetchTaskRecord, isDue, isLastTime, nextRunText, pauseSchedule, recordShows, removeTime, resumeSchedule, runLine, runNow, scheduleDone, scheduleZone, timeText, type TaskRecord, type TaskRun, modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask } from './task-board';
 import { DAY_MS } from './time';
 import { setTimeZoneForTest } from './time-zone';
 
@@ -264,9 +264,11 @@ describe('the task state screens (v0.23)', () => {
   it('names a mission, a routine and work that starts later', () => {
     const at = new Date(NOW + DAY_MS).toISOString();
     expect(cardLine(task({ turn: 'agent_scheduled', group: 'mission', delegate: 'atlas', nextRunAt: at }), NOW)).toMatch(/^Until the goal is reached\. Atlas checks again /);
-    expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: at, schedule: { cron: '0 8 * * 1-5' } }), NOW)).toMatch(/^Repeats on weekdays at 08:00\. Next /);
-    expect(repeatsText({ cron: '30 9 * * 1' })).toBe('Repeats every Monday at 09:30');
-    expect(repeatsText({ cron: '0 7 1 * *' })).toBe('Repeats (0 7 1 * *)');
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: at, schedule: { crons: ['0 8 * * 1-5'] } }), NOW)).toMatch(/^Repeats on weekdays at 08:00\. Next /);
+    // past its end the repeating times repeat no more; a wake-up ahead is still its next run
+    expect(cardLine(task({ turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: local(23, 9), schedule: { crons: ['0 8 * * 1-5'], at: local(23, 9), ends_at: local(18, 9) } }), NOW)).toBe('Its repeating times have ended. Next Mon 09:00.');
+    expect(repeatsText({ crons: ['30 9 * * 1'] })).toBe('Repeats every Monday at 09:30');
+    expect(repeatsText({ crons: ['0 7 1 1 *'] })).toBe('Repeats (0 7 1 1 *)');
   });
 
   it('groups Needs you and Agent scheduled by the new groups, and keeps working tasks next to the Stale group', () => {
@@ -289,10 +291,10 @@ describe('a task whose schedule is still on', () => {
     const next = new Date(NOW + DAY_MS).toISOString();
     expect(isScheduled(task({ hasSchedule: true, nextRunAt: next }))).toBe(true);
     expect(isScheduled(task({ turn: 'review', hasSchedule: true }))).toBe(true);
-    // a paused job, or one only mail wakes: no run is coming up, the schedule is on all the same
-    expect(isScheduled(task({ hasSchedule: true, nextRunAt: null, schedule: { cron: '0 8 * * 1-5', paused: true } }))).toBe(true);
+    // a paused schedule: no run is coming up, the schedule is on all the same
+    expect(isScheduled(task({ hasSchedule: true, nextRunAt: null, schedule: { crons: ['0 8 * * 1-5'], paused: true } }))).toBe(true);
     expect(isScheduled(task())).toBe(false);
-    // a next run alone does not decide it: the host does (a schedule left behind by a job that ended)
+    // a next run alone does not decide it: the host does
     expect(isScheduled(task({ nextRunAt: next }))).toBe(false);
     expect(isScheduled(task({ status: 'resolved', hasSchedule: true }))).toBe(false);
     expect(isScheduled(task({ status: 'invalidated', hasSchedule: true }))).toBe(false);
@@ -428,5 +430,162 @@ describe('taskSessionsKey', () => {
     const waiting = { ...a, waitingOn: { who: 'lasse', kind: 'question' as const, why: 'Which one?', since: '2026-11-25T10:00:00Z', session_id: 's1' } };
     expect(taskSessionsKey({ tasks: [waiting] })).not.toBe(key);
     expect(taskSessionsKey({ tasks: [{ ...waiting, waitingOn: { ...waiting.waitingOn, why: 'Reworded' } }] })).toBe(taskSessionsKey({ tasks: [waiting] }));
+  });
+});
+
+describe('a task holds its schedule', () => {
+  afterEach(() => { vi.unstubAllGlobals(); setTimeZoneForTest(null); });
+
+  it('says a repeating time in words, as the host says it to a session; a rule the words do not fit stays a rule', () => {
+    expect(cronWords('0 8 * * 1-5')).toBe('on weekdays at 08:00');
+    expect(cronWords('0 18,22 * * *')).toBe('every day at 18:00 and 22:00');
+    expect(cronWords('30 9 * * 1,4')).toBe('every Monday and Thursday at 09:30');
+    expect(cronWords('0 10 * * 0,6')).toBe('at the weekend at 10:00');
+    expect(cronWords('0 9 * * 7')).toBe('every Sunday at 09:00');
+    expect(cronWords('0 7 1 * *')).toBe('on day 1 of every month at 07:00');
+    expect(cronWords('15 * * * *')).toBe('every hour at :15');
+    expect(cronWords('15 * * * 1')).toBe('every hour at :15 on Monday');
+    expect(cronWords('*/5 * * * *')).toBeNull();
+    expect(cronWords('0 8 1 * 1')).toBeNull();
+    expect(cronWords('0 8 * 6 *')).toBeNull();
+    expect(cronWords('0 25 * * *')).toBeNull();
+    expect(cronWords('not a cron')).toBeNull();
+    expect(timeText('0 8 * * 1-5')).toBe('On weekdays at 08:00');
+    expect(timeText('*/5 * * * *')).toBe('*/5 * * * *');
+  });
+
+  it('says several repeating times one after the other, and names their zone only when it is not the user\'s', () => {
+    setTimeZoneForTest('Asia/Makassar');
+    const schedule = { crons: ['0 13 * * 1-5', '0 18,22 * * 1-5', '*/5 * * * *'], time_zone: 'Asia/Makassar' };
+    expect(repeatsText(schedule)).toBe('Repeats on weekdays at 13:00; on weekdays at 18:00 and 22:00; (*/5 * * * *)');
+    expect(scheduleZone(schedule)).toBeNull();
+    setTimeZoneForTest('Europe/Berlin');
+    expect(scheduleZone(schedule)).toBe('Asia/Makassar');
+    expect(repeatsText({ crons: ['0 8 * * *'], time_zone: 'Asia/Makassar' })).toBe('Repeats every day at 08:00 (Asia/Makassar)');
+    // a wake-up alone repeats nothing
+    expect(repeatsText({ at: local(23, 9) })).toBe('Repeats');
+    expect(repeatsText(undefined)).toBe('Repeats');
+  });
+
+  it('reads a next run whose time has come as due, not as a time in the past', () => {
+    const past = local(19, 10, 27), ahead = local(23, 9);
+    expect(isDue(past, NOW)).toBe(true);
+    expect(isDue(ahead, NOW)).toBe(false);
+    expect(isDue(null, NOW)).toBe(false);
+    expect(nextRunText(ahead, NOW)).toBe('next Mon 09:00');
+    expect(nextRunText(past, NOW)).toBe('due since 10:27');
+    expect(nextRunText(null, NOW)).toBe('');
+    const scheduled = (patch: Partial<BoardTask>) => task({ turn: 'agent_scheduled', delegate: 'atlas', nextRunAt: past, hasSchedule: true, ...patch });
+    expect(cardLine(scheduled({ group: 'at_time' }), NOW)).toBe('Atlas\'s run is due since 10:27.');
+    expect(cardLine(scheduled({ group: 'mission' }), NOW)).toBe('Until the goal is reached. Atlas\'s run is due since 10:27.');
+    expect(cardLine(scheduled({ group: 'routine', schedule: { crons: ['0 8 * * 1-5'] } }), NOW)).toBe('Repeats on weekdays at 08:00. Due since 10:27.');
+    expect(cardLine(scheduled({ group: 'routine', nextRunAt: ahead, schedule: { crons: ['0 8 * * 1-5'] } }), NOW)).toBe('Repeats on weekdays at 08:00. Next Mon 09:00.');
+    expect(cardLine(task({ turn: 'waiting_on_others', delegate: 'atlas', nextRunAt: past, waitingOn: { who: 'supplier', kind: 'outside' } }), NOW)).toBe('Waiting on supplier; Atlas\'s run is due since 10:27.');
+    expect(cardTime(scheduled({ group: 'at_time' }), NOW)).toEqual({ label: 'due since 10:27', future: true });
+    expect(coverageText(scheduled({ group: 'at_time', coverage: { ok: true, how: 'at_time', at: past } }), NOW)).toBe('Atlas · due since 10:27');
+    expect(coverageText(scheduled({ group: 'at_time', coverage: { ok: true, how: 'at_time', at: ahead } }), NOW)).toBe('Atlas · Mon 09:00');
+    expect(coverageText(scheduled({ waitingOn: { who: 'supplier', kind: 'outside' }, coverage: { ok: true, how: 'checks_back', at: past } }), NOW)).toBe('waiting on supplier · Atlas due since 10:27');
+  });
+
+  it('knows the one time whose removal ends the schedule: the only repeating time of a task without a wake-up', () => {
+    expect(isLastTime({ crons: ['0 8 * * 1-5'] }, '0 8 * * 1-5')).toBe(true);
+    expect(isLastTime({ crons: ['0 8 * * 1-5', '0 18 * * *'] }, '0 8 * * 1-5')).toBe(false);
+    expect(isLastTime({ crons: ['0 8 * * 1-5'], at: local(23, 9) }, '0 8 * * 1-5')).toBe(false);
+  });
+
+  it('sends each control of the schedule to its route with the op id and the space; a time to remove by its rule', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ opId: 'op-1', state: 'applied', undoUntil: '2026-11-19T10:35:00.000Z' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetched);
+    const t = { id: 'daily brief', spaceId: 'main' };
+    expect(await pauseSchedule(t, 'op-1')).toEqual({ ok: true, opId: 'op-1', state: 'applied', undoUntil: '2026-11-19T10:35:00.000Z' });
+    await resumeSchedule(t, 'op-2');
+    await runNow(t, 'op-3');
+    await removeTime(t, '0 8 * * 1-5', 'op-4');
+    expect(fetched.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
+      ['/api/v1/tasks/daily%20brief/pause-schedule', { opId: 'op-1', spaceId: 'main' }],
+      ['/api/v1/tasks/daily%20brief/resume-schedule', { opId: 'op-2', spaceId: 'main' }],
+      ['/api/v1/tasks/daily%20brief/run-now', { opId: 'op-3', spaceId: 'main' }],
+      ['/api/v1/tasks/daily%20brief/remove-time', { opId: 'op-4', spaceId: 'main', cron: '0 8 * * 1-5' }],
+    ]);
+  });
+
+  it('passes on why the host refused a control', async () => {
+    const refuse = (code: string, message: string) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code, message, retry: false } }), { status: 409 })));
+    refuse('run_open', 'Its last run is still going: wait for it to finish.');
+    expect(await runNow({ id: 't', spaceId: 'main' })).toEqual({ ok: false, code: 'run_open', message: 'Its last run is still going: wait for it to finish.', retry: false });
+    refuse('unknown_time', 'Its schedule has no repeating time "0 9 * * *".');
+    expect(await removeTime({ id: 't', spaceId: 'main' }, '0 9 * * *')).toMatchObject({ ok: false, code: 'unknown_time' });
+  });
+
+  it('says what a control did once it went through', () => {
+    const t = task({ schedule: { crons: ['0 8 * * 1-5', '0 18 * * *'] } });
+    expect(scheduleDone(t, { kind: 'pause' })).toBe('Schedule paused: nothing runs until you resume it.');
+    expect(scheduleDone(t, { kind: 'resume' })).toBe('Schedule resumed.');
+    expect(scheduleDone(t, { kind: 'run_now' })).toBe('Run started: how it goes shows under its last runs.');
+    expect(scheduleDone(t, { kind: 'remove_time', cron: '0 18 * * *' })).toBe('Time removed.');
+    expect(scheduleDone(task({ schedule: { crons: ['0 18 * * *'] } }), { kind: 'remove_time', cron: '0 18 * * *' })).toBe('Time removed and schedule ended. The task stays open.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'approve' } })).toBe('Approved: its messages wake the task from now.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'reply', channel: 'mail', mode: 'send' } })).toBe('Its mail replies are sent without asking.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'reply', channel: 'mail', mode: 'draft' } })).toBe('Its mail replies are drafts you approve.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'limited', limited: true } })).toBe('Its sessions are limited.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'grant', tool: 'chrome' } })).toBe('Chrome lent for 1 h.');
+    expect(scheduleDone(t, { kind: 'record', change: { kind: 'revoke', tool: 'SendMessage' } })).toBe('Messages taken back.');
+  });
+
+  const record = (patch: Partial<TaskRecord> = {}): TaskRecord => ({ id: 't', triggers: [], reply: {}, pausedReason: null, ...patch });
+
+  it('reads what this cockpit keeps for the task, in the task\'s space', async () => {
+    const view = { record: record(), runs: [], held: false, running: false };
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(view), { status: 200 }));
+    vi.stubGlobal('fetch', fetched);
+    expect(await fetchTaskRecord({ id: 'daily brief', spaceId: 'team space' })).toEqual(view);
+    expect(fetched.mock.calls[0][0]).toBe('/api/v1/tasks/daily%20brief/record?spaceId=team+space');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    await expect(fetchTaskRecord({ id: 't', spaceId: 'main' })).rejects.toThrow('HTTP 503');
+  });
+
+  it('changes a setting of the record through its route, and passes on a refusal', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ text: 'ok', record: record() }), { status: 200 }));
+    vi.stubGlobal('fetch', fetched);
+    const t = { id: 't', spaceId: 'main' };
+    expect(await changeRecord(t, { kind: 'approve' })).toEqual({ ok: true });
+    await changeRecord(t, { kind: 'reply', channel: 'mail', mode: 'send' });
+    await changeRecord(t, { kind: 'limited', limited: false });
+    await changeRecord(t, { kind: 'grant', tool: 'chrome' });
+    await changeRecord(t, { kind: 'revoke', tool: 'SendMessage' });
+    expect(fetched.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
+      ['/api/v1/tasks/t/record/approve', { spaceId: 'main' }],
+      ['/api/v1/tasks/t/record/reply', { spaceId: 'main', channel: 'mail', mode: 'send' }],
+      ['/api/v1/tasks/t/record/limited', { spaceId: 'main', limited: false }],
+      ['/api/v1/tasks/t/record/grant', { spaceId: 'main', tool: 'chrome' }],
+      ['/api/v1/tasks/t/record/revoke', { spaceId: 'main', tool: 'SendMessage' }],
+    ]);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'no_record', message: 'This cockpit keeps no schedule settings for the task yet.' } }), { status: 404 })));
+    expect(await changeRecord(t, { kind: 'approve' })).toEqual({ ok: false, code: 'no_record', message: 'This cockpit keeps no schedule settings for the task yet.' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
+    expect(await changeRecord(t, { kind: 'approve' })).toEqual({ ok: false, code: 'offline', message: 'The cockpit did not answer.' });
+  });
+
+  it('shows the record\'s settings only when it has something to show', () => {
+    const lent = { tool: 'chrome' as const, until: new Date(NOW + 60_000).toISOString(), reason: null };
+    const over = { tool: 'SendMessage' as const, until: new Date(NOW - 60_000).toISOString(), reason: null };
+    expect(recordShows(null, NOW)).toBe(false);
+    expect(recordShows(record(), NOW)).toBe(false);
+    expect(recordShows(record({ grants: [over] }), NOW)).toBe(false);
+    expect(recordShows(record({ triggers: [{ type: 'mail' }] }), NOW)).toBe(true);
+    expect(recordShows(record({ pendingApproval: true }), NOW)).toBe(true);
+    expect(recordShows(record({ limited: true }), NOW)).toBe(true);
+    expect(recordShows(record({ grants: [lent] }), NOW)).toBe(true);
+    expect(activeGrants(record({ grants: [lent, over] }), NOW)).toEqual([lent]);
+  });
+
+  it('says a run in one line: when, what fired it besides its schedule, how it went and why not', () => {
+    const run = (patch: Partial<TaskRun>): TaskRun => ({ id: 'r', number: 1, trigger: 'schedule', dueAt: local(19, 8), status: 'finished', sessionId: 's', startedAt: local(19, 8, 1), finishedAt: local(19, 8, 9), outcome: 'review', note: null, session: { projectId: null, chat: true, attention: 'review' }, ...patch });
+    expect(runLine(run({}), NOW, true)).toEqual({ text: '08:01 · check this', tone: 'attention' });
+    expect(runLine(run({ session: { projectId: null, chat: true, attention: null } }), NOW, true)).toEqual({ text: '08:01 · seen', tone: 'muted' });
+    expect(runLine(run({ trigger: 'manual', outcome: 'done' }), NOW)).toEqual({ text: '08:01 · run by hand · done', tone: 'ok' });
+    expect(runLine(run({ trigger: 'mail', outcome: 'done' }), NOW)).toEqual({ text: '08:01 · on mail · done', tone: 'ok' });
+    expect(runLine(run({ number: 0, status: 'skipped', startedAt: null, finishedAt: null, sessionId: null, session: null, outcome: null, note: 'a session of the task was working' }), NOW))
+      .toEqual({ text: '08:00 · skipped · a session of the task was working', tone: 'muted' });
   });
 });

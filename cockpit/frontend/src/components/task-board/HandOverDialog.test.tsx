@@ -88,4 +88,67 @@ describe('scheduling a hand-over', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     expect(onSubmit.mock.calls[0][0].schedule).toEqual({ at: '2026-11-21T20:15', timeZone: 'Asia/Makassar' });
   });
+
+  it('one time is the task\'s wake-up and Repeat one more repeating time; how a run goes on is not asked', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const onSubmit = schedule();
+    expect(screen.getByText(/Atlas is woken on this task at that time\. Until then/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    // The model decides it: a repeating time starts a new session, a wake-up continues.
+    expect(screen.queryByText('Each run')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continues the same session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Starts a new session' })).toBeNull();
+    expect(screen.getByText(/on that rhythm until you end it, each time in a new session\. The task sits/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Repeat'), { target: { value: 'mondays' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[0][0]).toEqual({ mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Bangkok' } });
+    // The host reads a time and its zone only: there is no "until the goal is reached" to choose.
+    expect(screen.queryByRole('button', { name: 'Until the goal is reached' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Once' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[1][0].schedule).toEqual({ at: '2026-11-21T09:00', timeZone: 'Asia/Bangkok' });
+  });
+
+  it('says what it does to the schedule the task has: a new wake-up replaces the one set, a repeating time is added', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const has = task({ delegate: 'atlas', hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'], at: '2026-11-23T02:00:00.000Z' } });
+    render(<HandOverDialog task={has} mode="schedule" agents={['atlas']} desks={[]} now={LATE} onClose={() => {}} onAnswerFirst={() => {}} onSubmit={() => {}} />);
+    expect(screen.getByText(/It replaces the wake-up set for Mon 09:00\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    expect(screen.getByText(/The time is added to those the task repeats at\. The task sits/)).toBeTruthy();
+    cleanup();
+  });
+
+  it('reads one more repeating time in the zone of the task\'s repeating times and says so; a wake-up stays in the user\'s', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const onSubmit = vi.fn();
+    const elsewhere = task({ delegate: 'atlas', hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } });
+    render(<HandOverDialog task={elsewhere} mode="schedule" agents={['atlas']} desks={[]} now={LATE} onClose={() => {}} onAnswerFirst={() => {}} onSubmit={onSubmit} />);
+    // Once: an instant, read where the user reads every time. Nothing about the task's zone.
+    expect(screen.queryByText(/Times of this task are in/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[0][0].schedule).toEqual({ at: '2026-11-21T09:00', timeZone: 'Asia/Bangkok' });
+    // Repeat: 09:00 is 09:00 in Berlin, the zone the host would refuse any other for.
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    expect(screen.getByText('Times of this task are in Europe/Berlin.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[1][0].schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'Europe/Berlin' });
+    // A picked time is read there too, and the field names that zone.
+    fireEvent.click(screen.getByRole('button', { name: 'Pick a date…' }));
+    expect(screen.getByText('Europe/Berlin')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '20:15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[2][0].schedule).toEqual({ cron: '15 20 * * 1-5', timeZone: 'Europe/Berlin' });
+  });
+
+  it('reads a repeating time in the user\'s zone on a task that has none yet (also one with only a wake-up)', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const onSubmit = vi.fn();
+    const wakeOnly = task({ delegate: 'atlas', hasSchedule: true, schedule: { at: '2026-11-23T02:00:00.000Z', time_zone: 'Europe/Berlin' } });
+    render(<HandOverDialog task={wakeOnly} mode="schedule" agents={['atlas']} desks={[]} now={LATE} onClose={() => {}} onAnswerFirst={() => {}} onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Repeat…' }));
+    expect(screen.queryByText(/Times of this task are in/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(onSubmit.mock.calls[0][0].schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: 'Asia/Bangkok' });
+  });
 });

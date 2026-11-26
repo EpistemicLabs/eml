@@ -62,42 +62,42 @@ export const PROPOSE_SORT_ANSWER = 'Proposed: the chat shows the user Sort topic
 
 export const SCHEDULE_TOOL = 'schedule'
 /** The schedule tool's description; `zone` names the user's own time zone, "Asia/Bangkok (UTC+7)". */
-export const scheduleToolDescription = (zone?: string) => 'Schedule work for later: the cockpit wakes a session at the time with your prompt as a message, even when nobody has the cockpit open. '
+export const scheduleToolDescription = (zone?: string) => 'Schedule work for later. A schedule belongs to a task: repeating times and at most one wake-up. At the time the cockpit runs the task, even when nobody has the cockpit open. '
   + 'Use it when the user asks for something at a time or on a rhythm ("every weekday at 8:00 write the daily brief", "on Friday 10:00 check whether the customer answered"), '
   + 'not for work you can do now. '
-  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: its id or exact name; finish ends a job whose goal is reached). '
-  + 'create needs name, prompt and exactly one of cron (repeating, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
-  + 'or at (one time, e.g. "2026-11-13T10:00"). Times read in timezone (an IANA name), by default the user\'s own' + (zone ? ` (${zone})` : '') + '; pass it when the user names another. '
-  + 'target: worker (default; a new session per run in project, by default this one\'s; give it a task_id so the task\'s goal and journal carry what earlier runs did), '
-  + 'self (this session, to continue here later), or session (another session of this space, by address). '
-  + 'A job made earlier with its own session moves to a worker with update and target worker. '
-  + 'The prompt is all the woken session gets: write it so it stands alone (what to do, where, and what to report). '
-  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a schedule): the job then starts a worker when such mail arrives. '
-  + 'It reacts only after the user\'s OK in the cockpit\'s Jobs view, and its replies are drafts the user approves; you cannot change either. '
-  + 'goal: what has to be true for the job to be over (e.g. "refund received"); set it for work toward an outcome, every run is told it. '
-  + 'Optional: max_runs, ends_at, task_id (a brain task it belongs to), deny_tools (tools the job\'s sessions may not use), '
+  + 'Actions: create, list, update, pause, resume, delete, run_now, finish (the last six take job: the task\'s id or exact name; pause and resume hold the task\'s whole schedule, delete and finish end it and leave the task open). '
+  + 'create needs prompt and exactly one of cron (a repeating time, five fields: minute hour day-of-month month day-of-week, e.g. "0 8 * * 1-5"; at most every 15 min) '
+  + 'or at (the wake-up, e.g. "2026-11-13T10:00"; it replaces the one the task had). Times read in timezone (an IANA name), by default the user\'s own' + (zone ? ` (${zone})` : '') + '; pass it when the user names another. '
+  + 'The task: task_id (one that exists), or target self (the task this session works on); without either a new task is made from name and prompt, in project (by default this one\'s). '
+  + 'A run reads the task, so the prompt goes into it: a repeating time\'s as its own paragraph of the task\'s text, a wake-up\'s as its reason. Write it so it stands alone (what to do, where, and what to report). '
+  + 'A repeating time starts a new session per run; a wake-up continues the session that set it if that session works on the task. '
+  + 'update: cron replaces the task\'s repeating times with that one, at replaces its wake-up. '
+  + 'For work that answers mail, pass mail: { domains, addresses } (with or without a time): the task is then started when such mail arrives. '
+  + 'It reacts only after the user\'s OK on the task in the cockpit, and its replies are drafts the user approves; you cannot change either. '
+  + 'goal: what has to be true for the task to be done (e.g. "refund received"); it is set when the task has none. '
+  + 'Optional: max_runs, ends_at, deny_tools (tools the task\'s sessions may not use), '
   + 'notify (needs-me: the user hears of runs that need them, the default; always; never). '
-  + 'A job runs in this space with at most this session\'s tools; a limited job\'s session reaches only its own job (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
+  + 'You reach the tasks of this space, and a task\'s sessions get at most this session\'s tools; a limited task\'s session reaches only its own task (update with at or goal, finish). The answer shows the next run times in words: check them against what the user asked.'
 const SCHEDULE_TOOL_INPUT = {
   action: z.enum(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish']),
-  job: z.string().optional().describe('The job to act on: its id (or the first 8 characters) or its exact name.'),
-  name: z.string().optional().describe('A short name the user recognizes, e.g. "Daily brief".'),
-  prompt: z.string().optional().describe('What the woken session should do; it reads nothing else.'),
+  job: z.string().optional().describe('The task whose schedule to act on: its id (or the first 8 characters) or its exact name.'),
+  name: z.string().optional().describe('For a new task: a short name the user recognizes, e.g. "Daily brief".'),
+  prompt: z.string().optional().describe('What a run at that time should do; it goes into the task.'),
   cron: z.string().optional(),
   at: z.string().optional(),
   timezone: z.string().optional(),
-  target: z.enum(['worker', 'self', 'session']).optional(),
-  session: z.string().optional().describe('With target session: the session\'s address.'),
-  project: z.string().optional().describe('For a worker: the project it runs in.'),
+  // Any word is taken, so one the tool does not know is answered with what to do instead (application/jobs.ts).
+  target: z.string().optional().describe('worker (default) or self: the task this session works on.'),
+  project: z.string().optional().describe('The project a new task is made in, and where new sessions of the task start.'),
   provider: z.string().optional(),
   max_runs: z.number().int().optional(),
   ends_at: z.string().optional(),
-  task_id: z.string().optional(),
-  goal: z.string().optional().describe('What has to be true for the job to be over; every run is told it.'),
+  task_id: z.string().optional().describe('The task that gets the time.'),
+  goal: z.string().optional().describe('What has to be true for the task to be done; set when the task has none.'),
   deny_tools: z.array(z.string()).optional(),
   notify: z.enum(['needs-me', 'always', 'never']).optional(),
   mail: z.object({ domains: z.array(z.string()).optional(), addresses: z.array(z.string()).optional() }).optional()
-    .describe('Mail that wakes the job: sender domains (e.g. example.com) and addresses.'),
+    .describe('Mail that starts the task: sender domains (e.g. example.com) and addresses.'),
 }
 
 export const SEND_MESSAGE_TOOL = 'send_message'

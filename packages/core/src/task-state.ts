@@ -7,7 +7,9 @@ import { WAIT_KINDS, CHECKPOINTS, ISO_DATE_FIELD, SNOOZED_OPEN, isoTimestamp } f
 //
 //   delegation — { agent, checkpoint?, requested_at?, schedule? }, the hand-over
 //                to an agent that works on its own; mirrors delegate and checkpoint.
-//                schedule = { at | cron, time_zone?, paused?, session? }.
+//                schedule (v0.24) = { crons?, at?, why?, by_session?, time_zone?,
+//                paused?, ends_at? }: the task's repeating times and its one
+//                wake-up — the only place a task's schedule lives.
 //   waits      — [{ id, who, kind?, why?, since?, session_id?, snoozed_until? }],
 //                everyone the task waits on; waiting_on is its most urgent entry.
 //
@@ -20,9 +22,14 @@ import { WAIT_KINDS, CHECKPOINTS, ISO_DATE_FIELD, SNOOZED_OPEN, isoTimestamp } f
 //   checkpoint without a delegate (written before 23) has no delegation.
 // - A write of delegation sets delegate and checkpoint; null clears all three.
 // - A write of delegate or checkpoint keeps requested_at and schedule while the
-//   agent stays the same; a new agent starts a new delegation (not requested,
-//   no schedule).
-// - A schedule has exactly one of at and cron.
+//   agent stays the same. A new agent starts unrequested and keeps the schedule
+//   (v0.24: the schedule is the task's, not the agent's) without by_session:
+//   the session that set the wake-up was the old agent's.
+// - A schedule (v0.24) has at least one of crons and at. Stored: its keys in
+//   the order above, the absent ones left out; crons without the white space
+//   around an entry, each once, in the order given; at and ends_at as ISO-8601
+//   UTC with milliseconds; why and by_session only next to at (they belong to
+//   the wake-up).
 // - A write of waits sets waiting_on to its most urgent entry (a wait that is
 //   not parked first, then WAIT_KINDS order, an entry without a kind last, then
 //   the oldest since, then list order), without its id and snoozed_until; an
@@ -34,31 +41,54 @@ import { WAIT_KINDS, CHECKPOINTS, ISO_DATE_FIELD, SNOOZED_OPEN, isoTimestamp } f
 
 type Props = Record<string, unknown>
 type Wait = Record<string, string>
-type Schedule = Record<string, string | boolean>
+type Schedule = { crons?: string[], at?: string, why?: string, by_session?: string, time_zone?: string, paused?: boolean, ends_at?: string }
 type Delegation = { agent: string, checkpoint?: string, requested_at?: string, schedule?: Schedule }
 
-const SCHEDULE_KEYS = ['at', 'cron', 'time_zone', 'paused', 'session'] as const
+/** v0.24: a schedule's stored keys, in their stored order. */
+const SCHEDULE_KEYS = ['crons', 'at', 'why', 'by_session', 'time_zone', 'paused', 'ends_at'] as const
 const WAIT_KEYS = ['id', 'who', 'kind', 'why', 'since', 'session_id', 'snoozed_until'] as const
 
 const has = (o: Props, k: string) => o[k] !== undefined
 
 /** An object with only `keys`, in that order, without the absent ones: the stored form is the same whatever order a caller sent. */
-function ordered<T extends string | boolean>(value: Record<string, unknown>, keys: readonly string[], take: (v: unknown) => v is T): Record<string, T> {
+function ordered<T extends string>(value: Record<string, unknown>, keys: readonly string[], take: (v: unknown) => v is T): Record<string, T> {
   const out: Record<string, T> = {}
   for (const k of keys) if (take(value[k])) out[k] = value[k] as T
   return out
 }
 const isText = (v: unknown): v is string => typeof v === 'string'
-const isTextOrBool = (v: unknown): v is string | boolean => typeof v === 'string' || typeof v === 'boolean'
 
-/** A schedule as stored: its keys in order, at as ISO-8601 UTC with milliseconds. Throws when it has not exactly one of at and cron. */
+/**
+ * A schedule as stored (see the header): its keys in order; crons trimmed, each
+ * once, in the order given; at and ends_at as ISO-8601 UTC with milliseconds;
+ * why and by_session only with at. Throws when it has neither a repeating time
+ * nor a wake-up.
+ */
 function storedSchedule(s: Record<string, unknown>): Schedule {
-  const out = ordered(s, SCHEDULE_KEYS, isTextOrBool)
-  if ((out.at === undefined) === (out.cron === undefined)) {
-    throw new Error('Invalid engram: delegation.schedule needs exactly one of at (one time) and cron (a repeat rule).')
+  const out: Schedule = {}
+  if (Array.isArray(s.crons)) {
+    const crons = [...new Set(s.crons.filter(isText).map(c => c.trim()).filter(c => c !== ''))]
+    if (crons.length > 0) out.crons = crons
   }
-  if (typeof out.at === 'string') out.at = isoTimestamp(out.at)
-  return out
+  if (isText(s.at)) {
+    out.at = isoTimestamp(s.at)
+    if (isText(s.why)) out.why = s.why
+    if (isText(s.by_session)) out.by_session = s.by_session
+  }
+  if (out.crons === undefined && out.at === undefined) {
+    throw new Error('Invalid engram: delegation.schedule needs a repeating time (crons) or a wake-up (at).')
+  }
+  if (isText(s.time_zone)) out.time_zone = s.time_zone
+  if (typeof s.paused === 'boolean') out.paused = s.paused
+  if (isText(s.ends_at)) out.ends_at = isoTimestamp(s.ends_at)
+  return Object.fromEntries(SCHEDULE_KEYS.filter(k => out[k] !== undefined).map(k => [k, out[k]])) as Schedule
+}
+
+/** v0.24: the schedule a new agent takes over: the task's, without the session that set its wake-up. */
+function withoutSession(s: Schedule | undefined): Schedule | undefined {
+  if (s === undefined) return undefined
+  const { by_session: _session, ...rest } = s
+  return rest
 }
 
 /** A delegation as stored: its keys in order, its timestamps as ISO-8601 UTC with milliseconds. */
@@ -161,7 +191,7 @@ export function mirrorTaskState(old: Props, patch: Props): void {
         agent,
         checkpoint: (CHECKPOINTS as readonly unknown[]).includes(checkpoint) ? checkpoint : undefined,
         requested_at: same ? before.requested_at : undefined,
-        schedule: same ? before.schedule : undefined,
+        schedule: same ? before.schedule : withoutSession(before?.schedule),
       })
     }
   }

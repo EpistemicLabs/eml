@@ -2,47 +2,319 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { JOBS_FILE } from './paths.js'
 import { JOB_LIMITS, type Job, type JobRun } from './domain/job.js'
+import type { JobV1 } from './domain/job-v1.js'
+import type { NotificationInput } from './notifications.js'
 
 /**
- * jobs.json: the jobs of every space and the last runs of each (domain/job.ts),
- * plus the time zone a job reads its times in when it names none. One file,
- * owner-only, rewritten whole through a temporary file on every change, like
- * the session ledger: small, and a crash leaves either the old or the new state.
+ * jobs.json, version 2: the local record of every scheduled task and the last runs of each (domain/job.ts), plus
+ * the time zone a time is read in when it names none. One file, owner-only, rewritten whole through a temporary
+ * file on every change, like the session ledger: small, and a crash leaves either the old or the new state.
+ *
+ * A version 1 file (jobs with their own schedule, before brain schema 24) is not dropped: its jobs, runs and keys
+ * are held under `v1` until the migration (application/job-migration.ts) has moved them onto their tasks, space by
+ * space, and they survive every rewrite until then. The version 1 file itself is copied next to it
+ * (<file>.v1-backup) before the first rewrite. Which job became which record is held under `renames` until the
+ * channel bridge has taken the new id. That the file was version 1 once stays in it (`fromV1`), with the spaces the
+ * cockpit had at the conversion (`v1Spaces`, written at the start that takes them): the migration looks through each of those once for schedules left
+ * without a job, also one that has no job, and no other space.
+ *
+ * A file that is there and cannot be parsed (cut off in a write, edited by hand) is never overwritten: the store
+ * starts empty at version 2 — not as a home that was on version 1, so no look for left-over schedules removes
+ * anything — and the file is renamed aside (<file>.unreadable-<UTC stamp>) when the host asks at its start
+ * (setAsideUnreadable), or before the first write. Reading alone moves nothing: the dry run by hand reads through
+ * the store too. A file that parses but whose version is neither 1 nor 2 (a newer cockpit wrote it, then the cockpit
+ * was downgraded) is handled the same way, under a name of its own (<file>.unknown-version-<UTC stamp>).
  */
 
+/** Why a jobs.json that is there is not used: it cannot be read or parsed, or its version is neither 1 nor 2. */
+export type JobsNotUsable = 'unreadable' | 'unknown-version'
+
+/** What the user is told at start when jobs.json could not be read and was set aside (`aside`: where it is now). */
+export const unreadableJobsNotice = (aside: string): NotificationInput => ({
+  kind: 'failed', title: 'Schedules', jobId: 'jobs-unreadable', sessionId: null, spaceId: null,
+  body: `jobs.json could not be read and was set aside as ${path.basename(aside)}; schedules made before are not running. Restore it or set them again.`,
+})
+
+/** What the user is told at start when jobs.json has a version this cockpit does not know and was set aside (`aside`: where it is now). */
+export const unknownVersionJobsNotice = (aside: string): NotificationInput => ({
+  kind: 'failed', title: 'Schedules', jobId: 'jobs-unknown-version', sessionId: null, spaceId: null,
+  body: `jobs.json has a version this cockpit does not know (a newer cockpit may have written it) and was set aside as ${path.basename(aside)}; schedules made before are not running. Update the cockpit and restore it, or set them again.`,
+})
+
+/** The notice of a jobs.json set aside, worded by why it was not used. */
+export const jobsSetAsideNotice = (why: JobsNotUsable, aside: string): NotificationInput =>
+  (why === 'unknown-version' ? unknownVersionJobsNotice(aside) : unreadableJobsNotice(aside))
+
+/** What a version 1 file held, as far as it is not migrated yet. */
+export interface JobsV1Data {
+  jobs: Record<string, JobV1>
+  runs: Record<string, JobRun[]>
+  /** Per job, the channel event keys that woke it and when. */
+  keys: Record<string, Record<string, string>>
+}
+
 interface JobsFile {
-  version: 1
+  version: 2
   /** The user's time zone (Settings › Preferences; a browser fills it in once); null until a page told the host. */
   timeZone: string | null
   jobs: Record<string, Job>
   runs: Record<string, JobRun[]>
-  /** Per job, the channel event keys that woke it and when: the same event never wakes it twice. */
+  /** Per record, the channel event keys that woke it and when: the same event never wakes it twice. */
   keys: Record<string, Record<string, string>>
+  /** The jobs of a version 1 file that are not on their tasks yet. */
+  v1?: JobsV1Data
+  /**
+   * Version 1 job id → the id of the record it became (its task's), for every job that moved to a record: kept until
+   * the channel bridge has confirmed the new id, since its own database still files messages, wakes and drafts under
+   * the old one (application/job-migration.ts). It outlives `v1`.
+   */
+  renames?: Record<string, string>
+  /**
+   * The spaces (their record key; '' for the main space) the migration has looked through for schedules the old
+   * mirror left on tasks without a job. It looks once per space of the conversion (v1Spaces), whenever the space can
+   * first be looked through (also one an agent is bound to later): a schedule set on a jobless task afterwards is real.
+   */
+  leftoversChecked?: string[]
+  /**
+   * The spaces (their record key; '' for the main space) the cockpit had when the version 1 file was converted: the
+   * spaces of its config then, and every space a version 1 job named. Only these can hold a schedule the old mirror
+   * left, so only these are ever held for the look and looked through; a space added later never is (a schedule on a
+   * task there is real, e.g. one a teammate set on a task assigned to this member).
+   */
+  v1Spaces?: string[]
+  /**
+   * The file was a version 1 file once: its home ran the cockpit that kept schedules on jobs, so a task of it may
+   * still show a schedule that cockpit's mirror left without a job. A file that started on version 2 never has it.
+   */
+  fromV1?: true
 }
 
-const empty = (): JobsFile => ({ version: 1, timeZone: null, jobs: {}, runs: {}, keys: {} })
+/** One task's part of the version 1 migration, written in one go. */
+export interface V1Step {
+  /** The version 1 jobs it settles: they leave `v1` with their runs and keys. */
+  jobIds: string[]
+  /** The task's record, or null when it gets none. */
+  record: Job | null
+  /** The runs that go on under the record's id. */
+  runs?: JobRun[]
+  /** The channel event keys that go on under the record's id. */
+  keys?: Record<string, string>
+  /** Runs kept for history under the id of the job they belonged to. */
+  history?: Record<string, JobRun[]>
+  /** Job id → record id of the jobs that moved to the record: remembered until the channel bridge has the new id. */
+  renames?: Record<string, string>
+}
 
-function load(file: string): JobsFile {
+const record = <T>(value: unknown): Record<string, T> => (value && typeof value === 'object' ? value as Record<string, T> : {})
+
+function empty(): JobsFile {
+  return { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }
+}
+
+/**
+ * The spaces of a converted file's look: the main space, the spaces the cockpit has now (`spaces`, its config's), every
+ * space a version 1 job names, and any space looked through already. Taken only while the file holds none yet: at the
+ * conversion of a version 1 file, or for a file a build of before converted without them.
+ */
+function spacesOfConversion(data: JobsFile, spaces: ReadonlyArray<string | null>): string[] {
+  return [...new Set(['', ...spaces.map((key) => key ?? ''), ...Object.values(data.v1?.jobs ?? {}).map((job) => job.spaceId ?? ''), ...(data.leftoversChecked ?? [])])]
+}
+
+/**
+ * The file as the store takes it: as it is read (load), and, for a file that was version 1, the spaces of its
+ * conversion when it holds none yet.
+ */
+function loadWithSpaces(file: string | null, spaces: ReadonlyArray<string | null>): ReturnType<typeof load> & { spacesTaken: boolean } {
+  const loaded = load(file)
+  const spacesTaken = loaded.data.fromV1 === true && !loaded.data.v1Spaces
+  if (spacesTaken) loaded.data.v1Spaces = spacesOfConversion(loaded.data, spaces)
+  return { ...loaded, spacesTaken }
+}
+
+/** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that is not used (and why). */
+function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; notUsable?: JobsNotUsable } {
+  if (!file) return { data: empty(), v1OnDisk: false }
+  let text: string
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<JobsFile>
-    if (parsed.version !== 1) return empty()
+    text = fs.readFileSync(file, 'utf8')
+  } catch (err) {
+    // No file yet: a new home. A file that is there and cannot be read is kept like one that cannot be parsed.
+    return { data: empty(), v1OnDisk: false, ...((err as NodeJS.ErrnoException).code !== 'ENOENT' ? { notUsable: 'unreadable' as const } : {}) }
+  }
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return { data: empty(), v1OnDisk: false, notUsable: 'unreadable' }
+    const timeZone = typeof parsed.timeZone === 'string' ? parsed.timeZone : null
+    if (parsed.version === 1) {
+      const v1: JobsV1Data = { jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys) }
+      return { data: { ...empty(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}), fromV1: true }, v1OnDisk: true }
+    }
+    // Neither 1 nor 2: nothing of it is taken, and it is kept as it is (a newer cockpit's file after a downgrade).
+    if (parsed.version !== 2) return { data: empty(), v1OnDisk: false, notUsable: 'unknown-version' }
+    const old = parsed.v1 as Partial<JobsV1Data> | undefined
     return {
-      version: 1,
-      timeZone: typeof parsed.timeZone === 'string' ? parsed.timeZone : null,
-      jobs: parsed.jobs && typeof parsed.jobs === 'object' ? parsed.jobs : {},
-      runs: parsed.runs && typeof parsed.runs === 'object' ? parsed.runs : {},
-      keys: parsed.keys && typeof parsed.keys === 'object' ? parsed.keys : {},
+      data: {
+        version: 2, timeZone, jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys),
+        ...(old && typeof old === 'object' ? { v1: { jobs: record(old.jobs), runs: record(old.runs), keys: record(old.keys) } } : {}),
+        ...(Object.keys(record(parsed.renames)).length > 0 ? { renames: record<string>(parsed.renames) } : {}),
+        ...(Array.isArray(parsed.leftoversChecked) ? { leftoversChecked: parsed.leftoversChecked.filter((key): key is string => typeof key === 'string') } : {}),
+        ...(Array.isArray(parsed.v1Spaces) ? { v1Spaces: parsed.v1Spaces.filter((key): key is string => typeof key === 'string') } : {}),
+        // What only the migration of a version 1 file writes says so too.
+        ...(parsed.fromV1 === true || parsed.v1 !== undefined || parsed.renames !== undefined || parsed.leftoversChecked !== undefined ? { fromV1: true as const } : {}),
+      },
+      v1OnDisk: false,
     }
   } catch {
-    return empty()
+    return { data: empty(), v1OnDisk: false, notUsable: 'unreadable' }
   }
 }
 
+const stamp = (at: Date) => at.toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')
+
+/**
+ * `file` null: nothing is read or written (a store in memory, for tests). `spaces`: the keys of the spaces the cockpit
+ * has at this start (null: the main space); a version 1 file converted now keeps them as the spaces of the look for
+ * left-over schedules (v1Spaces), and the file is written with them at once: a start that changes nothing else must
+ * not leave them to the next start, which may have more spaces. `readOnly` (the dry run by hand): nothing is ever
+ * written, the spaces are taken in memory only.
+ */
 export class JobStore {
   private data: JobsFile
+  private v1OnDisk: boolean
+  /** Why the file found on disk is not used; null: it was read, or there was none. It stays after the file was set aside. */
+  private found: JobsNotUsable | null
+  /** The file that is not used still stands where it was. */
+  private unreadableOnDisk: boolean
+  /** Where the file that is not used was set aside; null: there was none, or it is not set aside yet. */
+  private aside: string | null = null
 
-  constructor(private file = JOBS_FILE) {
-    this.data = load(file)
+  private readOnly: boolean
+
+  constructor(private file: string | null = JOBS_FILE, spaces: ReadonlyArray<string | null> = [], opts: { readOnly?: boolean } = {}) {
+    const loaded = loadWithSpaces(file, spaces)
+    this.data = loaded.data
+    this.v1OnDisk = loaded.v1OnDisk
+    this.found = loaded.notUsable ?? null
+    this.unreadableOnDisk = this.found !== null
+    this.readOnly = opts.readOnly === true
+    if (loaded.spacesTaken) this.persist()
+  }
+
+  /** Why the jobs.json found on disk is not used (it cannot be parsed, or its version is unknown); null when it was read or there was none. */
+  notUsable(): JobsNotUsable | null {
+    return this.found
+  }
+
+  /**
+   * A jobs.json that is not used (it could not be parsed, or its version is unknown: notUsable) is renamed aside,
+   * with its permissions, and logged by its path; the store goes on from empty. Returns where the file is now, also
+   * when it was set aside before; null when the file was read (or there was none). The host calls it at its start
+   * and tells the user; a write does it first too, so the file is never overwritten.
+   */
+  setAsideUnreadable(now: Date = new Date()): string | null {
+    if (!this.unreadableOnDisk || !this.file) return this.aside
+    const unknown = this.found === 'unknown-version'
+    const aside = `${this.file}.${unknown ? 'unknown-version' : 'unreadable'}-${stamp(now)}`
+    fs.renameSync(this.file, aside)
+    this.unreadableOnDisk = false
+    this.aside = aside
+    process.stderr.write(`[jobs] ${this.file} ${unknown ? 'has a version this cockpit does not know' : 'could not be read'}: set aside as ${aside}; the cockpit starts without the schedules it held\n`)
+    return aside
+  }
+
+  /** The jobs of a version 1 file that are not migrated yet, with their runs and keys; null when none is left. */
+  pendingV1(): JobsV1Data | null {
+    return this.data.v1 ?? null
+  }
+
+  /** The task still has version 1 jobs that have not moved onto it. */
+  hasV1Jobs(taskId: string): boolean {
+    return Object.values(this.data.v1?.jobs ?? {}).some((job) => job.taskId === taskId)
+  }
+
+  /** The tasks that still have version 1 jobs that have not moved onto them. */
+  v1TaskIds(): Set<string> {
+    return new Set(Object.values(this.data.v1?.jobs ?? {}).flatMap((job) => (job.taskId ? [job.taskId] : [])))
+  }
+
+  /**
+   * A version 1 job without a task got one (the migration made it): the job names it from now on, kept at once, before
+   * anything else is written to the task. A later pass plans the job on that task and makes no second one, and the
+   * engine waits for the task while the job has not moved (hasV1Jobs).
+   */
+  setV1Task(jobId: string, taskId: string): void {
+    const job = this.data.v1?.jobs[jobId]
+    if (!job || job.taskId === taskId) return
+    this.data.v1!.jobs[jobId] = { ...job, taskId }
+    this.persist()
+  }
+
+  /** Write one task's part of the version 1 migration: its jobs leave `v1`, its record and runs are in. */
+  migrateV1(step: V1Step): void {
+    const v1 = this.data.v1
+    for (const id of step.jobIds) {
+      delete v1?.jobs[id]
+      delete v1?.runs[id]
+      delete v1?.keys[id]
+    }
+    if (step.record) {
+      const id = step.record.id
+      this.data.jobs[id] = step.record
+      if (step.runs?.length) this.data.runs[id] = [...(this.data.runs[id] ?? []), ...step.runs]
+      if (step.keys && Object.keys(step.keys).length) this.data.keys[id] = { ...this.data.keys[id], ...step.keys }
+    }
+    for (const [id, runs] of Object.entries(step.history ?? {})) if (runs.length) this.data.runs[id] = runs
+    if (step.renames && Object.keys(step.renames).length > 0) this.data.renames = { ...this.data.renames, ...step.renames }
+    if (v1 && Object.keys(v1.jobs).length === 0) {
+      // Runs whose job was gone already stay as history.
+      for (const [id, runs] of Object.entries(v1.runs)) if (runs.length && !this.data.runs[id]) this.data.runs[id] = runs
+      delete this.data.v1
+    }
+    this.persist()
+  }
+
+  /** The jobs that became a record and whose new id the channel bridge has not confirmed yet: old id → record id. */
+  pendingRenames(): Record<string, string> {
+    return { ...this.data.renames }
+  }
+
+  /** The channel bridge has the new id of this job: its mapping is forgotten. */
+  renameConfirmed(jobId: string): void {
+    if (!this.data.renames || !(jobId in this.data.renames)) return
+    delete this.data.renames[jobId]
+    if (Object.keys(this.data.renames).length === 0) delete this.data.renames
+    this.persist()
+  }
+
+  /** The migration has looked through this space (its record key; null: main) for schedules left without a job. */
+  leftoversChecked(spaceKey: string | null): boolean {
+    return this.data.leftoversChecked?.includes(spaceKey ?? '') === true
+  }
+
+  /** The file was a version 1 file once, now or before a rewrite: only such a home can hold a schedule left without a job. */
+  fromV1(): boolean {
+    return this.data.fromV1 === true
+  }
+
+  /** The space was the cockpit's when its version 1 file was converted: only such a space can hold a schedule the old mirror left. */
+  hadAtConversion(spaceKey: string | null): boolean {
+    return this.data.v1Spaces?.includes(spaceKey ?? '') === true
+  }
+
+  /**
+   * The space still waits for the migration's one look for schedules left without a job: its home was on version 1,
+   * the space was the cockpit's at the conversion, and it is not marked as looked through. Each such space has its own
+   * look, also one an agent is bound to only later; a space added after the conversion never waits. Until then the
+   * engine takes up no schedule there by seeing it.
+   */
+  awaitsLeftoverLook(spaceKey: string | null): boolean {
+    return this.fromV1() && this.hadAtConversion(spaceKey) && !this.leftoversChecked(spaceKey)
+  }
+
+  markLeftoversChecked(spaceKey: string | null): void {
+    if (this.leftoversChecked(spaceKey)) return
+    this.data.leftoversChecked = [...(this.data.leftoversChecked ?? []), spaceKey ?? '']
+    this.persist()
   }
 
   timeZone(): string | null {
@@ -135,8 +407,18 @@ export class JobStore {
   }
 
   private persist(): void {
+    if (!this.file || this.readOnly) return
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 })
+      // A file that could not be parsed, or of an unknown version, is never overwritten: it is set aside first.
+      this.setAsideUnreadable()
+      // The version 1 file is kept as it was before it is rewritten for the first time.
+      if (this.v1OnDisk) {
+        const backup = `${this.file}.v1-backup`
+        if (!fs.existsSync(backup)) fs.copyFileSync(this.file, backup)
+        fs.chmodSync(backup, 0o600)
+        this.v1OnDisk = false
+      }
       const tmp = `${this.file}.tmp`
       fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2), { mode: 0o600 })
       fs.renameSync(tmp, this.file)

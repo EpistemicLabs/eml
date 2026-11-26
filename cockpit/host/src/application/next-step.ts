@@ -1,3 +1,6 @@
+import type { DelegationFields } from '../domain/delegation.js'
+import { runComingAt, type ScheduleFacts } from '../domain/task-schedule.js'
+import { JOB_LIMITS } from '../domain/job.js'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { needsAnswer, wasSpawned, worksAlone } from '../domain/session-attention.js'
@@ -15,9 +18,10 @@ import { trackWaits } from './task-waits.js'
  *   - a wait this session set since its run began, on whomever (the user, another
  *     member, someone outside), or one on the user set by a newer run (an older
  *     wait answered() should have cleared does not count);
- *   - a job of the task that will run again (a next run, a channel that wakes
- *     it, or a run waiting to start); the check an end_turn call sets with
- *     next.when is such a job (application/turn-check.ts);
+ *   - the task's schedule has a run coming up (a repeating time or its wake-up
+ *     ahead, or one that is due and not fired yet, domain/task-schedule.ts
+ *     runComingAt), or this cockpit's record of the task has a channel that
+ *     wakes it or a run waiting to start;
  *   - another session on the task that is working, or one of the user's own
  *     (not a worker): the task is in their conversation;
  *   - a step of the task the runner can move: active, or planned with a
@@ -61,12 +65,10 @@ const SEEN_SLACK_MS = 5_000
 /** wait: someone is waited on (the user, or whomever this session named). */
 export type Trigger = 'wait' | 'job' | 'session' | 'step'
 
+/** What this cockpit's record of a task says (domain/job.ts). */
 export interface JobFacts {
-  /** It ended (finished, or its end came). */
-  ended: boolean
   /** Paused, or waiting for the user's approval. */
   held: boolean
-  nextRunAt: string | null
   /** A mail, Slack or WhatsApp trigger wakes it. */
   channel: boolean
   /** A run of it waits to start. */
@@ -85,7 +87,7 @@ export interface StepFacts {
 interface Task {
   id: string
   status: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; waits?: unknown; waiting_on?: unknown }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: unknown }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -98,6 +100,8 @@ export function nextTriggers(facts: {
   /** When this session's run began: a wait from before it does not count. */
   runStartedAt: string
   jobs: JobFacts[]
+  /** The next run the task's schedule brings (domain/task-schedule.ts runComingAt); null: none. */
+  nextRunAt: string | null
   /** Another session holds the task: working on it, or the user's own. */
   otherSession: boolean
   steps: StepFacts[]
@@ -105,7 +109,7 @@ export function nextTriggers(facts: {
   const found: Trigger[] = []
   const counts = (w: { id: string; who: string; session_id?: string }) => w.who === facts.owner || (w.session_id ?? w.id) === facts.sessionId
   if (waitsOf(facts.task.properties).some((w) => counts(w) && (w.since ?? '') >= facts.runStartedAt)) found.push('wait')
-  if (facts.jobs.some((j) => !j.ended && !j.held && (j.nextRunAt !== null || j.channel || j.runWaiting))) found.push('job')
+  if (facts.nextRunAt !== null || facts.jobs.some((j) => !j.held && (j.channel || j.runWaiting))) found.push('job')
   if (facts.otherSession) found.push('session')
   const runnable = (s: StepFacts) => s.status === 'active'
     || (s.status === 'planned' && Boolean(s.checkpoint) && s.delegated && s.depsCanResolve && facts.task.status === 'active')
@@ -119,8 +123,10 @@ export interface NextStepDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
   /** The handle of the person whose turn it becomes (config handle). */
   owner: string
-  /** The jobs attached to the task (domain/job.ts taskId). */
+  /** What this cockpit's record of the task (domain/job.ts) says; its next run comes from the task's schedule, not from here. */
   jobsOf(taskId: string): JobFacts[]
+  /** What this cockpit's record of the task says of its schedule: the cursor and the wake-up it fired (domain/job.ts). */
+  scheduleFacts?(taskId: string): ScheduleFacts
   /** When the session's current run began: its job run's start, else its creation. */
   runStartedAt(sessionId: string): string
   /** Whether and how the session can call end_turn (application/turn-context.ts endTurnAccess); one that cannot is pointed at the block. */
@@ -217,7 +223,10 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     }
     const otherSession = deps.ledger.list().some((e) => e.sessionId !== sessionId && e.taskId === task.id && !e.archivedAt
       && (!e.worker || deps.working(e.sessionId)))
-    const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs: deps.jobsOf(task.id), otherSession, steps })
+    // The task's schedule is the truth for its next run; a paused or ended one has none. A time that is due and not
+    // fired yet is a run coming up too: the next pass fires it.
+    const nextRunAt = runComingAt(task.properties?.delegation?.schedule, deps.scheduleFacts?.(task.id) ?? {}, now().getTime(), JOB_LIMITS.lateLimitMs)
+    const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs: deps.jobsOf(task.id), nextRunAt, otherSession, steps })
 
     if (triggers.length > 0) {
       nudged.delete(sessionId)

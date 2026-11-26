@@ -176,7 +176,7 @@ describe('the task board', () => {
     expect(within(sheet).getByRole('button', { name: 'Work on it now' })).toBeTruthy();
   });
 
-  it('schedules an agent until the goal is reached, continuing the same session, or as a routine with new sessions (v0.23)', async () => {
+  it('schedules an agent once (a wake-up), or as a routine (a repeating time); how a run goes on is the model\'s, not asked', async () => {
     const withGoal = (): Board => ({ ...board(), tasks: board().tasks.map((t) => (t.id === 'mine' ? { ...t, goal: 'The meeting deck is ready' } : t)) });
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(withGoal()), { status: 200 });
@@ -187,20 +187,21 @@ describe('the task board', () => {
     fireEvent.click(await screen.findByText('Demo meeting prep'));
     const sheet = await screen.findByRole('dialog');
     fireEvent.click(within(sheet).getAllByRole('button', { name: 'Schedule…' })[0]);
-    fireEvent.click(await screen.findByRole('button', { name: 'Until the goal is reached' }));
-    expect(screen.getByRole('button', { name: 'Continues the same session' }).getAttribute('aria-pressed')).toBe('true');
+    // The host takes a time and its zone, nothing else: no "until the goal is reached", no session choice.
+    expect(await screen.findByRole('button', { name: 'Once' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Until the goal is reached' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Continues the same session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/mine/hand-over'));
-    expect(posts[0].body).toMatchObject({ mode: 'schedule', schedule: { session: 'resume', untilGoal: true } });
+    expect(Object.keys((posts[0].body as { schedule: Record<string, unknown> }).schedule).sort()).toEqual(['at', 'timeZone']);
     expect((posts[0].body as { schedule: { at: string } }).schedule.at).toMatch(/T09:00$/);
 
-    // a routine: Repeat… starts a new session each time, no goal
+    // a routine: Repeat… adds a repeating time, no goal
     fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('button', { name: 'Schedule…' })[0]);
     fireEvent.click(await screen.findByRole('button', { name: 'Repeat…' }));
-    expect(screen.getByRole('button', { name: 'Starts a new session' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByRole('button', { name: 'Starts a new session' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
-    await waitFor(() => expect(posts[1]?.body).toMatchObject({ mode: 'schedule', schedule: { cron: '0 9 * * 1-5', session: 'new' } }));
-    expect((posts[1].body as { schedule: Record<string, unknown> }).schedule).not.toHaveProperty('untilGoal');
+    await waitFor(() => expect((posts[1]?.body as { schedule?: unknown } | undefined)?.schedule).toEqual({ cron: '0 9 * * 1-5', timeZone: expect.any(String) }));
   });
 
   it('keeps a working card in Agent working next to the Stale group, before it', async () => {
@@ -598,7 +599,7 @@ describe('the Unread fold', () => {
 
   describe('a task whose schedule is still on', () => {
     const next = () => new Date(Date.now() + 86_400_000).toISOString();
-    const routine = (patch: Partial<BoardTask> = {}) => task({ id: 'daily', title: 'daily-brief', turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: next(), hasSchedule: true, schedule: { cron: '0 8 * * 1-5' }, ...patch });
+    const routine = (patch: Partial<BoardTask> = {}) => task({ id: 'daily', title: 'daily-brief', turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: next(), hasSchedule: true, schedule: { crons: ['0 8 * * 1-5', '0 18 * * *'] }, ...patch });
     const serve = (current: Board, refuse?: { code: string; message: string }) => vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/v1/tasks/board') return new Response(JSON.stringify(current), { status: 200 });
       if (init?.method === 'POST') {
@@ -637,6 +638,63 @@ describe('the Unread fold', () => {
       expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
     });
 
+    it('its controls apply at once: the page says what happened and offers no Undo', async () => {
+      serve(withRoutine());
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      const section = within(await screen.findByRole('region', { name: 'Schedule' }));
+      fireEvent.click(section.getByRole('button', { name: 'Pause' }));
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/daily/pause-schedule', body: { opId: expect.any(String), spaceId: 'main' } }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Schedule paused: nothing runs until you resume it.'));
+      expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
+      await waitFor(() => expect((section.getByRole('button', { name: 'Remove the time: Every day at 18:00' }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(section.getByRole('button', { name: 'Remove the time: Every day at 18:00' }));
+      await waitFor(() => expect(posts[1]).toEqual({ url: '/api/v1/tasks/daily/remove-time', body: { opId: expect.any(String), spaceId: 'main', cron: '0 18 * * *' } }));
+      await waitFor(() => expect(status.textContent).toContain('Time removed.'));
+      expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
+    });
+
+    it('a paused schedule resumes from the same place', async () => {
+      serve(withRoutine({ nextRunAt: null, schedule: { crons: ['0 8 * * 1-5'], paused: true } }));
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(within(await screen.findByRole('region', { name: 'Schedule' })).getByRole('button', { name: 'Resume' }));
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/resume-schedule'));
+      await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Schedule resumed.'));
+    });
+
+    it('says in the host\'s words why Run now was refused', async () => {
+      serve(withRoutine(), { code: 'task_working', message: 'A session of the task is working right now: nothing is started beside it.' });
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(within(await screen.findByRole('region', { name: 'Schedule' })).getByRole('button', { name: 'Run now' }));
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/run-now'));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('A session of the task is working right now: nothing is started beside it.'));
+      expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
+    });
+
+    it('a run that cannot start is said as a refusal, not as "Run started": the task has no project to run in', async () => {
+      serve(withRoutine(), { code: 'no_project', message: 'The task has no project to run in: move it into a project first.' });
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(within(await screen.findByRole('region', { name: 'Schedule' })).getByRole('button', { name: 'Run now' }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('The task has no project to run in: move it into a project first.'));
+      expect(status.textContent).not.toContain('Run started');
+    });
+
+    it('the section\'s End schedule and close is the one End: it closes the task, with Undo', async () => {
+      serve(withRoutine());
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      fireEvent.click(within(await screen.findByRole('region', { name: 'Schedule' })).getByRole('button', { name: 'End schedule and close' }));
+      await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/end-schedule'));
+      const status = await screen.findByRole('status');
+      expect(await within(status).findByRole('button', { name: 'Undo' })).toBeTruthy();
+    });
+
     const inReview = (): Board => withRoutine({ turn: 'review', group: undefined, waitingOn: { who: 'lasse', kind: 'review', why: 'Review: brief written' } });
 
     it('Looks good in the panel approves the run and says the task stays open', async () => {
@@ -673,6 +731,15 @@ describe('the Unread fold', () => {
       await waitFor(() => expect(posts[0]?.url).toBe('/api/v1/tasks/daily/end-schedule'));
       const status = await screen.findByRole('status');
       await waitFor(() => expect(status.textContent).toContain('Schedule ended, task closed.'));
+    });
+
+    it('Plan says on its row that a channel of the task waits for the user\'s OK', async () => {
+      const waits = withRoutine();
+      serve({ ...waits, tasks: waits.tasks.map((t) => (t.id === 'daily' ? { ...t, needsOk: true } : t)) });
+      setTaskView('plan');
+      mount();
+      fireEvent.click(await screen.findByRole('button', { name: /Acme/, expanded: false }));
+      expect(screen.getAllByText('waiting for your OK')).toHaveLength(1);
     });
 
     it('shows the host\'s refusal when Close reaches a scheduled task after all', async () => {

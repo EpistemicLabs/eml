@@ -34,6 +34,11 @@ export interface FieldSpec {
   keys?: Record<string, FieldSpec>
   /** v0.23 map[]: the key whose value is unique across the list's entries. */
   uniqueBy?: string
+  /**
+   * v0.24 text[]: the list has between min and max entries, none of them blank
+   * and none twice (both read without the white space around an entry).
+   */
+  entries?: { min: number, max: number }
 }
 
 export const BINDINGS = ['task', 'standing'] as const
@@ -52,8 +57,10 @@ export const CHECKPOINTS = ['before', 'after', 'none'] as const
  * has the next move) comes last.
  */
 export const WAIT_KINDS = ['question', 'go', 'stopped', 'review', 'outside'] as const
-/** v0.23: what each firing of a task's schedule starts — a new session, or the last one resumed. */
-export const SCHEDULE_SESSIONS = ['new', 'resume'] as const
+/** v0.24: the most repeating times (crons) one task's schedule holds. */
+export const SCHEDULE_CRONS_MAX = 10
+/** v0.24: the most characters the reason of a schedule's wake-up (why) has. */
+export const SCHEDULE_WHY_MAX = 2000
 /** v0.23: a wait parked without an end date (snoozed_until). */
 export const SNOOZED_OPEN = 'open'
 const bool = (o: Omit<FieldSpec, 'kind'> = {}): FieldSpec => ({ kind: 'bool', ...o })
@@ -128,9 +135,14 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     display_title: text({ max: 80, notBlank: true }),
     // v0.23: the hand-over to one agent as one value — the agent works on its
     // own. requested_at is the runner's trigger (a request is open while no run
-    // started after it); schedule says when it fires again (one time or a repeat
-    // rule; the next run time is computed, not stored). delegate and checkpoint
-    // stay, and core keeps the three mirrored on every write (task-state.ts).
+    // started after it). delegate and checkpoint stay, and core keeps the three
+    // mirrored on every write (task-state.ts).
+    // v0.24: schedule is the one place a task's schedule lives — its repeating
+    // times (crons, five-field, read in time_zone) and at most one wake-up (at,
+    // with why it was set and by_session, the session that set it); paused and
+    // ends_at hold for the whole schedule. The next run time is computed, not
+    // stored. task-state.ts checks that it has a time and brings it to its
+    // stored form.
     delegation: {
       kind: 'map',
       keys: {
@@ -140,11 +152,13 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
         schedule: {
           kind: 'map',
           keys: {
+            crons: list({ entries: { min: 1, max: SCHEDULE_CRONS_MAX } }),
             at: date(),
-            cron: text({ notBlank: true }),
+            why: text({ max: SCHEDULE_WHY_MAX }),
+            by_session: text(),
             time_zone: text({ notBlank: true }),
             paused: bool(),
-            session: oneOf(SCHEDULE_SESSIONS),
+            ends_at: date(),
           },
         },
       },
@@ -257,6 +271,17 @@ export function fieldProblem(name: string, spec: FieldSpec, value: unknown): str
       return null
     case 'text[]':
       if (!Array.isArray(value) || value.some(v => typeof v !== 'string')) return `${name} must be a list of text.`
+      if (spec.entries) {
+        const { min, max } = spec.entries
+        if (value.length < min || value.length > max) return `${name} takes ${min} to ${max} entries (got ${value.length}).`
+        const seen = new Set<string>()
+        for (const [i, entry] of (value as string[]).entries()) {
+          const v = entry.trim()
+          if (v === '') return `${name}[${i}] must not be blank.`
+          if (seen.has(v)) return `${name}: ${v} occurs twice.`
+          seen.add(v)
+        }
+      }
       return null
     case 'enum':
       if (typeof value !== 'string' || !spec.values!.includes(value)) return `${name} must be one of ${spec.values!.join(', ')}.`

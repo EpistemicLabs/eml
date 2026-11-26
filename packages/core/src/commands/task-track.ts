@@ -219,7 +219,8 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
   const was = old.delegation as { requested_at?: string, schedule?: Record<string, unknown> } | undefined
   const now = props.delegation as { requested_at?: string, schedule?: Record<string, unknown> } | undefined
   if (was?.requested_at !== now?.requested_at) change(now?.requested_at !== undefined ? 'delegation requested' : 'delegation request cleared')
-  if (JSON.stringify(was?.schedule ?? null) !== JSON.stringify(now?.schedule ?? null)) change(`schedule ${scheduleText(was?.schedule)} → ${scheduleText(now?.schedule)}`)
+  // v0.24: a schedule whose times stay as they are (only the wake-up's reason or session changed) reads the same and gets no entry
+  if (scheduleText(was?.schedule) !== scheduleText(now?.schedule)) change(`schedule ${scheduleText(was?.schedule)} → ${scheduleText(now?.schedule)}`)
   if (input.goal !== undefined && (input.goal ?? undefined) !== old.goal) change(input.goal === null ? 'goal cleared' : old.goal === undefined ? 'goal set' : 'goal changed')
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
@@ -280,9 +281,15 @@ function closedWithTask(ctx: CommandContext, taskId: string): BoundItem[] {
   })
 }
 
-/** v0.23: a schedule as one journal word group — "at <time>" or "cron <rule>", paused and resume marked; "none" without one. */
-function scheduleText(s: Record<string, unknown> | undefined): string {
+/**
+ * v0.24: a schedule as one journal word group — "crons <rule>; <rule> (<time zone>)",
+ * "at <time>" and "ends <time>" as far as it has them, paused marked; "none" without one.
+ */
+export function scheduleText(s: Record<string, unknown> | undefined): string {
   if (!s) return 'none'
-  const when = s.at !== undefined ? `at ${String(s.at)}` : `cron ${String(s.cron)}${s.time_zone ? ` ${String(s.time_zone)}` : ''}`
-  return `${when}${s.session === 'resume' ? ' (resume)' : ''}${s.paused === true ? ' (paused)' : ''}`
+  const parts: string[] = []
+  if (Array.isArray(s.crons) && s.crons.length > 0) parts.push(`crons ${s.crons.join('; ')}${s.time_zone ? ` (${String(s.time_zone)})` : ''}`)
+  if (s.at !== undefined) parts.push(`at ${String(s.at)}`)
+  if (s.ends_at !== undefined) parts.push(`ends ${String(s.ends_at)}`)
+  return `${parts.join(', ')}${s.paused === true ? ' (paused)' : ''}`
 }

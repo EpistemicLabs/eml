@@ -153,7 +153,7 @@ function Installed({ plugins, filtered, onShowAll, spaces, connections, onOpen }
         })}
       </div>
       <p className="text-ui text-muted-foreground">
-        Each space starts its sessions with exactly the plugins switched on for it. Sending always goes through the channel bridge; a plugin's tools for jobs only read and look up.
+        Each space starts its sessions with exactly the plugins switched on for it. Sending always goes through the channel bridge; a plugin's tools for a task woken by messages only read and look up.
       </p>
     </div>
   );

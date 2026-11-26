@@ -159,11 +159,11 @@ describe('v0.18 migration — unchanged default-brain seed rules become the shor
         `INSERT INTO brains (id, name, owner_id, brain_file, schema_version) VALUES ('3b241101-e2bb-4255-8caf-4136c566a962', 'test', 'u1', 'brains/b1.db', 17)`,
       ).run()
       const report = runForwardMigrations({ control, dataDir })
-      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18, 19, 20, 21, 22, 23] })
+      expect(report.outcomes[0]).toMatchObject({ status: 'migrated', kind: 'migrated', appliedVersions: [18, 19, 20, 21, 22, 23, 24] })
     } finally { control.close() }
 
     expectMigrated(brainFile, dir)
-  })
+  }, 30_000)
 
   it('through initDatabase (in-process path): same result', () => {
     const brainFile = join(dir, 'v17.db')

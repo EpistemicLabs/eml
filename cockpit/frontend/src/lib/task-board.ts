@@ -3,6 +3,7 @@
 // host; the page never works it out again, so every count agrees.
 import { useEffect } from 'react';
 import { keepPreviousData, type QueryClient, type QueryKey, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { runLabel, type RunOutcome, type RunTone } from '@/lib/job-run-label';
 import { DAY_MS } from '@/lib/time';
 import { clock, dayNumber, formatInZone, userTimeZone, wallClock, zonedTime } from '@/lib/time-zone';
 import type { Hue } from '@/shared/view/ui/hue';
@@ -86,12 +87,15 @@ export interface BoardTask {
   important: boolean;
   sessionIds: string[];
   working: boolean;
+  /** Its next run, worked out by the host. A time in the past is a run that is due and has not started yet (isDue). */
   nextRunAt: string | null;
   /**
-   * Its schedule is still on (the host decides: a job that has not ended, also a paused one or one only mail
-   * wakes, or a schedule another member's cockpit fires). Not the same as a next run: a paused job has none.
+   * It has a schedule (the host decides: the task holds one, also a paused one, or one another member's cockpit
+   * fires). Not the same as a next run: a paused schedule has none.
    */
   hasSchedule: boolean;
+  /** New channel addresses of the task wait for the user's OK on this cockpit; given in the panel's Schedule section. */
+  needsOk?: boolean;
   /** Work on it now ended and released this agent: offer "Hand to <agent>". */
   handTo?: string;
   /**
@@ -101,7 +105,7 @@ export interface BoardTask {
   ownSession?: { sessionId: string; continues: boolean; why?: 'terminal' | 'long_context' };
   /** What has to be true for it to be done; missing when it has none. */
   goal?: string;
-  /** When an agent works on it again (a job's here, else the delegation's); missing from an older host. */
+  /** Its schedule (repeating times, a wake-up, paused or not); only on an open task that has one. */
   schedule?: TaskSchedule;
   /** Its open runs, on this cockpit and the other members'; missing when none, or from an older host. */
   runs?: BoardRun[];
@@ -147,9 +151,9 @@ export interface ClosedTask {
 export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['resolved', 'invalidated', 'superseded']);
 
 /**
- * An open task whose schedule is still on (a routine, a mission that checks back, a one-time start that has
- * not run, a job that is paused): it is not closed by approving one run or by Close, only by ending its
- * schedule. The host decides it (hasSchedule); a closed task has none.
+ * An open task that has a schedule (repeating times, a wake-up that has not fired, also a paused one): it is not
+ * closed by approving one run or by Close, only by ending its schedule. The host decides it (hasSchedule); a closed
+ * task has none.
  */
 export const isScheduled = (task: Pick<BoardTask, 'status' | 'hasSchedule'>): boolean =>
   task.hasSchedule && !CLOSED_STATUSES.has(task.status);
@@ -345,8 +349,21 @@ async function post(path: string, body: unknown): Promise<CommandAnswer> {
 }
 
 export type HandOverMode = 'now' | 'schedule' | 'together';
-/** A task's schedule (host delegation.schedule): one time or a repeat rule; each run a new session or the last one resumed. */
-export interface TaskSchedule { at?: string; cron?: string; time_zone?: string; paused?: boolean; session?: 'new' | 'resume' }
+/**
+ * A task's schedule (host delegation.schedule, brain schema 24): repeating times (crons, read in time_zone) and at
+ * most one wake-up (at) with its reason (why) and the session that set it (by_session). paused holds for the whole
+ * schedule; ends_at ends the repeating times only, a wake-up still fires at its time. The next run is worked out by the host (BoardTask.nextRunAt), never stored. A repeating time
+ * starts a new session; a wake-up continues the session that set it.
+ */
+export interface TaskSchedule {
+  crons?: string[];
+  at?: string;
+  why?: string;
+  by_session?: string;
+  time_zone?: string;
+  paused?: boolean;
+  ends_at?: string;
+}
 
 /** A session working on a task, as its member's cockpit wrote it (host BoardRun). */
 export interface BoardRun {
@@ -383,8 +400,8 @@ export interface HandOverInput {
   mode: HandOverMode;
   delegate: string;
   checkpoint: 'before' | 'after' | 'none';
-  /** session: each run continues the last session or starts a new one; untilGoal: the agent keeps at it until the goal is reached. */
-  schedule?: { at?: string; cron?: string; timeZone: string; session?: 'new' | 'resume'; untilGoal?: boolean };
+  /** at: the task's wake-up (it replaces the one it has); cron: one more repeating time. */
+  schedule?: { at?: string; cron?: string; timeZone: string };
   desk?: string;
   /** Delegate now: start a new session even when the task has its own session to continue (Start fresh). */
   fresh?: boolean;
@@ -408,9 +425,26 @@ export const snooze = (item: InboxItem, until: string, opId = newOpId()) =>
 /** Drops a task that is not needed (invalidated), after the undo window. The host refuses it on a scheduled task (code scheduled). */
 export const closeTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/close`, { opId, spaceId: task.spaceId });
-/** Ends a scheduled task's jobs and closes it as done, after the undo window. */
+/** Ends a task's schedule and closes the task as done, after the undo window. */
 export const endSchedule = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/end-schedule`, { opId, spaceId: task.spaceId });
+/**
+ * The schedule's controls (host application/task-commands.ts). They act at once and cannot be undone: the answer's
+ * undoUntil is the moment they were made, so the page offers no Undo. Resume undoes Pause.
+ */
+export const pauseSchedule = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/pause-schedule`, { opId, spaceId: task.spaceId });
+export const resumeSchedule = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/resume-schedule`, { opId, spaceId: task.spaceId });
+/** A run now, whatever its times say. Refused while its last run is open, a session of it works, or its channel waits for the user's OK. */
+export const runNow = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/run-now`, { opId, spaceId: task.spaceId });
+/** Removes one repeating time, named as the schedule lists it. Removing the only time of a task without a wake-up ends its schedule; the task stays open. */
+export const removeTime = (task: Pick<BoardTask, 'id' | 'spaceId'>, cron: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/remove-time`, { opId, spaceId: task.spaceId, cron });
+/** Removing this repeating time would end the task's schedule: it is the only one and no wake-up is set. */
+export const isLastTime = (schedule: TaskSchedule | undefined, cron: string): boolean =>
+  !schedule?.at && (schedule?.crons ?? []).every((c) => c === cron);
 /** Reopens a closed task (active, starts nothing), after the undo window; owner only. */
 export const reopenTask = (task: Pick<BoardTask, 'id' | 'spaceId'>, reason?: string, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reopen`, { opId, spaceId: task.spaceId, ...(reason?.trim() ? { reason: reason.trim() } : {}) });
@@ -446,6 +480,149 @@ export function continueMode(task: Pick<BoardTask, 'closedAt' | 'owner'> & { blo
 }
 export const undo = (opId: string) => post(`/api/v1/commands/${encodeURIComponent(opId)}/undo`, {});
 
+// ---- what this cockpit keeps for a task with a schedule ----
+
+export type ReplyChannel = 'mail' | 'slack' | 'whatsapp';
+export const REPLY_CHANNELS: readonly ReplyChannel[] = ['mail', 'slack', 'whatsapp'];
+export type GrantTool = 'chrome' | 'SendMessage';
+export const GRANT_TOOLS: readonly GrantTool[] = ['chrome', 'SendMessage'];
+
+/**
+ * The record this cockpit keeps for one task (host domain/job.ts Job, its id is the task's): what only this machine
+ * needs. The schedule itself is the task's (BoardTask.schedule), so pause, the times and the next run are not here.
+ */
+export interface TaskRecord {
+  id: string;
+  /** The channels that wake the task besides its schedule. */
+  triggers: Array<{ type: ReplyChannel }>;
+  /** New channel addresses wait for the user's OK: until then the channel does not wake the task. */
+  pendingApproval?: boolean;
+  /** Per channel: send freely or draft for review. */
+  reply: Partial<Record<ReplyChannel, 'send' | 'draft'>>;
+  /** Its sessions get no shell, no messages to other sessions and only the brain's tools, unless a tool is lent. */
+  limited?: boolean;
+  grants?: Array<{ tool: GrantTool; until: string; reason: string | null }>;
+  /** Why the cockpit paused the schedule (failures in a row); the pause itself is the schedule's. */
+  pausedReason: string | null;
+  runCount?: number;
+  lastRunAt?: string | null;
+  /** The schedule ends once the record has run this often (counted over the record's life, so with runCount). */
+  end?: { afterRuns: number } | null;
+}
+
+/** How many runs the schedule still has before it ends by its count; null when it has no such end. */
+export function runsLeft(record: TaskRecord | null | undefined): number | null {
+  const after = record?.end?.afterRuns;
+  return typeof after === 'number' ? Math.max(0, after - (record?.runCount ?? 0)) : null;
+}
+/** "3 more runs", "1 more run", "no more runs". */
+export const runsLeftText = (left: number): string => (left === 0 ? 'no more runs' : `${left} more ${left === 1 ? 'run' : 'runs'}`);
+
+/** A run of the task's schedule (host RunView). number 0: a time that was missed or skipped. */
+export interface TaskRun {
+  id: string;
+  number: number;
+  trigger: 'schedule' | 'manual' | ReplyChannel;
+  dueAt: string;
+  status: 'waiting' | 'starting' | 'started' | 'finished' | 'failed' | 'missed' | 'skipped';
+  sessionId: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  outcome: RunOutcome | null;
+  note: string | null;
+  session: { projectId: string | null; chat: boolean; attention: RunOutcome | null } | null;
+}
+
+/** GET /api/v1/tasks/<id>/record: `record` null when this cockpit keeps nothing for the task. Runs newest first. */
+export interface TaskRecordView { record: TaskRecord | null; runs: TaskRun[]; held: boolean; running: boolean }
+
+export const RECORD_KEY = ['task-record'] as const;
+/** Runs start and end on the host's clock: the panel asks again this often while a task is open in it. */
+const RECORD_POLL_MS = 15_000;
+
+export async function fetchTaskRecord(task: Pick<BoardTask, 'id' | 'spaceId'>, signal?: AbortSignal): Promise<TaskRecordView> {
+  const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/record?${new URLSearchParams({ spaceId: task.spaceId })}`, { headers: { Accept: 'application/json' }, signal });
+  if (!res.ok) throw new Error(`The task's schedule settings did not load (HTTP ${res.status}).`);
+  return res.json() as Promise<TaskRecordView>;
+}
+
+/** What this cockpit keeps for the task, while `enabled` (an open task shown in the panel). */
+export function useTaskRecord(task: Pick<BoardTask, 'id' | 'spaceId'>, enabled: boolean) {
+  return useQuery({
+    queryKey: [...RECORD_KEY, task.spaceId, task.id] as const,
+    queryFn: ({ signal }) => fetchTaskRecord(task, signal),
+    enabled,
+    refetchInterval: RECORD_POLL_MS,
+  });
+}
+
+/** A change to the record's settings: done, or why the host refused (no_record: this cockpit keeps none for the task). */
+export type RecordAnswer = { ok: true } | { ok: false; code: string; message: string };
+export type RecordChange =
+  | { kind: 'approve' }
+  | { kind: 'reply'; channel: ReplyChannel; mode: 'send' | 'draft' }
+  | { kind: 'limited'; limited: boolean }
+  | { kind: 'grant'; tool: GrantTool }
+  | { kind: 'revoke'; tool: GrantTool };
+
+/** POST /api/v1/tasks/<id>/record/<kind>. They apply at once. */
+export async function changeRecord(task: Pick<BoardTask, 'id' | 'spaceId'>, change: RecordChange): Promise<RecordAnswer> {
+  const { kind, ...body } = change;
+  try {
+    const res = await fetch(`/api/v1/tasks/${encodeURIComponent(task.id)}/record/${kind}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ spaceId: task.spaceId, ...body }),
+    });
+    if (res.ok) return { ok: true };
+    const data = await res.json().catch(() => ({})) as { error?: { code?: string; message?: string } };
+    return { ok: false, code: data.error?.code ?? `http_${res.status}`, message: data.error?.message ?? `The cockpit refused (HTTP ${res.status}).` };
+  } catch {
+    return { ok: false, code: 'offline', message: 'The cockpit did not answer.' };
+  }
+}
+
+/** What the panel's schedule section asks for: a control of the schedule, or a change to the record. Each applies at once. */
+export type ScheduleAction =
+  | { kind: 'pause' }
+  | { kind: 'resume' }
+  | { kind: 'run_now' }
+  | { kind: 'remove_time'; cron: string }
+  | { kind: 'record'; change: RecordChange };
+
+/** What the page says once a schedule control or a setting of the task's record went through. */
+export function scheduleDone(task: Pick<BoardTask, 'schedule'>, action: ScheduleAction): string {
+  if (action.kind === 'pause') return 'Schedule paused: nothing runs until you resume it.';
+  if (action.kind === 'resume') return 'Schedule resumed.';
+  if (action.kind === 'run_now') return 'Run started: how it goes shows under its last runs.';
+  if (action.kind === 'remove_time') return isLastTime(task.schedule, action.cron) ? 'Time removed and schedule ended. The task stays open.' : 'Time removed.';
+  const c = action.change;
+  if (c.kind === 'approve') return 'Approved: its messages wake the task from now.';
+  if (c.kind === 'reply') return c.mode === 'send' ? `Its ${c.channel} replies are sent without asking.` : `Its ${c.channel} replies are drafts you approve.`;
+  if (c.kind === 'limited') return c.limited ? 'Its sessions are limited.' : 'Its sessions are no longer limited.';
+  const tool = c.tool === 'chrome' ? 'Chrome' : 'Messages';
+  return c.kind === 'grant' ? `${tool} lent for 1 h.` : `${tool} taken back.`;
+}
+
+/** The tools lent to a limited task that are still lent now. */
+export const activeGrants = (record: TaskRecord | null | undefined, now: number) =>
+  (record?.grants ?? []).filter((g) => Date.parse(g.until) > now);
+
+/**
+ * The record has something to show in the panel: a channel that wakes the task, addresses waiting for the user's OK,
+ * the Limited switch on, or a tool lent. A record that only counts runs shows nothing.
+ */
+export const recordShows = (record: TaskRecord | null | undefined, now: number): boolean =>
+  Boolean(record && (record.triggers.length > 0 || record.pendingApproval || record.limited || activeGrants(record, now).length > 0));
+
+/** A run in one line: when, how it went (the newest as its session stands now), and why it did not run. */
+export function runLine(run: TaskRun, now: number, current = false): { text: string; tone: RunTone } {
+  const label = runLabel({ status: run.status, outcome: run.outcome, attention: run.session?.attention ?? null, sessionKnown: Boolean(run.session) }, current);
+  const by = run.trigger === 'manual' ? 'run by hand' : run.trigger === 'schedule' ? null : `on ${run.trigger}`;
+  return { text: [when(run.startedAt ?? run.finishedAt ?? run.dueAt, now), by, label.text, run.note].filter(Boolean).join(' · '), tone: label.tone };
+}
+
+/** What a task whose channel waits for the user's OK says on its card, its Plan row and in its panel. */
+export const NEEDS_OK = 'waiting for your OK';
+
 // ---- names and colours ----
 
 export const TURN_ORDER: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'parked', 'done'];
@@ -455,7 +632,7 @@ export const TURN_META: Record<Turn, { name: string; rule: string; hue: Hue }> =
   review: { name: 'Review', rule: 'An agent finished. Stays until you looked at it.', hue: 'review' },
   agent_working: { name: 'Agent working', rule: 'An agent session works on it right now.', hue: 'agent' },
   agent_scheduled: { name: 'Agent scheduled', rule: 'Delegated. An agent picks it up at a set time, when the runner has a free slot, or after the step it waits for.', hue: 'scheduled' },
-  waiting_on_others: { name: 'Waiting on others', rule: 'Someone outside has the next move. An agent checks back when a job says so.', hue: 'waiting' },
+  waiting_on_others: { name: 'Waiting on others', rule: 'Someone outside has the next move. An agent checks back when the task\'s schedule says so.', hue: 'waiting' },
   parked: { name: 'Parked', rule: 'Its wait is snoozed: it comes back by itself at the date, on every device. Nothing runs meanwhile.', hue: 'waiting' },
   done: { name: 'Done · 24 h', rule: 'Reviewed by you, or closed in the last 24 hours.', hue: 'done' },
 };
@@ -542,6 +719,18 @@ export function dueLabel(due: string, now: number, zone: string = userTimeZone()
   return formatInZone(date, { day: 'numeric', month: 'short' }, 'UTC');
 }
 
+/** A next run whose time has come: the host holds it as due until it starts (a run waiting for room, a time not fired yet). */
+export const isDue = (iso: string | null | undefined, now: number): boolean => {
+  const at = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(at) && at <= now;
+};
+
+/** A task's next run after a word of its own: "next Mon 09:00", or "due since 10:27" once its time has come. */
+export function nextRunText(iso: string | null | undefined, now: number, word = 'next'): string {
+  if (!iso) return '';
+  return isDue(iso, now) ? `due since ${when(iso, now)}` : `${word} ${when(iso, now)}`;
+}
+
 // ---- what a card says ----
 
 const NOBODY: Record<NobodyReason, string> = {
@@ -599,6 +788,8 @@ export function runnerLine(task: Pick<BoardTask, 'runner' | 'delegate'>): string
 /** The line under a card's title: what is going on, in words. */
 export function cardLine(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
+  // A run whose time has come is due, not a time in the past the agent "starts" at.
+  const runs = (verb: string) => (isDue(task.nextRunAt, now) ? `${agent}'s run is due since ${when(task.nextRunAt, now)}` : `${agent} ${verb} ${when(task.nextRunAt, now)}`);
   if (task.pending?.kind === 'hand_over') return `Handed to ${agent}. You can undo this for a few seconds.`;
   // A review of a task whose schedule is on closes nothing: the host shows the task as still open.
   if (task.pending?.kind === 'review') return `${CLOSED_STATUSES.has(task.status) ? 'Closing as reviewed.' : 'Run approved.'} You can undo this for a few seconds.`;
@@ -612,12 +803,13 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.group === 'blocked') return runnerLine(task) ?? `${agent} waits before it starts.`;
   if (task.turn === 'waiting_on_others') {
     const waits = sentence(waitText(task, task.owner));
-    return task.nextRunAt ? `${waits}; ${agent} checks back ${when(task.nextRunAt, now)}.` : `${waits}.`;
+    return task.nextRunAt ? `${waits}; ${runs('checks back')}.` : `${waits}.`;
   }
-  if (task.turn === 'agent_scheduled' && task.waitingOn?.kind === 'outside') return `${sentence(waitText(task))}; ${agent} checks again ${when(task.nextRunAt, now)}.`;
-  if (task.group === 'mission') return `Until the goal is reached. ${agent} checks again ${when(task.nextRunAt, now)}.`;
-  if (task.group === 'routine') return `${repeatsText(task.schedule)}. Next ${when(task.nextRunAt, now)}.`;
-  if (task.group === 'at_time') return `${agent} starts ${when(task.nextRunAt, now)}.`;
+  if (task.turn === 'agent_scheduled' && task.waitingOn?.kind === 'outside') return `${sentence(waitText(task))}; ${runs('checks again')}.`;
+  if (task.group === 'mission') return `Until the goal is reached. ${sentence(runs('checks again'))}.`;
+  // Past its end (ends_at) the repeating times repeat no more; what is next then is its wake-up.
+  if (task.group === 'routine') return `${isDue(task.schedule?.ends_at, now) ? 'Its repeating times have ended' : repeatsText(task.schedule)}. ${sentence(nextRunText(task.nextRunAt, now))}.`;
+  if (task.group === 'at_time') return `${sentence(runs('starts'))}.`;
   if (task.group === 'runner') return runnerLine(task) ?? `${agent} is next in line for the runner.`;
   if (task.turn === 'done') return 'Closed.';
   if (task.handTo) return `You worked on it with ${agentName(task.handTo)}. Hand it to ${agentName(task.handTo)} to let it go on alone.`;
@@ -633,14 +825,83 @@ function workingLine(task: BoardTask, now: number): string {
   return `${who} is working on it.`;
 }
 
-/** A repeat rule in words, for the common ones the hand-over dialog makes; else the rule itself. */
-export function repeatsText(schedule: TaskSchedule | undefined): string {
-  const cron = schedule?.cron;
-  if (!cron) return 'Repeats';
-  const m = /^(\d+) (\d+) \* \* (1-5|1|\*)$/.exec(cron);
-  if (!m) return `Repeats (${cron})`;
-  const at = `${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')}`;
-  return m[3] === '1-5' ? `Repeats on weekdays at ${at}` : m[3] === '1' ? `Repeats every Monday at ${at}` : `Repeats every day at ${at}`;
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const two = (n: number) => String(n).padStart(2, '0');
+const listed = (items: string[]) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+const CRON_DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+/**
+ * The values one cron field names (numbers, lists, ranges, steps), sorted; null when it is not such a field.
+ * `names`: the field also takes these words for 0, 1, … (the weekday's SUN to SAT), as the host's parser does.
+ */
+function cronField(field: string, min: number, max: number, names: string[] | null = null): number[] | null {
+  const value = (part: string): number => {
+    const index = names ? names.indexOf(part.toUpperCase()) : -1;
+    return index >= 0 ? index : /^\d+$/.test(part) ? Number(part) : NaN;
+  };
+  const values = new Set<number>();
+  for (const part of field.split(',')) {
+    const pieces = part.split('/');
+    if (pieces.length > 2) return null;
+    const [range, stepText] = pieces;
+    const step = stepText === undefined ? 1 : /^\d+$/.test(stepText) ? Number(stepText) : NaN;
+    const ends = range.split('-');
+    if (ends.length > 2) return null;
+    const [from, to] = range === '*' ? [min, max] : ends.length === 2 ? [value(ends[0]), value(ends[1])] : [value(range), stepText === undefined ? value(range) : max];
+    if (!(from >= min && to <= max && from <= to && step >= 1)) return null;
+    for (let v = from; v <= to; v += step) values.add(v);
+  }
+  return [...values].sort((a, b) => a - b);
+}
+
+/**
+ * A repeating time in words, as the host says it to a session (host domain/run-text.ts cronInWords): "on weekdays at
+ * 08:00", "every day at 18:00 and 22:00", "every Monday and Thursday at 09:30", "on day 1 of every month at 07:00",
+ * "every hour at :15". Null for a rule none of these fit: the caller shows the rule itself.
+ */
+export function cronWords(cron: string): string | null {
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const [minute, hour, day, month, weekday] = fields;
+  const minutes = cronField(minute, 0, 59), hours = cronField(hour, 0, 23), days = cronField(day, 1, 31);
+  // Sunday is 0 or 7.
+  const weekdays = cronField(weekday, 0, 7, CRON_DAYS)?.map((d) => d % 7);
+  if (!minutes || !hours || !days || !weekdays || month !== '*' || minutes.length !== 1) return null;
+  const everyHour = hour === '*';
+  if (!everyHour && hours.length > 6) return null;
+  const at = everyHour ? `every hour at :${two(minutes[0])}` : `at ${listed(hours.map((h) => `${two(h)}:${two(minutes[0])}`))}`;
+  let on: string;
+  if (day === '*' && weekday === '*') on = everyHour ? '' : 'every day';
+  else if (day === '*') {
+    const set = [...new Set(weekdays)].sort((a, b) => a - b);
+    if (set.length === 7) on = everyHour ? '' : 'every day';
+    else if (set.join() === '1,2,3,4,5') on = 'on weekdays';
+    else if (set.join() === '0,6') on = 'at the weekend';
+    else on = `${everyHour ? 'on' : 'every'} ${listed(set.map((d) => WEEKDAYS[d]))}`;
+  } else if (weekday === '*') {
+    if (days.length > 4) return null;
+    on = `on day ${listed(days.map(String))} of every month`;
+  } else return null;
+  return everyHour ? [at, on].filter(Boolean).join(' ') : `${on} ${at}`;
+}
+
+/** One repeating time as a line of its own: in words, else the rule itself. */
+export const timeText = (cron: string): string => { const words = cronWords(cron); return words ? sentence(words) : cron; };
+
+/**
+ * The zone a schedule's repeating times are read in, named only when it is not the user's own (Settings): the times
+ * are said as the schedule holds them, so in another zone the reader has to know which.
+ */
+export const scheduleZone = (schedule: TaskSchedule | undefined, zone: string = userTimeZone()): string | null =>
+  schedule?.time_zone && schedule.time_zone !== zone ? schedule.time_zone : null;
+
+/** A schedule's repeating times in words, one after the other; a rule the words do not fit shows as itself. */
+export function repeatsText(schedule: TaskSchedule | undefined, zone: string = userTimeZone()): string {
+  const crons = schedule?.crons ?? [];
+  if (crons.length === 0) return 'Repeats';
+  const other = scheduleZone(schedule, zone);
+  return `Repeats ${crons.map((cron) => cronWords(cron) ?? `(${cron})`).join('; ')}${other ? ` (${other})` : ''}`;
 }
 
 /**
@@ -661,7 +922,7 @@ export function cardTime(task: BoardTask, now: number): { label: string; future:
   if (task.turn === 'agent_working') return named('last activity', task.runs?.find((r) => r.state === 'running')?.lastActivityAt ?? task.runs?.[0]?.lastActivityAt ?? task.updatedAt);
   if (task.turn === 'review') return named('finished', task.waitingOn?.since ?? task.updatedAt);
   if (task.turn === 'done') return named('closed', task.updatedAt);
-  if (task.nextRunAt && (task.turn === 'agent_scheduled' || task.turn === 'waiting_on_others')) return named('next', task.nextRunAt, true);
+  if (task.nextRunAt && (task.turn === 'agent_scheduled' || task.turn === 'waiting_on_others')) return { label: nextRunText(task.nextRunAt, now), future: true };
   if (task.turn === 'waiting_on_others') return named('waiting since', task.waitingOn?.since ?? task.updatedAt);
   return named('updated', task.updatedAt);
 }
@@ -712,8 +973,8 @@ export function coverageText(task: BoardTask, now: number): string {
   if (c.ok) {
     if (c.how === 'working') return `${agent} working now`;
     if (c.how === 'parked') return c.at ? `parked · back ${when(c.at, now)}` : 'parked until you bring it back';
-    if (c.how === 'checks_back') return `${waitText(task)} · ${agent} checks ${when(c.at, now)}`;
-    if (c.how === 'at_time') return `${agent} · ${when(c.at, now)}`;
+    if (c.how === 'checks_back') return `${waitText(task)} · ${agent} ${isDue(c.at, now) ? `due since ${when(c.at, now)}` : `checks ${when(c.at, now)}`}`;
+    if (c.how === 'at_time') return `${agent} · ${isDue(c.at, now) ? `due since ${when(c.at, now)}` : when(c.at, now)}`;
     const b = task.runner;
     if (b?.kind === 'depends') return `${agent} · after ${b.step?.turn === 'review' ? 'your review of ' : ''}${quoted(b.title)}`;
     if (b?.kind === 'cap') return `${agent} · waits for a free slot (${b.running} of ${b.max} run)`;

@@ -559,7 +559,7 @@ describe('task router', () => {
     expect(brain.posts).toEqual([{ path: '/task/t21/track', body: { waits: null } }])
   })
 
-  it('a run that comes due on a closed task reopens it first, so the run\'s question reaches the owner instead of being dropped', async () => {
+  it('writing in the chat of a closed task reopens it first, so the session\'s question reaches the owner instead of being dropped', async () => {
     const { createTaskCommands, TaskCommandStore } = await import('../src/application/task-commands.js')
     const world = (status: string) => {
       const s = setup({ id: 't-run', status, properties: { assignee_ids: ['lasse'] } })
@@ -583,17 +583,17 @@ describe('task router', () => {
     expect(dropped.brain.posts).toEqual([])
 
     const closed = world('resolved')
-    expect(await closed.commands.reopenForRun('main', 't-run', { number: 3, jobId: 'job-1', job: 'Daily brief' })).toBe('reopened')
-    expect(closed.brain.posts[0].body).toEqual({ status: 'active', waits: null, text: 'Reopened: run 3 of "Daily brief" came due while the task was closed. End its schedule to stop it.' })
+    expect(await closed.commands.reopenByWriting('main', 't-run')).toBe('reopened')
+    expect(closed.brain.posts[0].body).toEqual({ status: 'active', waits: null, text: 'Reopened by writing in its chat.' })
     await closed.r.turnEnded('s-run', HANDOFF)
     expect(closed.brain.task.status).toBe('active')
     expect(waitsOfTask(closed.brain)).toEqual([expect.objectContaining({ id: 's-run', who: 'lasse', kind: 'question', why: 'Ship the shorter headline?' })])
 
-    // A task another one replaced is left alone: nothing is written, and the router still drops the question.
+    // A task another one replaced stays closed: its journal says why, and the router still drops the question.
     const replaced = world('superseded')
-    expect(await replaced.commands.reopenForRun('main', 't-run', { number: 3, jobId: 'job-1', job: 'Daily brief' })).toBe('refused')
+    expect(await replaced.commands.reopenByWriting('main', 't-run')).toBe('refused')
     await replaced.r.turnEnded('s-run', HANDOFF)
-    expect(replaced.brain.posts).toEqual([])
+    expect(replaced.brain.posts.map((post) => Object.keys(post.body))).toEqual([['text']])
     expect(replaced.brain.task.status).toBe('superseded')
   })
 

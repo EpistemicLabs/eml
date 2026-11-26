@@ -7,12 +7,15 @@ import { isHeld, type Job, type ReplyChannel, type ReplyMode } from './job.js'
  * importing them; both sides test against tests/fixtures/job-contract.v1.json.
  *
  *   GET  /v1/jobs?space=<brain id>&channel=mail   → JobRouteV1[]
- *        the space's jobs that have not ended with a trigger on that channel; a paused
- *        one is listed (paused: true) so its mail still routes to it and waits
+ *        the space's records (one per task, domain/job.ts) with a trigger on that channel, of tasks that are
+ *        open (a closed task's record stops listening, application/job-runner.ts); a paused one is listed
+ *        (paused: true) so its mail still routes to it and waits
  *   POST /v1/jobs/<jobId>/wake  WakeRequestV1     → WakeResponseV1
- *        delivered: the job's session has it (a running one gets it with its next turn);
- *        retry: no room, a busy session, or the cockpit is down — try again later;
- *        refused: no such job, it ended, or its session is gone.
+ *        delivered: a session of the task has it, by the four-line order (domain/firing-order.ts): a working
+ *        one gets it with its next turn, one that waits on an answer continues, else a new one starts;
+ *        retry: no room, a busy session, a paused schedule, a record waiting for the user's OK, or the
+ *        cockpit is down — try again later; a message is never skipped;
+ *        refused: no such record, or its task is closed or gone.
  *        The same idempotencyKey within 7 days answers delivered without a second wake.
  *
  * Every request carries `Authorization: Bearer <token>`, the token of one space
@@ -61,13 +64,17 @@ export function mailMatches(match: unknown[]): MailMatchV1[] {
   })
 }
 
-/** The job as the bridge routes it on a channel; null when it does not listen there or has ended. */
-export function routeOf(job: Job, space: string, channel: ReplyChannel): JobRouteV1 | null {
-  if (job.endedAt) return null
+/**
+ * The task's record as the bridge routes it on a channel (`jobId` is the record's id: the task's); null when it does
+ * not listen there. `paused`: the record holds still — it waits for the user's OK, the cockpit paused it after
+ * failures, or the task's schedule is paused (`held`, application/job-runner.ts; without it only what the record
+ * itself says). Its mail still routes to it and waits; its wakes answer retry.
+ */
+export function routeOf(job: Job, space: string, channel: ReplyChannel, held: boolean = isHeld(job)): JobRouteV1 | null {
   const triggers = job.triggers.filter((t) => t.type === channel)
   if (triggers.length === 0) return null
   const raw = triggers.flatMap((t) => ('match' in t && Array.isArray(t.match) ? t.match : []))
   const matches = channel === 'mail' ? mailMatches(raw) : raw
   // Draft until the user says otherwise: nothing goes out unseen by default.
-  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' }, paused: isHeld(job) }
+  return { jobId: job.id, space, matches, reply: { [channel]: job.reply[channel] ?? 'draft' }, paused: held }
 }

@@ -18,6 +18,8 @@ export interface JobContractDeps {
   /** The brain ids of the spaces; the first is the main space, whose jobs carry no space id. */
   spaceIds(): string[]
   wake(job: Job, channel: ReplyChannel, text: string, key: string): Promise<WakeOutcome>
+  /** The record holds still: its route says paused (application/job-runner.ts held). Without it: what the record itself says. */
+  held?(job: Job): boolean
   tokensDir?: string
 }
 
@@ -62,6 +64,19 @@ function spaceOfToken(header: string | undefined, spaceIds: string[], dir: strin
   return null
 }
 
+/**
+ * The id is no record and is moving in this space: a pending version 1 job of the space, or an old id the store still
+ * maps to a record (job-store.ts pendingRenames) that is this space's or is gone by now.
+ */
+function movingIn(store: Pick<JobStore, 'pendingV1' | 'pendingRenames' | 'get'>, id: string, space: string, mainId: string | undefined): boolean {
+  const pending = store.pendingV1()?.jobs[id]
+  if (pending) return (pending.spaceId ?? mainId) === space
+  const renamedTo = store.pendingRenames()[id]
+  if (renamedTo === undefined) return false
+  const record = store.get(renamedTo)
+  return !record || (record.spaceId ?? mainId) === space
+}
+
 const isChannel = (value: unknown): value is ReplyChannel => typeof value === 'string' && (CHANNELS as readonly string[]).includes(value)
 
 export async function handleJobContract(
@@ -89,7 +104,7 @@ export async function handleJobContract(
       json(res, 400, { error: { code: 'INVALID_CHANNEL', message: `channel must be one of ${CHANNELS.join(', ')}` } })
       return true
     }
-    const routes = deps.store.list().filter((job) => spaceOf(job) === space).flatMap((job) => routeOf(job, space, channel) ?? [])
+    const routes = deps.store.list().filter((job) => spaceOf(job) === space).flatMap((job) => routeOf(job, space, channel, deps.held?.(job)) ?? [])
     json(res, 200, routes)
     return true
   }
@@ -104,6 +119,13 @@ export async function handleJobContract(
       return true
     }
     const job = deps.store.get(wake[1])
+    // An id that is moving: a version 1 job that still waits for its task, or a job that became its task's record
+    // and whose new id the bridge has not confirmed. The bridge keeps the message; once it has the new id it asks
+    // under the task's. Refused is for an id that names nothing, and it ends the message for good.
+    if (!job && movingIn(deps.store, wake[1], space, mainId)) {
+      json(res, 200, { outcome: 'retry' })
+      return true
+    }
     // Another space's job is answered like no job at all.
     if (!job || spaceOf(job) !== space) {
       json(res, 200, { outcome: 'refused' })

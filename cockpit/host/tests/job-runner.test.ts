@@ -1,692 +1,1984 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JobStore } from '../src/job-store.js'
-import { JobRunner, type JobRunnerDeps, type RunSessionState } from '../src/application/job-runner.js'
-import { Jobs, type JobCaller } from '../src/application/jobs.js'
+import { JobRunner, runProjectOf, type JobRunnerDeps, type RunnerSpace, type RunnerTask, type RunSessionState } from '../src/application/job-runner.js'
+import { newRecord, RECORD_GRACE_MS, type Job, type JobRun } from '../src/domain/job.js'
+import type { ScheduleFields } from '../src/domain/delegation.js'
+import { withSchedule } from '../src/domain/task-schedule.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
 import type { WorkerStatus } from '../src/domain/session-attention.js'
-import type { Job } from '../src/domain/job.js'
+import { SCHEDULE_TASK_RULE } from '../src/domain/run-text.js'
+import { planJobMigration } from '../src/domain/job-migration.js'
 
-// The runner wakes sessions for due jobs: a fresh worker per run, or a message
-// to a session that exists. It starts only with room, retries a busy target,
-// never runs a schedule twice for one time, and records what came of each run.
+// The engine fires the tasks' schedules: it reads the open tasks of each space, works out what is due against the
+// task's local record, and carries a firing out by the four-line order. It starts only with room, retries a busy
+// session, never fires a time twice, and records what came of each run.
 
 const MIN = 60_000
 const HOUR = 60 * MIN
+const ZONE = 'Asia/Makassar'
+const WEEKDAYS_8: ScheduleFields = { crons: ['0 8 * * 1-5'], time_zone: ZONE }
+const HOURLY: ScheduleFields = { crons: ['0 * * * *'], time_zone: 'UTC' }
+
+const MAIN: RunnerSpace = { key: null, name: 'Main', shared: false }
+const TEAM: RunnerSpace = { key: 'team', name: 'Team', shared: true }
+
+type WorldTask = RunnerTask & { space: string | null }
 
 class World {
-  now = Date.parse('2026-11-09T00:00:00Z') // Monday 08:00 in UTC+8
+  now = Date.parse('2026-11-09T00:00:00Z') // Monday 08:00 in Asia/Makassar
   room = true
+  me = 'member'
+  spaces: RunnerSpace[] = [MAIN]
+  /** Every task of every space, open or closed, by id; `space` says where it lives. */
+  tasks = new Map<string, WorldTask>()
+  /** Spaces whose brain cannot be asked. */
+  unreadable = new Set<string | null>()
+  /** Tasks whose version 1 jobs have not moved onto them yet. */
+  unmoved = new Set<string>()
+  /** Spaces whose first look for schedules left without a job is still to come (the jobs migration). */
+  unchecked = new Set<string | null>()
+  /** At most this many tasks come back from a list. */
+  listLimit = Infinity
+  listReads = 0
+  taskReads: string[] = []
+  /** `linked`: the session was started for the task's record (the ledger's jobId), so it has the bridge's tools. */
+  sessions: Array<{ taskId: string; sessionId: string; working: boolean; linked: boolean }> = []
+  elsewhere = new Set<string>()
+  /** The people of a shared space; null: they cannot be read. */
+  members: string[] | null = ['member', 'other']
+  /** What the brain server says of a space of unknown kind when it is asked again, by key; the calls are counted. */
+  kinds = new Map<string | null, boolean>()
+  kindAsked = 0
   states = new Map<string, RunSessionState>()
   statuses = new Map<string, WorkerStatus>()
-  started: Array<{ job: Job; sessionId: string; text: string }> = []
+  started: Array<{ record: Job; task: RunnerTask; sessionId: string; text: string }> = []
+  startProblem: string | null = null
+  /** Tasks without a project a new session could start in. */
+  noProject = new Set<string>()
   delivered: Array<{ sessionId: string; text: string }> = []
   deliveryOutcome: DeliveryOutcome = 'resumed'
+  outcomes = new Map<string, DeliveryOutcome>()
+  edits: Array<{ taskId: string; text?: string; schedule: ScheduleFields | null }> = []
+  editFails = false
   alerts: string[] = []
-  granted: string[] = []
-  ended: string[] = []
   flagged: string[] = []
-  /** What the host does before a run starts, and what was started by then. */
-  before: ((job: Job, run: { number: number }) => Promise<void>) | null = null
+  ended: string[] = []
   store = new JobStore(join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json'))
 
-  deps(): JobRunnerDeps {
+  task(id: string, schedule: ScheduleFields | null, patch: Partial<RunnerTask> & { space?: string | null; owner?: string[] } = {}): WorldTask {
+    const { space = null, owner = ['member'], properties, ...rest } = patch
+    const task: WorldTask = {
+      id, title: `slug-${id}`, content: `Do the work of ${id}.`, status: 'active', scope: 'project.eml', ingested_by: 'member', space,
+      properties: { assignee_ids: owner, display_title: `Task ${id}`, ...(schedule ? { delegation: { agent: 'atlas', checkpoint: 'none', schedule } } : {}), ...properties },
+      ...rest,
+    }
+    this.tasks.set(id, task)
+    return task
+  }
+
+  patch(id: string, patch: Partial<WorldTask>): void {
+    this.tasks.set(id, { ...this.tasks.get(id)!, ...patch })
+  }
+
+  scheduleOf(id: string): ScheduleFields | null {
+    return this.tasks.get(id)?.properties?.delegation?.schedule ?? null
+  }
+
+  setSchedule(id: string, schedule: ScheduleFields | null): void {
+    const task = this.tasks.get(id)!
+    const delegation = withSchedule(task.properties?.delegation ?? { agent: 'atlas' }, schedule)
+    this.patch(id, { properties: { ...task.properties, delegation } })
+  }
+
+  session(taskId: string, sessionId: string, working = false, linked = true): void {
+    this.sessions.unshift({ taskId, sessionId, working, linked })
+    this.states.set(sessionId, working ? 'working' : 'idle')
+  }
+
+  wait(taskId: string, sessionId: string, kind: string): void {
+    const task = this.tasks.get(taskId)!
+    this.patch(taskId, { properties: { ...task.properties, waits: [{ id: sessionId, who: 'member', kind, why: 'asks', session_id: sessionId }] } })
+  }
+
+  deps(patch: Partial<JobRunnerDeps> = {}): JobRunnerDeps {
     return {
       store: this.store,
       now: () => this.now,
+      me: this.me,
+      spaces: () => this.spaces,
+      openTasks: async (space) => {
+        if (this.unreadable.has(space.key)) return null
+        this.listReads += 1
+        return [...this.tasks.values()].filter((t) => t.space === space.key && ['planned', 'active'].includes(t.status)).slice(0, this.listLimit).map((t) => structuredClone(t))
+      },
+      task: async (space, taskId) => {
+        if (this.unreadable.has(space.key)) throw new Error('the brain does not answer')
+        this.taskReads.push(taskId)
+        const found = this.tasks.get(taskId)
+        return found && found.space === space.key ? structuredClone(found) : null
+      },
+      waitsForMigration: (taskId) => this.unmoved.has(taskId),
+      migratingTasks: () => new Set(this.unmoved),
+      holdsFirstSight: (space) => this.unchecked.has(space.key),
+      spaceKind: async (space) => { this.kindAsked += 1; return this.kinds.get(space.key) ?? null },
+      members: async () => this.members,
+      workingElsewhere: async (_space, taskId) => this.elsewhere.has(taskId),
+      sessionsOf: (taskId) => this.sessions.filter((s) => s.taskId === taskId).map(({ sessionId, working, linked }) => ({ sessionId, working, linked })),
+      editSchedule: async (_space, taskId, edit, text) => {
+        if (this.editFails) throw new Error('the brain refused the write')
+        const before = this.scheduleOf(taskId)
+        const next = edit(before, this.tasks.get(taskId) as never)
+        if (JSON.stringify(next) === JSON.stringify(before) && !text) return
+        this.setSchedule(taskId, next)
+        this.edits.push({ taskId, schedule: next, ...(text ? { text } : {}) })
+      },
       hasRoom: () => this.room,
       sessionState: (id) => this.states.get(id) ?? 'queued',
       sessionRuns: (id) => ['working', 'idle'].includes(this.states.get(id) ?? ''),
       statusSince: (id) => { const kind = this.statuses.get(id); return kind ? { kind, reason: kind === 'review' ? 'Brief written' : null } : null },
       deliver: async (sessionId, text) => {
         this.delivered.push({ sessionId, text })
-        return this.deliveryOutcome
+        return this.outcomes.get(sessionId) ?? this.deliveryOutcome
       },
-      startWorker: (job, sessionId, text) => {
-        this.started.push({ job, sessionId, text })
+      projectOf: (_record, task) => (this.noProject.has(task.id) ? null : 'eml'),
+      startWorker: (record, task, sessionId, text) => {
+        if (this.startProblem) return this.startProblem
+        this.started.push({ record, task, sessionId, text })
         return null
       },
       notify: (input) => { this.alerts.push(`${input.kind}: ${input.title}: ${input.body}`) },
-      flag: (_job, text) => { this.flagged.push(text) },
+      flag: (_record, text) => { this.flagged.push(text) },
       log: () => {},
-      timeZone: () => 'Asia/Makassar',
-      onGrantEnd: (job, tools) => { this.ended.push(`${job.name}:${tools.join(',')}`) },
-      beforeRun: async (job, run) => { await this.before?.(job, run) },
+      timeZone: () => ZONE,
+      onGrantEnd: (record, tools) => { this.ended.push(`${record.id}:${tools.join(',')}`) },
+      // The tests move the clock themselves: every pass reads the tasks.
+      deriveEveryMs: 0,
+      ...patch,
     }
   }
 }
 
-const caller: JobCaller = { sessionId: 'maker', spaceId: null, projectId: 'bp-eml', toolProfile: null }
-
-function setup(opts: { sharedSpaces?: string[] } = {}) {
-  const world = new World()
-  const runner = new JobRunner(world.deps())
-  const jobs = new Jobs({
-    store: world.store, runner, now: () => world.now,
-    resolveProject: async (_space, input) => (input === 'eml' ? 'bp-eml' : null),
-    findSession: (_space, target) => (target === 'eml-other' ? 'other' : null),
-    addressOf: (id) => `eml-${id}`,
-    projectName: (_space, id) => (id === 'bp-eml' ? 'EML' : id),
-    providerKnown: (id) => id === 'claude',
-    defaultTimeZone: () => 'Asia/Makassar',
-    onGrant: (job, tool) => { world.granted.push(`${job.name}:${tool}`) },
-    onGrantEnd: (job, tools) => { world.ended.push(`${job.name}:${tools.join(',')}`) },
-    sharedSpace: (spaceId) => !!spaceId && (opts.sharedSpaces ?? []).includes(spaceId),
-  })
-  return { world, runner, jobs }
+let world: World
+let runner: JobRunner
+const runs = (id: string) => world.store.runs(id)
+const statuses = (id: string) => runs(id).map((r) => r.status)
+/** The first pass sees the schedule (its cursor is now); then the clock moves to `at` and a pass runs. */
+const firstSeenThen = async (at: string) => {
+  await runner.tick()
+  world.now = Date.parse(at)
+  await runner.tick()
 }
 
-describe('job runner', () => {
-  let world: World
-  let runner: JobRunner
-  let jobs: Jobs
+beforeEach(() => {
+  world = new World()
+  runner = new JobRunner(world.deps())
+})
 
-  beforeEach(() => {
-    ({ world, runner, jobs } = setup())
-  })
-
-  const create = async (input: Record<string, unknown>) => {
-    const answer = await jobs.handle(caller, { action: 'create', name: 'Daily brief', prompt: 'Write the daily brief.', ...input })
-    expect(answer.status, answer.text).toBe(201)
-    return answer.job!
-  }
-
-  it('keeps the goal the agent set and puts it in every run, with what to do while it is not reached', async () => {
-    expect((await jobs.handle(caller, { action: 'create', name: 'Long', prompt: 'p', cron: '0 8 * * *', goal: 'x'.repeat(501) })).status).toBe(400)
-    const job = await create({ cron: '0 8 * * 1-5', goal: 'Refund received' })
-    expect(job.goal).toBe('Refund received')
-    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/goal: Refund received/)
-    const updated = await jobs.handle(caller, { action: 'update', job: job.id, goal: 'Refund on the card' })
-    expect(updated.job!.goal).toBe('Refund on the card')
-    world.now = Date.parse('2026-11-10T00:00:30Z')
+describe('deriving what is due', () => {
+  it('makes a record when a schedule is first seen, with the cursor at now: no time of the past fires', async () => {
+    world.now = Date.parse('2026-11-09T00:30:00Z') // 08:30: today's 08:00 has passed
+    world.task('daily', WEEKDAYS_8)
     await runner.tick()
-    // A repeating job goes on at its next run: setting a one-time wake-up would replace its schedule.
-    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund on the card\. Report done only once it is reached; until then, the next scheduled run continues it\. Once it is reached, end the job with finish\.\]$/)
-  })
-
-  it('links a job to the task its maker works on, unless it names another; without one it has none', async () => {
-    const onTask: JobCaller = { ...caller, taskId: 'task-1' }
-    const own = await jobs.handle(onTask, { action: 'create', name: 'Check reply', prompt: 'p', at: '2026-11-20T10:00' })
-    expect(own.job!.taskId).toBe('task-1')
-    const named = await jobs.handle(onTask, { action: 'create', name: 'Other check', prompt: 'p', at: '2026-11-20T10:00', task_id: 'task-2' })
-    expect(named.job!.taskId).toBe('task-2')
-    expect((await create({ cron: '0 8 * * *' })).taskId).toBeNull()
-  })
-
-  it('lets the host prepare a run before its session starts (a closed task reopens), and starts it even when that fails', async () => {
-    const seen: string[] = []
-    world.before = async (job, run) => {
-      await Promise.resolve()
-      seen.push(`${job.name} run ${run.number} on ${job.taskId}, started so far: ${world.started.length}`)
-    }
-    const job = await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'Daily brief', prompt: 'p', cron: '0 8 * * 1-5' })
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    // Two passes at once: the run is taken before the host is asked, so it starts once.
-    await Promise.all([runner.tick(), runner.wake(job.job!, 'mail', 'A mail', 'key-1')])
-    expect(seen[0]).toBe('Daily brief run 1 on task-1, started so far: 0')
-    expect(world.started.map((s) => s.text.split(',')[1])).toEqual([' run 1', ' run 2'])
-
-    world.before = async () => { throw new Error('brain is down') }
-    world.states.set(world.started[0].sessionId, 'stopped')
-    world.states.set(world.started[1].sessionId, 'stopped')
-    world.now = Date.parse('2026-11-11T00:00:30Z')
-    await runner.tick()
-    expect(world.started).toHaveLength(3)
-    expect(world.store.runs(job.job!.id).at(-1)).toMatchObject({ status: 'started', number: 3 })
-  })
-
-  it('prepares a run that goes to a session that exists too: before the message, which is delivered even when preparing fails', async () => {
-    const seen: string[] = []
-    world.before = async (job, run) => {
-      await Promise.resolve()
-      seen.push(`${job.name} run ${run.number}, delivered so far: ${world.delivered.length}`)
-    }
-    // A job that messages its maker's session, and one whose own session takes its later runs.
-    const self = (await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'To its maker', prompt: 'p', cron: '0 8 * * 1-5', target: 'self' })).job!
-    const made = await create({ cron: '0 8 * * 1-5' })
-    world.store.put({ ...made, name: 'Own session', target: { type: 'job-session', projectId: 'bp-eml', sessionId: 'kept' } })
-    world.states.set('maker', 'idle')
-    world.states.set('kept', 'stopped')
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    expect(seen).toEqual(['To its maker run 1, delivered so far: 0', 'Own session run 1, delivered so far: 1'])
-    expect(world.delivered.map((d) => d.sessionId)).toEqual(['maker', 'kept'])
+    expect(world.store.get('daily')).toMatchObject({ id: 'daily', taskId: 'daily', spaceId: null, cursor: '2026-11-09T00:30:00.000Z', firedWake: null, runCount: 0, notify: 'needs-me' })
+    expect(runs('daily')).toEqual([])
     expect(world.started).toEqual([])
-
-    world.before = async () => { throw new Error('brain is down') }
-    world.statuses.set('maker', 'done')
-    world.now = Date.parse('2026-11-11T00:00:30Z')
-    await runner.tick()
-    expect(world.delivered.filter((d) => d.sessionId === 'maker')).toHaveLength(2)
-    expect(world.store.runs(self.id).at(-1)).toMatchObject({ status: 'started', number: 2 })
   })
 
-  it('starts no run on a job that has ended: finish skips the run that was due, and one ended while it was prepared is not started', async () => {
-    // Due, but no room yet: the run waits. Ending the job (finish, the board's End schedule) skips it.
-    const waiting = await create({ cron: '0 8 * * 1-5' })
-    world.room = false
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    expect(world.store.runs(waiting.id)[0]).toMatchObject({ status: 'waiting', number: 1 })
-    jobs.finish(world.store.get(waiting.id)!)
-    expect(world.store.runs(waiting.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started', finishedAt: new Date(world.now).toISOString() })
-    world.room = true
-    world.now += 2 * MIN
-    await runner.tick()
-    expect(world.started).toEqual([])
-
-    // Ended in the store with the run still waiting (a write the runner did not see): the runner itself skips it.
-    const direct = (await jobs.handle(caller, { action: 'create', name: 'Ended', prompt: 'p', cron: '0 8 * * 1-5' })).job!
-    world.room = false
-    world.now = Date.parse('2026-11-11T00:00:30Z')
-    await runner.tick()
-    world.store.put({ ...world.store.get(direct.id)!, endedAt: new Date(world.now).toISOString(), nextRunAt: null })
-    world.room = true
-    world.now += 2 * MIN
-    await runner.tick()
-    expect(world.started).toEqual([])
-    expect(world.store.runs(direct.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started' })
-    expect(world.store.get(direct.id)!.failures).toBe(0)
-
-    // Ended while the host prepared the run: neither a fresh worker nor a message to its session starts.
-    const made = (await jobs.handle(caller, { action: 'create', name: 'Mid-start', prompt: 'p', cron: '0 8 * * 1-5' })).job!
-    world.store.put({ ...made, target: { type: 'job-session', projectId: 'bp-eml', sessionId: null } })
-    const self = (await jobs.handle(caller, { action: 'create', name: 'Mid-delivery', prompt: 'p', cron: '0 8 * * 1-5', target: 'self' })).job!
-    world.states.set('maker', 'idle')
-    world.before = async (job) => { jobs.finish(world.store.get(job.id)!) }
-    world.now = Date.parse('2026-11-12T00:00:30Z')
-    await runner.tick()
-    expect(world.started).toEqual([])
-    expect(world.delivered).toEqual([])
-    expect(world.store.runs(made.id)[0]).toMatchObject({ status: 'skipped', note: 'its job was ended before it started' })
-    expect(world.store.runs(self.id)[0].status).toBe('skipped')
-    expect(world.store.get(made.id)!.target).toMatchObject({ type: 'job-session', sessionId: null })
-    expect(world.alerts).toEqual([])
-  })
-
-  it('tells a run of a job on a task never to close the task while the job has not ended; a job without a task reads no such rule', async () => {
-    const { JOB_TASK_RULE: rule } = await import('../src/domain/job.js')
-    expect(rule).toBe('While this job has not ended, never close its task, whatever its checkpoint: once its goal is reached, end the job first (schedule tool, action finish) and hand the result over; the owner closes the task.')
-    await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'On a task', prompt: 'p', cron: '0 8 * * 1-5', goal: 'Refund received' })
-    await create({ cron: '0 8 * * 1-5' })
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    const header = (name: string) => world.started.find((s) => s.job.name === name)!.text.split('\n')[0]
-    expect(header('On a task')).toContain('Once it is reached, end the job with finish.')
-    expect(header('On a task').endsWith(` ${rule}]`)).toBe(true)
-    expect(header('Daily brief')).not.toContain('never close its task')
-  })
-
-  it('tells the run of a check set by ending a turn how that check moves and ends, not the schedule tool\'s rules', async () => {
-    const { CHECK_RUN_RULE } = await import('../src/domain/turn-end.js')
-    const check = (await jobs.handle({ ...caller, taskId: 'task-1' }, { action: 'create', name: 'Check: a task', prompt: 'p', at: '2026-11-10T08:00', target: 'self' })).job!
-    world.store.put({ ...check, origin: 'end_turn' })
-    world.states.set('maker', 'idle')
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    const header = world.delivered[0].text.split('\n')[0]
-    expect(header.endsWith(`${CHECK_RUN_RULE}]`)).toBe(true)
-    expect(header).not.toMatch(/schedule tool|action finish/)
-  })
-
-  it('settles the run of a check whose session ends that turn without a time, and ends the check', async () => {
-    const { createTurnCheck } = await import('../src/application/turn-check.js')
-    const logs: string[] = []
-    const check = createTurnCheck({ jobs, store: world.store, callerOf: () => ({ ...caller, taskId: 'task-1' }), log: (l) => logs.push(l) })
-    const wanted = (at: string | null) => ({ at, taskName: 'Refund from Acme', prompt: 'The check is due.' })
-    expect(await check.settle('maker', wanted('2026-11-10T08:00'))).toBeNull()
-    const job = world.store.list()[0]
-    // The check fires and wakes its session.
-    world.states.set('maker', 'idle')
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    expect(world.delivered).toHaveLength(1)
-    expect(world.store.runs(job.id)).toMatchObject([{ status: 'started', sessionId: 'maker' }])
-    // The session hands the result over: its call names no time.
-    world.states.set('maker', 'working')
-    expect(await check.settle('maker', wanted(null))).toBeNull()
-    expect(world.store.get(job.id)?.endedAt).toBeTruthy()
-    world.statuses.set('maker', 'review')
-    world.states.set('maker', 'idle')
-    world.now += MIN
-    await runner.tick()
-    // The run is settled with what the session said, and the user is told.
-    expect(world.store.runs(job.id)).toMatchObject([{ status: 'finished', outcome: 'review' }])
-    expect(world.alerts).toEqual(['review: Check: Refund from Acme: Run 1: Brief written'])
-    expect(logs.at(-1)).toMatch(/ended, its run is still open$/)
-  })
-
-  it('tells a one-time run to set its next wake-up while its goal is not reached', async () => {
-    await create({ at: '2026-11-10T08:00', goal: 'Refund received.' })
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    expect(world.started[0].text.split('\n')[0]).toMatch(/Goal: Refund received\. Report done only once it is reached; until then, before you stop, set your next wake-up with the schedule tool \(update with at\)\. Once it is reached, end the job with finish\.\]$/)
-  })
-
-  it('tells a one-time run without a goal to set its next wake-up while the work is not finished', async () => {
-    await create({ at: '2026-11-10T08:00' })
-    world.now = Date.parse('2026-11-10T00:00:30Z')
-    await runner.tick()
-    expect(world.started[0].text.split('\n')[0]).toMatch(/If the work is not finished, set your next wake-up with the schedule tool \(update with at\) before you stop\.\]$/)
-  })
-
-  it('starts a worker with the job’s prompt when a schedule is due, and not again for the same time', async () => {
-    const job = await create({ cron: '0 8 * * 1-5' })
-    expect(job.nextRunAt).toBe('2026-11-10T00:00:00.000Z') // created exactly at 08:00: next is tomorrow
-    world.now = Date.parse('2026-11-10T00:00:30Z')
+  it('starts a new session with the prompt built from the task and a line naming what fired, and not again for the same time', async () => {
+    world.task('daily', WEEKDAYS_8)
+    await firstSeenThen('2026-11-10T00:00:30Z')
     await runner.tick()
     await runner.tick()
     expect(world.started).toHaveLength(1)
-    expect(world.started[0].text).toMatch(/^\[Scheduled by the cockpit: job "Daily brief" .*run 1, due Tue 10 Nov 08:00 Asia\/Makassar\. Not from your user/)
-    expect(world.started[0].text).toContain('nobody may be watching: end your turn with end_turn if you have it.')
-    expect(world.started[0].text).not.toContain('session_status')
-    expect(world.started[0].text).toMatch(/Write the daily brief\.$/)
-    const stored = world.store.get(job.id)!
-    expect(stored.nextRunAt).toBe('2026-11-11T00:00:00.000Z')
-    expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'started', number: 1, sessionId: world.started[0].sessionId })
+    const text = world.started[0].text
+    expect(text.split('\n')[0]).toBe('The task\'s schedule started you for "Task daily" (task daily).')
+    expect(text).toContain('Do the work of daily.')
+    // a run for a schedule is never told to close the task
+    expect(text).toContain('No checkpoint: do this run to the end on your own; ask only when you cannot go on.')
+    expect(text).not.toContain('Closing means')
+    expect(text.split('\n\n').at(-1)).toBe(
+      '[From the cockpit, not from your user: run 1 for task "Task daily" (daily). '
+      + 'What fired: the repeating time on weekdays at 08:00 (cron "0 8 * * 1-5", Asia/Makassar), due Tue 10 Nov 08:00. '
+      + `Nobody may be watching: end your turn with end_turn if you have it. ${SCHEDULE_TASK_RULE}]`,
+    )
+    expect(world.store.get('daily')).toMatchObject({ cursor: '2026-11-10T00:00:30.000Z', runCount: 1, lastRunAt: '2026-11-10T00:00:30.000Z' })
+    expect(runs('daily')).toEqual([expect.objectContaining({
+      status: 'started', number: 1, trigger: 'schedule', dueAt: '2026-11-10T00:00:00.000Z', sessionId: world.started[0].sessionId, newSession: true,
+      fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: '2026-11-10T00:00:00.000Z' }], timeZone: ZONE },
+    })])
   })
 
-  it('waits for room and tries again later, then fails after an hour', async () => {
-    const job = await create({ at: '2026-11-09T09:00' })
-    world.room = false
-    world.now = Date.parse('2026-11-09T01:00:00Z')
+  it('starts the session with the record\'s project and limits, for the task and the record', async () => {
+    world.task('daily', WEEKDAYS_8)
     await runner.tick()
-    let run = world.store.runs(job.id)[0]
-    expect(run).toMatchObject({ status: 'waiting', attempts: 1 })
+    world.store.put({ ...world.store.get('daily')!, projectId: 'bp-other', limited: true, toolProfile: { deny: ['Bash'] } as never })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started[0].record).toMatchObject({ id: 'daily', taskId: 'daily', projectId: 'bp-other', limited: true, toolProfile: { deny: ['Bash'] } })
+    expect(world.started[0].task).toMatchObject({ id: 'daily', scope: 'project.eml' })
+  })
+
+  it('tells a run with a checkpoint what the checkpoint asks, and never to close the task itself', async () => {
+    world.task('daily', WEEKDAYS_8, { properties: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: WEEKDAYS_8 } } })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started[0].text).toMatch(/Checkpoint after: /)
+    expect(world.started[0].text).toContain('Never close the task yourself')
+  })
+
+  it('makes one firing of several times due at once, naming all of them: the wake-up and every repeating time', async () => {
+    world.task('multi', { crons: ['0 8 * * 1-5', '0 8 * * 2'], at: '2026-11-09T23:30:00.000Z', why: 'Check the reply.', by_session: 'gone', time_zone: ZONE })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toHaveLength(1)
+    expect(runs('multi')).toHaveLength(1)
+    expect(runs('multi')[0]).toMatchObject({ number: 1, dueAt: '2026-11-09T23:30:00.000Z' })
+    const parts = world.started[0].text.split('\n\n')
+    expect(parts.at(-2)).toContain('What fired: the wake-up set for Tue 10 Nov 07:30 (Asia/Makassar), 31 min late; the repeating time on weekdays at 08:00 (cron "0 8 * * 1-5", Asia/Makassar), due Tue 10 Nov 08:00; the repeating time every Tuesday at 08:00 (cron "0 8 * * 2", Asia/Makassar), due Tue 10 Nov 08:00.')
+    expect(parts.at(-1)).toBe('The wake-up\'s reason: Check the reply.')
+  })
+
+  it('records a repeating time due longer ago than six hours as missed and tells; a wake-up fires late', async () => {
+    world.task('daily', { crons: ['0 9 * * *'], time_zone: ZONE })
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check reply.' })
+    await firstSeenThen('2026-11-09T09:00:00Z') // 17:00 local: the 09:00 time is 8 h late
+    expect(statuses('daily')).toEqual(['missed'])
+    expect(runs('daily')[0]).toMatchObject({ number: 0, dueAt: '2026-11-09T01:00:00.000Z', note: 'due 8 h ago while the cockpit was not running' })
+    expect(world.alerts).toEqual([expect.stringMatching(/^missed: Task daily: Missed a run due 8 h ago while the cockpit was not running \(cron "0 9 \* \* \*"\)/)])
+    expect(world.store.get('daily')).toMatchObject({ cursor: '2026-11-09T09:00:00.000Z', runCount: 0 })
+    expect(statuses('once')).toEqual(['started'])
+    expect(world.started[0].text).toMatch(/420 min late/)
+  })
+
+  it('fires a wake-up that was due before the schedule was first seen', async () => {
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('once', { at: '2026-11-09T02:00:00.000Z' })
+    await runner.tick()
+    expect(statuses('once')).toEqual(['started'])
+  })
+
+  it('reads the open tasks once per space and pass, and no task on its own', async () => {
+    world.spaces = [MAIN, TEAM]
+    for (let i = 0; i < 20; i++) world.task(`t${i}`, WEEKDAYS_8)
+    world.task('theirs', WEEKDAYS_8, { space: 'team' })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    // two passes, two spaces: four lists
+    expect(world.listReads).toBe(4)
+    // a task is read on its own only when one of its runs is tried: two starts per pass
+    expect(world.taskReads).toHaveLength(2)
+  })
+
+  it('reads the tasks at most once a minute, while every tick still settles and starts runs', async () => {
+    runner = new JobRunner(world.deps({ deriveEveryMs: undefined }))
+    world.task('daily', WEEKDAYS_8)
+    await runner.tick()
+    world.now += 30_000
+    await runner.tick()
+    expect(world.listReads).toBe(1)
+    // the tick on the minute reads again, also when its timer fires a little early
+    world.now += 29_900
+    await runner.tick()
+    expect(world.listReads).toBe(2)
+  })
+
+  it('leaves a space alone whose tasks cannot be read: nothing fires, and no record is touched', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.store.put({ ...newRecord({ id: 'old', spaceId: null }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-01T00:00:00.000Z' })
+    world.unreadable.add(null)
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toEqual([])
+    expect(world.store.get('daily')).toBeUndefined()
+    expect(world.store.get('old')).toBeDefined()
+    // once it can be read, the schedule is seen for the first time: from then on
+    world.unreadable.clear()
+    await runner.tick()
+    expect(world.store.get('daily')?.cursor).toBe('2026-11-10T00:00:30.000Z')
+    expect(world.started).toEqual([])
+  })
+
+  it('leaves a task alone while its version 1 jobs have not moved onto it: nothing is derived, its record is not touched; the others fire', async () => {
+    world.task('unmoved', { ...WEEKDAYS_8, at: '2026-11-09T00:00:00.000Z' })
+    world.task('old-record', null)
+    world.store.put({ ...newRecord({ id: 'old-record', spaceId: null }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-01T00:00:00.000Z' })
+    world.task('daily', WEEKDAYS_8)
+    world.unmoved = new Set(['unmoved', 'old-record'])
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started.map((s) => s.task.id)).toEqual(['daily'])
+    expect(world.store.get('unmoved')).toBeUndefined()
+    expect(world.store.get('old-record')?.cursor).toBe('2026-11-01T00:00:00.000Z')
+    // moved: seen for the first time now
+    world.unmoved.clear()
+    world.setSchedule('unmoved', WEEKDAYS_8)
+    await runner.tick()
+    expect(world.store.get('unmoved')?.cursor).toBe('2026-11-10T00:00:30.000Z')
+    expect(world.store.get('old-record')).toBeUndefined()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('while the jobs migration has not looked through a space for left-over schedules, a schedule is not taken up by being seen: only a task with a record fires', async () => {
+    // a schedule the old mirror left on a task without a job: nothing ran it before, and its past wake-up must not fire now
+    world.task('leftover', { ...HOURLY, at: '2026-11-08T00:00:00.000Z', why: 'An old check.' })
+    // a schedule someone set here since the update: its record was made with it
+    world.task('set-here', HOURLY)
+    world.store.put(newRecord({ id: 'set-here', spaceId: null }, '2026-11-09T00:00:00.000Z'))
+    world.unchecked.add(null)
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(world.started.map((s) => s.task.id)).toEqual(['set-here'])
+    expect(world.store.get('leftover')).toBeUndefined()
+    // the migration removed what was left over and is through with the space: from now on a schedule is taken up when seen
+    world.setSchedule('leftover', null)
+    world.task('new', HOURLY)
+    world.unchecked.delete(null)
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('new')).toMatchObject({ cursor: '2026-11-09T01:01:10.000Z' })
+    expect(world.store.get('leftover')).toBeUndefined()
+  })
+
+  it('in a home converted from version 1, a space added after the conversion is not held: a schedule a teammate set on a task there fires', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'jobs-')), 'jobs.json')
+    writeFileSync(file, JSON.stringify({ version: 1, timeZone: ZONE, jobs: {}, runs: {}, keys: {} }))
+    // the cockpit had only its main space when it converted the file
+    world.store = new JobStore(file, [null])
+    world.spaces = [MAIN, TEAM]
+    runner = new JobRunner(world.deps({ holdsFirstSight: (space) => world.store.awaitsLeftoverLook(space.key) }))
+    world.task('main-left', HOURLY)
+    world.task('team-task', HOURLY, { space: 'team' })
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    // the main space waits for its look; the team space came later, and its schedule is real
+    expect(world.started.map((s) => s.task.id)).toEqual(['team-task'])
+    expect(world.store.get('main-left')).toBeUndefined()
+  })
+
+  it('a task whose schedule cannot be derived does not hold up the others', async () => {
+    world.task('broken', HOURLY)
+    world.task('fine', HOURLY)
+    await runner.tick()
+    // its schedule is due to end, and the brain refuses that write
+    world.store.put({ ...world.store.get('broken')!, end: { afterRuns: 1 }, runCount: 1 })
+    world.editFails = true
+    world.now += HOUR
+    await runner.tick()
+    expect(world.started.map((s) => s.task.id)).toEqual(['fine'])
+    expect(world.scheduleOf('broken')).toEqual(HOURLY)
+    // the next read tries again
+    world.editFails = false
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('broken')).toBeNull()
+  })
+
+  it('honours a pause: nothing fires, and resumed it goes on from then without making up what fell due', async () => {
+    world.task('daily', { ...WEEKDAYS_8, paused: true })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toEqual([])
+    expect(world.store.get('daily')?.cursor).toBeNull()
+    // a pass over a paused schedule writes nothing more
+    const before = world.store.get('daily')!.updatedAt
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('daily')!.updatedAt).toBe(before)
+    world.setSchedule('daily', WEEKDAYS_8)
+    world.now = Date.parse('2026-11-10T03:00:00Z')
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(world.store.get('daily')?.cursor).toBe('2026-11-10T03:00:00.000Z')
+    world.now = Date.parse('2026-11-11T00:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('a record that waits for the user\'s OK holds the task\'s repeating times as it holds the channel; the wake-up still fires, and once approved nothing of the hold is made up', async () => {
+    world.task('mail', { crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], time_zone: ZONE })
+    await runner.tick()
+    world.store.put({ ...world.store.get('mail')!, pendingApproval: true, updatedAt: '2026-11-01T00:00:00.000Z' })
+    world.now = Date.parse('2026-11-09T05:00:30Z') // 13:00 in Asia/Makassar
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    expect(world.alerts).toEqual([])
+    // the wake-up is set by a session, not by an outside sender: it fires
+    world.setSchedule('mail', { crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', time_zone: ZONE })
+    world.now = Date.parse('2026-11-09T06:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')[0].fired).toEqual({ wake: { at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', bySession: null }, timeZone: ZONE })
+    // approved after 18:00: that time is not made up; 22:00 fires
+    const { pendingApproval: _ok, ...approved } = world.store.get('mail')!
+    world.store.put(approved)
+    world.now = Date.parse('2026-11-09T10:30:00Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    world.now = Date.parse('2026-11-09T14:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(2)
+    expect(runs('mail').at(-1)!.fired?.crons).toEqual([{ cron: '0 18,22 * * 1-5', dueAt: '2026-11-09T14:00:00.000Z' }])
+  })
+
+  it('a run of a repeating time that waits when the record comes to wait for the user\'s OK is skipped, with a note, and is no run', async () => {
+    world.task('mail', HOURLY)
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(statuses('mail')).toEqual(['waiting'])
+    world.store.put({ ...world.store.get('mail')!, pendingApproval: true })
+    world.room = true
+    world.now = Date.parse('2026-11-09T01:10:10Z')
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toMatchObject([{ number: 0, status: 'skipped', note: 'the task waits for the user\'s OK: its repeating times do not run until it is given', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }] } }])
+    expect(world.store.get('mail')!.runCount).toBe(0)
+  })
+
+  it('a waiting run that carries the wake-up and a repeating time starts while the record waits for the user\'s OK, for its wake-up alone', async () => {
+    world.task('both', { ...HOURLY, at: '2026-11-09T01:00:00.000Z', why: 'Check the reply.' })
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(runs('both')).toMatchObject([{ status: 'waiting', fired: { crons: [{ cron: '0 * * * *' }], wake: { at: '2026-11-09T01:00:00.000Z' } } }])
+    world.store.put({ ...world.store.get('both')!, pendingApproval: true })
+    world.room = true
+    world.now = Date.parse('2026-11-09T01:10:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    const [started, skipped] = runs('both')
+    expect(started).toMatchObject({ status: 'started', number: 1 })
+    expect(started.fired).not.toHaveProperty('crons')
+    expect(skipped).toMatchObject({ number: 0, status: 'skipped', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }] } })
+  })
+
+  it('the reviewer\'s case: a mail routine and a job that waited for the OK on one task, moved at 13:30: the held job is not moved, the others are not held, and there is no 09:00 run, no second 13:00 and no missed time', async () => {
+    const now = Date.parse('2026-11-09T05:30:00Z') // Monday 13:30 in Asia/Makassar
+    const v1 = (id: string, cron: string, nextRunAt: string, patch: Record<string, unknown> = {}) => ({
+      id, name: id, kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'mail',
+      prompt: `Do ${id}.`, target: { type: 'worker', projectId: 'eml' }, triggers: [{ type: 'schedule', cron, timeZone: ZONE }],
+      toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt, runCount: 3, failures: 0, ...patch,
+    })
+    const jobs = [
+      v1('noon', '0 13 * * 1-5', '2026-11-10T05:00:00.000Z'),
+      v1('evening', '0 18,22 * * 1-5', '2026-11-09T10:00:00.000Z'),
+      // v1 never fired it: it waited for the user's OK, and its time stood at 09:00 today
+      v1('morning', '0 9 * * *', '2026-11-09T01:00:00.000Z', { pendingApproval: true, triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: ZONE }, { type: 'mail', match: [] }] }),
+    ]
+    const task = world.task('mail', null)
+    const [planned] = planJobMigration({
+      jobs: jobs as never, runs: {}, keys: {}, space: { key: null, name: 'Main', shared: false }, me: 'member', now,
+      tasks: { mail: { id: 'mail', status: 'active', content: task.content, properties: task.properties as never } }, routineTaskOf: () => null,
+    }).tasks
+    // the held job is not moved (one hold of a task would hold the others' times too); the cursor is the migration's now
+    expect(planned.schedule?.crons).toEqual(['0 13 * * 1-5', '0 18,22 * * 1-5'])
+    expect(planned.jobs.find((j) => j.id === 'morning')).toMatchObject({ kind: 'lost', what: expect.stringContaining('NOT MOVED, IT NO LONGER FIRES: it was waiting for your OK') })
+    expect(planned.record).toMatchObject({ cursor: '2026-11-09T05:30:00.000Z', triggers: [] })
+    expect(planned.record).not.toHaveProperty('pendingApproval')
+    world.setSchedule('mail', planned.schedule)
+    world.store.put({ ...planned.record!, updatedAt: '2026-11-01T00:00:00.000Z' })
+    world.now = now
+    await runner.tick()
+    expect(world.started).toEqual([])
+    // the evening time runs, as it did before the update
+    world.now = Date.parse('2026-11-09T10:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')).toMatchObject([{ status: 'started', dueAt: '2026-11-09T10:00:00.000Z' }])
+    expect(world.alerts).toEqual([])
+  })
+
+  describe('a waiting run of version 1, moved onto its task', () => {
+    const v1 = (id: string, cron: string, timeZone: string, patch: Record<string, unknown> = {}) => ({
+      id, name: id, kind: 'routine', spaceId: null, createdBy: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', taskId: 'brief',
+      prompt: `Do ${id}.`, target: { type: 'worker', projectId: 'eml' }, triggers: [{ type: 'schedule', cron, timeZone }],
+      toolProfile: null, reply: {}, end: null, notify: 'needs-me', paused: false, pausedReason: null, endedAt: null, nextRunAt: '2026-11-10T00:00:00.000Z', runCount: 1, failures: 0, ...patch,
+    })
+    const waiting = (jobId: string, dueAt: string, attempts: number): JobRun => ({
+      id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt, createdAt: dueAt, status: 'waiting', attempts,
+      nextAttemptAt: attempts > 0 ? dueAt : null, sessionId: null, startedAt: null, finishedAt: null, outcome: null, note: attempts > 0 ? 'a session of the task was busy' : null,
+    })
+    /** Plans the jobs onto the task 'brief' at `now` and writes what the migration writes: the schedule, the record, the carried runs. */
+    const migrate = (jobs: Array<Record<string, unknown>>, runsOf: Record<string, JobRun[]>, now: number) => {
+      const task = world.task('brief', null)
+      const [planned] = planJobMigration({
+        jobs: jobs as never, runs: runsOf, keys: {}, space: { key: null, name: 'Main', shared: false }, me: 'member', now,
+        tasks: { brief: { id: 'brief', status: 'active', content: task.content, properties: task.properties as never } }, routineTaskOf: () => null,
+      }).tasks
+      world.setSchedule('brief', planned.schedule)
+      world.store.put({ ...planned.record!, updatedAt: '2026-11-01T00:00:00.000Z' })
+      for (const run of planned.runs) world.store.addRun(run)
+      world.now = now
+      return planned
+    }
+
+    it('of a repeating job left out (another time zone than the task\'s): it is not carried, so nothing fires for its cron', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate(
+        [v1('makassar', '0 8 * * 1-5', ZONE), v1('berlin', '0 9 * * 1-5', 'Europe/Berlin')],
+        { berlin: [waiting('berlin', '2026-11-09T08:00:00.000Z', 0)] }, now,
+      )
+      expect(planned.schedule?.crons).toEqual(['0 8 * * 1-5'])
+      await runner.tick()
+      world.now = Date.parse('2026-11-09T09:00:30Z')
+      await runner.tick()
+      expect(world.started).toEqual([])
+      expect(runs('brief')).toEqual([])
+      expect(planned.history.berlin).toMatchObject([{ id: 'run-berlin', status: 'skipped' }])
+    })
+
+    it('that had tried to start before, due 2 hours ago: it gets a fresh hour from the migration and starts', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate([v1('brief', '30 14 * * 1-5', ZONE)], { brief: [waiting('brief', '2026-11-09T06:30:00.000Z', 3)] }, now)
+      await runner.tick()
+      expect(world.started).toHaveLength(1)
+      expect(runs('brief')).toMatchObject([{ id: 'run-brief', status: 'started', dueAt: '2026-11-09T06:30:00.000Z' }])
+      // its hour counts from the migration, and its attempts start again
+      expect(planned.runs).toMatchObject([{ id: 'run-brief', status: 'waiting', attempts: 0, nextAttemptAt: null, createdAt: '2026-11-09T08:30:00.000Z' }])
+    })
+
+    it('that was starting (the host\'s recovery ran before the migration): it is carried as waiting, starts on the next tick, and the task\'s next time fires', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const starting: JobRun = { ...waiting('brief', '2026-11-09T06:30:00.000Z', 1), status: 'starting', sessionId: 'never-reached', newSession: true }
+      const planned = migrate([v1('brief', '30 14 * * 1-5', ZONE)], { brief: [starting] }, now)
+      expect(planned.runs).toMatchObject([{ id: 'run-brief', status: 'waiting', attempts: 0, sessionId: null, createdAt: '2026-11-09T08:30:00.000Z' }])
+      await runner.tick()
+      expect(world.started).toHaveLength(1)
+      expect(runs('brief')).toMatchObject([{ id: 'run-brief', status: 'started' }])
+      world.statuses.set(world.started[0].sessionId, 'done')
+      world.now = Date.parse('2026-11-09T08:31:00Z')
+      await runner.tick()
+      world.now = Date.parse('2026-11-10T06:30:30Z')
+      await runner.tick()
+      expect(world.started).toHaveLength(2)
+      expect(runs('brief').at(-1)).toMatchObject({ status: 'started', dueAt: '2026-11-10T06:30:00.000Z' })
+    })
+
+    it('of a repeating time due longer ago than the late limit: it is missed, kept as history, and not started', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate([v1('brief', '30 8 * * 1-5', ZONE)], { brief: [waiting('brief', '2026-11-09T00:30:00.000Z', 3)] }, now)
+      await runner.tick()
+      expect(world.started).toEqual([])
+      expect(runs('brief')).toEqual([])
+      expect(planned.runs).toEqual([])
+      expect(planned.history.brief).toMatchObject([{ id: 'run-brief', status: 'missed', finishedAt: '2026-11-09T08:30:00.000Z' }])
+      expect(planned.record).toMatchObject({ runCount: 0 })
+    })
+  })
+
+  it('a pause seen after the schedule ran forgets the cursor, so the times of the pause are never made up', async () => {
+    world.task('hourly', HOURLY)
+    await runner.tick()
+    world.setSchedule('hourly', { ...HOURLY, paused: true })
+    world.now += 2 * HOUR + MIN
+    await runner.tick()
+    expect(world.store.get('hourly')?.cursor).toBeNull()
+    world.setSchedule('hourly', HOURLY)
+    world.now += 2 * HOUR
+    await runner.tick()
+    expect(runs('hourly')).toEqual([])
+    world.now += HOUR
+    await runner.tick()
+    expect(statuses('hourly')).toEqual(['started'])
+  })
+
+  it('paused and resumed between two reads: a time that fell inside the pause does not run, though no read saw the pause', async () => {
+    world.task('hourly', HOURLY)
+    await runner.tick()
+    expect(world.store.get('hourly')?.cursor).toBe('2026-11-09T00:00:00.000Z')
+    // paused at 00:30 and resumed at 01:10, with no read in between: 01:00 fell inside the pause
+    world.setSchedule('hourly', { ...HOURLY, paused: true })
+    runner.paused('hourly')
+    world.now += HOUR + 10 * MIN
+    world.setSchedule('hourly', HOURLY)
+    runner.resumed('hourly')
+    expect(world.store.get('hourly')?.cursor).toBeNull()
+    await runner.tick()
+    expect(runs('hourly')).toEqual([])
+    expect(world.store.get('hourly')?.cursor).toBe('2026-11-09T01:10:00.000Z')
+    // it goes on from the resume: the next time runs
+    world.now = Date.parse('2026-11-09T02:00:30Z')
+    await runner.tick()
+    expect(statuses('hourly')).toEqual(['started'])
+  })
+
+  it('fires a time that was due at the schedule\'s end when the pass comes just after it, once, and nothing after', async () => {
+    world.task('ends', { ...HOURLY, ends_at: '2026-11-09T01:00:00.000Z' })
+    await firstSeenThen('2026-11-09T01:00:25Z')
+    expect(runs('ends')).toMatchObject([{ status: 'started', dueAt: '2026-11-09T01:00:00.000Z' }])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now = Date.parse('2026-11-09T01:01:25Z')
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    // past its end the cursor is forgotten: nothing of that time is made up should the end be taken off
+    expect(world.store.get('ends')?.cursor).toBeNull()
+  })
+
+  it('fires a time at the schedule\'s end itself, and nothing after it', async () => {
+    world.task('ends', { ...HOURLY, ends_at: '2026-11-09T01:00:00.000Z' })
+    await firstSeenThen('2026-11-09T01:00:00Z')
+    expect(statuses('ends')).toEqual(['started'])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(statuses('ends')).toEqual(['finished'])
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('ends the schedule on the task after the runs it was set to have; the task stays open', async () => {
+    world.task('twice', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('twice')!, end: { afterRuns: 2 } })
+    for (let hour = 1; hour <= 2; hour++) {
+      world.now = Date.parse('2026-11-09T00:00:10Z') + hour * HOUR
+      await runner.tick()
+      if (hour === 1) world.statuses.set(world.started[0].sessionId, 'done')
+    }
+    expect(world.started).toHaveLength(2)
+    // the second run is still open: the schedule ends once it is over
+    world.states.set(world.started[1].sessionId, 'working')
+    world.now += HOUR
+    await runner.tick()
+    expect(world.started).toHaveLength(2)
+    expect(world.edits).toEqual([])
+    world.statuses.set(world.started[1].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its repeating times ended after the runs they were set to have.' }])
+    expect(world.tasks.get('twice')!.status).toBe('active')
+    // without a schedule, a channel or an open run the record goes, once it has not changed for the grace
+    await runner.tick()
+    expect(world.store.get('twice')).toMatchObject({ end: null })
+    world.now += RECORD_GRACE_MS
+    await runner.tick()
+    expect(world.store.get('twice')).toBeUndefined()
+    expect(world.started).toHaveLength(2)
+  })
+
+  it('max runs ends the repeating times only: a wake-up the last run set stays, and the count is over', async () => {
+    world.task('routine', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 } })
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    // the run's session ends its turn with a time: the task has a wake-up for tomorrow
+    const wake = { at: '2026-11-10T01:00:00.000Z', why: 'Check whether the customer answered.', by_session: world.started[0].sessionId }
+    world.setSchedule('routine', { ...HOURLY, ...wake })
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toEqual({ ...wake, time_zone: 'UTC' })
+    expect(world.edits.at(-1)?.text).toBe('Its repeating times ended after the runs they were set to have.')
+    expect(world.store.get('routine')?.end).toBeNull()
+    // no repeating time fires any more; the wake-up fires at its time
+    world.now = Date.parse('2026-11-09T05:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    world.now = Date.parse('2026-11-10T01:00:10Z')
+    await runner.tick()
+    expect(statuses('routine')).toEqual(['finished', 'started'])
+    expect(world.delivered.at(-1)?.text ?? world.started.at(-1)?.text).toContain('Check whether the customer answered.')
+  })
+
+  it('max runs: while the last run is open no repeating time fires, and they go off the task once it is over', async () => {
+    world.task('routine', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 } })
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    world.states.set(world.started[0].sessionId, 'working')
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toEqual(HOURLY)
+    expect(statuses('routine')).toEqual(['started'])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('routine')).toBeNull()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('a count left on a record whose task has no repeating time never ends a schedule set later', async () => {
+    // the record stays for its tool profile; its repeating times were ended some other way
+    world.task('follow', { at: '2026-11-10T00:00:00.000Z', why: 'Follow up.' })
+    world.store.put({ ...newRecord({ id: 'follow', spaceId: null }, '2026-11-01T00:00:00.000Z'), toolProfile: { deniedTools: ['Bash'], mcpServers: null }, end: { afterRuns: 3 }, runCount: 3 })
+    await runner.tick()
+    expect(world.scheduleOf('follow')).toEqual({ at: '2026-11-10T00:00:00.000Z', why: 'Follow up.' })
+    expect(world.edits).toEqual([])
+    expect(world.store.get('follow')?.end).toBeNull()
+    // and with no schedule at all
+    world.task('bare', null)
+    world.store.put({ ...newRecord({ id: 'bare', spaceId: null }, '2026-11-01T00:00:00.000Z'), limited: true, end: { afterRuns: 3 }, runCount: 3 })
+    await runner.tick()
+    expect(world.store.get('bare')).toMatchObject({ limited: true, end: null })
+  })
+
+  it('counts only the runs a repeating time fired toward max runs: not Run now, not a message, not a wake-up', async () => {
+    world.task('routine', { ...HOURLY, at: '2026-11-09T00:30:00.000Z' })
+    await runner.tick()
+    world.store.put({ ...world.store.get('routine')!, end: { afterRuns: 1 }, triggers: [{ type: 'mail', match: [] }] })
+    const finish = async () => { world.statuses.set(world.started.at(-1)!.sessionId, 'done'); world.now += MIN; await runner.tick() }
+    world.now = Date.parse('2026-11-09T00:30:10Z')
+    await runner.tick() // the wake-up
+    await finish()
+    expect(await runner.runNow(MAIN, world.tasks.get('routine')!)).toMatchObject({ trigger: 'manual' })
+    await runner.tick()
+    await finish()
+    // a message the bridge has to bring again moves nothing
+    world.room = false
+    expect(await runner.wake(world.store.get('routine')!, 'mail', '1 new message', 'key-1')).toBe('retry')
+    world.room = true
+    expect(await runner.wake(world.store.get('routine')!, 'mail', '1 new message', 'key-1')).toBe('delivered')
+    await finish()
+    expect(world.started).toHaveLength(3)
+    // one run of a repeating time is still left
+    const record = world.store.get('routine')!
+    expect(record.end!.afterRuns - record.runCount).toBe(1)
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(4)
+    await finish()
+    expect(world.scheduleOf('routine')).toBeNull()
+  })
+})
+
+describe('who fires: the task\'s owner, by the one rule (the first assignee, else the author)', () => {
+  beforeEach(() => {
+    world.spaces = [TEAM]
+  })
+
+  const fires = async (id: string) => {
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    return { record: world.store.get(id) !== undefined, started: world.started.some((s) => s.task.id === id) }
+  }
+
+  it('fires my task', async () => {
+    world.task('mine', WEEKDAYS_8, { space: 'team', owner: ['member', 'other'], ingested_by: 'other' })
+    expect(await fires('mine')).toEqual({ record: true, started: true })
+    expect(world.store.get('mine')?.spaceId).toBe('team')
+  })
+
+  it('leaves another member\'s task to their cockpit: no record, no run', async () => {
+    world.task('theirs', WEEKDAYS_8, { space: 'team', owner: ['other', 'member'], ingested_by: 'member' })
+    expect(await fires('theirs')).toEqual({ record: false, started: false })
+  })
+
+  it('fires a task nobody is assigned to that I authored', async () => {
+    world.task('authored', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'member' })
+    expect(await fires('authored')).toEqual({ record: true, started: true })
+  })
+
+  it('leaves a task nobody is assigned to that another member authored', async () => {
+    world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'other' })
+    expect(await fires('their-own')).toEqual({ record: false, started: false })
+  })
+
+  it('fires every task of a local space', async () => {
+    world.spaces = [MAIN]
+    world.task('local', WEEKDAYS_8, { owner: ['other'], ingested_by: 'other' })
+    world.task('agents', WEEKDAYS_8, { owner: [], ingested_by: 'atlas' })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started.map((s) => s.task.id).sort()).toEqual(['agents', 'local'])
+  })
+
+  it('fires nothing in a space whose kind is not known, touches none of its records, and asks again at every read until it is', async () => {
+    const unsure: RunnerSpace = { key: 'team', name: 'Team', shared: null }
+    world.spaces = [unsure, MAIN]
+    world.task('mine', WEEKDAYS_8, { space: 'team' })
+    world.task('closed', null, { space: 'team', status: 'resolved' })
+    world.task('local', WEEKDAYS_8)
+    world.store.put({ ...newRecord({ id: 'mine', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-09T00:00:00.000Z' })
+    world.store.put({ ...newRecord({ id: 'closed', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started.map((s) => s.task.id)).toEqual(['local'])
+    expect(world.store.get('mine')?.cursor).toBe('2026-11-09T00:00:00.000Z')
+    expect(world.store.get('closed')?.triggers).toHaveLength(1)
+    expect(world.kindAsked).toBe(2)
+    // a message for a task of that space stays with the bridge
+    expect(await runner.wake(world.store.get('closed')!, 'mail', '1 new message', 'k1')).toBe('refused')
+    world.patch('closed', { status: 'active' })
+    expect(await runner.wake(world.store.get('closed')!, 'mail', '1 new message', 'k1')).toBe('retry')
+    // the brain server answers: the space is shared, and my task fires from the cursor it had
+    world.kinds.set('team', true)
+    world.now += MIN
+    await runner.tick()
+    expect(world.started.map((s) => s.task.id)).toEqual(['local', 'mine'])
+  })
+
+  describe('a task no member owns (nobody assigned, written by an agent)', () => {
+    const ownerless = () => world.task('agents', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'atlas' })
+
+    it('does not fire by being seen, and gets no record', async () => {
+      ownerless()
+      expect(await fires('agents')).toEqual({ record: false, started: false })
+    })
+
+    it('fires on the cockpit that holds a record for it', async () => {
+      ownerless()
+      world.store.put(newRecord({ id: 'agents', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'))
+      expect(await fires('agents')).toEqual({ record: true, started: true })
+    })
+
+    it('its record is left alone while the members cannot be read: nothing fires, nothing is removed', async () => {
+      ownerless()
+      world.store.put({ ...newRecord({ id: 'agents', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-10T00:00:10.000Z' })
+      world.members = null
+      expect(await fires('agents')).toEqual({ record: true, started: false })
+      expect(world.store.get('agents')?.cursor).toBe('2026-11-10T00:00:10.000Z')
+      world.members = ['member', 'other']
+      world.now = Date.parse('2026-11-11T00:00:30Z')
+      await runner.tick()
+      await runner.tick()
+      expect(world.started.map((s) => s.task.id)).toEqual(['agents'])
+    })
+
+    it('a task nobody is assigned to that another member wrote is that member\'s, record or not', async () => {
+      world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'other' })
+      world.store.put({ ...newRecord({ id: 'their-own', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), limited: true })
+      expect(await fires('their-own')).toEqual({ record: true, started: false })
+    })
+  })
+
+  it('drops the record of a task that went to another member, once no run of it is open', async () => {
+    world.task('moved', WEEKDAYS_8, { space: 'team' })
+    await runner.tick()
+    expect(world.store.get('moved')).toBeDefined()
+    world.patch('moved', { properties: { ...world.tasks.get('moved')!.properties, assignee_ids: ['other'] } })
+    world.now += RECORD_GRACE_MS
+    await runner.tick()
+    expect(world.store.get('moved')).toBeUndefined()
+    expect(world.taskReads).toEqual([])
+  })
+})
+
+describe('the four-line order', () => {
+  it('a: skips a due time while a session of the task works, records it, and does not fire it later', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-work', true)
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toEqual([])
+    expect(world.delivered).toEqual([])
+    expect(runs('daily')).toEqual([expect.objectContaining({ status: 'skipped', number: 0, dueAt: '2026-11-10T00:00:00.000Z', note: 'a session of the task was working', fired: expect.objectContaining({ crons: [expect.objectContaining({ cron: '0 8 * * 1-5' })] }) })])
+    expect(world.store.get('daily')).toMatchObject({ runCount: 0, cursor: '2026-11-10T00:00:30.000Z' })
+    world.sessions[0].working = false
+    world.now += MIN
+    await runner.tick()
+    expect(statuses('daily')).toEqual(['skipped'])
+  })
+
+  it('a: a wake-up due while a session works is not skipped: it stays due, pass after pass without a row, and fires once when the session stops', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
+    world.session('once', 's-work', true)
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    for (let pass = 0; pass < 3; pass++) {
+      world.now += MIN
+      await runner.tick()
+    }
+    expect(runs('once')).toEqual([])
+    expect(world.scheduleOf('once')).toEqual({ at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
+    expect(world.store.get('once')).toMatchObject({ firedWake: null, runCount: 0 })
+    expect(world.edits).toEqual([])
+    // the session stops: the first pass after it gives the wake-up to the session that set it
+    world.sessions[0].working = false
+    world.states.set('s-work', 'idle')
+    world.now += MIN
+    await runner.tick()
+    expect(world.delivered).toEqual([{ sessionId: 's-work', text: expect.stringContaining('The wake-up\'s reason: Check the reply.') }])
+    expect(world.scheduleOf('once')).toBeNull()
+    world.now += MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.delivered).toHaveLength(1)
+    expect(statuses('once')).toEqual(['started'])
+  })
+
+  it('a wake-up held back by a working session does not wait unseen: one log line in the first pass, one notice once it has waited an hour, and both forgotten when it fires', async () => {
+    const logs: string[] = []
+    runner = new JobRunner(world.deps({ log: (line) => logs.push(line) }))
+    const held = () => logs.filter((line) => line.includes('its wake-up'))
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-work' })
+    world.session('once', 's-work', true)
+    await firstSeenThen('2026-11-09T02:05:00Z')
+    expect(held()).toEqual(['[jobs] task once: its wake-up, due 5 min ago, is held back: a session of the task is working; it stays due'])
+    // pass after pass: nothing more is said, and no row is written
+    for (let pass = 0; pass < 5; pass++) {
+      world.now += 10 * MIN
+      await runner.tick()
+    }
+    expect(held()).toHaveLength(1)
+    expect(world.alerts).toEqual([])
+    // an hour after it was due: the user is told, once
+    world.now = Date.parse('2026-11-09T03:01:00Z')
+    await runner.tick()
+    expect(world.alerts).toEqual(['question: Task once: Its wake-up has waited an hour because a session of the task is still working.'])
+    world.now += 30 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.alerts).toHaveLength(1)
+    expect(held()).toHaveLength(1)
+    expect(runs('once')).toEqual([])
+    // the session stops: the wake-up fires, and what was said of it is forgotten
+    world.sessions[0].working = false
+    world.states.set('s-work', 'idle')
+    world.now += MIN
+    await runner.tick()
+    expect(world.delivered).toHaveLength(1)
+    // a later wake-up that is held back is said anew
+    world.setSchedule('once', { at: '2026-11-09T06:00:00.000Z', why: 'Check again.' })
+    world.sessions[0].working = true
+    world.states.set('s-work', 'working')
+    world.now = Date.parse('2026-11-09T06:02:00Z')
+    await runner.tick()
+    expect(held().at(-1)).toBe('[jobs] task once: its wake-up, due 2 min ago, is held back: a session of the task is working; it stays due')
+    expect(held()).toHaveLength(2)
+    // it leaves the task before the hour is over: nothing is told
+    world.setSchedule('once', { crons: ['0 8 * * 1-5'], time_zone: ZONE })
+    world.now += 2 * 60 * MIN
+    await runner.tick()
+    expect(world.alerts).toHaveLength(1)
+  })
+
+  it('a wake-up that waited for hours gets its hour to start from when its run was made, not from the time it was set for', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.session('once', 's-work', true)
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    // the session works for three hours, then stops; the machine has no room for a new session at that moment
+    world.now = Date.parse('2026-11-09T05:00:10Z')
+    world.sessions[0].working = false
+    world.states.set('s-work', 'stopped')
+    world.room = false
+    await runner.tick()
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(runs('once').map((r) => [r.status, r.attempts])).toEqual([['waiting', 2]])
+    expect(world.scheduleOf('once')?.at).toBe('2026-11-09T02:00:00.000Z')
+    world.room = true
+    world.now += 5 * MIN
+    await runner.tick()
+    expect(statuses('once')).toEqual(['started'])
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
+  it('a: repeating times and the wake-up due together while a session works: the times are skipped and recorded, the wake-up stays', async () => {
+    world.task('mixed', { ...HOURLY, at: '2026-11-09T01:00:00.000Z', why: 'Check the reply.' })
+    world.session('mixed', 's-work', true)
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(runs('mixed')).toEqual([expect.objectContaining({ status: 'skipped', number: 0, note: 'a session of the task was working', fired: { crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], timeZone: 'UTC' } })])
+    expect(world.scheduleOf('mixed')?.at).toBe('2026-11-09T01:00:00.000Z')
+    world.now += MIN
+    await runner.tick()
+    expect(runs('mixed')).toHaveLength(1)
+    world.sessions[0].working = false
+    world.states.set('s-work', 'stopped')
+    world.now += MIN
+    await runner.tick()
+    expect(statuses('mixed')).toEqual(['skipped', 'started'])
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('mixed')).toEqual(HOURLY)
+  })
+
+  it('a: a wake-up whose run finds a session working meanwhile is not used up: the run is taken back and the wake-up fires later', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.session('once', 's-late')
+    // the session starts a turn between the read that made the run and the attempt to start it
+    let asked = 0
+    runner = new JobRunner(world.deps({ sessionsOf: () => [{ sessionId: 's-late', working: ++asked === 2 }] }))
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(asked).toBe(2)
+    expect(runs('once')).toEqual([])
+    expect(world.store.get('once')).toMatchObject({ firedWake: null, runCount: 0 })
+    expect(world.scheduleOf('once')?.at).toBe('2026-11-09T02:00:00.000Z')
+    world.now += MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
+  it('a wake-up due while a run of the task waits for room joins that run: its text names the reason, and only then is the wake-up off the task', async () => {
+    world.task('mixed', { ...HOURLY, at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', by_session: 's-gone' })
+    world.room = false
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(statuses('mixed')).toEqual(['waiting'])
+    world.now = Date.parse('2026-11-09T01:02:10Z')
+    await runner.tick()
+    // no skipped row, and the wake-up is still the task's
+    expect(statuses('mixed')).toEqual(['waiting'])
+    expect(runs('mixed')[0].fired).toEqual({ crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], wake: { at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', bySession: 's-gone' }, timeZone: 'UTC' })
+    expect(world.scheduleOf('mixed')?.at).toBe('2026-11-09T01:02:00.000Z')
+    expect(world.store.get('mixed')?.firedWake).toBeNull()
+    world.now += MIN
+    await runner.tick()
+    expect(statuses('mixed')).toEqual(['waiting'])
+    expect(world.edits).toEqual([])
+    world.room = true
+    world.now += 10 * MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('What fired: the wake-up set for Mon 9 Nov 01:02 (UTC), 11 min late; the repeating time every hour at :00 (cron "0 * * * *", UTC), due Mon 9 Nov 01:00, 13 min late.')
+    expect(world.started[0].text).toContain('The wake-up\'s reason: IMPORTANT follow-up.')
+    expect(world.scheduleOf('mixed')).toEqual(HOURLY)
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += 10 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(statuses('mixed')).toEqual(['finished'])
+  })
+
+  it('a wake-up joins a run by hand that waits for room, and its text says both', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    await runner.tick()
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:55:00Z')
+    expect(await runner.runNow(MAIN, world.tasks.get('once')!)).toMatchObject({ trigger: 'manual' })
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T02:00:10Z')
+    await runner.tick()
+    expect(statuses('once')).toEqual(['waiting'])
+    world.room = true
+    world.now += 5 * MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('What fired: the owner started it by hand (Run now); the wake-up set for Mon 9 Nov 10:00 (Asia/Makassar), 5 min late.')
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('once')).toBeNull()
+  })
+
+  it('a wake-up whose run fails is used up, as before: the failure is told, and it does not fire again', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.' })
+    world.startProblem = 'the task has no project to run in'
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(statuses('once')).toEqual(['failed'])
+    expect(world.scheduleOf('once')).toBeNull()
+    world.startProblem = null
+    world.now += MIN
+    await runner.tick()
+    expect(world.started).toEqual([])
+  })
+
+  it('a: skips a time while another member\'s session works on the task elsewhere', async () => {
+    world.spaces = [TEAM]
+    world.task('shared', WEEKDAYS_8, { space: 'team' })
+    world.elsewhere.add('shared')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(statuses('shared')).toEqual(['skipped'])
+  })
+
+  it('skips a time while the task\'s previous run still waits to start, and says so', async () => {
+    world.task('hourly', HOURLY)
+    world.room = false
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(statuses('hourly')).toEqual(['waiting'])
+    world.now = Date.parse('2026-11-09T01:59:50Z')
+    await runner.tick()
+    world.now = Date.parse('2026-11-09T02:00:05Z')
+    await runner.tick()
+    expect(runs('hourly').map((r) => [r.status, r.note])).toEqual([['waiting', expect.stringMatching(/^no room/)], ['skipped', 'the previous run had not started yet']])
+  })
+
+  it('b: a session that waits on its question continues and gets only the line; no new session', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'question')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toEqual([])
+    expect(world.delivered).toEqual([{ sessionId: 's-asks', text: expect.stringMatching(/^\[From the cockpit, not from your user: run 1 for task "Task daily".*What fired: the repeating time on weekdays at 08:00/) }])
+    expect(world.delivered[0].text).not.toContain('Do the work of daily.')
+    expect(runs('daily')[0]).toMatchObject({ status: 'started', sessionId: 's-asks', newSession: false })
+  })
+
+  it('b: a session that waits for the go continues too; a review does not count: a new session starts', async () => {
+    world.task('go', WEEKDAYS_8)
+    world.session('go', 's-go')
+    world.wait('go', 's-go', 'go')
+    world.task('review', WEEKDAYS_8)
+    world.session('review', 's-review')
+    world.wait('review', 's-review', 'review')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-go'])
+    expect(world.started.map((s) => s.task.id)).toEqual(['review'])
+  })
+
+  it('c: the session that set the wake-up continues, with the wake-up\'s reason', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check whether the customer answered.', by_session: 's-set' })
+    world.session('once', 's-set')
+    world.session('once', 's-other')
+    world.states.set('s-set', 'stopped')
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(world.started).toEqual([])
+    expect(world.delivered).toHaveLength(1)
+    expect(world.delivered[0].sessionId).toBe('s-set')
+    expect(world.delivered[0].text.split('\n\n')).toEqual([expect.stringContaining('What fired: the wake-up set for Mon 9 Nov 10:00 (Asia/Makassar).'), 'The wake-up\'s reason: Check whether the customer answered.'])
+  })
+
+  it('c: a new session starts when the session that set the wake-up is gone', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z', why: 'Check the reply.', by_session: 's-gone' })
+    world.session('once', 's-other')
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).toContain('The wake-up\'s reason: Check the reply.')
+  })
+
+  it('c: a new session starts when that session cannot be woken after all', async () => {
+    world.task('once', null)
+    world.session('once', 's-set')
+    for (const outcome of ['refused', 'unknown'] as const) {
+      world.outcomes.set('s-set', outcome)
+      world.setSchedule('once', { at: new Date(world.now + HOUR).toISOString(), by_session: 's-set' })
+      await runner.tick()
+      world.now += HOUR + 10_000
+      await runner.tick()
+      world.statuses.set(world.started.at(-1)!.sessionId, 'done')
+    }
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-set', 's-set'])
+    expect(world.started).toHaveLength(2)
+    expect(runs('once').map((r) => [r.attempts, r.newSession])).toEqual([[1, true], [1, true]])
+  })
+
+  it('b then d: a waiting session that takes no message is passed over, and a new session starts', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'question')
+    world.outcomes.set('s-asks', 'refused')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.delivered).toHaveLength(1)
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('d: a repeating time starts a new session beside idle sessions of the task', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-idle')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('a firing that names the wake-up and a repeating time is one run, in the session that set the wake-up', async () => {
+    world.task('both', { crons: ['0 8 * * 1-5'], at: '2026-11-09T23:59:00.000Z', why: 'Look again.', by_session: 's-set', time_zone: ZONE })
+    world.session('both', 's-set')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started).toEqual([])
+    expect(world.delivered).toHaveLength(1)
+    expect(world.delivered[0].text).toContain('the wake-up set for Tue 10 Nov 07:59 (Asia/Makassar); the repeating time on weekdays at 08:00')
+    expect(runs('both')).toHaveLength(1)
+  })
+
+  it('a run that waited for room is skipped when a session of the task works by the time it can start', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.room = false
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(statuses('daily')).toEqual(['waiting'])
+    world.room = true
+    world.session('daily', 's-work', true)
+    world.now += 2 * MIN
+    await runner.tick()
+    // skipped like a time that never got a run: without a run number, and its number is free again
+    expect(runs('daily').map((r) => [r.status, r.number, r.note])).toEqual([['skipped', 0, 'a session of the task was working']])
+    expect(runs('daily')[0].fired).toEqual({ crons: [{ cron: '0 8 * * 1-5', dueAt: '2026-11-10T00:00:00.000Z' }], timeZone: ZONE })
+    expect(world.store.get('daily')).toMatchObject({ runCount: 0 })
+  })
+
+  it('a repeating time skipped at its attempt does not count toward max runs: the schedule still gets the runs it was set to have', async () => {
+    world.task('twice', HOURLY)
+    await runner.tick()
+    world.store.put({ ...world.store.get('twice')!, end: { afterRuns: 2 } })
+    // 01:00: no room, and by the time there is room a session of the task works
+    world.room = false
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    world.room = true
+    world.session('twice', 's-work', true)
+    world.now += 2 * MIN
+    await runner.tick()
+    expect(runs('twice').map((r) => [r.status, r.number])).toEqual([['skipped', 0]])
+    expect(world.store.get('twice')).toMatchObject({ runCount: 0, end: { afterRuns: 2 } })
+    // 02:00 and 03:00 run: these are its two runs, numbered 1 and 2
+    world.sessions = []
+    for (let hour = 2; hour <= 3; hour++) {
+      world.now = Date.parse('2026-11-09T00:00:10Z') + hour * HOUR
+      await runner.tick()
+      world.statuses.set(world.started.at(-1)!.sessionId, 'done')
+    }
+    expect(runs('twice').map((r) => [r.status, r.number])).toEqual([['skipped', 0], ['finished', 1], ['started', 2]])
+    expect(world.edits).toEqual([])
+    world.now += 2 * MIN
+    await runner.tick()
+    await runner.tick()
+    expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its repeating times ended after the runs they were set to have.' }])
+  })
+
+  it('a wake-up that joins a run while its start is under way has fired only if the text the session got named it: unnamed, it stays on the task and fires on its own', async () => {
+    world.task('mail', { at: '2026-11-09T00:30:00.000Z', why: 'Check the reply.' })
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }], cursor: '2026-11-09T00:00:00.000Z' })
+    world.now = Date.parse('2026-11-09T00:30:05Z')
+    // The message's run is being started (its text is built) when a pass finds the wake-up due and joins it to that run.
+    let joined = false
+    runner = new JobRunner(world.deps({
+      workingElsewhere: async () => {
+        const run = runs('mail').find((r) => r.status === 'waiting')
+        if (run && !joined) {
+          joined = true
+          world.store.updateRun({ ...run, fired: { ...run.fired, wake: { at: '2026-11-09T00:30:00.000Z', why: 'Check the reply.', bySession: null } } })
+        }
+        return false
+      },
+    }))
+    expect(await runner.wake(world.store.get('mail')!, 'mail', '1 new message', 'key-1')).toBe('delivered')
+    expect(joined).toBe(true)
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text).not.toContain('wake-up')
+    // not named, so not fired: still on the task, not remembered as fired, and off the run that did not bring it
+    expect(world.scheduleOf('mail')?.at).toBe('2026-11-09T00:30:00.000Z')
+    expect(world.store.get('mail')).toMatchObject({ firedWake: null })
+    expect(runs('mail')[0].fired?.wake).toBeUndefined()
+    // the next pass gives it to a session, with its reason
+    world.states.set(world.started[0].sessionId, 'idle')
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += 2 * MIN
+    await runner.tick()
+    await runner.tick()
+    const texts = [...world.started.slice(1).map((s) => s.text), ...world.delivered.map((d) => d.text)]
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('The wake-up\'s reason: Check the reply.')
+    expect(world.scheduleOf('mail')).toBeNull()
+  })
+})
+
+describe('the wake-up fires once', () => {
+  it('remembers the wake-up it fired and clears it on the task; the repeating times stay', async () => {
+    world.task('mixed', { crons: ['0 8 * * 1-5'], at: '2026-11-09T02:00:00.000Z', why: 'Check.', by_session: 's1', time_zone: ZONE })
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(world.started).toHaveLength(1)
+    expect(world.scheduleOf('mixed')).toEqual({ crons: ['0 8 * * 1-5'], time_zone: ZONE })
+    expect(world.edits).toHaveLength(1)
+    // the next read finds it off the task: the record forgets it
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('mixed')?.firedWake).toBeNull()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('does not fire it again when clearing it on the task failed, and clears it at the next read', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z' })
+    world.editFails = true
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(world.started).toHaveLength(1)
+    expect(world.scheduleOf('once')).toEqual({ at: '2026-11-09T02:00:00.000Z' })
+    expect(world.store.get('once')?.firedWake).toBe('2026-11-09T02:00:00.000Z')
+    world.now += MIN
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    world.editFails = false
+    world.now += MIN
+    await runner.tick()
+    expect(world.scheduleOf('once')).toBeNull()
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('leaves a new wake-up the task got meanwhile alone, and fires that one at its time', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z' })
+    // the brain write that clears the fired wake-up arrives after the session has set its next one
+    runner = new JobRunner(world.deps({
+      editSchedule: async (_space, taskId, edit) => {
+        world.setSchedule(taskId, { at: '2026-11-09T04:00:00.000Z', why: 'Look again.' })
+        world.setSchedule(taskId, edit(world.scheduleOf(taskId), world.tasks.get(taskId) as never))
+      },
+    }))
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    expect(world.scheduleOf('once')).toEqual({ at: '2026-11-09T04:00:00.000Z', why: 'Look again.' })
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now = Date.parse('2026-11-09T04:00:10Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(2)
+    expect(world.started[1].text).toContain('The wake-up\'s reason: Look again.')
+  })
+})
+
+describe('keeping the records in step with their tasks', () => {
+  const mail: Job['triggers'] = [{ type: 'mail', match: [{ kind: 'domain', domain: 'customer.example' }] }]
+
+  it('a record made while a pass was under way is left alone: that pass read the tasks before the schedule was written', async () => {
+    world.task('fresh', null)
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // the schedule tool, after this pass read the tasks: the schedule onto the task, then the record with its settings
+          world.setSchedule('fresh', HOURLY)
+          world.store.put({ ...newRecord({ id: 'fresh', spaceId: null }, new Date(world.now).toISOString(), 's-maker'), end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops' })
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.store.get('fresh')).toMatchObject({ end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops', createdBy: 's-maker', cursor: null })
+    // the next read sees the schedule: it is first seen now, with every setting it was given
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('fresh')).toMatchObject({ end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops', createdBy: 's-maker', cursor: '2026-11-09T00:01:00.000Z' })
+  })
+
+  it('a task the jobs migration wrote after the pass read its list is not derived from that list: nothing fires, and the next pass fires from the moved schedule', async () => {
+    // the old mirror's schedule, as the list has it: a past wake-up of a one-time job that ran long ago
+    world.task('routine', { at: '2026-11-08T23:00:00.000Z', why: 'An old check.' })
+    world.unmoved.add('routine')
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // the migration, after this pass read the tasks: the task's schedule from its jobs, then its record (made
+          // at the time of the plan, before this read), and its jobs leave the version 1 data
+          world.setSchedule('routine', WEEKDAYS_8)
+          world.store.put({ ...newRecord({ id: 'routine', spaceId: null }, '2026-11-08T23:59:00.000Z'), cursor: '2026-11-09T00:00:00.000Z' })
+          world.unmoved.delete('routine')
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('routine')).toEqual([])
+    expect(world.edits).toEqual([])
+    expect(world.store.get('routine')).toMatchObject({ cursor: '2026-11-09T00:00:00.000Z', firedWake: null })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('routine')).toMatchObject([{ number: 1, fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: '2026-11-10T00:00:00.000Z' }], timeZone: ZONE } }])
+    expect(runs('routine')[0].fired).not.toHaveProperty('wake')
+  })
+
+  it('a task whose record changed after the pass read its list is not derived from that list in that pass', async () => {
+    world.task('checked', { ...HOURLY, at: '2026-11-08T23:00:00.000Z', why: 'Check the reply.' })
+    world.store.put({ ...newRecord({ id: 'checked', spaceId: null }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-08T23:59:00.000Z' })
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // a turn ended without a time, after this read: the wake-up off the task, then the record
+          world.now += 1000
+          world.setSchedule('checked', HOURLY)
+          world.store.put({ ...world.store.get('checked')!, updatedAt: new Date(world.now).toISOString() })
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.started).toEqual([])
+    expect(runs('checked')).toEqual([])
+    world.now = Date.parse('2026-11-09T01:00:30Z')
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(runs('checked')[0].fired).not.toHaveProperty('wake')
+  })
+
+  it('a record without anything that keeps it goes once it has not changed for the grace, not before', async () => {
+    world.task('plain', null)
+    world.store.put({ ...newRecord({ id: 'plain', spaceId: null }, new Date(world.now).toISOString()), end: { afterRuns: 3 } })
+    await runner.tick()
+    world.now += RECORD_GRACE_MS - 1
+    await runner.tick()
+    expect(world.store.get('plain')).toMatchObject({ end: { afterRuns: 3 }, updatedAt: '2026-11-09T00:00:00.000Z' })
+    world.now += 1
+    await runner.tick()
+    expect(world.store.get('plain')).toBeUndefined()
+  })
+
+  it('removes a record when its task has no schedule, no channel trigger and no open run', async () => {
+    world.task('once', { at: '2026-11-09T02:00:00.000Z' })
+    await firstSeenThen('2026-11-09T02:00:10Z')
+    const sessionId = world.started[0].sessionId
+    world.states.set(sessionId, 'working')
+    // the wake-up is off the task, but its run is open: the record stays
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('once')).toBeDefined()
+    world.statuses.set(sessionId, 'done')
+    world.now += RECORD_GRACE_MS
+    await runner.tick()
+    expect(world.store.get('once')).toBeUndefined()
+    expect(runs('once')).toEqual([])
+    // the task was among the open ones listed: it was read on its own only to start its run
+    expect(world.taskReads).toEqual(['once'])
+  })
+
+  it('keeps the record of a task that only a channel wakes, and forgets where its schedule stood', async () => {
+    world.task('mail', WEEKDAYS_8)
+    await runner.tick()
+    world.store.put({ ...world.store.get('mail')!, triggers: mail, firedWake: '2026-11-01T00:00:00.000Z' })
+    world.setSchedule('mail', null)
+    world.now += RECORD_GRACE_MS
+    await runner.tick()
+    expect(world.store.get('mail')).toMatchObject({ triggers: mail, cursor: null, firedWake: null })
+    // a schedule set later counts from then
+    world.setSchedule('mail', WEEKDAYS_8)
+    world.now = Date.parse('2026-11-12T03:00:00Z')
+    await runner.tick()
+    expect(world.store.get('mail')?.cursor).toBe('2026-11-12T03:00:00.000Z')
+    expect(runs('mail')).toEqual([])
+  })
+
+  it('keeps a limited record while its task is open, so a schedule set later starts no freer session', async () => {
+    world.task('plain', null)
+    world.store.put({ ...newRecord({ id: 'plain', spaceId: null }, '2026-11-01T00:00:00.000Z'), limited: true })
+    await runner.tick()
+    expect(world.store.get('plain')?.limited).toBe(true)
+  })
+
+  it('a closed task stops listening: its channel no longer wakes it, lent tools go back, and the record goes', async () => {
+    world.task('mail', null)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail, pendingApproval: true, grants: [{ tool: 'chrome', until: '2026-11-10T00:00:00.000Z', reason: null }] })
+    await runner.tick()
+    expect(world.store.get('mail')?.triggers).toEqual(mail)
+    // closed some other way than End schedule: Looks good, Close, or the agent itself
+    world.patch('mail', { status: 'resolved' })
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('mail')).toBeUndefined()
+    expect(world.ended).toEqual(['mail:chrome'])
+    // the task's status was read once to tell closed from "not listed"
+    expect(world.taskReads).toEqual(['mail'])
+  })
+
+  it('keeps a closed task\'s record while a session still has a run of it, without its channel; then it goes', async () => {
+    world.task('mail', null)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail, runCount: 2 })
+    const run = (id: string, status: JobRun['status'], sessionId: string | null): JobRun => ({
+      id, jobId: 'mail', trigger: 'mail', number: id === 'r1' ? 1 : 2, dueAt: '2026-11-09T00:00:00.000Z', createdAt: '2026-11-09T00:00:00.000Z', status, attempts: 1,
+      nextAttemptAt: null, sessionId, startedAt: sessionId ? '2026-11-09T00:00:00.000Z' : null, finishedAt: null, outcome: null, note: null,
+    })
+    world.store.addRun(run('r1', 'started', 's-run'))
+    world.store.addRun(run('r2', 'waiting', null))
+    world.states.set('s-run', 'working')
+    world.patch('mail', { status: 'invalidated' })
+    await runner.tick()
+    expect(world.store.get('mail')).toMatchObject({ triggers: [] })
+    expect(runs('mail').map((r) => [r.status, r.note])).toEqual([['started', null], ['skipped', 'its task was closed before it started']])
+    world.statuses.set('s-run', 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('mail')).toBeUndefined()
+  })
+
+  it('removes the record of a task that is gone from the brain', async () => {
+    world.store.put({ ...newRecord({ id: 'gone', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail })
+    await runner.tick()
+    expect(world.store.get('gone')).toBeUndefined()
+  })
+
+  it('still fires a scheduled task the list did not reach, as long as it has a record', async () => {
+    world.task('first', null)
+    world.task('daily', WEEKDAYS_8)
+    await runner.tick()
+    world.listLimit = 1
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    expect(world.started.map((s) => s.task.id)).toEqual(['daily'])
+  })
+
+  it('lifts the pause the cockpit set after failures once the schedule runs again, whoever resumed it', async () => {
+    world.task('hourly', { ...HOURLY, paused: true })
+    world.store.put({ ...newRecord({ id: 'hourly', spaceId: null }, '2026-11-01T00:00:00.000Z'), pausedReason: '3 failed runs in a row', failures: 3 })
+    await runner.tick()
+    expect(world.store.get('hourly')).toMatchObject({ pausedReason: '3 failed runs in a row', failures: 3 })
+    world.setSchedule('hourly', HOURLY)
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('hourly')).toMatchObject({ pausedReason: null, failures: 0, cursor: '2026-11-09T00:01:00.000Z' })
+  })
+})
+
+describe('carrying a run out', () => {
+  it('waits for room and tries again later, then fails after an hour and tells', async () => {
+    world.task('once', { at: '2026-11-09T01:00:00.000Z' })
+    world.room = false
+    await firstSeenThen('2026-11-09T01:00:00Z')
+    let run = runs('once')[0]
+    expect(run).toMatchObject({ status: 'waiting', attempts: 1, note: expect.stringMatching(/^no room/) })
     expect(Date.parse(run.nextAttemptAt!)).toBe(world.now + MIN)
     world.now += 61 * MIN
     await runner.tick()
-    run = world.store.runs(job.id)[0]
+    run = runs('once')[0]
     expect(run.status).toBe('failed')
     expect(run.note).toMatch(/could not start within 1 h/)
-    expect(world.alerts[0]).toMatch(/^failed: Daily brief: Run 1 failed: could not start within 1 h/)
-    expect(world.flagged).toEqual([expect.stringMatching(/^Job "Daily brief": run 1 failed: could not start within 1 h/)])
+    expect(world.alerts[0]).toMatch(/^failed: Task once: Run 1 failed: could not start within 1 h/)
+    expect(world.flagged).toEqual([expect.stringMatching(/^"Task once": run 1 failed: could not start within 1 h/)])
+    expect(world.store.get('once')?.failures).toBe(1)
   })
 
-  it('records the session’s status as the run’s outcome', async () => {
-    const job = await create({ cron: '0 9 * * *' })
-    world.now = Date.parse('2026-11-09T01:00:10Z')
+  it('needs no room to give a running session a message', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'question')
+    world.room = false
+    world.deliveryOutcome = 'delivered'
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(statuses('daily')).toEqual(['started'])
+  })
+
+  it('retries while the session it goes to is busy', async () => {
+    world.task('once', { at: '2026-11-09T01:00:00.000Z', by_session: 's-set' })
+    world.session('once', 's-set')
+    world.deliveryOutcome = 'busy'
+    await firstSeenThen('2026-11-09T01:00:10Z')
+    expect(runs('once')[0]).toMatchObject({ status: 'waiting', attempts: 1, note: expect.stringMatching(/its session was busy/) })
+    world.deliveryOutcome = 'delivered'
+    world.now += 2 * MIN
     await runner.tick()
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-set', 's-set'])
+    expect(statuses('once')).toEqual(['started'])
+  })
+
+  it('records the session\'s status as the run\'s outcome, and tells when someone is needed', async () => {
+    world.task('daily', { crons: ['0 9 * * *'], time_zone: ZONE })
+    await firstSeenThen('2026-11-09T01:00:10Z')
     const sessionId = world.started[0].sessionId
     world.states.set(sessionId, 'working')
     world.now += 5 * MIN
     await runner.tick()
-    expect(world.store.runs(job.id)[0].status).toBe('started')
+    expect(statuses('daily')).toEqual(['started'])
     world.statuses.set(sessionId, 'review')
     world.states.set(sessionId, 'idle')
     await runner.tick()
-    expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'finished', outcome: 'review' })
-    expect(world.alerts).toEqual(['review: Daily brief: Run 1: Brief written'])
+    expect(runs('daily')[0]).toMatchObject({ status: 'finished', outcome: 'review' })
+    expect(world.alerts).toEqual(['review: Task daily: Run 1: Brief written'])
     // Its own session shows the review itself: nothing stands in for it.
     expect(world.flagged).toEqual([])
   })
 
-  it('skips a run while the previous one still works', async () => {
-    const job = await create({ cron: '0 9 * * *' })
-    world.now = Date.parse('2026-11-09T01:00:10Z')
+  it('finishes a run whose session stopped working without a word, quietly when nobody is needed', async () => {
+    world.task('daily', WEEKDAYS_8)
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    world.states.set(world.started[0].sessionId, 'stopped')
+    world.now += MIN
     await runner.tick()
-    world.states.set(world.started[0].sessionId, 'working')
-    world.now = Date.parse('2026-11-10T01:00:10Z')
+    expect(statuses('daily')).toEqual(['started'])
+    world.now += MIN
     await runner.tick()
-    expect(world.started).toHaveLength(1)
-    expect(world.store.runs(job.id).map((r) => r.status)).toEqual(['started', 'skipped'])
-  })
-
-  it('misses a repeating run due more than 6 h ago, but runs a late one-time job', async () => {
-    const daily = await create({ cron: '0 9 * * *' })
-    const once = await create({ name: 'Check reply', at: '2026-11-09T10:00' })
-    world.now = Date.parse('2026-11-09T09:00:00Z') // 17:00 local: 8 h late
-    await runner.tick()
-    expect(world.store.runs(daily.id).map((r) => r.status)).toEqual(['missed'])
-    expect(world.alerts).toEqual([expect.stringMatching(/^missed: Daily brief: Missed a run due 8 h ago/)])
-    expect(world.store.get(daily.id)!.nextRunAt).toBe('2026-11-10T01:00:00.000Z')
-    expect(world.store.runs(once.id).map((r) => r.status)).toEqual(['started'])
-    expect(world.started[0].text).toMatch(/420 min late/)
-  })
-
-  it('ends a one-time job once its run is over, quietly when it is done', async () => {
-    const job = await create({ at: '2026-11-09T09:00' })
-    world.now = Date.parse('2026-11-09T01:00:10Z')
-    await runner.tick()
-    const sessionId = world.started[0].sessionId
-    world.statuses.set(sessionId, 'done')
-    world.states.set(sessionId, 'stopped')
-    await runner.tick()
-    expect(world.store.get(job.id)!.endedAt).not.toBeNull()
+    expect(runs('daily')[0]).toMatchObject({ status: 'finished', outcome: null, finishedAt: '2026-11-10T00:02:30.000Z' })
     expect(world.alerts).toEqual([])
   })
 
-  it('moves a job-session job to a worker per run with update target=worker', async () => {
-    const made = await create({ cron: '0 9 * * *' })
-    world.store.put({ ...made, target: { type: 'job-session', projectId: 'bp-eml', sessionId: 'old-session' } })
-    const moved = await jobs.handle(caller, { action: 'update', job: made.id, target: 'worker' })
-    expect(moved.status, moved.text).toBe(200)
-    expect(world.store.get(made.id)!.target).toEqual({ type: 'worker', projectId: 'bp-eml' })
-    expect((await jobs.handle(caller, { action: 'update', job: made.id, target: 'self' })).text).toMatch(/only moves a job-session job to a worker/)
+  it('hears of every run when the record says always, and of none when it says never', async () => {
+    world.task('loud', WEEKDAYS_8)
+    world.task('quiet', WEEKDAYS_8)
+    await runner.tick()
+    world.store.put({ ...world.store.get('loud')!, notify: 'always' })
+    world.store.put({ ...world.store.get('quiet')!, notify: 'never' })
+    world.now = Date.parse('2026-11-10T00:00:30Z')
+    await runner.tick()
+    for (const start of world.started) world.statuses.set(start.sessionId, start.task.id === 'loud' ? 'done' : 'question')
+    await runner.tick()
+    expect(world.alerts).toEqual(['done: Task loud: Run 1: done'])
   })
 
-  it('an existing job-session job still wakes its own session again on later runs', async () => {
-    // job-session can no longer be created; the ones made before keep running until they move to a worker and a task.
-    const made = await create({ cron: '0 9 * * *' })
-    const job = { ...made, target: { type: 'job-session' as const, projectId: 'bp-eml', sessionId: null } }
-    world.store.put(job)
-    world.now = Date.parse('2026-11-09T01:00:10Z')
-    await runner.tick()
-    const sessionId = world.started[0].sessionId
-    expect(world.store.get(job.id)!.target).toMatchObject({ type: 'job-session', sessionId })
-    world.statuses.set(sessionId, 'done')
-    world.states.set(sessionId, 'stopped')
-    await runner.tick()
-    world.statuses.delete(sessionId)
-    world.now = Date.parse('2026-11-10T01:00:10Z')
-    await runner.tick()
-    expect(world.started).toHaveLength(1)
-    expect(world.delivered).toEqual([{ sessionId, text: expect.stringMatching(/run 2,/) }])
+  it('fails a run whose session cannot be started, with the reason', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.startProblem = 'the task has no project to run in'
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(runs('daily')[0]).toMatchObject({ status: 'failed', note: 'the worker could not start: the task has no project to run in' })
   })
 
-  it('messages the session itself, and retries while it is busy', async () => {
-    const job = await create({ at: '2026-11-09T09:00', target: 'self' })
-    world.states.set('maker', 'idle')
-    world.deliveryOutcome = 'busy'
-    world.now = Date.parse('2026-11-09T01:00:10Z')
+  it('pauses the task\'s schedule after three failures in a row, keeps why on the record, and says so', async () => {
+    world.task('hourly', HOURLY)
+    world.startProblem = 'no project'
     await runner.tick()
-    expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'waiting', attempts: 1 })
-    world.deliveryOutcome = 'delivered'
-    world.now += 2 * MIN
-    await runner.tick()
-    expect(world.delivered.map((d) => d.sessionId)).toEqual(['maker', 'maker'])
-    expect(world.store.runs(job.id)[0].status).toBe('started')
-  })
-
-  it('pauses a job after three failures in a row and says so', async () => {
-    const job = await create({ cron: '0 * * * *', target: 'self' })
-    world.states.set('maker', 'idle')
-    world.deliveryOutcome = 'unknown'
     for (let hour = 1; hour <= 3; hour++) {
       world.now = Date.parse('2026-11-09T00:00:10Z') + hour * HOUR
       await runner.tick()
     }
-    const stored = world.store.get(job.id)!
-    expect(stored.paused).toBe(true)
-    expect(stored.pausedReason).toMatch(/3 failed runs in a row/)
-    expect(world.alerts.at(-1)).toMatch(/^paused: Daily brief: Paused itself after 3 failed runs/)
-    expect(world.flagged.at(-1)).toMatch(/^Job "Daily brief" paused itself after 3 failed runs/)
+    expect(world.scheduleOf('hourly')).toEqual({ ...HOURLY, paused: true })
+    expect(world.edits.at(-1)).toMatchObject({ taskId: 'hourly', text: expect.stringMatching(/^The cockpit paused its schedule after 3 failed runs in a row; last: run 3 failed/) })
+    expect(world.store.get('hourly')).toMatchObject({ failures: 3, pausedReason: expect.stringMatching(/^3 failed runs in a row/) })
+    expect(world.alerts.at(-1)).toMatch(/^paused: Task hourly: Paused itself after 3 failed runs in a row.*Resume it on the task once fixed\.$/)
+    expect(world.flagged.at(-1)).toMatch(/^The schedule of "Task hourly" paused itself after 3 failed runs/)
+    expect(runner.held(world.store.get('hourly')!)).toBe(true)
     world.now += HOUR
     await runner.tick()
-    expect(world.store.runs(job.id)).toHaveLength(3)
+    expect(runs('hourly')).toHaveLength(3)
+    // the owner resumes it on the task: it runs again from now
+    world.setSchedule('hourly', HOURLY)
+    runner.resumed('hourly')
+    expect(world.store.get('hourly')).toMatchObject({ failures: 0, pausedReason: null, cursor: null })
+    world.startProblem = null
+    await runner.tick()
+    world.now += HOUR
+    await runner.tick()
+    expect(statuses('hourly').at(-1)).toBe('started')
+  })
+
+  it('keeps no pause reason while the pause is not on the task: the write is tried again at the next failure', async () => {
+    world.task('hourly', HOURLY)
+    world.startProblem = 'no project'
+    world.editFails = true
+    await runner.tick()
+    for (let hour = 1; hour <= 3; hour++) {
+      world.now = Date.parse('2026-11-09T00:00:10Z') + hour * HOUR
+      await runner.tick()
+    }
+    expect(world.store.get('hourly')).toMatchObject({ failures: 3, pausedReason: null })
+    world.editFails = false
+    world.now += HOUR
+    await runner.tick()
+    expect(world.scheduleOf('hourly')?.paused).toBe(true)
+    expect(world.store.get('hourly')?.pausedReason).toMatch(/^4 failed runs in a row/)
+  })
+
+  it('a run that ends as failed counts, and a good one starts the count anew', async () => {
+    world.task('hourly', HOURLY)
+    await runner.tick()
+    const hour = async (status: WorkerStatus) => {
+      world.now += HOUR
+      await runner.tick()
+      world.statuses.set(world.started.at(-1)!.sessionId, status)
+      world.now += MIN
+      await runner.tick()
+    }
+    await hour('failed')
+    await hour('failed')
+    expect(world.store.get('hourly')?.failures).toBe(2)
+    await hour('done')
+    expect(world.store.get('hourly')?.failures).toBe(0)
+    expect(world.scheduleOf('hourly')?.paused).toBeUndefined()
   })
 
   it('starts at most two runs per pass', async () => {
-    for (const name of ['a', 'b', 'c']) await create({ name, at: '2026-11-09T09:00' })
-    world.now = Date.parse('2026-11-09T01:00:10Z')
-    await runner.tick()
+    for (const id of ['a', 'b', 'c']) world.task(id, { at: '2026-11-09T01:00:00.000Z' })
+    await firstSeenThen('2026-11-09T01:00:10Z')
     expect(world.started).toHaveLength(2)
     await runner.tick()
     expect(world.started).toHaveLength(3)
   })
 
-  it('retries a run a restart cut off while starting, once', async () => {
-    const job = await create({ at: '2026-11-09T09:00', target: 'self' })
-    world.now = Date.parse('2026-11-09T01:00:10Z')
-    const run = { ...(await (async () => { await runner.tick(); return world.store.runs(job.id)[0] })()) }
-    world.store.updateRun({ ...run, status: 'starting', attempts: 1 })
-    const after = new JobRunner(world.deps())
-    after.recover()
-    expect(world.store.runs(job.id)[0]).toMatchObject({ status: 'waiting', note: 'retried after a cockpit restart' })
-  })
-})
-
-describe('schedule tool', () => {
-  it('refuses schedules it cannot keep', async () => {
-    const { jobs } = setup()
-    const create = (input: Record<string, unknown>) => jobs.handle(caller, { action: 'create', name: 'x', prompt: 'p', ...input })
-    expect((await create({})).text).toMatch(/exactly one of cron/)
-    expect((await create({ cron: '0 8 * * *', at: '2026-11-10T08:00' })).text).toMatch(/exactly one of cron/)
-    expect((await create({ cron: '*/5 * * * *' })).text).toMatch(/at most every 15 min/)
-    expect((await create({ at: '2026-11-08T08:00' })).text).toMatch(/has passed/)
-    expect((await create({ at: '2028-01-01T08:00' })).text).toMatch(/a year ahead/)
-    expect((await create({ cron: '0 8 * * *', timezone: 'Mars/Olympus' })).text).toMatch(/unknown time zone/)
-    expect((await create({ cron: '0 8 * * *', project: 'nope' })).text).toMatch(/unknown project/)
-    expect((await create({ cron: '0 8 * * *', target: 'job-session' })).text)
-      .toMatch(/^job-session is gone: a worker per run \(the default\) keeps its memory in the task's goal and journal; self wakes this session/)
-  })
-
-  it('answers with the next runs in words', async () => {
-    const { jobs } = setup()
-    const answer = await jobs.handle(caller, { action: 'create', name: 'Daily brief', prompt: 'p', cron: '0 8 * * 1-5' })
-    expect(answer.text).toMatch(/next: Tue 10 Nov 08:00, Wed 11 Nov 08:00, Thu 12 Nov 08:00/)
-    expect(answer.text).toMatch(/a new worker per run in EML/)
-  })
-
-  it('keeps jobs in their space', async () => {
-    const { jobs } = setup()
-    await jobs.handle(caller, { action: 'create', name: 'Main job', prompt: 'p', cron: '0 8 * * *' })
-    const other: JobCaller = { sessionId: 'other-caller', spaceId: 'space-b', projectId: 'bp-x', toolProfile: null }
-    expect((await jobs.handle(other, { action: 'list' })).text).toBe('No jobs in this space.')
-    expect((await jobs.handle(other, { action: 'delete', job: 'Main job' })).status).toBe(404)
-    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/Main job/)
-  })
-
-  it('takes 100 jobs per space and refuses the 101st until one is deleted; another space is not counted', async () => {
-    const { jobs } = setup()
-    const create = (who: JobCaller, name: string) => jobs.handle(who, { action: 'create', name, prompt: 'p', cron: '0 8 * * *' })
-    for (let n = 1; n <= 99; n++) expect((await create(caller, `Job ${n}`)).status).toBe(201)
-    const other: JobCaller = { sessionId: 'other-caller', spaceId: 'space-b', projectId: 'bp-x', toolProfile: null }
-    expect((await create(other, 'Elsewhere')).status).toBe(201)
-    expect((await create(caller, 'Job 100')).status).toBe(201)
-    const refused = await create(caller, 'Job 101')
-    expect(refused.status).toBe(400)
-    expect(refused.text).toBe('this space already has 100 jobs; delete one first (at most 100)')
-    expect((await jobs.handle(caller, { action: 'delete', job: 'Job 1' })).status).toBe(200)
-    expect((await create(caller, 'Job 101')).status).toBe(201)
-  })
-
-  it('gives a job at most its maker’s tools', async () => {
-    const { jobs } = setup()
-    const limited: JobCaller = { ...caller, toolProfile: { deniedTools: ['Bash'], mcpServers: ['gmail'] } }
-    const answer = await jobs.handle(limited, { action: 'create', name: 'x', prompt: 'p', cron: '0 8 * * *', deny_tools: ['WebFetch'] })
-    expect(answer.job!.toolProfile).toEqual({ deniedTools: ['Bash', 'WebFetch'], mcpServers: ['gmail'] })
-  })
-
-  it('pauses, resumes from now, and refuses a second run while one is open', async () => {
-    const { world, jobs } = setup()
-    await jobs.handle(caller, { action: 'create', name: 'Daily', prompt: 'p', cron: '0 8 * * *' })
-    expect((await jobs.handle(caller, { action: 'pause', job: 'daily' })).job!.paused).toBe(true)
-    world.now += 3 * 24 * HOUR
-    const resumed = await jobs.handle(caller, { action: 'resume', job: 'Daily' })
-    expect(resumed.job!.nextRunAt).toBe('2026-11-13T00:00:00.000Z')
+  it('skips a run whose task was closed before it started, and counts no failure', async () => {
+    world.task('daily', WEEKDAYS_8)
     world.room = false
-    expect((await jobs.handle(caller, { action: 'run_now', job: 'Daily' })).status).toBe(202)
-    expect((await jobs.handle(caller, { action: 'run_now', job: 'Daily' })).status).toBe(409)
-  })
-})
-
-describe('mail jobs', () => {
-  const createMail = async (jobs: Jobs, mail: unknown, extra: Record<string, unknown> = {}) =>
-    jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'Draft replies to Acme.', mail, ...extra })
-
-  it('listens on mail with a fresh worker per mail, drafts, and waits for the user’s OK', async () => {
-    const { jobs } = setup()
-    const answer = await createMail(jobs, { domains: ['Acme.example'], addresses: ['boss@partner.example'] })
-    expect(answer.status, answer.text).toBe(201)
-    expect(answer.job).toMatchObject({
-      kind: 'standing', pendingApproval: true, reply: { mail: 'draft' }, nextRunAt: null,
-      target: { type: 'worker', projectId: 'bp-eml' },
-      triggers: [{ type: 'mail', match: [{ kind: 'address', address: 'boss@partner.example' }, { kind: 'domain', domain: 'acme.example' }] }],
-    })
-    expect(answer.text).toMatch(/only after the user's OK in the Jobs view/)
-    expect((await createMail(jobs, { domains: ['@acme.example'] }, { name: 'x' })).text).toMatch(/not a mail address or domain: @acme.example/)
-  })
-
-  it('holds wakes and run_now until approved; a session cannot approve or resume past it', async () => {
-    const { world, runner, jobs } = setup()
-    const job = (await createMail(jobs, { domains: ['acme.example'] })).job!
-    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k1')).toBe('retry')
-    expect((await jobs.handle(caller, { action: 'run_now', job: job.id })).text).toMatch(/waits for the user's OK/)
-    await jobs.handle(caller, { action: 'resume', job: job.id })
-    expect(world.store.get(job.id)!.pendingApproval).toBe(true)
-    jobs.approve(world.store.get(job.id)!)
-    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k1')).toBe('delivered')
-    expect(world.started[0].text).toMatch(/woken by mail[\s\S]*Draft replies to Acme\.[\s\S]*1 new mail$/)
-  })
-
-  it('asks for the OK again when addresses grow, not when they shrink', async () => {
-    const { world, jobs } = setup()
-    const job = (await createMail(jobs, { domains: ['acme.example', 'acme.test'] })).job!
-    jobs.approve(world.store.get(job.id)!)
-    await jobs.handle(caller, { action: 'update', job: job.id, mail: { domains: ['acme.example'] } })
-    expect(world.store.get(job.id)!.pendingApproval).toBe(false)
-    const grown = await jobs.handle(caller, { action: 'update', job: job.id, mail: { domains: ['acme.example', 'other.example'] } })
-    expect(grown.job!.pendingApproval).toBe(true)
-  })
-
-  it('keeps mail out of a shared space: no mail job there, and none made by adding mail later; schedules still work', async () => {
-    const { jobs } = setup({ sharedSpaces: ['team'] })
-    const member: JobCaller = { ...caller, spaceId: 'team' }
-    const refused = await jobs.handle(member, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
-    expect(refused.status).toBe(400)
-    expect(refused.text).toMatch(/shared space cannot watch mail/)
-    const routine = await jobs.handle(member, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
-    expect(routine.status, routine.text).toBe(201)
-    const grown = await jobs.handle(member, { action: 'update', job: routine.job!.id, mail: { domains: ['acme.example'] } })
-    expect(grown.status).toBe(400)
-    expect((await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })).status).toBe(201)
-  })
-
-  it('lets only the page switch a channel to send', async () => {
-    const { world, jobs } = setup()
-    const job = (await createMail(jobs, { domains: ['acme.example'] })).job!
-    expect(jobs.setReply(world.store.get(job.id)!, 'mail', 'send').job!.reply).toEqual({ mail: 'send' })
-    expect(jobs.setReply(world.store.get(job.id)!, 'slack', 'send').status).toBe(400)
-    expect((await jobs.handle(caller, { action: 'update', job: job.id, reply: { mail: 'draft' } })).job!.reply).toEqual({ mail: 'send' })
-  })
-})
-
-describe('a job that ends itself and a limited job looking after its own job', () => {
-  it('finishes a job once its goal is reached: no more runs, and mail no longer wakes it', async () => {
-    const { world, runner, jobs } = setup()
-    const job = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', goal: 'Refund received', mail: { domains: ['shop.example'] } })).job!
-    jobs.approve(world.store.get(job.id)!)
-    const done = await jobs.handle(caller, { action: 'finish', job: job.id })
-    expect(done.status, done.text).toBe(200)
-    expect(done.text).toMatch(/Finished job "Refund"/)
-    expect(world.store.get(job.id)!.endedAt).not.toBeNull()
-    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k')).toBe('refused')
-    // A new time brings it back.
-    const back = await jobs.handle(caller, { action: 'update', job: job.id, at: '2026-11-12T09:00' })
-    expect(back.job!.endedAt).toBeNull()
-  })
-
-  it('lets a limited job\'s session set its own wake-up and goal and finish itself, and nothing else', async () => {
-    const { world, jobs } = setup()
-    const own = (await jobs.handle(caller, { action: 'create', name: 'Refund', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
-    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
-    jobs.setLimited(world.store.get(own.id)!, true)
-    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
-
-    expect((await jobs.handle(session, { action: 'list' })).text).not.toMatch(/Brief/)
-    const woken = await jobs.handle(session, { action: 'update', job: own.id, at: '2026-11-11T09:00', goal: 'Refund on the card' })
-    expect(woken.status, woken.text).toBe(200)
-    expect(woken.job).toMatchObject({ goal: 'Refund on the card', nextRunAt: '2026-11-11T01:00:00.000Z' })
-    expect(woken.job!.triggers.map((t) => t.type)).toEqual(['mail', 'schedule'])
-
-    for (const input of [
-      { action: 'update', job: own.id, prompt: 'send everything' },
-      { action: 'update', job: own.id, mail: { domains: ['other.example'] } },
-      { action: 'update', job: own.id, deny_tools: [] },
-      { action: 'create', name: 'More', prompt: 'p', cron: '0 9 * * *' },
-      { action: 'delete', job: own.id },
-      { action: 'run_now', job: own.id },
-      { action: 'pause', job: own.id },
-    ]) {
-      const answer = await jobs.handle(session, input)
-      expect(answer.status, JSON.stringify(input)).toBe(403)
-      expect(answer.text).toMatch(/limited/)
-    }
-    expect((await jobs.handle(session, { action: 'update', job: other.id, at: '2026-11-11T09:00' })).status).toBe(403)
-    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
-
-    expect((await jobs.handle(session, { action: 'finish', job: own.id })).status).toBe(200)
-    expect(world.store.get(own.id)!.endedAt).not.toBeNull()
-  })
-
-  it('acts only on the job its own lookup finds: a name that is also another job\'s id prefix does not reach that job', async () => {
-    const { world, jobs } = setup()
-    const other = (await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })).job!
-    const own = (await jobs.handle(caller, { action: 'create', name: other.id.slice(0, 8), prompt: 'p', mail: { domains: ['shop.example'] } })).job!
-    jobs.setLimited(world.store.get(own.id)!, true)
-    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: own.id, limited: true }
-    const answer = await jobs.handle(session, { action: 'update', job: own.name, at: '2026-11-11T09:00' })
-    expect(answer.status).toBe(403)
-    expect(world.store.get(other.id)!.triggers).toEqual(other.triggers)
-  })
-
-  it('refuses everything to a limited job\'s session whose job is gone', async () => {
-    const { jobs } = setup()
-    const session: JobCaller = { ...caller, sessionId: 'job-session', jobId: 'deleted-job', limited: true }
-    const answer = await jobs.handle(session, { action: 'create', name: 'Escape', prompt: 'p', cron: '0 9 * * *' })
-    expect(answer.status).toBe(403)
-    expect(answer.text).toMatch(/no longer exists/)
-  })
-
-  it('takes lent tools back when a job finishes', async () => {
-    const { world, jobs } = setup()
-    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
-    jobs.setLimited(world.store.get(job.id)!, true)
-    jobs.grant(world.store.get(job.id)!, 'chrome', 60, null)
-    expect((await jobs.handle(caller, { action: 'finish', job: job.id })).status).toBe(200)
-    expect(world.store.get(job.id)!.grants).toEqual([])
-    expect(world.ended).toEqual(['Returns:chrome'])
-  })
-})
-
-describe('limited jobs and grants', () => {
-  it('starts every job, mail jobs too, with its maker\'s tools; only the user limits one', async () => {
-    const { jobs } = setup()
-    const mail = await jobs.handle(caller, { action: 'create', name: 'Acme mail', prompt: 'p', mail: { domains: ['acme.example'] } })
-    expect(mail.job!.limited).toBeUndefined()
-    const routine = await jobs.handle(caller, { action: 'create', name: 'Brief', prompt: 'p', cron: '0 8 * * *' })
-    expect(routine.job!.limited).toBeUndefined()
-    // A session cannot set its limits or lend itself a tool.
-    expect((await jobs.handle(caller, { action: 'update', job: mail.job!.id, limited: true, grants: [{ tool: 'chrome', until: '2099-01-01T00:00:00Z' }] })).job)
-      .not.toHaveProperty('grants')
-    const limited = jobs.setLimited(mail.job!, true).job!
-    expect(limited.limited).toBe(true)
-    expect(jobs.setLimited(limited, false).job!.limited).toBe(false)
-  })
-
-  it('lends a tool for a while, tells the host, and takes it back when the session is done', async () => {
-    const { world, runner, jobs } = setup()
-    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
-    jobs.approve(world.store.get(job.id)!)
-    jobs.setLimited(world.store.get(job.id)!, true)
-    expect(jobs.grant(world.store.get(job.id)!, 'chrome', 2, null).status).toBe(400)
-    const lent = jobs.grant(world.store.get(job.id)!, 'chrome', 60, 'submit the return form')
-    expect(lent.job!.grants).toEqual([{ tool: 'chrome', until: new Date(world.now + HOUR).toISOString(), reason: 'submit the return form' }])
-    expect(world.granted).toEqual(['Returns:chrome'])
-    expect((await jobs.handle(caller, { action: 'list' })).text).toMatch(/lent for now: chrome/)
-
-    expect(await runner.wake(world.store.get(job.id)!, 'mail', '1 new mail', 'k')).toBe('delivered')
-    const sessionId = world.started[0].sessionId
-    world.statuses.set(sessionId, 'done')
-    world.states.set(sessionId, 'idle')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(statuses('daily')).toEqual(['waiting'])
+    world.patch('daily', { status: 'resolved' })
+    world.room = true
     world.now += 2 * MIN
     await runner.tick()
-    expect(world.store.get(job.id)!.grants).toEqual([])
-    expect(world.ended).toEqual(['Returns:chrome'])
+    expect(world.started).toEqual([])
+    expect(world.alerts).toEqual([])
+    // the record went with its closed task, and its runs with it
+    expect(world.store.get('daily')).toBeUndefined()
   })
 
-  it('drops a grant once its time is up, and revoke takes it back at once', async () => {
-    const { world, runner, jobs } = setup()
-    const job = (await jobs.handle(caller, { action: 'create', name: 'Returns', prompt: 'p', mail: { domains: ['shop.example'] } })).job!
-    jobs.grant(world.store.get(job.id)!, 'SendMessage', 30, null)
-    jobs.grant(world.store.get(job.id)!, 'chrome', 90, null)
-    expect(jobs.revoke(world.store.get(job.id)!, 'chrome').job!.grants!.map((g) => g.tool)).toEqual(['SendMessage'])
-    world.now += 31 * MIN
+  it('retries a run a restart cut off while starting, once; a new session that got as far as existing has it', async () => {
+    world.task('a', { at: '2026-11-09T01:00:00.000Z', by_session: 's-set' })
+    world.session('a', 's-set')
+    world.task('b', { at: '2026-11-09T01:00:00.000Z' })
+    world.task('c', { at: '2026-11-09T01:00:00.000Z' })
+    await firstSeenThen('2026-11-09T01:00:10Z')
     await runner.tick()
-    expect(world.store.get(job.id)!.grants).toEqual([])
-    expect(world.ended).toEqual(['Returns:chrome', 'Returns:SendMessage'])
+    const cut = (id: string, patch: Partial<JobRun>) => world.store.updateRun({ ...runs(id)[0], status: 'starting', startedAt: null, ...patch })
+    cut('a', { attempts: 1 })
+    cut('b', { attempts: 1 })
+    world.states.set(runs('b')[0].sessionId!, 'idle')
+    cut('c', { attempts: 2 })
+    const after = new JobRunner(world.deps())
+    after.recover()
+    // a message to a session that existed: nobody knows whether it arrived
+    expect(runs('a')[0]).toMatchObject({ status: 'waiting', sessionId: null, note: 'retried after a cockpit restart' })
+    expect(runs('b')[0]).toMatchObject({ status: 'started', startedAt: '2026-11-09T01:00:10.000Z' })
+    expect(runs('c')[0]).toMatchObject({ status: 'failed', note: 'cut off by a cockpit restart while starting' })
+  })
+
+  it('drops a grant once its time is up, and takes lent tools back when the session reports done', async () => {
+    world.task('daily', { crons: ['0 9 * * *'], time_zone: ZONE })
+    await runner.tick()
+    world.store.put({ ...world.store.get('daily')!, limited: true, grants: [{ tool: 'chrome', until: '2026-11-09T00:30:00.000Z', reason: null }, { tool: 'SendMessage', until: '2026-11-09T03:00:00.000Z', reason: null }] })
+    world.now = Date.parse('2026-11-09T01:00:10Z')
+    await runner.tick()
+    expect(world.ended).toEqual(['daily:chrome'])
+    expect(world.store.get('daily')?.grants).toEqual([{ tool: 'SendMessage', until: '2026-11-09T03:00:00.000Z', reason: null }])
+    world.statuses.set(world.started[0].sessionId, 'done')
+    world.now += MIN
+    await runner.tick()
+    expect(world.ended).toEqual(['daily:chrome', 'daily:SendMessage'])
+    expect(world.store.get('daily')?.grants).toEqual([])
+  })
+})
+
+describe('the log', () => {
+  it('names a task and a space by their ids, never by their names: a run, a skipped time, a record that goes, a space that is not read', async () => {
+    const logs: string[] = []
+    world.spaces = [MAIN, { key: 'team', name: 'Team', shared: null }]
+    runner = new JobRunner(world.deps({ log: (line) => logs.push(line) }))
+    world.task('aaaa1111-runs', HOURLY)
+    world.task('bbbb2222-busy', HOURLY)
+    world.task('cccc3333-ends', HOURLY)
+    await runner.tick()
+    world.session('bbbb2222-busy', 's-busy', true)
+    world.setSchedule('cccc3333-ends', null)
+    world.now = Date.parse('2026-11-09T01:00:30Z')
+    await runner.tick()
+    expect(logs).toContain('[jobs] task aaaa1111: run 1 is due')
+    expect(logs).toContain('[jobs] task bbbb2222: a time due 2026-11-09T01:00:00.000Z is skipped, a session of the task was working')
+    expect(logs).toContain('[jobs] task cccc3333: its record is removed (no schedule, no channel, no open run)')
+    expect(logs).toContain('[jobs] space team: the brain server has not said yet whether it is shared: nothing fires here until it has')
+    expect(logs.filter((line) => /Task |slug-|Main|Team/.test(line))).toEqual([])
+  })
+})
+
+describe('where a new session of a task starts', () => {
+  it('is the record\'s project, which wins over the task\'s own', () => {
+    expect(runProjectOf({ projectId: 'bp-ops' }, { scope: 'project.sales' })).toBe('bp-ops')
+    expect(runProjectOf({ projectId: 'bp-ops' }, {})).toBe('bp-ops')
+  })
+
+  it('is the project of the task\'s scope when the record names none', () => {
+    expect(runProjectOf({ projectId: null }, { scope: 'project.sales' })).toBe('bp-sales')
+  })
+
+  it('is nowhere for a task without a project scope: no session can start for it', () => {
+    expect(runProjectOf({ projectId: null }, { scope: 'global' })).toBeNull()
+    expect(runProjectOf({ projectId: null }, { scope: null })).toBeNull()
+    expect(runProjectOf({ projectId: null }, {})).toBeNull()
+  })
+})
+
+describe('a run by hand', () => {
+  const task = (id = 'daily') => world.tasks.get(id)!
+
+  it('starts a run now by the four-line order, also on a paused schedule', async () => {
+    world.task('daily', { ...WEEKDAYS_8, paused: true })
+    const run = await runner.runNow(MAIN, task())
+    expect(run).toMatchObject({ trigger: 'manual', number: 1 })
+    await runner.tick()
+    expect(world.started).toHaveLength(1)
+    expect(world.started[0].text.split('\n')[0]).toBe('The task\'s owner (Run now) started you for "Task daily" (task daily).')
+    expect(world.started[0].text).toContain('What fired: the owner started it by hand (Run now).')
+  })
+
+  it('goes to the session that waits on an answer', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'go')
+    await runner.runNow(MAIN, task())
+    await runner.tick()
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-asks'])
+  })
+
+  it('is refused while the last run is open, while a session of the task works, and while its channel waits for the OK', async () => {
+    world.task('daily', WEEKDAYS_8)
+    expect(typeof await runner.runNow(MAIN, task())).toBe('object')
+    expect(await runner.runNow(MAIN, task())).toBe('run_open')
+    world.task('busy', WEEKDAYS_8)
+    world.session('busy', 's-work', true)
+    expect(await runner.runNow(MAIN, task('busy'))).toBe('task_working')
+    expect(world.store.get('busy')).toBeUndefined()
+    world.task('mail', null)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }], pendingApproval: true })
+    expect(await runner.runNow(MAIN, task('mail'))).toBe('needs_approval')
+  })
+
+  it('is refused before it starts when a new session would be needed and the task has no project to run in', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.noProject.add('daily')
+    expect(await runner.runNow(MAIN, task())).toBe('no_project')
+    // nothing was written: no record made for it, no run that would fail
+    expect(world.store.get('daily')).toBeUndefined()
+    expect(world.store.runs('daily')).toEqual([])
+    // a session that waits on an answer continues: no new session, so no project is needed
+    world.session('daily', 's-asks')
+    world.wait('daily', 's-asks', 'go')
+    expect(await runner.runNow(MAIN, task())).toMatchObject({ trigger: 'manual' })
+    // with a project again it runs
+    world.task('other', WEEKDAYS_8)
+    expect(await runner.runNow(MAIN, task('other'))).toMatchObject({ trigger: 'manual' })
+  })
+})
+
+describe('a channel message from the bridge', () => {
+  const mail: Job['triggers'] = [{ type: 'mail', match: [{ kind: 'domain', domain: 'customer.example' }] }]
+  const listen = (patch: Partial<Job> = {}, schedule: ScheduleFields | null = null) => {
+    world.task('mail', schedule)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail, ...patch })
+    return world.store.get('mail')!
+  }
+  const wake = (key = 'k1') => runner.wake(world.store.get('mail')!, 'mail', '2 new mails from customer.example', key)
+
+  it('d: starts a new session with the task\'s prompt, the line and the message; the same key wakes it once', async () => {
+    listen()
+    expect(await wake()).toBe('delivered')
+    expect(await wake()).toBe('delivered')
+    expect(world.started).toHaveLength(1)
+    const parts = world.started[0].text.split('\n\n')
+    expect(parts[0].split('\n')[0]).toBe('A new message on mail started you for "Task mail" (task mail).')
+    expect(parts.at(-2)).toContain('What fired: a new message on mail.')
+    expect(parts.at(-1)).toBe('2 new mails from customer.example')
+    expect(runs('mail')).toEqual([expect.objectContaining({ status: 'started', trigger: 'mail', number: 1, idempotencyKey: 'k1' })])
+    expect(await wake('k2')).toBe('delivered')
+    expect(world.started).toHaveLength(2)
+  })
+
+  it('a: is never skipped: a working session gets it with its next turn', async () => {
+    listen()
+    world.session('mail', 's-work', true)
+    world.deliveryOutcome = 'delivered'
+    expect(await wake()).toBe('delivered')
+    expect(world.started).toEqual([])
+    expect(world.delivered).toEqual([{ sessionId: 's-work', text: expect.stringMatching(/a new message on mail[^]*\n\n2 new mails from customer\.example$/) }])
+    expect(statuses('mail')).toEqual(['started'])
+  })
+
+  it('a: asks the bridge to retry when the working session cannot take it, and keeps no run of the try', async () => {
+    listen()
+    world.session('mail', 's-terminal', true)
+    for (const outcome of ['busy', 'refused'] as const) {
+      world.deliveryOutcome = outcome
+      expect(await wake()).toBe('retry')
+    }
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    expect(world.store.get('mail')?.runCount).toBe(0)
+    // the bridge comes back with the same key once the session is free
+    world.deliveryOutcome = 'delivered'
+    expect(await wake()).toBe('delivered')
+  })
+
+  it('a: while another member\'s session works on the task the message is handled here: that session cannot touch it, so a session starts for it', async () => {
+    listen()
+    world.elsewhere.add('mail')
+    expect(await wake()).toBe('delivered')
+    expect(world.started).toHaveLength(1)
+  })
+
+  it('b: goes to the session that waits on an answer', async () => {
+    listen()
+    world.session('mail', 's-asks')
+    world.wait('mail', 's-asks', 'question')
+    expect(await wake()).toBe('delivered')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-asks'])
+    expect(world.started).toEqual([])
+  })
+
+  it('never answers delivered unless a session linked to the record got the message, or one was started for it', async () => {
+    const mail = () => runner.wake(world.store.get('mail')!, 'mail', '1 new message', `key-${world.now}`)
+    world.task('mail', null)
+    world.store.put({ ...newRecord({ id: 'mail', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
+    // the owner's own session on the task: it has no bridge tools, so it could not read or answer the mail
+    world.session('mail', 's-own', true, false)
+    // the message is handled all the same: a session is started for the record beside it
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toHaveLength(1)
+    expect(runs('mail')).toMatchObject([{ trigger: 'mail', status: 'started', sessionId: world.started[0].sessionId }])
+    // without room for one more session the bridge keeps the message
+    world.room = false
+    world.now += MIN
+    expect(await mail()).toBe('retry')
+    world.room = true
+    // it stops and waits on the owner's answer: the message still does not go to it; a session is started for the record
+    world.sessions[0].working = false
+    world.states.set('s-own', 'idle')
+    world.wait('mail', 's-own', 'question')
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered).toEqual([])
+    expect(world.started).toHaveLength(2)
+    // that session is the record's: working, it gets the next message; the owner's own never does
+    const linked = world.started[1].sessionId
+    world.session('mail', linked, true, true)
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual([linked])
+    // a linked session that takes no message, beside the owner's own: a new one starts, never the owner's
+    world.sessions[0].working = false
+    world.states.set(linked, 'stopped')
+    world.wait('mail', linked, 'question')
+    world.outcomes.set(linked, 'unknown')
+    world.now += MIN
+    expect(await mail()).toBe('delivered')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual([linked, linked])
+    expect(world.started).toHaveLength(3)
+    expect(world.delivered.some((d) => d.sessionId === 's-own')).toBe(false)
+  })
+
+  it('a time still continues the owner\'s own session that waits on an answer, linked or not', async () => {
+    world.task('daily', WEEKDAYS_8)
+    world.session('daily', 's-own', false, false)
+    world.wait('daily', 's-own', 'question')
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.delivered.map((d) => d.sessionId)).toEqual(['s-own'])
+    expect(world.started).toEqual([])
+  })
+
+  it('asks for a retry without room, and drops the run that never happened', async () => {
+    listen()
+    world.room = false
+    expect(await wake()).toBe('retry')
+    expect(runs('mail')).toEqual([])
+    world.room = true
+    expect(await wake()).toBe('delivered')
+    expect(runs('mail')[0].number).toBe(1)
+  })
+
+  it('asks for a retry while the record waits for the user\'s OK, is paused after failures, or the task\'s schedule is paused', async () => {
+    listen({ pendingApproval: true })
+    expect(await wake()).toBe('retry')
+    listen({ pausedReason: '3 failed runs in a row' })
+    expect(await wake()).toBe('retry')
+    listen({}, { ...WEEKDAYS_8, paused: true })
+    expect(await wake()).toBe('retry')
+    expect(runner.held(world.store.get('mail')!)).toBe(true)
+    expect(world.started).toEqual([])
+    expect(runs('mail')).toEqual([])
+    listen({}, WEEKDAYS_8)
+    expect(await wake()).toBe('delivered')
+    expect(runner.held(world.store.get('mail')!)).toBe(false)
+  })
+
+  it('refuses a message for a task that is closed or gone, and asks for a retry while the brain cannot say', async () => {
+    listen()
+    world.patch('mail', { status: 'resolved' })
+    expect(await wake()).toBe('refused')
+    world.tasks.delete('mail')
+    expect(await wake()).toBe('refused')
+    world.unreadable.add(null)
+    expect(await wake()).toBe('retry')
+    expect(runs('mail')).toEqual([])
+  })
+
+  it('answers retry when the session could not be started; the failure counts', async () => {
+    listen()
+    world.startProblem = 'no project'
+    expect(await wake()).toBe('retry')
+    expect(statuses('mail')).toEqual(['failed'])
+    expect(world.store.get('mail')?.failures).toBe(1)
+  })
+})
+
+describe('what the engine knows of a task', () => {
+  it('names a task as its last read had it, and by its id before that', async () => {
+    expect(runner.nameOf('11111111-2222')).toBe('task 11111111')
+    world.task('daily', WEEKDAYS_8)
+    await runner.tick()
+    expect(runner.nameOf('daily')).toBe('Task daily')
+  })
+
+  it('holds a record for the bridge as soon as the owner pauses the schedule, and no longer once resumed', async () => {
+    world.task('daily', WEEKDAYS_8)
+    await runner.tick()
+    const record = world.store.get('daily')!
+    expect(runner.held(record)).toBe(false)
+    runner.paused('daily')
+    expect(runner.held(record)).toBe(true)
+    runner.resumed('daily')
+    expect(runner.held(record)).toBe(false)
   })
 })

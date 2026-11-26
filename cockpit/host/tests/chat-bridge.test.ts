@@ -68,7 +68,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnCheck?: ChatContext['turnCheck']; agent?: string | null; tracker?: TurnTracker; zone?: string; checkSaved?: ChatContext['checkSaved'] } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     workerMode: 'auto',
@@ -134,8 +134,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; transcript?: boolean; hist
     turnDone: opts.turnDone,
     worksAlone: opts.worksAlone,
     turnContext: opts.turnContext,
-    turnCheck: opts.turnCheck,
-    checkSaved: opts.checkSaved,
+    turnWake: opts.turnWake,
     // A fixed moment, so the times in these calls stay ahead of it.
     callTime: () => ({ now: Date.parse('2026-11-25T08:00:00Z'), zone: opts.zone ?? 'UTC' }),
   } as unknown as ChatContext
@@ -470,9 +469,9 @@ describe('ChatBridge', () => {
       expect(await worker.endTurn({ result: 'Half way', next: { who: 'lasse', what: 'decide' } })).toMatchObject({ missing: [] })
     })
 
-    it('refuses a call whose time has passed: nothing is recorded, no check is asked for', async () => {
+    it('refuses a call whose time has passed: nothing is recorded, no wake-up is asked for', async () => {
       const checks: unknown[] = []
-      const { worker, attention } = started({ turnCheck: async (_id, check) => { checks.push(check.at); return null } })
+      const { worker, attention } = started({ turnWake: async (_id, wake) => { checks.push(wake.edit); return { problem: null, saved: null, nextRun: false } } })
       await expect(worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T07:59' } }))
         .rejects.toThrow('next.when "2026-11-25T07:59" has passed (read in UTC); name a time that is still to come')
       expect(attention() ?? null).toBeNull()
@@ -481,7 +480,8 @@ describe('ChatBridge', () => {
       expect(await worker.onTurnEnding()).toBe(reminder(['call']))
       // A hand-over to the user sets no check: its time is not used, so a passed one refuses nothing.
       expect(await worker.endTurn({ result: 'Sent', next: { who: 'lasse', what: 'read it', when: '2026-11-25T07:59' } })).toMatchObject({ derived: { status: 'review', checkAt: null }, missing: [] })
-      expect(checks).toEqual([null])
+      // The hand-over clears the task's wake-up, whoever set it.
+      expect(checks).toEqual([{ kind: 'clear', whose: 'any' }])
     })
 
     it('reads a call against the space\'s agent and nobody else when the host gives no context, or its context fails', async () => {
@@ -512,19 +512,32 @@ describe('ChatBridge', () => {
       expect((await worker.endTurn({ result: 'Closed it' })).missing).toEqual([])
     })
 
-    it('hands the check to the host and tells the agent when it could not be set', async () => {
-      const checks: Array<string | null> = []
-      const { worker } = started({ turnCheck: async (_id, check) => { checks.push(check.at); return check.at === '2028-01-01T10:00' ? 'at: at most a year ahead' : null } })
+    it('hands the wake-up to the host and tells the agent when it could not be set', async () => {
+      const edits: unknown[] = []
+      const { worker } = started({ turnWake: async (_id, wake) => {
+        edits.push(wake.edit)
+        return wake.edit.kind === 'set' && wake.edit.when === '2028-01-01T10:00' ? { problem: 'at most a year ahead', fix: 'time', saved: null, nextRun: false } : { problem: null, saved: null, nextRun: false }
+      } })
       expect((await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } })).checkProblem).toBeUndefined()
       const far = await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2028-01-01T10:00' } })
-      expect(far.checkProblem).toBe('at: at most a year ahead')
+      expect(far).toMatchObject({ checkProblem: 'at most a year ahead', checkFix: 'time' })
       await worker.endTurn({ result: 'Sent' })
-      // A call without a time goes there too: the check it set earlier is removed.
-      expect(checks).toEqual(['2026-11-27T10:00', '2028-01-01T10:00', null])
+      // A call without a time goes there too: the wake-up this session set earlier is cleared.
+      expect(edits).toEqual([{ kind: 'set', when: '2026-11-27T10:00' }, { kind: 'set', when: '2028-01-01T10:00' }, { kind: 'clear', whose: 'own' }])
+    })
+
+    it('asks for no time, and records the wait, when the task has a next run from its schedule', async () => {
+      const { worker } = started({ turnWake: async () => ({ problem: null, saved: null, nextRun: true }) })
+      expect(await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again' } })).toMatchObject({ derived: { status: 'done', wait: null, checkAt: null }, missing: [], nextRun: true })
+      expect(await worker.endTurn({ result: 'Sent', next: { who: 'outside:Acme', what: 'answers' } }))
+        .toMatchObject({ derived: { wait: { who: 'Acme', kind: 'outside', why: 'answers' } }, missing: [], nextRun: true })
+      // Without a next run the same calls lack the time.
+      const bare = started({ turnWake: async () => ({ problem: null, saved: null, nextRun: false }) })
+      expect((await bare.worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again' } })).missing).toEqual(['when'])
     })
 
     it('reads next.when in the user\'s time zone, names the instant the schedule saved, and tells the session the zone (the process runs in UTC)', async () => {
-      const made = setup({ zone: 'Asia/Bangkok', turnCheck: async () => null, checkSaved: () => ({ at: Date.parse('2026-11-25T13:15:00Z'), zone: 'Asia/Bangkok' }) })
+      const made = setup({ zone: 'Asia/Bangkok', turnWake: async () => ({ problem: null, saved: { at: Date.parse('2026-11-25T13:15:00Z'), zone: 'Asia/Bangkok' }, nextRun: true }) })
       made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
       expect(made.runtimes[0].start.timeZone).toBe('Asia/Bangkok (UTC+7)')
       const worker = made.runtimes[0].start.worker!
@@ -537,7 +550,7 @@ describe('ChatBridge', () => {
     })
 
     it('names no saved instant for a check that could not be set', async () => {
-      const made = setup({ zone: 'Asia/Bangkok', turnCheck: async () => 'This space has 30 jobs already.', checkSaved: () => ({ at: 0, zone: 'Asia/Bangkok' }) })
+      const made = setup({ zone: 'Asia/Bangkok', turnWake: async () => ({ problem: 'the task\'s schedule could not be written (the brain does not answer)', fix: 'again', saved: null, nextRun: false }) })
       made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
       expect((await made.runtimes[0].start.worker!.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T20:15' } })).checkTime).toBeUndefined()
     })
@@ -1525,7 +1538,8 @@ describe('ChatBridge', () => {
     ws.client({ type: 'restart', unlimited: true, forJob: true })
     await flush()
     expect(cleared).toEqual(['job-1'])
-    expect(ws.events().some((e) => e.kind === 'notice' && /Weekly analysis/.test(e.text))).toBe(true)
+    // The name is the task's: a schedule sits on a task, there is no job to name.
+    expect(ws.events().some((e) => e.kind === 'notice' && /Future runs of the task "Weekly analysis" start without them too\./.test(e.text))).toBe(true)
   })
 
   it('a limited channel job\'s limits are not lifted here, and nothing restarts', async () => {

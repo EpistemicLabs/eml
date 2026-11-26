@@ -51,6 +51,27 @@ export async function handleBridgeApi(req: http.IncomingMessage, res: http.Serve
   }
 }
 
+/**
+ * A job got a new id in the cockpit (it became its task's record): the bridge is told, so its messages, wakes and
+ * drafts follow (the bridge's POST /v1/jobs/<id>/rename). `off`: the bridge does not run or cannot be reached, which
+ * is no error for the caller: it asks again later. `failed`: it answered and did not rename.
+ */
+export async function renameBridgeJob(deps: BridgeApiDeps, from: string, to: string): Promise<'renamed' | 'off' | 'failed'> {
+  const url = deps.url()
+  const token = deps.cockpitToken()
+  if (!url || !token) return 'off'
+  let upstream: Response
+  try {
+    upstream = await fetch(`${url}/v1/jobs/${encodeURIComponent(from)}/rename`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ to }),
+      signal: AbortSignal.timeout(30_000),
+    })
+  } catch {
+    return 'off'
+  }
+  return upstream.ok ? 'renamed' : 'failed'
+}
+
 /** The bridge's address and the cockpit's token, as the bridge wrote them into its folder. */
 export function bridgeFiles(home = CHANNEL_BRIDGE_HOME): BridgeApiDeps {
   const read = (name: string) => {
