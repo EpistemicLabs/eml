@@ -117,6 +117,19 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.moved).toEqual([['j1', 't1']])
   })
 
+  it('a pass under way is joined, not doubled: two calls write each task once and answer the same', async () => {
+    const w = world([v1('j1'), v1('j2', { taskId: 't2' })], [task('t1'), task('t2')])
+    const first = w.migration.run()
+    const second = w.migration.run()
+    expect(second).toBe(first)
+    expect(await second).toMatchObject({ moved: 2, failed: [] })
+    expect(w.posts.map((p) => p.path)).toEqual(['/task/t1/track', '/task/t2/track'])
+    expect(w.moved).toEqual([['j1', 't1'], ['j2', 't2']])
+    expect(w.saved).toHaveLength(1)
+    // once it is over, a new call is a pass of its own
+    expect(w.migration.run()).not.toBe(first)
+  })
+
   it('a task without a delegation gets one for the space\'s agent with its schedule', async () => {
     const w = world([v1('j1')], [task('t1')])
     await w.migration.run()
