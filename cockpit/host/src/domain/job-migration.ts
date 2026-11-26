@@ -20,9 +20,15 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, 
  *     was built from the task itself, as a scheduled hand-over's is);
  *   - a one-time job still ahead → the task's wake-up: at, why (its prompt) and by_session (the session it wakes).
  *     A task has one wake-up: of two, the earlier one is it, the later one's time and prompt go into the journal;
- *   - a one-time job whose time has passed and that never ran → dropped, with a journal line;
- *   - a paused job → with all of the task's timed jobs paused, the schedule is paused; a paused job next to running
- *     ones is left out, with a journal line (the one Pause is for the whole schedule, and it would run again);
+ *   - a one-time job whose time has passed and that never ran → not dropped: it is the task's wake-up with its past
+ *     time, which the engine fires late; when the task gets its wake-up from another job, its prompt goes into the
+ *     journal, and the report says so. One that has run has nothing to carry over;
+ *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
+ *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
+ *     one-time job next to running ones is left out, with a journal line;
+ *   - a repeating job in another time zone than the task's first → left out (a task's times are read in one zone),
+ *     and said loudly: the journal and the report say that it no longer fires and give the schedule-tool call that
+ *     puts it on a task of its own;
  *   - its per-machine settings (who hears of a run, limited and lent tools, tool profile, reply mode, max runs, mail
  *     triggers, where a new session starts) → the task's record; its runs go on under the record. Of several jobs
  *     on one task the strictest wins: the narrowest tools, the limit, the draft reply; and the loudest telling.
@@ -83,6 +89,9 @@ export interface JobMigrationInput {
   routineTaskOf(job: JobV1): NewRoutineTask | null
 }
 
+/** What becomes of one job (TaskMigration.jobs). */
+export type JobFate = 'moved' | 'lost' | 'waits' | 'history'
+
 /** moved: onto its task. dropped: it ends here, with `why`. left: it stays in the version 1 data, with `why`. */
 export type MigrationOutcome = 'moved' | 'dropped' | 'left'
 
@@ -116,10 +125,16 @@ export interface TaskMigration {
   settles: string[]
   /** The jobs whose sessions work for the task's record from now on (the ledger's jobId moves to the task's id). */
   renamed: string[]
-  /** Per job, what becomes of it. */
-  jobs: Array<{ id: string; name: string; what: string }>
+  /**
+   * Per job, what becomes of it. `kind`: moved (it goes on firing, on its task), lost (it does not: left out, or
+   * dropped while it still had something to do), waits (it stays in the version 1 data for a later pass), history
+   * (it was over already: it had ended or had run).
+   */
+  jobs: Array<{ id: string; name: string; what: string; kind: JobFate }>
   /** The per-machine settings that move to the record, in words. */
   settings: string[]
+  /** The schedule is paused because one of the task's repeating jobs was, while others ran: the report says how to resume. */
+  pausedByJob?: boolean
 }
 
 export interface JobMigrationPlan {
@@ -170,7 +185,7 @@ function dropped(taskId: string | null, title: string, jobs: readonly JobV1[], i
     taskId, create: null, title, outcome: 'dropped', why, schedule, brain, record: null, runs: [], keys: {},
     history: Object.fromEntries(jobs.map((j) => [j.id, (input.runs[j.id] ?? []).map((r) => closed(r, at))])),
     settles: jobs.map((j) => j.id), renamed: [],
-    jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: j.endedAt ? 'had ended: its runs stay as history' : what(j) })),
+    jobs: jobs.map((j) => (j.endedAt ? { id: j.id, name: j.name, what: 'had ended: its runs stay as history', kind: 'history' as const } : { id: j.id, name: j.name, what: what(j), kind: 'lost' as const })),
     settings: [],
   }
 }
@@ -193,17 +208,23 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const taskId = create ? '' : task.id
   const live = jobs.filter((j) => !j.endedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   const ended = jobs.filter((j) => j.endedAt)
-  const lines: TaskMigration['jobs'] = ended.map((j) => ({ id: j.id, name: j.name, what: 'had ended: its runs stay as history' }))
+  const lines: TaskMigration['jobs'] = ended.map((j) => ({ id: j.id, name: j.name, what: 'had ended: its runs stay as history', kind: 'history' }))
   const journal: string[] = []
   const appended: string[] = []
-  const say = (job: JobV1, what: string) => lines.push({ id: job.id, name: job.name, what })
+  const say = (job: JobV1, what: string, kind: JobFate = 'moved') => lines.push({ id: job.id, name: job.name, what, kind })
 
   const repeating = live.filter((j) => scheduleTriggerOf(j)?.cron !== undefined)
   const once = live.filter((j) => scheduleTriggerOf(j)?.at !== undefined)
-  const ahead = once.filter((j) => Date.parse(scheduleTriggerOf(j)!.at!) > now).sort((a, b) => Date.parse(scheduleTriggerOf(a)!.at!) - Date.parse(scheduleTriggerOf(b)!.at!))
-  const timed = [...repeating, ...ahead]
-  // One Pause for the whole schedule: it is paused when every timed job was; a paused job among running ones is left out.
-  const allPaused = !handed && timed.length > 0 && timed.every((j) => j.paused)
+  const byTime = (a: JobV1, b: JobV1) => Date.parse(scheduleTriggerOf(a)!.at!) - Date.parse(scheduleTriggerOf(b)!.at!)
+  const ahead = once.filter((j) => Date.parse(scheduleTriggerOf(j)!.at!) > now).sort(byTime)
+  // A one-time job whose time has passed and that never ran still has its run to do: it is a wake-up that fires late.
+  const overdueOnce = once.filter((j) => !ahead.includes(j) && neverRan(j, input.runs[j.id] ?? [])).sort(byTime)
+  const timed = [...repeating, ...ahead, ...overdueOnce]
+  // One Pause for the whole schedule, and the pause wins: it is paused when every timed job was, and when one of its
+  // repeating jobs was (its time is never left out, and would run again unpaused). A paused one-time job among
+  // running ones is left out. Another member's schedule is never paused from here: there every paused job is left out.
+  const pausedCrons = handed ? [] : repeating.filter((j) => j.paused)
+  const allPaused = !handed && timed.length > 0 && (timed.every((j) => j.paused) || pausedCrons.length > 0)
   const leftOut = (job: JobV1) => job.paused && !allPaused
 
   const current = task.properties?.delegation?.schedule ?? null
@@ -216,26 +237,29 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     const cron = trigger.cron!.trim()
     const note = `"${job.name}" (cron "${cron}", ${trigger.timeZone}): what it did: "${cut(flat(job.prompt), NOTE_CHARS)}"`
     if (leftOut(job)) {
-      say(job, `cron "${cron}" (${trigger.timeZone}) → left out: it was paused while the task's other times run; noted in the journal`)
-      journal.push(`A paused repeating job was not carried over when schedules moved onto tasks, since a task's schedule is paused as a whole. ${note}`)
+      // Only on another member's task: its schedule is its owner's, and is not paused from here.
+      say(job, `cron "${cron}" (${trigger.timeZone}) → left out: it was paused, and the task's schedule is its owner's to pause; noted in the journal`, 'lost')
+      journal.push(`A paused repeating job was not carried over when schedules moved onto tasks: the task's schedule is its owner's, and it would have run again. ${note}`)
       continue
     }
     const zone: string = cronZoneRefusal(schedule, trigger.timeZone) ?? trigger.timeZone
     if (trigger.timeZone !== zone) {
-      say(job, `cron "${cron}" (${trigger.timeZone}) → left out: the task's repeating times are read in ${zone}; noted in the journal`)
-      journal.push(`A repeating job in another time zone was not carried over when schedules moved onto tasks: the task's times are read in ${zone}. ${note}`)
+      // Loud, with the way back: this routine stops, and nothing else will say so.
+      const call = `To bring it back on a task of its own, call the schedule tool: action "create", name "${job.name}", cron "${cron}", timezone "${trigger.timeZone}", prompt "${cut(flat(job.prompt), NOTE_CHARS)}"`
+      say(job, `cron "${cron}" (${trigger.timeZone}) → NOT MOVED, IT NO LONGER FIRES: the task's repeating times are read in ${zone}, and a task has one zone. ${call}`, 'lost')
+      journal.push(`The routine "${job.name}" NO LONGER FIRES: it ran in another time zone (cron "${cron}", ${trigger.timeZone}) than the task's repeating times (${zone}), and a task's times are read in one zone, so it was not carried over when schedules moved onto tasks. ${call}`)
       continue
     }
     const has = schedule?.crons?.includes(cron) ?? false
     if (!has && (schedule?.crons?.length ?? 0) >= SCHEDULE_LIMITS.crons) {
-      say(job, `cron "${cron}" → left out: a task holds at most ${SCHEDULE_LIMITS.crons} repeating times; noted in the journal`)
+      say(job, `cron "${cron}" → left out: a task holds at most ${SCHEDULE_LIMITS.crons} repeating times; noted in the journal`, 'lost')
       journal.push(`A repeating job was not carried over when schedules moved onto tasks: a task holds at most ${SCHEDULE_LIMITS.crons} repeating times. ${note}`)
       continue
     }
     try {
       schedule = addCron(schedule, cron, zone)
     } catch (err) {
-      say(job, `cron "${cron}" → left out: ${(err as Error).message}; noted in the journal`)
+      say(job, `cron "${cron}" → left out: ${(err as Error).message}; noted in the journal`, 'lost')
       journal.push(`A repeating job was not carried over when schedules moved onto tasks: ${(err as Error).message}. ${note}`)
       continue
     }
@@ -246,43 +270,48 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       content = content.trim() ? `${content.replace(/\s+$/, '')}\n\n${paragraph}` : paragraph
       appended.push(paragraph)
     }
-    say(job, `cron "${cron}" (${zone}) → a repeating time of the task${has ? ' (it has that time already)' : ''}; its prompt ${said ? 'is in the task\'s text already' : 'is appended to the task\'s text'}`)
+    say(job, `cron "${cron}" (${zone}) → a repeating time of the task${has ? ' (it has that time already)' : ''}${job.paused && pausedCrons.includes(job) ? '; it was paused, so the task\'s whole schedule is paused' : ''}; its prompt ${said ? 'is in the task\'s text already' : 'is appended to the task\'s text'}`)
   }
 
   let wake: JobV1 | null = null
-  for (const job of ahead) {
+  for (const job of [...ahead, ...overdueOnce]) {
     const at = scheduleTriggerOf(job)!.at!
+    const late = overdueOnce.includes(job)
+    const quoted = `"${cut(flat(job.prompt), NOTE_CHARS)}"`
     if (leftOut(job)) {
-      say(job, `once at ${at} → left out: it was paused while the task's other times run; noted in the journal`)
-      journal.push(`A paused one-time run was not carried over when schedules moved onto tasks. "${job.name}", set for ${at}: "${cut(flat(job.prompt), NOTE_CHARS)}"`)
+      say(job, `once at ${at} → left out: it was paused while the task's other times run; noted in the journal`, 'lost')
+      journal.push(`A paused one-time run was not carried over when schedules moved onto tasks. "${job.name}", set for ${at}: ${quoted}`)
+      continue
+    }
+    if (wake && late) {
+      say(job, `once at ${at} → not the task's wake-up: its time has passed, it never ran, and the task gets its wake-up from "${wake.name}"; its prompt is noted in the journal`, 'lost')
+      journal.push(`A one-time run set for ${at} never ran, and the task has another wake-up (${schedule?.at}); what it was to do is noted here: ${quoted}`)
       continue
     }
     if (wake) {
-      say(job, `once at ${at} → not the task's wake-up: "${wake.name}" comes earlier, and a task has one; its time and prompt are noted in the journal`)
-      journal.push(`A later one-time run was set too, for ${at}; a task has one wake-up, so it is noted here: "${cut(flat(job.prompt), NOTE_CHARS)}"`)
+      say(job, `once at ${at} → not the task's wake-up: "${wake.name}" comes earlier, and a task has one; its time and prompt are noted in the journal`, 'lost')
+      journal.push(`A later one-time run was set too, for ${at}; a task has one wake-up, so it is noted here: ${quoted}`)
       continue
     }
     if (handed && schedule?.at) {
-      say(job, `once at ${at} → not the task's wake-up: the task has one already (${schedule.at}), and it is its owner's; its time and prompt are noted in the journal`)
-      journal.push(`A one-time run was set too, for ${at}; the task already has a wake-up, and a task has one, so it is noted here: "${cut(flat(job.prompt), NOTE_CHARS)}"`)
+      say(job, `once at ${at} → not the task's wake-up: the task has one already (${schedule.at}), and it is its owner's; its time and prompt are noted in the journal`, 'lost')
+      journal.push(`A one-time run was set too, for ${at}; the task already has a wake-up, and a task has one, so it is noted here: ${quoted}`)
       continue
     }
     wake = job
     const bySession = sessionOf(job)
     schedule = setWake(schedule, { at, why: job.prompt, bySession, timeZone: scheduleTriggerOf(job)!.timeZone })
     kept.push(job)
-    say(job, `once at ${at} → the task's wake-up${bySession ? `, set by session ${bySession.slice(0, 8)}` : ''}; its prompt is the reason${job.prompt.trim().length > SCHEDULE_LIMITS.whyChars ? ` (cut to ${SCHEDULE_LIMITS.whyChars} characters)` : ''}`)
+    const cutNote = job.prompt.trim().length > SCHEDULE_LIMITS.whyChars ? ` (cut to ${SCHEDULE_LIMITS.whyChars} characters)` : ''
+    say(job, late
+      ? `once at ${at} → the task's wake-up, though its time has passed: it never ran, so it fires late, at the cockpit's next look${bySession ? `; set by session ${bySession.slice(0, 8)}` : ''}; its prompt is the reason${cutNote}`
+      : `once at ${at} → the task's wake-up${bySession ? `, set by session ${bySession.slice(0, 8)}` : ''}; its prompt is the reason${cutNote}`)
   }
-  for (const job of once.filter((j) => !ahead.includes(j))) {
-    const at = scheduleTriggerOf(job)!.at!
-    if (neverRan(job, input.runs[job.id] ?? [])) {
-      say(job, `once at ${at} → dropped: its time has passed and it never ran; noted in the journal`)
-      journal.push(`The one-time run "${job.name}" set for ${at} never ran; it was dropped when schedules moved onto tasks.`)
-    } else {
-      say(job, `once at ${at} → it has run: no time to carry over`)
-    }
+  for (const job of once.filter((j) => !ahead.includes(j) && !overdueOnce.includes(j))) say(job, `once at ${scheduleTriggerOf(job)!.at!} → it has run: no time to carry over`, 'history')
+  for (const job of live.filter((j) => !scheduleTriggerOf(j))) {
+    if (handed) say(job, `${describe(job)} → not carried over: a channel is kept per machine, and the task is ${handed}'s`, 'lost')
+    else say(job, `${describe(job)} → its channel wakes the task`)
   }
-  for (const job of live.filter((j) => !scheduleTriggerOf(j))) say(job, `${describe(job)} → its channel wakes the task`)
 
   // The end: a time only when every time that moved had one (the latest of them), a number of runs only for a single job.
   const ends = kept.map((j) => (j.end?.at ? Date.parse(j.end.at) : NaN))
@@ -292,6 +321,11 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   } else if (schedule && ends.length > 0 && ends.every(Number.isFinite)) schedule = setEndsAt(schedule, iso(Math.max(...ends)))
   else if (ends.some(Number.isFinite)) settings.push('an end time of one job is not carried over: the task\'s other times have none')
   if (schedule && allPaused) schedule = setPaused(schedule, true)
+  // Paused because of one repeating job, with others that ran: said where the owner reads it, with the way out.
+  if (schedule?.paused && pausedCrons.length > 0 && !timed.every((j) => j.paused)) {
+    const which = pausedCrons.map((j) => `"${j.name}" (cron "${scheduleTriggerOf(j)!.cron!.trim()}")`).join(', ')
+    journal.push(`Its schedule is paused as a whole: its repeating job${pausedCrons.length === 1 ? '' : 's'} ${which} ${pausedCrons.length === 1 ? 'was' : 'were'} paused when schedules moved onto tasks, and a task has one Pause for all its times. Nothing fires until it is resumed: Resume in the task's Schedule section, or the schedule tool's resume. To keep ${pausedCrons.length === 1 ? 'that one time' : 'those times'} off, remove ${pausedCrons.length === 1 ? 'it' : 'them'} there first.`)
+  }
 
   const setSchedule = create !== null ? schedule !== null : !sameSchedule(current, schedule)
   // The brain takes a rewrite of a task's text only with a line that says what happened.
@@ -376,6 +410,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     ]),
     settles: jobs.map((j) => j.id), renamed: record ? live.map((j) => j.id) : [],
     jobs: lines, settings,
+    ...(schedule?.paused && pausedCrons.length > 0 && !timed.every((j) => j.paused) ? { pausedByJob: true } : {}),
   }
 }
 
@@ -402,7 +437,7 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
         : 'the members of this space could not be read, so it is not known whether a member owns the task: it waits'
       tasks.push({
         taskId, create: null, title: nameOf(task), outcome: 'left', why, schedule: task.properties?.delegation?.schedule ?? null, brain: null, record: null,
-        runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: `${describe(j)} → waits` })), settings: [],
+        runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: `${describe(j)} → waits`, kind: 'waits' as const })), settings: [],
       })
       continue
     }
@@ -431,16 +466,16 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       continue
     }
     const trigger = scheduleTriggerOf(job)
-    if (trigger?.at !== undefined && Date.parse(trigger.at) <= input.now && channelsOf(job).length === 0 && !(input.runs[job.id] ?? []).some(isOpenRun)) {
-      const ran = !neverRan(job, input.runs[job.id] ?? [])
-      tasks.push(dropped(null, job.name, [job], input, ran ? 'it has run and has no task' : 'its time has passed, it never ran and has no task', null, null, (j) => `${describe(j)} → dropped`))
+    // A one-time job that has run has nothing left to do. One that never ran still has: it gets a task like any other.
+    if (trigger?.at !== undefined && Date.parse(trigger.at) <= input.now && channelsOf(job).length === 0 && !(input.runs[job.id] ?? []).some(isOpenRun) && !neverRan(job, input.runs[job.id] ?? [])) {
+      tasks.push({ ...dropped(null, job.name, [job], input, 'it has run and has no task', null, null, (j) => `${describe(j)} → it has run: nothing to carry over`), jobs: [{ id: job.id, name: job.name, what: `${describe(job)} → it has run: nothing to carry over`, kind: 'history' }] })
       continue
     }
     const create = input.routineTaskOf(job)
     if (!create) {
       tasks.push({
         taskId: null, create: null, title: job.name, outcome: 'left', why: 'it has no task and no project of the brain to make one in: it stays as it is, nothing fires it', schedule: null, brain: null, record: null,
-        runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: [{ id: job.id, name: job.name, what: `${describe(job)} → left as it is` }], settings: [],
+        runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: [{ id: job.id, name: job.name, what: `${describe(job)} → left as it is`, kind: 'waits' }], settings: [],
       })
       continue
     }
@@ -460,6 +495,13 @@ export function stepOf(plan: TaskMigration, taskId: string | null): { jobIds: st
   }
 }
 
+/** How many of the planned jobs go on firing (moved), do not (lost), wait for a later pass (waits), or were over already (history). */
+export function jobFates(plan: Pick<JobMigrationPlan, 'tasks'>): Record<JobFate, number> {
+  const fates: Record<JobFate, number> = { moved: 0, lost: 0, waits: 0, history: 0 }
+  for (const task of plan.tasks) for (const job of task.jobs) fates[job.kind] += 1
+  return fates
+}
+
 /** The plan as Markdown, per task: which times, which text, which jobs go and why, which settings move. */
 export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string; at: string; dryRun: boolean }): string {
   const out: string[] = [
@@ -468,7 +510,10 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
   ]
   const count = (outcome: MigrationOutcome) => plan.tasks.filter((t) => t.outcome === outcome).length
   const jobs = plan.tasks.reduce((sum, t) => sum + t.jobs.length, 0)
-  out.push(`${jobs} job${jobs === 1 ? '' : 's'} on ${plan.tasks.length} task${plan.tasks.length === 1 ? '' : 's'}: ${count('moved')} moved, ${count('dropped')} dropped, ${count('left')} left as they are.${plan.elsewhere ? ` ${plan.elsewhere} job${plan.elsewhere === 1 ? '' : 's'} of other spaces wait for their space.` : ''}`, '')
+  const fate = jobFates(plan)
+  // A task counts as moved also when one of its jobs was left out: the count by job says what does not fire any more.
+  const byJob = fate.lost + fate.waits > 0 ? ` Of the jobs, ${fate.moved} moved and ${fate.lost + fate.waits} did not.` : ''
+  out.push(`${jobs} job${jobs === 1 ? '' : 's'} on ${plan.tasks.length} task${plan.tasks.length === 1 ? '' : 's'}: ${count('moved')} moved, ${count('dropped')} dropped, ${count('left')} left as they are.${byJob}${plan.elsewhere ? ` ${plan.elsewhere} job${plan.elsewhere === 1 ? '' : 's'} of other spaces wait for their space.` : ''}`, '')
   for (const t of plan.tasks) {
     const id = t.taskId ? ` (${t.taskId.slice(0, 8)})` : t.create ? ' (a new task)' : ''
     out.push(`## ${t.title}${id} — ${t.outcome}${t.why ? `: ${t.why}` : ''}`, '')
@@ -478,7 +523,7 @@ export function jobMigrationReport(plan: JobMigrationPlan, opts: { space: string
       if (s) {
         out.push(`- Repeating times: ${s.crons?.length ? `${s.crons.join('; ')}${s.time_zone ? ` (${s.time_zone})` : ''}` : 'none'}`)
         out.push(`- Wake-up: ${s.at ? `${s.at}${s.by_session ? `, set by session ${s.by_session.slice(0, 8)}` : ''} — "${cut(flat(s.why ?? ''), 200)}"` : 'none'}`)
-        if (s.paused) out.push('- The schedule is paused.')
+        if (s.paused) out.push(t.pausedByJob ? '- The schedule is paused: one of its repeating jobs was. Resume it on the task (its Schedule section, or the schedule tool\'s resume).' : '- The schedule is paused.')
         if (s.ends_at) out.push(`- It ends at ${s.ends_at}.`)
         out.push(t.brain?.setSchedule ? '- That schedule is written to the task.' : '- The task has that schedule already: it is not written again.')
       } else out.push(t.brain?.setSchedule ? '- No time moves onto the task; the schedule it still shows is cleared.' : '- No time moves onto the task: it has no schedule.')

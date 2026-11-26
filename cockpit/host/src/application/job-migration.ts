@@ -2,7 +2,8 @@ import { EmlApiError, type EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import type { Job } from '../domain/job.js'
 import type { JobV1 } from '../domain/job-v1.js'
-import { jobMigrationReport, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
+import { jobFates, jobMigrationReport, planJobMigration, stepOf, type JobMigrationPlan, type JobMigrationTask, type NewRoutineTask, type TaskMigration } from '../domain/job-migration.js'
+import type { NotificationInput } from '../notifications.js'
 import type { JobStore } from '../job-store.js'
 import { makeRoutineTask, routineTask } from './task-state-migration.js'
 import { writeTaskSchedule } from './task-schedule-write.js'
@@ -14,7 +15,8 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  * application/task-schedule-write.ts), then the store (the record in, the jobs out of the version 1 data), then the
  * sessions of those jobs move to the record in the ledger.
  *
- * The version 1 file is copied next to itself before it is rewritten for the first time (job-store.ts). The pass is
+ * The version 1 file is copied next to itself before it is rewritten for the first time (job-store.ts). The report
+ * of each real run is appended to a file next to it, and the user is told when a job did not move. The pass is
  * safe to run again: a job that moved is no longer in the version 1 data, so a second start finds nothing; a task
  * whose write failed, and a space whose brain did not answer, keep their jobs there for the next start. A crash
  * between a task's brain write and its store write plans that one task again: its schedule and text are found as
@@ -39,10 +41,36 @@ export interface JobMigrationDeps {
   moveSessions(fromJobId: string, toRecordId: string): void
   now(): number
   log(line: string): void
+  /**
+   * Keep the report of a real run: append it to the report file in the cockpit home, next to the backup of the
+   * version 1 file, and return that file's path. Without it no report is kept.
+   */
+  saveReport?(markdown: string): string
+  /** Tell the user (notifications.ts, as the engine tells a paused schedule): a run in which a job did not move. */
+  notify?(input: NotificationInput): void
 }
 
 export interface SpacePlan { space: BrainSpace; plan: JobMigrationPlan; report: string }
-export interface JobMigrationResult { moved: number; dropped: number; left: number; failed: string[]; reports: string[] }
+export interface JobMigrationResult {
+  /** Tasks, by what became of them. */
+  moved: number
+  dropped: number
+  left: number
+  failed: string[]
+  reports: string[]
+  /** Jobs: those that go on firing on their task, and those that do not (left out, dropped while live, or still waiting). Jobs that were over do not count. */
+  jobs: { moved: number; notMoved: number }
+  /** Where this run's report was kept; null: none was written (nothing was planned, nothing changed since the last one, or it failed). */
+  reportFile: string | null
+}
+
+/** What a real run appends to the report file: its date, the count by job, what was not done, and each space's report. */
+export function runReport(result: Pick<JobMigrationResult, 'jobs' | 'failed' | 'reports'>, at: string): string {
+  const notDone = result.failed.length > 0 ? `Not done in this run:\n${result.failed.map((line) => `- ${line}`).join('\n')}\n\n` : ''
+  return `# Run of ${at}\n\n${MOVED_LINE(result.jobs)}.\n\n${notDone}${result.reports.join('\n')}\n`
+}
+
+const MOVED_LINE = (jobs: JobMigrationResult['jobs']) => `Schedules moved onto their tasks: ${jobs.moved} moved, ${jobs.notMoved} not moved`
 
 const keyOf = (space: BrainSpace): string | null => (space.main ? null : space.id)
 
@@ -80,6 +108,8 @@ export const KIND_UNKNOWN = 'the brain server has not said yet whether it is sha
 
 export function createJobMigration(deps: JobMigrationDeps) {
   let running: Promise<JobMigrationResult> | null = null
+  /** A report of this process is in the file: a later pass adds one only when it changed something. */
+  let reported = false
 
   /** Shared, local, or null: not known yet (asked again each time). */
   const kindOf = async (space: BrainSpace): Promise<boolean | null> =>
@@ -117,7 +147,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
   }
 
   const runOnce = async (): Promise<JobMigrationResult> => {
-    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [] }
+    const result: JobMigrationResult = { moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null }
     if (!deps.store.pendingV1()) return result
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
@@ -125,11 +155,13 @@ export function createJobMigration(deps: JobMigrationDeps) {
       if (waiting === 0) continue
       if (!brain) {
         result.failed.push(`${space.name}: no brain to ask, its ${waiting} job(s) wait`)
+        result.jobs.notMoved += waiting
         continue
       }
       // Whose cockpit fires a task depends on the space's kind: not known, nothing of it is planned, and it waits.
       if (await kindOf(space) === null) {
         result.failed.push(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
+        result.jobs.notMoved += waiting
         continue
       }
       let planned: SpacePlan | null
@@ -137,21 +169,28 @@ export function createJobMigration(deps: JobMigrationDeps) {
         planned = await planSpace(space, brain, false)
       } catch (err) {
         result.failed.push(`${space.name}: its brain did not answer (${(err as Error).message}), its ${waiting} job(s) wait`)
+        result.jobs.notMoved += waiting
         continue
       }
       if (!planned) continue
       result.reports.push(planned.report)
       for (const task of planned.plan.tasks) {
+        const fates = jobFates({ tasks: [task] })
         if (task.outcome === 'left') {
           result.left += 1
+          result.jobs.notMoved += fates.waits + fates.lost
           deps.log(`[jobs] migration, ${space.name}: "${task.title}" left as it is: ${task.why}`)
           continue
         }
         try {
           await applyTask(space, brain, task)
           result[task.outcome] += 1
+          result.jobs.moved += fates.moved
+          result.jobs.notMoved += fates.lost + fates.waits
         } catch (err) {
           result.failed.push(`${space.name}: "${task.title}": ${(err as Error).message}`)
+          // Its jobs stay where they are for the next pass: none of them fires meanwhile.
+          result.jobs.notMoved += fates.moved + fates.lost + fates.waits
         }
       }
     }
@@ -161,6 +200,18 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (homeless > 0) result.failed.push(`${homeless} job(s) of a space this cockpit no longer has stay as they are`)
     deps.log(`[jobs] migration to schedules on tasks: ${result.moved} task(s) moved, ${result.dropped} dropped, ${result.left} left, ${result.failed.length} failed${rest.length ? `; ${rest.length} job(s) wait for the next start` : ''}`)
     for (const line of result.failed) deps.log(`[jobs] migration: ${line}`)
+    // The report is kept: the first one of this process, then one for every pass that moved or dropped something.
+    if (deps.saveReport && result.reports.length > 0 && (!reported || result.moved + result.dropped > 0)) {
+      try {
+        result.reportFile = deps.saveReport(runReport(result, new Date(deps.now()).toISOString()))
+        reported = true
+        deps.log(`[jobs] migration: the report of this run is in ${result.reportFile}`)
+        // Nothing is left out silently: a job that does not fire any more, or not yet, is told with where to read why.
+        if (result.jobs.notMoved > 0) deps.notify?.({ kind: 'review', title: 'Schedules', body: `${MOVED_LINE(result.jobs)} — see ${result.reportFile}`, jobId: 'jobs-migration-report', sessionId: null, spaceId: null })
+      } catch (err) {
+        deps.log(`[jobs] migration: its report could not be written: ${(err as Error).message}`)
+      }
+    }
     return result
   }
 

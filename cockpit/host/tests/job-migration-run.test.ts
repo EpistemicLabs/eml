@@ -65,12 +65,16 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
   const spaces = [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }, { id: 'space-2', name: 'Team', main: false, agent: 'motti', shared: opts.team === undefined ? false : opts.team }]
   /** What the brain server says of the team space when it is asked again; the calls are counted. */
   const kind = { answer: null as boolean | null, asked: 0 }
+  const saved: string[] = []
+  const notices: Array<Record<string, unknown>> = []
   const deps = {
+    saveReport: (markdown: string) => { saved.push(markdown); return '/home/someone/.eml-cockpit/jobs-migration-report.md' },
+    notify: (input: Record<string, unknown>) => { notices.push(input) },
     spaceKind: async (space: { shared: boolean | null }) => { kind.asked += 1; return space.shared ?? kind.answer },
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'lasse', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
-  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
+  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, saved, notices, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
@@ -117,8 +121,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     await w.migration.run()
     const posts = w.posts.length
     const file = readFileSync(w.file, 'utf8')
-    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [] })
-    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [] })
+    expect(await w.migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
+    expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
     expect(w.posts).toHaveLength(posts)
     expect(readFileSync(w.file, 'utf8')).toBe(file)
     expect(w.moved).toEqual([['j1', 't1']])
@@ -263,8 +267,60 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
     const migration = createJobMigration({ store: new JobStore(file), spaces: () => { throw new Error('not asked') }, brain: () => null, me: 'lasse', moveSessions: () => {}, now: () => NOW, log: () => {} })
     expect(migration.pending()).toBe(false)
-    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [] })
+    expect(await migration.run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, reportFile: null })
     expect(existsSync(file)).toBe(false)
+  })
+})
+
+describe('the report of a real run is kept, and the user is told of what did not move', () => {
+  it('writes the whole report of the run to a file with its date, logs where, and tells nothing when every job moved', async () => {
+    const w = world([v1('j1')], [task('t1')])
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ jobs: { moved: 1, notMoved: 0 }, reportFile: '/home/someone/.eml-cockpit/jobs-migration-report.md' })
+    expect(w.saved).toHaveLength(1)
+    expect(w.saved[0].startsWith('# Run of 2026-11-26T10:00:00.000Z\n\nSchedules moved onto their tasks: 1 moved, 0 not moved.\n\n# Schedules onto tasks — run\n')).toBe(true)
+    expect(w.saved[0]).toContain('- Job "Daily brief" (j1): cron "0 8 * * 1-5" (UTC) → a repeating time of the task')
+    expect(w.logs).toContain('[jobs] migration: the report of this run is in /home/someone/.eml-cockpit/jobs-migration-report.md')
+    expect(w.notices).toEqual([])
+    // the dry run writes no file
+    const dry = world([v1('j1')], [task('t1')])
+    await dry.migration.dryRun(dry.spaces[0] as never)
+    expect(dry.saved).toEqual([])
+  })
+
+  it('tells the user once, with the file, when a job did not move: one left out, one whose task is gone, one whose space did not answer', async () => {
+    const w = world(
+      [v1('j1'), v1('j2', { name: 'Tokyo brief', triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Asia/Tokyo' }] }), v1('j3', { taskId: 'gone' }), v1('j4', { spaceId: 'space-2', taskId: 't2' }), v1('j5', { taskId: 't1', endedAt: '2026-11-20T00:00:00.000Z' })],
+      [task('t1'), task('t2')], { down: ['space-2'] },
+    )
+    const result = await w.migration.run()
+    // j1 moved; j2 (another zone), j3 (task gone) and j4 (its brain did not answer) did not; j5 had ended: history
+    expect(result.jobs).toEqual({ moved: 1, notMoved: 3 })
+    expect(w.notices).toEqual([{
+      kind: 'review', title: 'Schedules', jobId: 'jobs-migration-report', sessionId: null, spaceId: null,
+      body: 'Schedules moved onto their tasks: 1 moved, 3 not moved — see /home/someone/.eml-cockpit/jobs-migration-report.md',
+    }])
+    expect(w.saved[0]).toContain('Schedules moved onto their tasks: 1 moved, 3 not moved.\n\nNot done in this run:\n- Team: its brain did not answer (connect ECONNREFUSED), its 1 job(s) wait\n')
+    expect(w.saved[0]).toContain('NOT MOVED, IT NO LONGER FIRES')
+    // a later pass that changes nothing writes no second report and tells nothing again
+    await w.migration.run()
+    expect(w.saved).toHaveLength(1)
+    expect(w.notices).toHaveLength(1)
+    // once the space answers, its pass is reported too
+    w.opts.down = []
+    expect((await w.migration.run()).jobs).toEqual({ moved: 1, notMoved: 0 })
+    expect(w.saved).toHaveLength(2)
+    expect(w.notices).toHaveLength(1)
+  })
+
+  it('a report that cannot be written does not stop the migration', async () => {
+    const w = world([v1('j1')], [task('t1')])
+    const migration = createJobMigration({
+      store: w.store, spaces: () => [w.spaces[0]] as never, brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async () => ({}) }),
+      me: 'lasse', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') },
+    } as never)
+    expect(await migration.run()).toMatchObject({ moved: 1, reportFile: null })
+    expect(w.logs.some((l) => l.includes('its report could not be written: disk full'))).toBe(true)
   })
 })
 

@@ -90,17 +90,32 @@ describe('planning jobs onto their tasks', () => {
     expect(t.settles.sort()).toEqual([later.id, earlier.id].sort())
   })
 
-  it('a one-time job whose time has passed and that never ran is dropped, with a journal line; one that ran has nothing to carry', () => {
+  it('a one-time job whose time has passed and that never ran is not dropped: it is the task\'s wake-up with its past time, and fires late; one that ran has nothing to carry', () => {
     const missed = once(PAST)
     const [t] = plan([missed]).tasks
-    expect(t).toMatchObject({ outcome: 'moved', schedule: null, record: null, renamed: [], settles: [missed.id] })
-    expect(t.brain).toEqual({ setSchedule: false, content: null, appended: [], journal: [`The one-time run "Check: reply" set for ${PAST} never ran; it was dropped when schedules moved onto tasks.`] })
-    expect(t.jobs[0].what).toBe(`once at ${PAST} → dropped: its time has passed and it never ran; noted in the journal`)
+    expect(t).toMatchObject({ outcome: 'moved', renamed: [missed.id], settles: [missed.id] })
+    expect(t.schedule).toEqual({ at: PAST, why: 'Look whether the reply came.', by_session: 'sess-1234-abcd', time_zone: 'Europe/Berlin' })
+    // the engine fires a wake-up whose time has come however long ago, unless it is the one it fired last
+    expect(t.record).toMatchObject({ id: 't1', firedWake: null })
+    expect(t.brain).toEqual({ setSchedule: true, content: null, appended: [], journal: [] })
+    expect(t.jobs[0]).toEqual({ id: missed.id, name: 'Check: reply', kind: 'moved', what: `once at ${PAST} → the task's wake-up, though its time has passed: it never ran, so it fires late, at the cockpit's next look; set by session sess-123; its prompt is the reason` })
+
+    // a job still ahead is the task's wake-up: the past one's prompt goes into the journal, and the report says so
+    const ahead = once(AHEAD, { name: 'Check: offer', prompt: 'Look whether the offer was signed.' })
+    const [both] = plan([missed, ahead]).tasks
+    expect(both.schedule).toMatchObject({ at: AHEAD, why: 'Look whether the offer was signed.' })
+    expect(both.brain?.journal).toEqual([`A one-time run set for ${PAST} never ran, and the task has another wake-up (${AHEAD}); what it was to do is noted here: "Look whether the reply came."`])
+    expect(both.jobs.find((j) => j.id === missed.id)).toMatchObject({ kind: 'lost', what: `once at ${PAST} → not the task's wake-up: its time has passed, it never ran, and the task gets its wake-up from "Check: offer"; its prompt is noted in the journal` })
+    // two that never ran: the earlier one is the wake-up
+    const older = once('2026-11-24T02:00:00.000Z', { name: 'Check: older', prompt: 'The older check.' })
+    expect(plan([missed, older]).tasks[0].schedule).toMatchObject({ at: '2026-11-24T02:00:00.000Z', why: 'The older check.' })
+    // without a task, one is made for it, as for any job that still has something to do
+    expect(plan([once(PAST, { taskId: null, target: { type: 'worker', projectId: 'bp-ops' } })], []).tasks[0]).toMatchObject({ outcome: 'moved', create: { display_title: 'Check: reply' }, schedule: { at: PAST } })
 
     const ran = once(PAST, { runCount: 1 })
     const [u] = plan([ran], [task()], { runs: { [ran.id]: [run(ran.id, 'r1')] } }).tasks
     expect(u).toMatchObject({ brain: null, record: null, history: { [ran.id]: [{ id: 'r1', status: 'finished' }] } })
-    expect(u.jobs[0].what).toBe(`once at ${PAST} → it has run: no time to carry over`)
+    expect(u.jobs[0]).toMatchObject({ kind: 'history', what: `once at ${PAST} → it has run: no time to carry over` })
     // the schedule the mirror left on the task for a job that is over is cleared
     const [v] = plan([once(PAST, { runCount: 1 })], [task('t1', {}, { delegation: { agent: 'atlas', schedule: { at: PAST } } })]).tasks
     expect(v).toMatchObject({ schedule: null, brain: { setSchedule: true } })
@@ -229,7 +244,7 @@ describe('planning jobs onto their tasks', () => {
       const what = Object.fromEntries(t.jobs.map((j) => [j.id, j.what]))
       expect(what[b.id]).toContain('not the task\'s wake-up: the task has one already')
       expect(what[c.id]).toContain('left out: it was paused')
-      expect(what[d.id]).toContain('left out')
+      expect(what[d.id]).toContain('NOT MOVED, IT NO LONGER FIRES')
       expect(t.brain!.journal.join(' ')).toContain('The task\'s schedule is paused: the times that joined it fire once its owner resumes it.')
       // all of my jobs ended: the owner's schedule is not touched
       const ended = plan([cron('0 8 * * 1-5', { endedAt: '2026-11-20T00:00:00.000Z' })], [theirs], shared).tasks[0]
@@ -290,21 +305,44 @@ describe('planning jobs onto their tasks', () => {
     expect(all.schedule).toMatchObject({ crons: ['0 8 * * 1-5'], at: AHEAD, paused: true })
     expect(all.record).toMatchObject({ pausedReason: '3 failed runs in a row; last: run 4 failed' })
 
-    const sleeping = cron('0 18 * * 1-5', { name: 'Evening brief', prompt: 'Write the evening brief.', paused: true })
-    const [mixed] = plan([cron('0 8 * * 1-5'), sleeping]).tasks
-    expect(mixed.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
-    expect(mixed.brain?.journal.slice(1)).toEqual(['A paused repeating job was not carried over when schedules moved onto tasks, since a task\'s schedule is paused as a whole. "Evening brief" (cron "0 18 * * 1-5", Europe/Berlin): what it did: "Write the evening brief."'])
-    expect(mixed.record?.pausedReason).toBeNull()
-    expect(mixed.settles).toContain(sleeping.id)
+    // a paused repeating job next to running ones: its time is not left out. The pause wins: the whole schedule is
+    // paused, with every repeating time on it, and the journal and the report say why and how to resume
+    const sleeping = cron('0 18 * * 1-5', { name: 'Evening brief', prompt: 'Write the evening brief.', paused: true, pausedReason: '3 failed runs in a row; last: run 9 failed' })
+    const [mixed] = plan([cron('0 8 * * 1-5'), sleeping, once(AHEAD)]).tasks
+    expect(mixed.schedule).toEqual({ crons: ['0 18 * * 1-5', '0 8 * * 1-5'], at: AHEAD, why: 'Look whether the reply came.', by_session: 'sess-1234-abcd', time_zone: 'Europe/Berlin', paused: true })
+    expect(mixed.brain?.journal.at(-1)).toBe('Its schedule is paused as a whole: its repeating job "Evening brief" (cron "0 18 * * 1-5") was paused when schedules moved onto tasks, and a task has one Pause for all its times. Nothing fires until it is resumed: Resume in the task\'s Schedule section, or the schedule tool\'s resume. To keep that one time off, remove it there first.')
+    expect(mixed.jobs.find((j) => j.id === sleeping.id)?.what).toBe('cron "0 18 * * 1-5" (Europe/Berlin) → a repeating time of the task; it was paused, so the task\'s whole schedule is paused; its prompt is appended to the task\'s text')
+    expect(mixed.record?.pausedReason).toBe('3 failed runs in a row; last: run 9 failed')
+    expect(jobMigrationReport({ tasks: [mixed], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: true })).toContain('- The schedule is paused: one of its repeating jobs was. Resume it on the task (its Schedule section, or the schedule tool\'s resume).')
+    // nothing of the pause is made up: the record starts from now
+    expect(plan([cron('0 8 * * 1-5', { nextRunAt: '2026-11-26T07:00:00.000Z' }), sleeping]).tasks[0].record?.cursor).toBe('2026-11-26T10:00:00.000Z')
+
+    // a paused one-time job next to running ones is left out, and noted
+    const nap = once(AHEAD, { paused: true })
+    const [one] = plan([cron('0 8 * * 1-5'), nap]).tasks
+    expect(one.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
+    expect(one.jobs.find((j) => j.id === nap.id)).toMatchObject({ kind: 'lost', what: `once at ${AHEAD} → left out: it was paused while the task's other times run; noted in the journal` })
+    expect(one.brain?.journal.at(-1)).toContain('A paused one-time run was not carried over')
+    expect(one.settles).toContain(nap.id)
   })
 
-  it('a task\'s repeating times are read in one zone: a job in another zone is left out and noted', () => {
+  it('a task\'s repeating times are read in one zone: a job in another zone is left out, and the journal and the report say loudly that it no longer fires and how to bring it back', () => {
     const berlin = cron('0 8 * * 1-5')
-    const tokyo = job({ name: 'Tokyo brief', triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Asia/Tokyo' }] })
+    const tokyo = job({ name: 'Tokyo brief', prompt: 'Write the Tokyo brief.', triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Asia/Tokyo' }] })
     const [t] = plan([tokyo, berlin]).tasks
     expect(t.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
-    expect(t.brain?.journal.at(-1)).toContain('A repeating job in another time zone was not carried over')
-    expect(t.jobs[1].what).toBe('cron "0 9 * * *" (Asia/Tokyo) → left out: the task\'s repeating times are read in Europe/Berlin; noted in the journal')
+    expect(t.brain?.journal.at(-1)).toBe(
+      'The routine "Tokyo brief" NO LONGER FIRES: it ran in another time zone (cron "0 9 * * *", Asia/Tokyo) than the task\'s repeating times (Europe/Berlin), and a task\'s times are read in one zone, so it was not carried over when schedules moved onto tasks. '
+      + 'To bring it back on a task of its own, call the schedule tool: action "create", name "Tokyo brief", cron "0 9 * * *", timezone "Asia/Tokyo", prompt "Write the Tokyo brief."',
+    )
+    expect(t.jobs[1]).toEqual({
+      id: tokyo.id, name: 'Tokyo brief', kind: 'lost',
+      what: 'cron "0 9 * * *" (Asia/Tokyo) → NOT MOVED, IT NO LONGER FIRES: the task\'s repeating times are read in Europe/Berlin, and a task has one zone. To bring it back on a task of its own, call the schedule tool: action "create", name "Tokyo brief", cron "0 9 * * *", timezone "Asia/Tokyo", prompt "Write the Tokyo brief."',
+    })
+    // the report gives the call whole, not cut
+    const report = jobMigrationReport({ tasks: [t], elsewhere: 0 }, { space: 'Main', at: 'now', dryRun: false })
+    expect(report).toContain('timezone "Asia/Tokyo", prompt "Write the Tokyo brief."')
+    expect(report).toContain('2 jobs on 1 task: 1 moved, 0 dropped, 0 left as they are. Of the jobs, 1 moved and 1 did not.')
   })
 
   it('a prompt the task\'s text says already is not appended: the same words, or a prompt a scheduled hand-over built from the task', () => {
@@ -378,7 +416,9 @@ describe('planning jobs onto their tasks', () => {
     const [left] = plan([self], [], { routineTaskOf: () => null }).tasks
     expect(left).toMatchObject({ outcome: 'left', settles: [], record: null, brain: null })
     expect(left.why).toContain('no project of the brain')
-    expect(plan([once(PAST, { taskId: null })], []).tasks[0]).toMatchObject({ outcome: 'dropped', why: 'its time has passed, it never ran and has no task' })
+    // a one-time job that ran and has no task has nothing left to do
+    const done = once(PAST, { taskId: null, runCount: 1 })
+    expect(plan([done], [], { runs: { [done.id]: [run(done.id, 'r1')] } }).tasks[0]).toMatchObject({ outcome: 'dropped', why: 'it has run and has no task' })
     expect(plan([cron('0 8 * * *', { taskId: null, endedAt: '2026-11-01T00:00:00.000Z' })], []).tasks[0]).toMatchObject({ outcome: 'dropped', why: 'it had ended and has no task' })
   })
 })
@@ -392,7 +432,7 @@ describe('the report of the plan', () => {
     const report = jobMigrationReport(p, { space: 'Main', at: '2026-11-26T10:00:00.000Z', dryRun: true })
     expect(report).toContain('# Schedules onto tasks — dry run')
     expect(report).toContain('Space: Main · 2026-11-26T10:00:00.000Z · nothing written.')
-    expect(report).toContain('4 jobs on 2 tasks: 2 moved, 0 dropped, 0 left as they are. 1 job of other spaces wait for their space.')
+    expect(report).toContain('4 jobs on 2 tasks: 2 moved, 0 dropped, 0 left as they are. Of the jobs, 3 moved and 1 did not. 1 job of other spaces wait for their space.')
     expect(report).toContain('## Task t1 (t1) — moved')
     expect(report).toContain('- Repeating times: 0 8 * * 1-5 (Europe/Berlin)')
     expect(report).toContain(`- Wake-up: ${AHEAD}, set by session sess-123 — "Look whether the reply came."`)

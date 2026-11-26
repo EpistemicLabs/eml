@@ -59,7 +59,7 @@ import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
 import { runMigrateJobsCommand } from './job-migration-cli.js'
-import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, PLUGINS_HOME } from './paths.js'
+import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, JOBS_MIGRATION_REPORT_FILE, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
@@ -884,6 +884,12 @@ async function main() {
   const jobMigration = createJobMigration({
     store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,
     spaceKind: spaceKindOf,
+    // Each real run's report is kept, appended to one file in the home; the user is told when a job did not move.
+    saveReport: (markdown) => {
+      fs.appendFileSync(JOBS_MIGRATION_REPORT_FILE, `${markdown}\n`, { mode: 0o600 })
+      return JOBS_MIGRATION_REPORT_FILE
+    },
+    notify: (input) => notifier.notify(input),
     moveSessions: (from, to) => { for (const entry of ledger.list()) if (entry.jobId === from) ledger.setJobId(entry.sessionId, to) },
   })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
