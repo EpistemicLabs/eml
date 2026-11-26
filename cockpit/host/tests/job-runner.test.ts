@@ -388,6 +388,26 @@ describe('deriving what is due', () => {
     expect(statuses('hourly')).toEqual(['started'])
   })
 
+  it('paused and resumed between two reads: a time that fell inside the pause does not run, though no read saw the pause', async () => {
+    world.task('hourly', HOURLY)
+    await runner.tick()
+    expect(world.store.get('hourly')?.cursor).toBe('2026-11-09T00:00:00.000Z')
+    // paused at 00:30 and resumed at 01:10, with no read in between: 01:00 fell inside the pause
+    world.setSchedule('hourly', { ...HOURLY, paused: true })
+    runner.paused('hourly')
+    world.now += HOUR + 10 * MIN
+    world.setSchedule('hourly', HOURLY)
+    runner.resumed('hourly')
+    expect(world.store.get('hourly')?.cursor).toBeNull()
+    await runner.tick()
+    expect(runs('hourly')).toEqual([])
+    expect(world.store.get('hourly')?.cursor).toBe('2026-11-09T01:10:00.000Z')
+    // it goes on from the resume: the next time runs
+    world.now = Date.parse('2026-11-09T02:00:30Z')
+    await runner.tick()
+    expect(statuses('hourly')).toEqual(['started'])
+  })
+
   it('fires a time that was due at the schedule\'s end when the pass comes just after it, once, and nothing after', async () => {
     world.task('ends', { ...HOURLY, ends_at: '2026-11-09T01:00:00.000Z' })
     await firstSeenThen('2026-11-09T01:00:25Z')
