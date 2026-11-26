@@ -19,7 +19,7 @@ const v1 = (id: string, patch: Record<string, unknown> = {}) => ({
 const openRun = (jobId: string) => ({ id: `run-${jobId}`, jobId, trigger: 'schedule', number: 1, dueAt: '2026-11-26T08:00:00.000Z', createdAt: '2026-11-26T08:00:00.000Z', status: 'started', attempts: 1, nextAttemptAt: null, sessionId: 's1', startedAt: '2026-11-26T08:00:05.000Z', finishedAt: null, outcome: null, note: null })
 const task = (id: string, properties: Record<string, unknown> = {}, status = 'active'): Task => ({ id, type: 'task', status, title: id, content: 'Keep the customer informed.', properties: { assignee_ids: ['lasse'], ...properties } })
 
-function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[] } = {}) {
+function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs?: Record<string, unknown[]>; failOn?: string[]; down?: string[]; noBrain?: string[]; team?: boolean | null; members?: string[] | null } = {}) {
   const file = join(mkdtempSync(join(tmpdir(), 'cockpit-job-migration-')), 'jobs.json')
   const original = JSON.stringify({ version: 1, timeZone: 'UTC', jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), runs: opts.runs ?? {}, keys: {} })
   writeFileSync(file, original)
@@ -30,6 +30,10 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
     async get(path: string, query?: Record<string, unknown>) {
       if (opts.down?.includes(space)) throw new Error('connect ECONNREFUSED')
       if (path === '/list') return { engrams: [...byId.values()].filter((t) => t.title === query?.title) }
+      if (path === '/object/user') {
+        if (opts.members === null) throw new Error('the users did not come')
+        return { objects: (opts.members ?? ['lasse', 'dominik']).map((id) => ({ id })) }
+      }
       const found = byId.get(decodeURIComponent(path.slice('/engram/'.length)))
       if (!found) throw new EmlApiError(404, { error: 'NOT_FOUND' }, 'not found')
       return structuredClone(found)
@@ -57,18 +61,22 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
   })
   const moved: Array<[string, string]> = []
   const logs: string[] = []
-  const spaces = [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas' }, { id: 'space-2', name: 'Team', main: false, agent: 'motti' }]
+  // The main space is local; the second one is local too unless a test says shared (true) or not known yet (null).
+  const spaces = [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }, { id: 'space-2', name: 'Team', main: false, agent: 'motti', shared: opts.team === undefined ? false : opts.team }]
+  /** What the brain server says of the team space when it is asked again; the calls are counted. */
+  const kind = { answer: null as boolean | null, asked: 0 }
   const deps = {
+    spaceKind: async (space: { shared: boolean | null }) => { kind.asked += 1; return space.shared ?? kind.answer },
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'lasse', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
-  return { file, original, store, byId, posts, moved, logs, opts, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
+  return { file, original, store, byId, posts, moved, logs, opts, kind, spaces, migration: createJobMigration(deps as never), restart: () => createJobMigration({ ...deps, store: new JobStore(file) } as never) }
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
   it('the dry run plans and reports, and writes nothing: not to the brain, not to the file', async () => {
     const w = world([v1('j1'), v1('j2', { triggers: [{ type: 'schedule', at: AHEAD, timeZone: 'UTC' }], prompt: 'Look again.', target: { type: 'session', sessionId: 'sess-1' } })], [task('t1')])
-    const dry = await w.migration.dryRun(w.store && ({ id: 'main-id', name: 'Main', main: true, agent: 'atlas' } as never))
+    const dry = await w.migration.dryRun(w.spaces[0] as never)
     expect(dry?.plan.tasks).toHaveLength(1)
     expect(dry?.report).toContain('# Schedules onto tasks — dry run')
     expect(dry?.report).toContain('- Repeating times: 0 8 * * 1-5 (UTC)')
@@ -77,7 +85,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(existsSync(`${w.file}.v1-backup`)).toBe(false)
     expect(w.migration.pending()).toBe(true)
     // a space without jobs has nothing to plan
-    expect(await w.migration.dryRun({ id: 'space-2', name: 'Team', main: false, agent: 'motti' } as never)).toBeNull()
+    expect(await w.migration.dryRun(w.spaces[1] as never)).toBeNull()
   })
 
   it('writes each task in one brain call with everything else of its delegation unchanged, then the record, and moves the jobs\' sessions to it', async () => {
@@ -138,7 +146,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a crash between a task\'s brain write and its record: the next start finds the schedule and the text as they should be and writes neither again', async () => {
     const w = world([v1('j1')], [task('t1')])
     const first = createJobMigration({
-      store: { pendingV1: () => w.store.pendingV1(), migrateV1: () => { throw new Error('host stopped') } }, spaces: () => [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas' }] as never,
+      store: { pendingV1: () => w.store.pendingV1(), migrateV1: () => { throw new Error('host stopped') } }, spaces: () => [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }] as never,
       brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async (_p: string, body: Record<string, unknown>) => { w.posts.push({ space: 'main-id', path: _p, body }); const t = w.byId.get('t1')!; t.content = body.content as string; t.properties.delegation = body.delegation; return t } }),
       me: 'lasse', moveSessions: () => {}, now: () => NOW, log: () => {},
     } as never)
@@ -167,19 +175,71 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(Object.keys(new JobStore(w.file).pendingV1()!.jobs)).toEqual(['j3'])
   })
 
-  it('drops the jobs of a closed task, a gone one and another member\'s; only the closed one is written to', async () => {
+  it('drops the jobs of a closed task and a gone one; only the closed one is written to', async () => {
     const w = world(
-      [v1('j1', { taskId: 'closed' }), v1('j2', { taskId: 'gone' }), v1('j3', { taskId: 'theirs' })],
-      [task('closed', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'] } } }, 'resolved'), task('theirs', { assignee_ids: ['dominik'] })], { runs: { j3: [openRun('j3')] } },
+      [v1('j1', { taskId: 'closed' }), v1('j2', { taskId: 'gone' })],
+      [task('closed', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'] } } }, 'resolved')], { runs: { j2: [openRun('j2')] } },
     )
     const result = await w.migration.run()
-    expect(result).toMatchObject({ moved: 0, dropped: 3, failed: [] })
+    expect(result).toMatchObject({ moved: 0, dropped: 2, failed: [] })
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/closed/track', body: { delegation: { agent: 'atlas' }, text: expect.stringContaining('the task is closed') } }])
     expect(w.store.list()).toEqual([])
     expect(w.moved).toEqual([])
     // its runs stay as history under the job's id, none of them open
-    expect(w.store.runs('j3')).toMatchObject([{ id: 'run-j3', status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
+    expect(w.store.runs('j2')).toMatchObject([{ id: 'run-j2', status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
     expect(w.store.pendingV1()).toBeNull()
+  })
+
+  it('in a shared space a job on another member\'s task is written onto that task for the owner\'s cockpit, and no record stays here', async () => {
+    const theirs = task('theirs', { assignee_ids: ['dominik'], delegation: { agent: 'motti', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } })
+    const w = world(
+      [v1('j1', { spaceId: 'space-2', taskId: 'theirs', limited: true }), v1('j2', { spaceId: 'space-2', taskId: 'agents' }), v1('j3', { spaceId: 'space-2', taskId: 'mine' })],
+      [theirs, { ...task('agents', { assignee_ids: [] }), ingested_by: 'atlas' } as never, task('mine')], { team: true, runs: { j1: [openRun('j1')] } },
+    )
+    const result = await w.migration.run()
+    expect(result).toMatchObject({ moved: 3, dropped: 0, left: 0, failed: [] })
+    // the owner's own time stays, mine joins it; the delegation is carried whole
+    expect(w.posts[0]).toEqual({ space: 'space-2', path: '/task/theirs/track', body: {
+      content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.',
+      delegation: { agent: 'motti', checkpoint: 'after', schedule: { crons: ['0 7 * * *', '0 8 * * 1-5'], time_zone: 'UTC' } },
+      text: expect.stringContaining('the cockpit of the task\'s owner (dominik) fires them from here on. What lasse\'s cockpit kept for the job did not move: the limit on its sessions.'),
+    } })
+    // a record for my task and for the one no member owns, none for the other member's
+    expect(w.store.list().map((r) => r.id).sort()).toEqual(['agents', 'mine'])
+    expect(w.moved).toEqual([['j2', 'agents'], ['j3', 'mine']])
+    expect(w.store.runs('j1')).toMatchObject([{ status: 'finished', note: 'its job ended when schedules moved onto tasks' }])
+    expect(result.reports[0]).toContain('nothing is kept on this machine: dominik\'s cockpit fires the task')
+    expect(w.store.pendingV1()).toBeNull()
+  })
+
+  it('plans nothing for a space the brain server has not said the kind of: its jobs wait, and the next pass asks again', async () => {
+    const w = world([v1('j1'), v1('j2', { spaceId: 'space-2', taskId: 't2' })], [task('t1'), task('t2', { assignee_ids: [] })], { team: null })
+    const first = await w.migration.run()
+    expect(first).toMatchObject({ moved: 1, dropped: 0, left: 0 })
+    expect(first.failed).toEqual(['Team: the brain server has not said yet whether it is shared, its 1 job(s) wait'])
+    expect(first.reports).toHaveLength(1)
+    expect(w.posts.map((p) => p.space)).toEqual(['main-id'])
+    expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j2'])
+    expect(w.kind.asked).toBeGreaterThan(0)
+    // the dry run of such a space plans its jobs as waiting, and says why
+    const dry = await w.migration.dryRun(w.spaces[1] as never)
+    expect(dry?.plan.tasks).toMatchObject([{ outcome: 'left', settles: [] }])
+    expect(dry?.report).toContain('left: the brain server has not said yet whether this space is shared: nothing is planned until it has')
+    // the brain server answers: local, so the task is this member's
+    w.kind.answer = false
+    expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
+    expect(w.store.get('t2')).toMatchObject({ spaceId: 'space-2' })
+    expect(w.store.pendingV1()).toBeNull()
+  })
+
+  it('a task whose owner cannot be told because the members did not come waits; the others of the space move', async () => {
+    const w = world(
+      [v1('j1', { spaceId: 'space-2', taskId: 'agents' }), v1('j2', { spaceId: 'space-2', taskId: 'mine' })],
+      [{ ...task('agents', { assignee_ids: [] }), ingested_by: 'atlas' } as never, task('mine')], { team: true, members: null },
+    )
+    expect(await w.migration.run()).toMatchObject({ moved: 1, left: 1 })
+    expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j1'])
+    expect(w.store.list().map((r) => r.id)).toEqual(['mine'])
   })
 
   it('makes a task for a job without one, once, and gives it the schedule and the record', async () => {

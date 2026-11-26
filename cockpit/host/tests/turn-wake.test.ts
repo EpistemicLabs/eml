@@ -176,10 +176,17 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
 describe('a wake-up set by a session with narrowed tools', () => {
   const NO_SHELL: ToolProfile = { deniedTools: ['Bash'], mcpServers: ['eml'] }
 
-  it('a session with all its tools sets the wake-up and touches no record', async () => {
+  it('a session with all its tools sets the wake-up: the task gets a record here with nothing limited, and one that exists is not touched', async () => {
+    // ending a turn with a time is an explicit act on this machine: the record is what makes this cockpit fire a task no member owns
     const none = world()
     await none.wake.settle('s1', set('2026-11-26T10:00'))
-    expect(none.store.get('t1')).toBeUndefined()
+    expect(none.writes).toEqual(['schedule', 'record'])
+    expect(none.store.get('t1')).toMatchObject({ id: 't1', taskId: 't1', spaceId: null, createdBy: 's1', toolProfile: null, cursor: null, triggers: [] })
+    expect(none.store.get('t1')).not.toHaveProperty('limited')
+    // clearing a wake-up makes no record
+    const cleared = world()
+    await cleared.wake.settle('s1', { edit: { kind: 'clear', whose: 'own' }, why: '' })
+    expect(cleared.store.get('t1')).toBeUndefined()
     const has = world({ record: NO_SHELL })
     await has.wake.settle('s1', set('2026-11-26T10:00'))
     expect(has.store.get('t1')?.toolProfile).toEqual(NO_SHELL)

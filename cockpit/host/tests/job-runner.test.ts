@@ -44,6 +44,11 @@ class World {
   /** `linked`: the session was started for the task's record (the ledger's jobId), so it has the bridge's tools. */
   sessions: Array<{ taskId: string; sessionId: string; working: boolean; linked: boolean }> = []
   elsewhere = new Set<string>()
+  /** The people of a shared space; null: they cannot be read. */
+  members: string[] | null = ['lasse', 'dominik']
+  /** What the brain server says of a space of unknown kind when it is asked again, by key; the calls are counted. */
+  kinds = new Map<string | null, boolean>()
+  kindAsked = 0
   states = new Map<string, RunSessionState>()
   statuses = new Map<string, WorkerStatus>()
   started: Array<{ record: Job; task: RunnerTask; sessionId: string; text: string }> = []
@@ -113,6 +118,8 @@ class World {
         return found && found.space === space.key ? structuredClone(found) : null
       },
       waitsForMigration: (taskId) => this.unmoved.has(taskId),
+      spaceKind: async (space) => { this.kindAsked += 1; return this.kinds.get(space.key) ?? null },
+      members: async () => this.members,
       workingElsewhere: async (_space, taskId) => this.elsewhere.has(taskId),
       sessionsOf: (taskId) => this.sessions.filter((s) => s.taskId === taskId).map(({ sessionId, working, linked }) => ({ sessionId, working, linked })),
       editSchedule: async (_space, taskId, edit, text) => {
@@ -515,12 +522,70 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
     expect(await fires('their-own')).toEqual({ record: false, started: false })
   })
 
-  it('counts a space whose sharing is not confirmed as shared, and fires every task of a local space', async () => {
-    world.spaces = [{ key: 'team', name: 'Team', shared: null }, MAIN]
-    world.task('unsure', WEEKDAYS_8, { space: 'team', owner: ['dominik'] })
+  it('fires every task of a local space', async () => {
+    world.spaces = [MAIN]
     world.task('local', WEEKDAYS_8, { owner: ['dominik'], ingested_by: 'dominik' })
+    world.task('agents', WEEKDAYS_8, { owner: [], ingested_by: 'atlas' })
+    await firstSeenThen('2026-11-10T00:00:30Z')
+    expect(world.started.map((s) => s.task.id).sort()).toEqual(['agents', 'local'])
+  })
+
+  it('fires nothing in a space whose kind is not known, touches none of its records, and asks again at every read until it is', async () => {
+    const unsure: RunnerSpace = { key: 'team', name: 'Team', shared: null }
+    world.spaces = [unsure, MAIN]
+    world.task('mine', WEEKDAYS_8, { space: 'team' })
+    world.task('closed', null, { space: 'team', status: 'resolved' })
+    world.task('local', WEEKDAYS_8)
+    world.store.put({ ...newRecord({ id: 'mine', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-09T00:00:00.000Z' })
+    world.store.put({ ...newRecord({ id: 'closed', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), triggers: [{ type: 'mail', match: [] }] })
     await firstSeenThen('2026-11-10T00:00:30Z')
     expect(world.started.map((s) => s.task.id)).toEqual(['local'])
+    expect(world.store.get('mine')?.cursor).toBe('2026-11-09T00:00:00.000Z')
+    expect(world.store.get('closed')?.triggers).toHaveLength(1)
+    expect(world.kindAsked).toBe(2)
+    // a message for a task of that space stays with the bridge
+    expect(await runner.wake(world.store.get('closed')!, 'mail', '1 new message', 'k1')).toBe('refused')
+    world.patch('closed', { status: 'active' })
+    expect(await runner.wake(world.store.get('closed')!, 'mail', '1 new message', 'k1')).toBe('retry')
+    // the brain server answers: the space is shared, and my task fires from the cursor it had
+    world.kinds.set('team', true)
+    world.now += MIN
+    await runner.tick()
+    expect(world.started.map((s) => s.task.id)).toEqual(['local', 'mine'])
+  })
+
+  describe('a task no member owns (nobody assigned, written by an agent)', () => {
+    const ownerless = () => world.task('agents', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'atlas' })
+
+    it('does not fire by being seen, and gets no record', async () => {
+      ownerless()
+      expect(await fires('agents')).toEqual({ record: false, started: false })
+    })
+
+    it('fires on the cockpit that holds a record for it', async () => {
+      ownerless()
+      world.store.put(newRecord({ id: 'agents', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'))
+      expect(await fires('agents')).toEqual({ record: true, started: true })
+    })
+
+    it('its record is left alone while the members cannot be read: nothing fires, nothing is removed', async () => {
+      ownerless()
+      world.store.put({ ...newRecord({ id: 'agents', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), cursor: '2026-11-10T00:00:10.000Z' })
+      world.members = null
+      expect(await fires('agents')).toEqual({ record: true, started: false })
+      expect(world.store.get('agents')?.cursor).toBe('2026-11-10T00:00:10.000Z')
+      world.members = ['lasse', 'dominik']
+      world.now = Date.parse('2026-11-11T00:00:30Z')
+      await runner.tick()
+      await runner.tick()
+      expect(world.started.map((s) => s.task.id)).toEqual(['agents'])
+    })
+
+    it('a task nobody is assigned to that another member wrote is that member\'s, record or not', async () => {
+      world.task('their-own', WEEKDAYS_8, { space: 'team', owner: [], ingested_by: 'dominik' })
+      world.store.put({ ...newRecord({ id: 'their-own', spaceId: 'team' }, '2026-11-01T00:00:00.000Z'), limited: true })
+      expect(await fires('their-own')).toEqual({ record: true, started: false })
+    })
   })
 
   it('drops the record of a task that went to another member, once no run of it is open', async () => {

@@ -85,8 +85,9 @@ import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
-import { createJobMigration } from './application/job-migration.js'
+import { createJobMigration, membersOf } from './application/job-migration.js'
 import { endRunCount, endTaskRecord } from './application/end-task-record.js'
+import { keepRecord } from './application/record-profile.js'
 import { hasSchedule } from './domain/task-schedule.js'
 import { bridgeServerFor, startChannelBridge } from './infrastructure/channel-bridge/channel-bridge.js'
 import { bridgeFiles } from './channel-bridge-api.js'
@@ -722,11 +723,19 @@ async function main() {
     return record.projectId ?? (brainProject ? projectIdForBrain(brainProject) : null)
   }
   // The engine: it fires the schedules of the tasks this member owns (application/job-runner.ts).
+  // Whether a space is shared: what the host knows, else the brain server asked again (team-space.ts); null: still unknown.
+  const spaceKindOf = async (space: BrainSpace): Promise<boolean | null> => {
+    if (space.shared === null) await loadSharedFlags([space])
+    return space.shared
+  }
   const runnerSpaceOf = (space: BrainSpace): RunnerSpace => ({ key: space.main ? null : space.id, name: space.name, shared: space.shared })
   const brainOfRunnerSpace = (space: RunnerSpace) => taskBrain(spaces.resolve(space.key))
   const jobRunner: JobRunner = new JobRunner({
     store: jobStore, log, timeZone: userTimeZone, me: owner,
     spaces: () => spaces.list().map(runnerSpaceOf),
+    // A space the brain server said nothing of at boot is asked about again; until it answers nothing fires there.
+    spaceKind: (space) => spaceKindOf(spaces.resolve(space.key)),
+    members: async (space) => { const brain = brainOfRunnerSpace(space); return brain ? membersOf(brain) : null },
     // The space's open tasks, as the task runner lists them: two reads per space, none per task.
     openTasks: async (space) => {
       const brain = brainOfRunnerSpace(space)
@@ -873,6 +882,7 @@ async function main() {
   // jobs.json version 1 → 2: the jobs of before brain schema 24 move onto their tasks (application/job-migration.ts).
   const jobMigration = createJobMigration({
     store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,
+    spaceKind: spaceKindOf,
     moveSessions: (from, to) => { for (const entry of ledger.list()) if (entry.jobId === from) ledger.setJobId(entry.sessionId, to) },
   })
   // The channel bridge's tokens, one per local space (job-contract-api.ts); a space added later gets one at the next start.
@@ -994,6 +1004,11 @@ async function main() {
     },
     // End schedule: the task's record here ends with its schedule (application/end-task-record.ts).
     endRecord: (_spaceId, taskId) => endTaskRecord(jobStore, taskId, Date.now(), onGrantEnd),
+    // A scheduled hand-over is an explicit act here: this cockpit keeps the task's record from now on.
+    keepRecord: (spaceId, taskId) => {
+      const space = spaces.get(spaceId)
+      if (space) keepRecord(jobStore, { id: taskId, spaceId: space.main ? null : space.id }, new Date().toISOString())
+    },
     // The schedule's controls on the task: Run now goes through the engine, Pause and Resume tell it at once.
     schedule: {
       runNow: async (spaceId, task) => {

@@ -1,8 +1,8 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
-import { ownerOf, runsHere } from './task-owner.js'
-import { addCron, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
+import { firingOf, ownerOf } from './task-owner.js'
+import { addCron, cronZoneRefusal, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
 /**
  * The migration of jobs.json version 1 to version 2 (brain schema 24: a task holds its schedule). Before, a job had
@@ -29,8 +29,14 @@ import { addCron, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPau
  *
  *   - a job that has ended: only its runs stay, as history under its id;
  *   - a job whose task is closed or gone: dropped (a closed task gets a journal line and loses a mirrored schedule);
- *   - a job on a task another member owns: dropped here and nothing written. A schedule has one writer, the cockpit
- *     of the task's owner (domain/task-owner.ts runsHere, the rule the engine fires by); it fires what the task's schedule says;
+ *   - a job on a task another member owns (a shared space; domain/task-owner.ts firingOf, the rule the engine fires
+ *     by): it is never dropped. Its times join the schedule the task has (which is its owner's: never replaced,
+ *     paused or ended from here), its prompt joins the task's text, and the owner's cockpit fires it from then on.
+ *     No record stays here; the journal and the report say so, and which per-machine settings did not move;
+ *   - a job on a task no member owns: moved as this member's own, with a record here, which is what makes this
+ *     cockpit fire it;
+ *   - a job of a space whose kind is not known yet (the brain server has not said whether it is shared), or on a task
+ *     whose owner cannot be told yet: left where it is, for a later pass;
  *   - a job in another space: left for that space's pass;
  *   - a job without a task: a task is made for it first (application/task-state-migration.ts routineTask); without
  *     a project of the brain it stays as it is, to be looked at.
@@ -59,16 +65,15 @@ export interface JobMigrationInput {
   keys: Readonly<Record<string, Record<string, string>>>
   /**
    * The space planned: `key` is what its jobs carry as spaceId (null for the main space). `shared`: false for a local
-   * brain, where every task is this member's; true or null (not confirmed yet, or left out) counts as shared.
+   * brain, where every task is this member's; true for a shared one; null while the brain server has not said: then
+   * nothing is planned, every job is left for a later pass.
    */
-  space: { key: string | null; name: string; shared?: boolean | null }
+  space: { key: string | null; name: string; shared: boolean | null }
+  /** The people of a shared space (its brain's users); null or absent: they could not be read. Not asked in a local space. */
+  members?: readonly string[] | null
   /** The task of each job of the space, as the brain has it now; null: the brain has no such task. */
   tasks: Readonly<Record<string, JobMigrationTask | null>>
-  /**
-   * This cockpit's member: only the schedules of the tasks this cockpit fires are written, by the one rule for a
-   * cockpit's background work (domain/task-owner.ts runsHere): in a local space every task, in a shared one the tasks
-   * this member owns — the first assignee, else the task's author.
-   */
+  /** This cockpit's member: whose cockpit fires a task is decided by domain/task-owner.ts firingOf, the engine's rule. */
   me: string
   now: number
   /** The task a job without one gets; null when its project is none of the brain's. */
@@ -171,8 +176,13 @@ const describe = (job: JobV1): string => {
   return [when, ...(channels.length ? [`woken by ${channels.join(', ')}`] : []), ...(job.paused ? ['paused'] : [])].join(', ')
 }
 
-/** One open task of this member's: its jobs onto it. `task` is the task as it is, or the one `create` will make. */
-function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
+/**
+ * One open task: its jobs onto it. `task` is the task as it is, or the one `create` will make. `handed`: the member
+ * who owns the task when that is not this one — the times join the schedule the task has, nothing of it is replaced,
+ * paused or ended, and no record is kept here: the owner's cockpit fires it. `ownerless`: no member owns it, so the
+ * record kept here is what makes this cockpit fire it.
+ */
+function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: readonly JobV1[], input: JobMigrationInput, handed: string | null = null, ownerless = false): TaskMigration {
   const now = input.now
   const taskId = create ? '' : task.id
   const live = jobs.filter((j) => !j.endedAt).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -187,10 +197,12 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const ahead = once.filter((j) => Date.parse(scheduleTriggerOf(j)!.at!) > now).sort((a, b) => Date.parse(scheduleTriggerOf(a)!.at!) - Date.parse(scheduleTriggerOf(b)!.at!))
   const timed = [...repeating, ...ahead]
   // One Pause for the whole schedule: it is paused when every timed job was; a paused job among running ones is left out.
-  const allPaused = timed.length > 0 && timed.every((j) => j.paused)
+  const allPaused = !handed && timed.length > 0 && timed.every((j) => j.paused)
   const leftOut = (job: JobV1) => job.paused && !allPaused
 
-  let schedule: ScheduleFields | null = null
+  const current = task.properties?.delegation?.schedule ?? null
+  // Another member's task keeps the schedule it has: this cockpit's times join it.
+  let schedule: ScheduleFields | null = handed ? current : null
   let content = create ? create.content : task.content ?? ''
   const kept: JobV1[] = []
   for (const job of repeating) {
@@ -202,7 +214,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       journal.push(`A paused repeating job was not carried over when schedules moved onto tasks, since a task's schedule is paused as a whole. ${note}`)
       continue
     }
-    const zone: string = schedule?.time_zone ?? trigger.timeZone
+    const zone: string = cronZoneRefusal(schedule, trigger.timeZone) ?? trigger.timeZone
     if (trigger.timeZone !== zone) {
       say(job, `cron "${cron}" (${trigger.timeZone}) → left out: the task's repeating times are read in ${zone}; noted in the journal`)
       journal.push(`A repeating job in another time zone was not carried over when schedules moved onto tasks: the task's times are read in ${zone}. ${note}`)
@@ -244,6 +256,11 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       journal.push(`A later one-time run was set too, for ${at}; a task has one wake-up, so it is noted here: "${cut(flat(job.prompt), NOTE_CHARS)}"`)
       continue
     }
+    if (handed && schedule?.at) {
+      say(job, `once at ${at} → not the task's wake-up: the task has one already (${schedule.at}), and it is its owner's; its time and prompt are noted in the journal`)
+      journal.push(`A one-time run was set too, for ${at}; the task already has a wake-up, and a task has one, so it is noted here: "${cut(flat(job.prompt), NOTE_CHARS)}"`)
+      continue
+    }
     wake = job
     const bySession = sessionOf(job)
     schedule = setWake(schedule, { at, why: job.prompt, bySession, timeZone: scheduleTriggerOf(job)!.timeZone })
@@ -264,14 +281,33 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   // The end: a time only when every time that moved had one (the latest of them), a number of runs only for a single job.
   const ends = kept.map((j) => (j.end?.at ? Date.parse(j.end.at) : NaN))
   const settings: string[] = []
-  if (schedule && ends.length > 0 && ends.every(Number.isFinite)) schedule = setEndsAt(schedule, iso(Math.max(...ends)))
+  if (handed) {
+    // The schedule's end and its pause are its owner's.
+  } else if (schedule && ends.length > 0 && ends.every(Number.isFinite)) schedule = setEndsAt(schedule, iso(Math.max(...ends)))
   else if (ends.some(Number.isFinite)) settings.push('an end time of one job is not carried over: the task\'s other times have none')
   if (schedule && allPaused) schedule = setPaused(schedule, true)
 
-  const current = task.properties?.delegation?.schedule ?? null
   const setSchedule = create !== null ? schedule !== null : !sameSchedule(current, schedule)
   // The brain takes a rewrite of a task's text only with a line that says what happened.
   if (appended.length > 0) journal.unshift(`Schedules moved onto tasks: what ${appended.length === 1 ? 'its repeating job did was' : `its ${appended.length} repeating jobs did was`} added to the task's text, as "Every <cron>: …".`)
+  if (handed && kept.length > 0) {
+    // What this machine kept for the jobs stays behind: the owner's cockpit has its own record of the task.
+    const notMoved = [
+      ...(live.some((j) => j.limited) ? ['the limit on its sessions'] : []),
+      ...(live.some((j) => j.toolProfile) ? ['its tool profile'] : []),
+      ...[...new Set(live.flatMap(channelsOf).map((c) => c.type))].map((type) => `its ${type} trigger`),
+      ...kept.filter((j) => j.end?.afterRuns !== undefined).map((j) => `an end after ${j.end!.afterRuns} runs`),
+      ...(kept.some((j) => j.end?.at) ? ['an end time'] : []),
+      ...[...new Set(live.map((j) => j.notify).filter((n) => n !== 'needs-me'))].map((n) => `who hears of a run (${n})`),
+    ]
+    journal.push(
+      `Schedules moved onto tasks: a job on ${input.me}'s cockpit ran this task at its times. They are on the task now, and the cockpit of the task's owner (${handed}) fires them from here on.`
+      + (schedule?.paused ? ' The task\'s schedule is paused: the times that joined it fire once its owner resumes it.' : '')
+      + (notMoved.length > 0 ? ` What ${input.me}'s cockpit kept for the job did not move: ${notMoved.join(', ')}. Set them on ${handed}'s cockpit if they are wanted.` : ''),
+    )
+    settings.push(`nothing is kept on this machine: ${handed}'s cockpit fires the task`)
+    if (notMoved.length > 0) settings.push(`did not move: ${notMoved.join(', ')}`)
+  }
   const brain: TaskMigration['brain'] = setSchedule || appended.length > 0 || journal.length > 0
     ? { setSchedule, content: appended.length > 0 ? content : null, appended, journal }
     : null
@@ -281,7 +317,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const allRuns = live.flatMap((j) => input.runs[j.id] ?? [])
   const triggers = live.flatMap(channelsOf)
   let record: Job | null = null
-  if (primary && (schedule || triggers.length > 0 || allRuns.some(isOpenRun))) {
+  if (primary && !handed && (schedule || triggers.length > 0 || allRuns.some(isOpenRun))) {
     const starts = live.find((j) => j.target.type !== 'session')?.target as Extract<JobV1['target'], { projectId: string }> | undefined
     const reply: Partial<Record<ReplyChannel, ReplyMode>> = {}
     for (const job of live) for (const [channel, mode] of Object.entries(job.reply) as Array<[ReplyChannel, ReplyMode]>) reply[channel] = reply[channel] === 'draft' ? 'draft' : mode
@@ -313,13 +349,15 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
     if (record.end) settings.push(`ends after ${record.end.afterRuns} runs (${record.runCount} so far)`)
     if (record.projectId) settings.push(`new sessions start in ${record.projectId}${record.provider ? ` with ${record.provider}` : ''}`)
     if (record.pausedReason) settings.push(`paused by the cockpit: ${record.pausedReason}`)
+    if (ownerless) settings.push('no member owns the task: this cockpit fires it, because it keeps its record')
     if (live.length > 1) settings.push(`taken from its oldest job "${primary.name}"; limited, lent tools, reply mode and channels from all ${live.length}`)
     const open = allRuns.filter(isOpenRun).length
     if (allRuns.length > 0) settings.push(`${allRuns.length} run${allRuns.length === 1 ? '' : 's'} carried over${open ? ` (${open} open)` : ''}`)
   }
   const at = iso(now)
   return {
-    taskId: create ? null : task.id, create, title: nameOf(task), outcome: 'moved', why: null, schedule, brain, record,
+    taskId: create ? null : task.id, create, title: nameOf(task), outcome: 'moved',
+    why: handed ? `the task is ${handed}'s: its schedule fires on their cockpit from now on` : null, schedule, brain, record,
     runs: record ? carried(allRuns, taskId) : [],
     keys: record ? Object.assign({}, ...live.map((j) => input.keys[j.id] ?? {})) as Record<string, string> : {},
     history: Object.fromEntries([
@@ -346,15 +384,24 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       tasks.push(dropped(taskId, taskId.slice(0, 8), jobs, input, 'its task is gone', null, null, (j) => `${describe(j)} → dropped: its task is gone`))
       continue
     }
-    // The one owner rule, the engine's (application/job-runner.ts): what is written here is what this cockpit fires.
-    if (!runsHere(input.space.shared ?? null, task, input.me)) {
-      const owner = ownerOf(task)
-      const whose = owner ? `${owner}'s` : 'nobody\'s (no assignee, no author)'
-      const their = owner ? `the cockpit of the task's owner (${owner}) fires what the task's schedule says` : 'no cockpit fires a task nobody owns: assign it to bring its schedule back'
-      tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is ${whose}: its schedule is left to their cockpit, nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped here: ${their}`))
+    // The one rule, the engine's (domain/task-owner.ts firingOf): what is written here is what the owner's cockpit fires.
+    const firing = firingOf(input.space.shared, task, input.me, input.members ?? null)
+    if (firing === 'unknown') {
+      const why = input.space.shared === null
+        ? 'the brain server has not said yet whether this space is shared: nothing is planned until it has'
+        : 'the members of this space could not be read, so it is not known whether a member owns the task: it waits'
+      tasks.push({
+        taskId, create: null, title: nameOf(task), outcome: 'left', why, schedule: task.properties?.delegation?.schedule ?? null, brain: null, record: null,
+        runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: `${describe(j)} → waits` })), settings: [],
+      })
       continue
     }
+    const owner = firing === 'theirs' ? ownerOf(task) : null
     if (!OPEN.has(task.status)) {
+      if (owner) {
+        tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is closed (${task.status}) and ${owner}'s: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
+        continue
+      }
       const live = jobs.filter((j) => !j.endedAt)
       const leftover = task.properties?.delegation?.schedule ?? null
       const journal = live.length > 0 ? [`${live.length === 1 ? 'A job' : `${live.length} jobs`} of this task (${live.map((j) => `"${j.name}": ${describe(j)}`).join('; ')}) ended when schedules moved onto tasks: the task is closed. Reopen it and set a schedule to bring ${live.length === 1 ? 'it' : 'them'} back.`] : []
@@ -362,7 +409,11 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is closed (${task.status})`, null, brain, (j) => `${describe(j)} → dropped: the task is closed`))
       continue
     }
-    tasks.push(moved(task, null, jobs, input))
+    if (owner) {
+      tasks.push(moved(task, null, jobs, input, owner))
+      continue
+    }
+    tasks.push(moved(task, null, jobs, input, null, firing === 'ownerless'))
   }
   for (const job of taskless) {
     if (job.endedAt) {

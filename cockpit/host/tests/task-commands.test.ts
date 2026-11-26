@@ -146,6 +146,19 @@ describe('hand over', () => {
     expect(w.store.get('op-s')!.effects).toBeUndefined()
   })
 
+  it('a scheduled hand-over is an explicit act on this machine: the cockpit keeps a record for the task; a hand-over now makes none', async () => {
+    const w = world([owned('t1'), owned('t2')])
+    const kept: string[] = []
+    w.deps.keepRecord = (spaceId, taskId) => { kept.push(`${spaceId}:${taskId}`) }
+    const commands = createTaskCommands(w.deps)
+    await commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', timeZone: 'Asia/Singapore' } } })
+    await commands.submit({ opId: 'op-n', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(kept).toEqual([])
+    w.later(UNDO_WINDOW_MS + 1)
+    await commands.tick()
+    expect(kept).toEqual(['main:t1'])
+  })
+
   it('refuses a repeating time given in another zone than the task\'s repeating times, and says theirs', async () => {
     const w = world([owned('t2', { delegation: { agent: 'motti', checkpoint: 'none', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } }, 'active')])
     const r = await w.commands.submit({ opId: 'op-z', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'Asia/Singapore' } } })

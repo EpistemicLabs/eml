@@ -21,12 +21,18 @@ import { writeTaskSchedule } from './task-schedule-write.js'
  * they should be and are not written twice; only its journal lines repeat.
  *
  * A brain that is not at schema 24 yet refuses the new schedule shape: that task's write fails and its jobs wait.
+ * A space the brain server has not said the kind of (shared or local) is not planned at all: its jobs wait too.
  */
 
 export interface JobMigrationDeps {
   store: Pick<JobStore<Job>, 'pendingV1' | 'migrateV1'>
   spaces(): BrainSpace[]
   brain(space: BrainSpace): Pick<EmlApi, 'get' | 'post'> | null
+  /**
+   * Whether the space is shared, asked of the brain server again when the host does not know it yet (space.shared is
+   * null); null: still not known. A space of unknown kind is not planned: whose cockpit fires a task depends on it.
+   */
+  spaceKind?(space: BrainSpace): Promise<boolean | null>
   /** This cockpit's member. */
   me: string
   /** The sessions that worked for a job work for the task's record from now on (the ledger's jobId). */
@@ -59,8 +65,25 @@ export async function tasksOfJobs(brain: Pick<EmlApi, 'get'>, jobs: readonly Job
   return tasks
 }
 
+/** The people of a space, as its brain lists its users; null when it does not answer. Who owns a task nobody is assigned to depends on them. */
+export async function membersOf(brain: Pick<EmlApi, 'get'>): Promise<string[] | null> {
+  try {
+    const listed = await brain.get('/object/user') as { objects?: Array<{ id?: unknown }> }
+    return (listed.objects ?? []).map((o) => o.id).filter((id): id is string => typeof id === 'string' && id !== '')
+  } catch {
+    return null
+  }
+}
+
+/** What a pass says of a space it cannot plan yet because its kind is not known. */
+export const KIND_UNKNOWN = 'the brain server has not said yet whether it is shared'
+
 export function createJobMigration(deps: JobMigrationDeps) {
   let running: Promise<JobMigrationResult> | null = null
+
+  /** Shared, local, or null: not known yet (asked again each time). */
+  const kindOf = async (space: BrainSpace): Promise<boolean | null> =>
+    space.shared ?? (deps.spaceKind ? await deps.spaceKind(space).catch(() => null) : null)
 
   /** The plan of one space, from the version 1 data and the brain as they are now. Nothing is written. */
   const planSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>, dryRun: boolean): Promise<SpacePlan | null> => {
@@ -69,8 +92,11 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const mine = jobs.filter((j) => (j.spaceId ?? null) === keyOf(space))
     if (!pending || mine.length === 0) return null
     const now = deps.now()
+    const shared = await kindOf(space)
     const plan = planJobMigration({
-      jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name, shared: space.shared },
+      jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name, shared },
+      // Only a shared space has other members whose tasks are not this cockpit's.
+      members: shared === true ? await membersOf(brain) : null,
       tasks: await tasksOfJobs(brain, mine), me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
     })
     return { space, plan, report: jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun }) }
@@ -99,6 +125,11 @@ export function createJobMigration(deps: JobMigrationDeps) {
       if (waiting === 0) continue
       if (!brain) {
         result.failed.push(`${space.name}: no brain to ask, its ${waiting} job(s) wait`)
+        continue
+      }
+      // Whose cockpit fires a task depends on the space's kind: not known, nothing of it is planned, and it waits.
+      if (await kindOf(space) === null) {
+        result.failed.push(`${space.name}: ${KIND_UNKNOWN}, its ${waiting} job(s) wait`)
         continue
       }
       let planned: SpacePlan | null
@@ -136,7 +167,10 @@ export function createJobMigration(deps: JobMigrationDeps) {
   return {
     /** Version 1 jobs wait to be moved. */
     pending: (): boolean => deps.store.pendingV1() !== null,
-    /** The dry run of one space: its plan and report, nothing written; null when it has no job to move or no brain. */
+    /**
+     * The dry run of one space: its plan and report, nothing written; null when it has no job to move or no brain.
+     * A space whose kind is not known plans every job as left, and says why.
+     */
     async dryRun(space: BrainSpace): Promise<SpacePlan | null> {
       const brain = deps.brain(space)
       return brain ? planSpace(space, brain, true) : null

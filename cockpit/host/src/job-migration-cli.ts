@@ -65,14 +65,17 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
     const mine = jobs.filter((j) => (j.spaceId ?? null) === key)
     if (mine.length === 0) continue
     if (!info.brainFile || !fs.existsSync(info.brainFile)) { out(`# ${space.name}\n\nIts brain file is not on this machine: its ${mine.length} job(s) cannot be planned here.\n\n`); continue }
+    // Whose cockpit fires a task depends on whether its space is shared, and only the brain server says that. The
+    // main space is this home's own brain, local by construction; any other space is not planned here, not guessed.
+    if (!space.main) {
+      out(`# ${space.name}\n\nWhether this space is shared only its brain server says, and the dry run does not ask it: its ${mine.length} job(s) are not planned here. The host plans them at its start, once the brain server has answered: in a local space every task's jobs move; in a shared one the jobs on another member's task go onto that task for the owner's cockpit to fire.\n\n`)
+      continue
+    }
     const db = new Database(info.brainFile, { readonly: true, fileMustExist: true })
     try {
       const tasks: Record<string, JobMigrationTask | null> = {}
       for (const id of new Set(mine.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = taskFrom(db, id)
-      // The main space is a local brain: every task in it is this member's. Whether another space is shared only its
-      // brain server says, so here it is planned as a shared one: only the tasks this member owns (domain/task-owner.ts).
-      const plan = planJobMigration({ jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: space.main ? false : null }, tasks, me, now, routineTaskOf: routineTaskOfJob(me) })
-      if (!space.main) out(`(${space.name}: planned as a shared space, where this cockpit fires only the tasks ${me} owns. The host asks the brain server; in a local space every task is moved.)\n\n`)
+      const plan = planJobMigration({ jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: false }, tasks, me, now, routineTaskOf: routineTaskOfJob(me) })
       out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
     } finally {
       db.close()

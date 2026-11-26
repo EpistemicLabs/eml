@@ -262,6 +262,11 @@ export interface TaskCommandsDeps {
    */
   endRecord?(spaceId: string, taskId: string): void
   /**
+   * A scheduled hand-over put a time on the task: this cockpit keeps a record for it (application/record-profile.ts
+   * keepRecord), which is what makes it fire a task no member owns. A record that exists stays as it is.
+   */
+  keepRecord?(spaceId: string, taskId: string): void
+  /**
    * The engine that fires the tasks' schedules (application/job-runner.ts), for the schedule's controls on the task.
    * Without it Run now is refused and Pause and Resume only write the task.
    */
@@ -684,6 +689,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         if (!planned.ok) return fail(planned.refusal)
         // A scheduled hand-over is this one write too: the plan's delegation carries the task's new schedule.
         await track(brain, planned.task.id, { ...planned.plan.patch }, planned.plan.journal)
+        if (command.handOver!.mode === 'schedule') deps.keepRecord?.(command.spaceId, planned.task.id)
         save({ ...command, state: 'applied' })
       } else if (command.kind === 'review') {
         const task = await taskOf(brain, command.taskId!)

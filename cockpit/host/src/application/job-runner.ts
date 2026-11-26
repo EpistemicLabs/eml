@@ -9,7 +9,7 @@ import { delegationOf, type DelegationFields } from '../domain/delegation.js'
 import { decideFiring, type Fired, type FiringFacts } from '../domain/firing-order.js'
 import { firedText, startedBy } from '../domain/run-text.js'
 import { formatDuration } from '../domain/schedule.js'
-import { runsHere } from '../domain/task-owner.js'
+import { firesHere, firingOf, type TaskFiring } from '../domain/task-owner.js'
 import { clearWake, dueOf, hasSchedule, sameInstant, scheduleIsOff, scheduleOf, setCrons, setPaused } from '../domain/task-schedule.js'
 import { waitKind } from '../domain/task-turn.js'
 import { waitsOf } from '../domain/task-waits.js'
@@ -22,8 +22,9 @@ import { stepPrompt } from './task-runner.js'
 
 /**
  * Fires the tasks' schedules (decision task-schedules-live-in-the-brain). A task holds its schedule in the brain
- * (domain/task-schedule.ts); this cockpit fires the schedules of the tasks its member owns (domain/task-owner.ts
- * runsHere, the task runner's rule) and keeps one local record per task (domain/job.ts) with what only it needs:
+ * (domain/task-schedule.ts); this cockpit fires the schedules of the tasks its member owns, and of the tasks no member
+ * owns that it holds a record for (domain/task-owner.ts firingOf, the rule the jobs migration plans by too), and
+ * keeps one local record per task (domain/job.ts) with what only it needs:
  * the cursor the repeating times are due after, the wake-up it fired last, the runs.
  *
  * Every tick it settles the runs whose session has answered and starts the waiting runs, oldest first, a few per
@@ -32,7 +33,7 @@ import { stepPrompt } from './task-runner.js'
  * for every task with a schedule it fires works out what is due against the task's record (dueOf). Several times due
  * at once are ONE firing that names all of them; a repeating time due longer ago than the late limit is recorded as
  * missed; the cursor moves before anything starts, so no time fires twice. A wake-up has fired once a run that carries
- * it got to a session: then it is remembered on the record and cleared on the task. The same read keeps the records: one is made when a schedule is first seen
+ * it got to a session: then it is remembered on the record and cleared on the task. The same read keeps the records: one is made when a schedule is first seen on a task of this member's
  * (its cursor is now, so no time of the past fires), and one goes by domain/job.ts recordKeeping; a closed task's
  * record stops listening first.
  *
@@ -59,7 +60,11 @@ export type RunSessionState = 'queued' | 'working' | 'idle' | 'stopped'
 export interface RunnerSpace {
   key: string | null
   name: string
-  /** A shared brain: each member's cockpit fires only its member's tasks. null (not confirmed yet) counts as shared. */
+  /**
+   * A shared brain: each member's cockpit fires its member's tasks (domain/task-owner.ts firingOf). null: the brain
+   * server has not said yet. Then nothing fires in the space and none of its records is touched; the engine asks
+   * again at every read (JobRunnerDeps.spaceKind).
+   */
   shared: boolean | null
 }
 
@@ -93,6 +98,16 @@ export interface JobRunnerDeps {
    * cannot be asked now, so the space is left alone this time.
    */
   openTasks(space: RunnerSpace): Promise<RunnerTask[] | null>
+  /**
+   * Whether the space is shared, asked of the brain server again: for a space whose kind the host does not know yet
+   * (`shared` null). Null: still not known.
+   */
+  spaceKind?(space: RunnerSpace): Promise<boolean | null>
+  /**
+   * The people of a shared space (its brain's users); null: they could not be read. Asked only for a task nobody is
+   * assigned to and this member did not write: whether a member owns it decides whose cockpit fires it.
+   */
+  members?(space: RunnerSpace): Promise<readonly string[] | null>
   /**
    * The task still has version 1 jobs that have not moved onto it. The migration (application/job-migration.ts)
    * builds its schedule from them and replaces what the task holds, so until they have moved nothing is derived for
@@ -181,6 +196,8 @@ export class JobRunner {
   private derivedAt: number | null = null
   /** What the last read said of the tasks that have a record: their name, and whether their schedule is paused. */
   private facts = new Map<string, { name: string; paused: boolean }>()
+  /** Spaces whose kind was not known at the last read: said once in the log, not every minute. */
+  private kindless = new Set<string | null>()
   /** Brain writes under way that the next pass waits for (a pause after failures). */
   private writes: Array<Promise<void>> = []
 
@@ -291,6 +308,8 @@ export class JobRunner {
     const paused = scheduleOf(task)?.paused === true
     this.facts.set(task.id, { name: nameOfTask(task), paused })
     if (isHeld(record) || paused) return 'retry'
+    // Nothing fires in a space whose kind is not known: the bridge keeps the message.
+    if (await this.kindOf(space) === null) return 'retry'
     const now = this.now()
     if (this.deps.store.seenKey(record.id, key, now - KEY_MEMORY_MS)) return 'delivered'
     const run = this.addRun(record.id, channel, now, { idempotencyKey: key, message })
@@ -307,6 +326,17 @@ export class JobRunner {
 
   private spaceOf(record: Pick<Job, 'spaceId'>): RunnerSpace | null {
     return this.deps.spaces().find((space) => space.key === (record.spaceId ?? null)) ?? null
+  }
+
+  /** The space is shared, local, or null: the brain server has not said, also when asked again now. */
+  private async kindOf(space: RunnerSpace): Promise<boolean | null> {
+    const shared = space.shared ?? (this.deps.spaceKind ? await this.deps.spaceKind(space).catch(() => null) : null)
+    if (shared !== null) this.kindless.delete(space.key)
+    else if (!this.kindless.has(space.key)) {
+      this.kindless.add(space.key)
+      this.deps.log(`[jobs] ${space.name}: the brain server has not said yet whether it is shared: nothing fires here until it has`)
+    }
+    return shared
   }
 
   private async flush(): Promise<void> {
@@ -352,14 +382,24 @@ export class JobRunner {
   }
 
   /**
-   * One space: what is due on the tasks this member fires, and the space's records kept in step with their tasks.
-   * A space whose tasks cannot be read is left as it is: nothing fires and no record is touched.
+   * One space: what is due on the tasks this cockpit fires, and the space's records kept in step with their tasks.
+   * A space whose tasks cannot be read, and one whose kind is not known (shared or local), is left as it is: nothing
+   * fires and no record is touched.
    */
   private async deriveSpace(space: RunnerSpace, now: number): Promise<void> {
+    const shared = await this.kindOf(space)
+    if (shared === null) return
     const tasks = await this.deps.openTasks(space)
     if (!tasks) return
     const open = new Map(tasks.map((task) => [task.id, task]))
-    const fires = (task: RunnerTask) => hasSchedule(task) && runsHere(space.shared, task, this.deps.me)
+    // The members are read once, and only when a task needs them to say whose it is.
+    let members: readonly string[] | null | undefined
+    const firing = async (task: RunnerTask): Promise<TaskFiring> => {
+      const quick = firingOf(shared, task, this.deps.me, null)
+      if (quick !== 'unknown') return quick
+      if (members === undefined) members = this.deps.members ? await this.deps.members(space).catch(() => null) : null
+      return firingOf(shared, task, this.deps.me, members)
+    }
     const waits = (taskId: string) => this.deps.waitsForMigration?.(taskId) === true
     const fired = new Set<string>()
     // One task that cannot be derived (a brain write that fails) does not hold up the others.
@@ -371,7 +411,9 @@ export class JobRunner {
       }
     }
     for (const task of tasks) {
-      if (!fires(task) || waits(task.id)) continue
+      if (!hasSchedule(task) || waits(task.id)) continue
+      // A task no member owns fires only where a record of it is kept: seeing it makes none.
+      if (!firesHere(await firing(task), this.deps.store.get(task.id) !== undefined)) continue
       fired.add(task.id)
       await derive(task)
     }
@@ -381,10 +423,13 @@ export class JobRunner {
       // Not among the open tasks: closed, gone, or the list did not reach it. The task itself says which.
       if (!task) task = await this.deps.task(space, record.taskId)
       const isOpen = task !== null && OPEN.has(task.status)
-      if (task && isOpen && fires(task)) {
+      const whose = task && isOpen ? await firing(task) : null
+      if (task && isOpen && hasSchedule(task) && whose && firesHere(whose, true)) {
         await derive(task)
         continue
       }
+      // Whose task it is cannot be told now (the members did not come): its record is left as it is.
+      if (whose === 'unknown') continue
       if (task) this.facts.set(record.id, { name: nameOfTask(task), paused: false })
       this.keep(record, isOpen ? 'open' : 'closed', now)
     }

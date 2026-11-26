@@ -6,7 +6,7 @@ import { clearWake, nextRunOfSchedule, setWake } from '../domain/task-schedule.j
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { CheckFix, CheckTime, WakeEdit } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
-import { narrowRecordProfile } from './record-profile.js'
+import { keepRecord, narrowRecordProfile } from './record-profile.js'
 import { editTaskSchedule } from './task-schedule-write.js'
 
 /**
@@ -112,6 +112,9 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
     if (edit.kind === 'set' && open && written.schedule?.at && deps.records) {
       const narrowed = narrowRecordProfile(deps.records, { id: where.taskId, spaceId: where.spaceId ?? null }, { sessionId, toolProfile: where.toolProfile ?? null }, new Date(now()).toISOString())
       if (narrowed) deps.log(`[wake] ${sessionId.slice(0, 8)} task ${where.taskId.slice(0, 8)}: its sessions get at most this session's tools`)
+      // Ending a turn with a time is an explicit act here: this cockpit keeps the task's record, which is what makes
+      // it fire a task no member owns.
+      keepRecord(deps.records, { id: where.taskId, spaceId: where.spaceId ?? null }, new Date(now()).toISOString(), sessionId)
     }
     if (written.changed) {
       deps.changed?.()

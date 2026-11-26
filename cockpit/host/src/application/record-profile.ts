@@ -29,3 +29,17 @@ export function narrowRecordProfile(
   store.put(next)
   return next
 }
+
+/**
+ * An explicit act on this machine put a time on the task (a session ending its turn with a time, the page's
+ * scheduled hand-over): this cockpit keeps a record for the task from now on, with every setting at its default. A
+ * task no member owns fires only on a cockpit that holds its record, and seeing the task never makes one
+ * (domain/task-owner.ts firingOf). A record that exists is left as it is. The engine removes the record of a task
+ * another member owns at its next read, so making one for such a task does no harm.
+ */
+export function keepRecord(store: Pick<JobStore, 'get' | 'put'>, task: { id: string; spaceId: string | null }, at: string, by: string | null = null): Job | null {
+  if (store.get(task.id)) return null
+  const record = newRecord(task, at, by)
+  store.put(record)
+  return record
+}
