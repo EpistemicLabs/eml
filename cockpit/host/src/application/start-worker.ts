@@ -26,7 +26,7 @@ export interface StartWorkerDeps {
 /**
  * Starts the workers sessions ask for. A chat worker runs on the host from its first
  * moment and a pane only attaches, so its prompt never depends on a browser. The
- * host's own requests (sign-in, getting started, hygiene) need a person at a
+ * host's own requests (a sign-in by /login, getting started, hygiene) need a person at a
  * terminal and stay there.
  */
 export class StartWorker {
