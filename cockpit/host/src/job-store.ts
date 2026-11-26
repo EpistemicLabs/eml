@@ -21,14 +21,28 @@ import type { NotificationInput } from './notifications.js'
  * starts empty at version 2 — not as a home that was on version 1, so no look for left-over schedules removes
  * anything — and the file is renamed aside (<file>.unreadable-<UTC stamp>) when the host asks at its start
  * (setAsideUnreadable), or before the first write. Reading alone moves nothing: the dry run by hand reads through
- * the store too.
+ * the store too. A file that parses but whose version is neither 1 nor 2 (a newer cockpit wrote it, then the cockpit
+ * was downgraded) is handled the same way, under a name of its own (<file>.unknown-version-<UTC stamp>).
  */
+
+/** Why a jobs.json that is there is not used: it cannot be read or parsed, or its version is neither 1 nor 2. */
+export type JobsNotUsable = 'unreadable' | 'unknown-version'
 
 /** What the user is told at start when jobs.json could not be read and was set aside (`aside`: where it is now). */
 export const unreadableJobsNotice = (aside: string): NotificationInput => ({
   kind: 'failed', title: 'Schedules', jobId: 'jobs-unreadable', sessionId: null, spaceId: null,
   body: `jobs.json could not be read and was set aside as ${path.basename(aside)}; schedules made before are not running. Restore it or set them again.`,
 })
+
+/** What the user is told at start when jobs.json has a version this cockpit does not know and was set aside (`aside`: where it is now). */
+export const unknownVersionJobsNotice = (aside: string): NotificationInput => ({
+  kind: 'failed', title: 'Schedules', jobId: 'jobs-unknown-version', sessionId: null, spaceId: null,
+  body: `jobs.json has a version this cockpit does not know (a newer cockpit may have written it) and was set aside as ${path.basename(aside)}; schedules made before are not running. Update the cockpit and restore it, or set them again.`,
+})
+
+/** The notice of a jobs.json set aside, worded by why it was not used. */
+export const jobsSetAsideNotice = (why: JobsNotUsable, aside: string): NotificationInput =>
+  (why === 'unknown-version' ? unknownVersionJobsNotice(aside) : unreadableJobsNotice(aside))
 
 /** What a version 1 file held, as far as it is not migrated yet. */
 export interface JobsV1Data {
@@ -90,25 +104,26 @@ function empty(): JobsFile {
   return { version: 2, timeZone: null, jobs: {}, runs: {}, keys: {} }
 }
 
-/** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that cannot be parsed. */
-function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; unreadable?: boolean } {
+/** The file as it is read, whether what is on disk is still a version 1 file, and whether a file is there that is not used (and why). */
+function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; notUsable?: JobsNotUsable } {
   if (!file) return { data: empty(), v1OnDisk: false }
   let text: string
   try {
     text = fs.readFileSync(file, 'utf8')
   } catch (err) {
     // No file yet: a new home. A file that is there and cannot be read is kept like one that cannot be parsed.
-    return { data: empty(), v1OnDisk: false, unreadable: (err as NodeJS.ErrnoException).code !== 'ENOENT' }
+    return { data: empty(), v1OnDisk: false, ...((err as NodeJS.ErrnoException).code !== 'ENOENT' ? { notUsable: 'unreadable' as const } : {}) }
   }
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>
-    if (!parsed || typeof parsed !== 'object') return { data: empty(), v1OnDisk: false, unreadable: true }
+    if (!parsed || typeof parsed !== 'object') return { data: empty(), v1OnDisk: false, notUsable: 'unreadable' }
     const timeZone = typeof parsed.timeZone === 'string' ? parsed.timeZone : null
     if (parsed.version === 1) {
       const v1: JobsV1Data = { jobs: record(parsed.jobs), runs: record(parsed.runs), keys: record(parsed.keys) }
       return { data: { ...empty(), timeZone, ...(Object.keys(v1.jobs).length + Object.keys(v1.runs).length > 0 ? { v1 } : {}), fromV1: true }, v1OnDisk: true }
     }
-    if (parsed.version !== 2) return { data: empty(), v1OnDisk: false }
+    // Neither 1 nor 2: nothing of it is taken, and it is kept as it is (a newer cockpit's file after a downgrade).
+    if (parsed.version !== 2) return { data: empty(), v1OnDisk: false, notUsable: 'unknown-version' }
     const old = parsed.v1 as Partial<JobsV1Data> | undefined
     return {
       data: {
@@ -123,7 +138,7 @@ function load(file: string | null): { data: JobsFile; v1OnDisk: boolean; unreada
       v1OnDisk: false,
     }
   } catch {
-    return { data: empty(), v1OnDisk: false, unreadable: true }
+    return { data: empty(), v1OnDisk: false, notUsable: 'unreadable' }
   }
 }
 
@@ -133,31 +148,40 @@ const stamp = (at: Date) => at.toISOString().replace(/[-:]/g, '').replace(/\..+$
 export class JobStore {
   private data: JobsFile
   private v1OnDisk: boolean
-  /** The file on disk could not be parsed and still stands where it was. */
+  /** Why the file found on disk is not used; null: it was read, or there was none. It stays after the file was set aside. */
+  private found: JobsNotUsable | null
+  /** The file that is not used still stands where it was. */
   private unreadableOnDisk: boolean
-  /** Where the unreadable file was set aside; null: there was none, or it is not set aside yet. */
+  /** Where the file that is not used was set aside; null: there was none, or it is not set aside yet. */
   private aside: string | null = null
 
   constructor(private file: string | null = JOBS_FILE) {
     const loaded = load(file)
     this.data = loaded.data
     this.v1OnDisk = loaded.v1OnDisk
-    this.unreadableOnDisk = loaded.unreadable === true
+    this.found = loaded.notUsable ?? null
+    this.unreadableOnDisk = this.found !== null
+  }
+
+  /** Why the jobs.json found on disk is not used (it cannot be parsed, or its version is unknown); null when it was read or there was none. */
+  notUsable(): JobsNotUsable | null {
+    return this.found
   }
 
   /**
-   * A jobs.json that could not be parsed is renamed aside, with its permissions, and logged by its path; the store
-   * goes on from empty. Returns where the file is now, also when it was set aside before; null when the file was
-   * readable (or there was none). The host calls it at its start and tells the user; a write does it first too, so
-   * the file is never overwritten.
+   * A jobs.json that is not used (it could not be parsed, or its version is unknown: notUsable) is renamed aside,
+   * with its permissions, and logged by its path; the store goes on from empty. Returns where the file is now, also
+   * when it was set aside before; null when the file was read (or there was none). The host calls it at its start
+   * and tells the user; a write does it first too, so the file is never overwritten.
    */
   setAsideUnreadable(now: Date = new Date()): string | null {
     if (!this.unreadableOnDisk || !this.file) return this.aside
-    const aside = `${this.file}.unreadable-${stamp(now)}`
+    const unknown = this.found === 'unknown-version'
+    const aside = `${this.file}.${unknown ? 'unknown-version' : 'unreadable'}-${stamp(now)}`
     fs.renameSync(this.file, aside)
     this.unreadableOnDisk = false
     this.aside = aside
-    process.stderr.write(`[jobs] ${this.file} could not be read: set aside as ${aside}; the cockpit starts without the schedules it held\n`)
+    process.stderr.write(`[jobs] ${this.file} ${unknown ? 'has a version this cockpit does not know' : 'could not be read'}: set aside as ${aside}; the cockpit starts without the schedules it held\n`)
     return aside
   }
 
@@ -336,7 +360,7 @@ export class JobStore {
     if (!this.file) return
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 })
-      // A file that could not be parsed is never overwritten: it is set aside first.
+      // A file that could not be parsed, or of an unknown version, is never overwritten: it is set aside first.
       this.setAsideUnreadable()
       // The version 1 file is kept as it was before it is rewritten for the first time.
       if (this.v1OnDisk) {

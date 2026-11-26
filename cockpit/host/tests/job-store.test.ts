@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { JobStore, unreadableJobsNotice } from '../src/job-store.js'
+import { JobStore, unknownVersionJobsNotice, unreadableJobsNotice } from '../src/job-store.js'
 import { newRecord, type JobRun } from '../src/domain/job.js'
 
 const run = (jobId: string, id: string, status: JobRun['status'] = 'finished'): JobRun => ({
@@ -225,6 +225,58 @@ describe('jobs.json', () => {
     expect(unreadableJobsNotice('/home/someone/.eml-cockpit/jobs.json.unreadable-20261126-100005')).toEqual({
       kind: 'failed', title: 'Schedules', jobId: 'jobs-unreadable', sessionId: null, spaceId: null,
       body: 'jobs.json could not be read and was set aside as jobs.json.unreadable-20261126-100005; schedules made before are not running. Restore it or set them again.',
+    })
+  })
+
+  it('a jobs.json of a version this cockpit does not know is never overwritten: it is set aside under its own dated name, and the store starts empty at version 2, not as a home that was on version 1', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
+    const file = join(dir, 'jobs.json')
+    // written by a newer cockpit, then the cockpit was downgraded
+    const newer = JSON.stringify({ version: 3, timeZone: 'UTC', jobs: { t1: { id: 't1' } }, runs: {}, keys: {}, v1: { jobs: { j1: v1Job('j1') }, runs: {}, keys: {} }, fromV1: true })
+    writeFileSync(file, newer)
+    chmodSync(file, 0o600)
+    const store = new JobStore(file)
+    expect([store.list(), store.pendingV1(), store.fromV1(), store.awaitsLeftoverLook(null)]).toEqual([[], null, false, false])
+    expect(store.notUsable()).toBe('unknown-version')
+    // reading alone moves nothing: the dry run by hand reads through the store too
+    expect(readdirSync(dir)).toEqual(['jobs.json'])
+    const aside = store.setAsideUnreadable(new Date('2026-11-26T10:00:05.000Z'))
+    expect(aside).toBe(`${file}.unknown-version-20261126-100005`)
+    expect(readFileSync(aside!, 'utf8')).toBe(newer)
+    expect(statSync(aside!).mode & 0o777).toBe(0o600)
+    expect(existsSync(file)).toBe(false)
+    expect(store.setAsideUnreadable(new Date('2026-11-26T11:00:00.000Z'))).toBe(aside)
+    // what was found stays known after the file was set aside: the host words its notice by it
+    expect(store.notUsable()).toBe('unknown-version')
+    store.put(newRecord({ id: 't2', spaceId: null }, '2026-11-26T10:00:00.000Z'))
+    expect(read(file)).toMatchObject({ version: 2, jobs: { t2: { id: 't2' } } })
+    expect(read(file).fromV1).toBeUndefined()
+    expect(readFileSync(aside!, 'utf8')).toBe(newer)
+    expect(readdirSync(dir).sort()).toEqual(['jobs.json', 'jobs.json.unknown-version-20261126-100005'])
+    // a file without a version is one too; a file that does not parse is unreadable, a readable one neither
+    writeFileSync(join(dir, 'bare.json'), JSON.stringify({ jobs: {} }))
+    expect(new JobStore(join(dir, 'bare.json')).notUsable()).toBe('unknown-version')
+    writeFileSync(join(dir, 'bad.json'), 'not json')
+    expect(new JobStore(join(dir, 'bad.json')).notUsable()).toBe('unreadable')
+    expect(new JobStore(file).notUsable()).toBeNull()
+  })
+
+  it('a write that comes before anyone set the file of an unknown version aside sets it aside first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-job-store-'))
+    const file = join(dir, 'jobs.json')
+    writeFileSync(file, '{"version":9,"jobs":{"x":{}}}')
+    const store = new JobStore(file)
+    store.setTimeZone('UTC')
+    const kept = readdirSync(dir).filter((name) => name.startsWith('jobs.json.unknown-version-'))
+    expect(kept).toHaveLength(1)
+    expect(readFileSync(join(dir, kept[0]), 'utf8')).toBe('{"version":9,"jobs":{"x":{}}}')
+    expect(read(file)).toEqual({ version: 2, timeZone: 'UTC', jobs: {}, runs: {}, keys: {} })
+  })
+
+  it('the notice of a jobs.json of an unknown version says so, names the file and what to do', () => {
+    expect(unknownVersionJobsNotice('/home/someone/.eml-cockpit/jobs.json.unknown-version-20261126-100005')).toEqual({
+      kind: 'failed', title: 'Schedules', jobId: 'jobs-unknown-version', sessionId: null, spaceId: null,
+      body: 'jobs.json has a version this cockpit does not know (a newer cockpit may have written it) and was set aside as jobs.json.unknown-version-20261126-100005; schedules made before are not running. Update the cockpit and restore it, or set them again.',
     })
   })
 

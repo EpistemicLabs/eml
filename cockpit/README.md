@@ -327,7 +327,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   is checked against what was planned (the task's rev). In a home that had such a file, each space is looked through
   once for a schedule left on a task without a job, also a space without jobs: on a task this cockpit fires it is
   removed, in a local and in a shared space alike; until then no schedule is taken up there by being seen. A
-  `jobs.json` that cannot be parsed is set aside as `jobs.json.unreadable-<UTC stamp>`, never overwritten. A record made or changed in the last few minutes is left as it is by a pass that finds no
+  `jobs.json` that cannot be parsed is set aside as `jobs.json.unreadable-<UTC stamp>`, one of a version this cockpit does not know (a newer cockpit's, after a downgrade) as `jobs.json.unknown-version-<UTC stamp>`: neither is overwritten. A record made or changed in the last few minutes is left as it is by a pass that finds no
   schedule on its task (`domain/job.ts` `RECORD_GRACE_MS`).
 - **Channel bridge:** `packages/channel-bridge`, bundled as `dist/channel-bridge.cjs`, runs next to the host once
   `<home>/channel-bridge/accounts.json` lists mailboxes; the host restarts it after a crash and stops it with itself

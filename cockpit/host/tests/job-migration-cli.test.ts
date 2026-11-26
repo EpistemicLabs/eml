@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createRequire } from 'node:module'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runMigrateJobsCommand, type MigrateJobsHome } from '../src/job-migration-cli.js'
@@ -65,6 +65,22 @@ describe('eml-cockpit migrate-jobs', () => {
     const moved = homeWith({ jobs: { version: 2, timeZone: null, jobs: { t1: { id: 't1', runCount: 0 } }, runs: {}, keys: {} } })
     expect(await moved.run()).toBe(true)
     expect(moved.printed).toEqual(['jobs.json holds no version 1 jobs: nothing to move\n'])
+  })
+
+  it('says what it found when jobs.json cannot be parsed or has an unknown version, and writes or renames nothing', async () => {
+    const cut = homeWith()
+    writeFileSync(cut.jobsFile, '{"version": 1, "jobs": {"j1": {"id": "j1", "name": "Daily br')
+    expect(await cut.run()).toBe(true)
+    expect(cut.printed).toEqual([`jobs.json in ${cut.dir} cannot be read (it is not valid JSON, or the file cannot be opened): nothing is planned. The host sets it aside at its start, as jobs.json.unreadable-<UTC stamp>, and starts without the schedules it held.\n`])
+    expect(readFileSync(cut.jobsFile, 'utf8')).toBe('{"version": 1, "jobs": {"j1": {"id": "j1", "name": "Daily br')
+    expect(readdirSync(cut.dir).sort()).toEqual(['jobs.json', 'main.db'])
+
+    const newer = homeWith({ jobs: { version: 3, jobs: { t1: { id: 't1' } }, runs: {}, keys: {} } })
+    const before = readFileSync(newer.jobsFile, 'utf8')
+    expect(await newer.run()).toBe(true)
+    expect(newer.printed).toEqual([`jobs.json in ${newer.dir} has a version this cockpit does not know (neither 1 nor 2; a newer cockpit may have written it): nothing is planned. The host sets it aside at its start, as jobs.json.unknown-version-<UTC stamp>, and starts without the schedules it held.\n`])
+    expect(readFileSync(newer.jobsFile, 'utf8')).toBe(before)
+    expect(readdirSync(newer.dir).sort()).toEqual(['jobs.json', 'main.db'])
   })
 
   it('plans the main space from its brain file and prints the report; jobs.json is left byte for byte, with no backup', async () => {

@@ -68,6 +68,14 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
   if (!fs.existsSync(home.jobsFile)) { out(`no jobs.json in ${home.dir}: nothing to move\n`); return true }
   // Read as the host reads it (job-store.ts); the store writes only on a change, and none is made here.
   const store = new JobStore(home.jobsFile)
+  // A file the host would not use is named as what it is; setting it aside is the host's step, never the dry run's.
+  const notUsable = store.notUsable()
+  if (notUsable) {
+    out(notUsable === 'unknown-version'
+      ? `jobs.json in ${home.dir} has a version this cockpit does not know (neither 1 nor 2; a newer cockpit may have written it): nothing is planned. The host sets it aside at its start, as jobs.json.unknown-version-<UTC stamp>, and starts without the schedules it held.\n`
+      : `jobs.json in ${home.dir} cannot be read (it is not valid JSON, or the file cannot be opened): nothing is planned. The host sets it aside at its start, as jobs.json.unreadable-<UTC stamp>, and starts without the schedules it held.\n`)
+    return true
+  }
   const pending = store.pendingV1()
   const jobs = Object.values(pending?.jobs ?? {})
   // As the host's pass: in a home that was on version 1 the main space is looked through once for schedules left
