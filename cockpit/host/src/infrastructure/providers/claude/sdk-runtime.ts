@@ -41,8 +41,67 @@ const TOOL_KINDS: Record<string, ToolKind> = {
 // The mode a worker runs in, as in the terminal (index.ts launch, unattended).
 const WORKER_MODE = 'auto'
 
-/** What Claude Code offers in the chat beyond the basics (domain RuntimeFeature); no sign-in to a tool server yet. */
-const FEATURES: RuntimeFeature[] = ['commands', 'stopAgent', 'toolServerToggle', 'toolServerReconnect']
+/** What Claude Code offers in the chat beyond the basics (domain RuntimeFeature). */
+const FEATURES: RuntimeFeature[] = ['commands', 'stopAgent', 'toolServerToggle', 'toolServerReconnect', 'toolServerSignIn']
+
+// How often a sign-in under way looks whether the server is connected, and for how long. A claude.ai
+// connector signs in on claude.ai, which tells the CLI nothing: it is connected again each time, less often.
+const SIGN_IN_POLL_MS = 2_000
+const CONNECTOR_SIGN_IN_POLL_MS = 10_000
+const SIGN_IN_WATCH_MS = 10 * 60_000
+
+/**
+ * The CLI's sign-in to an MCP server, as /mcp runs it: control requests the SDK's Query sends
+ * (mcp_authenticate, mcp_oauth_callback_url) but leaves out of its typings.
+ *
+ * mcpAuthenticate answers with the page to open. For a server with its own OAuth service
+ * (`callbackExpected`), the CLI waits for the browser on a callback address on this machine
+ * (`http://localhost:<callbackPort>/callback`), trades the code and connects the server again by itself.
+ * mcpSubmitOAuthCallbackUrl hands it that address instead, from a browser elsewhere; then the CLI
+ * leaves connecting again to the caller. A claude.ai connector (`callbackExpected` false) signs in on
+ * claude.ai. Without `authUrl` the server's sign-in was still good.
+ */
+interface McpAuthAnswer {
+  authUrl?: string
+  requiresUserAction?: boolean
+  callbackExpected?: boolean
+  state?: string
+  callbackPort?: number
+}
+interface McpSignIn {
+  mcpAuthenticate(serverName: string): Promise<McpAuthAnswer | undefined>
+  mcpSubmitOAuthCallbackUrl(serverName: string, callbackUrl: string): Promise<unknown>
+}
+
+function mcpSignIn(query: Query): McpSignIn {
+  const calls = query as unknown as Partial<McpSignIn>
+  if (typeof calls.mcpAuthenticate !== 'function' || typeof calls.mcpSubmitOAuthCallbackUrl !== 'function') {
+    throw new Error('This Claude Code cannot sign in to a tool server from the chat. To sign in, switch this pane to the terminal and run /mcp.')
+  }
+  return calls as McpSignIn
+}
+
+/** A sign-in under way: where its callback waits (secret, in memory only) and what looks for its end. */
+interface PendingSignIn {
+  port: number | null
+  state: string | null
+  timer: ReturnType<typeof setInterval>
+  finishing: boolean
+}
+
+/**
+ * What the user pasted back, as the address the CLI's callback waits for: the address the sign-in page
+ * ended on as it is, or a code alone, put into that address. Null when it is neither.
+ */
+export function callbackAddress(pasted: string, pending: { port: number | null; state: string | null } | undefined): string | null {
+  const value = pasted.trim()
+  if (/^https?:\/\//i.test(value)) return value
+  if (!value || /\s/.test(value) || !pending?.port || !pending.state) return null
+  const address = new URL(`http://localhost:${pending.port}/callback`)
+  address.searchParams.set('code', value)
+  address.searchParams.set('state', pending.state)
+  return address.toString()
+}
 
 const MODES: ModeOption[] = [
   { id: 'default', label: 'Ask first', description: 'Asks before edits and commands' },
@@ -565,6 +624,8 @@ class ClaudeSdkRuntime implements SessionRuntime {
   // The journals of running workflow runs, by task id, and when each run started (for finding its folder).
   private journals = new Map<string, JournalWatch>()
   private workflowStarts = new Map<string, number>()
+  // Sign-ins to tool servers under way, by server name.
+  private signIns = new Map<string, PendingSignIn>()
 
   constructor(private request: SessionRuntimeStart, private watchJournal: JournalWatcher = watchWorkflowJournal) {
     this.exited = new Promise((resolve) => { this.markExited = resolve })
@@ -720,8 +781,9 @@ class ClaudeSdkRuntime implements SessionRuntime {
       }
     }
     this.cancelOpenRequests()
-    // The runs went with the process.
+    // The runs and sign-ins went with the process.
     this.stopJournals()
+    this.endSignIns()
     if (!this.exitReported) {
       this.exitReported = true
       this.emit({ kind: 'runtime_exit', expected: this.closing })
@@ -797,8 +859,73 @@ class ClaudeSdkRuntime implements SessionRuntime {
     throw new Error('Claude Code sessions in the chat take no reasoning effort.')
   }
 
-  async signInToolServer(): Promise<ToolServerSignIn> {
-    throw new Error('To sign in, switch this pane to the terminal and run /mcp.')
+  async signInToolServer(name: string): Promise<ToolServerSignIn | null> {
+    const answer = await mcpSignIn(this.query).mcpAuthenticate(name)
+    if (answer?.authUrl && !/^https?:\/\//.test(answer.authUrl)) throw new Error('Claude Code gave no page to sign in on.')
+    this.watchSignIn(name, answer ?? {})
+    if (!answer?.authUrl) return null
+    return { url: answer.authUrl, ...(answer.callbackExpected ? { takesCode: true } : {}) }
+  }
+
+  async finishToolServerSignIn(name: string, code: string): Promise<void> {
+    const pending = this.signIns.get(name)
+    const address = callbackAddress(code, pending)
+    if (!address) throw new Error(pending ? 'Paste the whole address the sign-in page ended on.' : 'No sign-in is under way for this server. Start it again.')
+    if (pending) pending.finishing = true
+    try {
+      await mcpSignIn(this.query).mcpSubmitOAuthCallbackUrl(name, address)
+    } catch (error) {
+      // The sign-in still waits, for another try.
+      if (pending) pending.finishing = false
+      throw error
+    }
+    this.endSignIn(name)
+    await this.query.reconnectMcpServer(name)
+    this.emit({ kind: 'notice', text: `Signed in to the tool server "${name}".` })
+  }
+
+  /** Until the server is connected, or the time is up: then a notice, and the panel's list shows it. */
+  private watchSignIn(name: string, answer: McpAuthAnswer): void {
+    this.endSignIn(name)
+    // A connector's sign-in happens on claude.ai: only connecting again finds out.
+    const connector = !!answer.authUrl && !answer.callbackExpected
+    const since = Date.now()
+    let looking = false
+    const timer = setInterval(() => {
+      const pending = this.signIns.get(name)
+      if (pending?.timer !== timer) return clearInterval(timer)
+      if (Date.now() - since > SIGN_IN_WATCH_MS) return this.endSignIn(name)
+      if (looking || pending.finishing) return
+      looking = true
+      void this.connected(name, connector).then((done) => {
+        if (!done || this.signIns.get(name)?.timer !== timer || this.signIns.get(name)?.finishing) return
+        this.endSignIn(name)
+        this.emit({ kind: 'notice', text: `Signed in to the tool server "${name}".` })
+      }).finally(() => { looking = false })
+    }, connector ? CONNECTOR_SIGN_IN_POLL_MS : SIGN_IN_POLL_MS)
+    timer.unref?.()
+    this.signIns.set(name, { port: answer.callbackPort ?? null, state: answer.state ?? null, timer, finishing: false })
+  }
+
+  private async connected(name: string, reconnect: boolean): Promise<boolean> {
+    if (this.closing) return false
+    try {
+      if (reconnect) await this.query.reconnectMcpServer(name).catch(() => { /* still not signed in */ })
+      return (await this.query.mcpServerStatus()).some((server) => server.name === name && server.status === 'connected')
+    } catch {
+      return false
+    }
+  }
+
+  private endSignIns(): void {
+    for (const name of [...this.signIns.keys()]) this.endSignIn(name)
+  }
+
+  private endSignIn(name: string): void {
+    const pending = this.signIns.get(name)
+    if (!pending) return
+    clearInterval(pending.timer)
+    this.signIns.delete(name)
   }
 
   async stopAgent(taskId: string): Promise<void> {
@@ -850,6 +977,7 @@ class ClaudeSdkRuntime implements SessionRuntime {
     this.query.close()
     this.cancelOpenRequests()
     this.stopJournals()
+    this.endSignIns()
     if (!this.child) return
     const timer = setTimeout(() => { try { this.child?.kill('SIGKILL') } catch { /* gone */ } }, EXIT_TIMEOUT_MS)
     await this.exited
