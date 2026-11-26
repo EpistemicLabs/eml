@@ -6,7 +6,7 @@ import type { JobStore } from '../job-store.js'
  * The user's per-machine settings of a scheduled task, on the task's record here (domain/job.ts): their OK for new
  * channel addresses, send or draft per channel, the Limited switch, and tools lent for a while. Only the page reaches
  * them (tasks-api.ts), never a session's tool: a session never approves its own senders, widens its replies or lifts
- * its own limit. Before brain schema 24 these sat on a job in the Jobs view.
+ * its own limit.
  *
  * A record is this cockpit's alone, so nothing here is written to the brain. Limiting a task that has no record yet
  * makes one; every other setting needs the record (a channel, a limit) it is about.

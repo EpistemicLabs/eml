@@ -535,7 +535,7 @@ const SCHEDULE_TOOL_INPUT = {
   cron: z.string().optional(),
   at: z.string().optional(),
   timezone: z.string().optional(),
-  // Any word is taken, so one the tool no longer knows is answered with what to do instead (application/jobs.ts).
+  // Any word is taken, so one the tool does not know is answered with what to do instead (application/jobs.ts).
   target: z.string().optional().describe('worker (default) or self: the task this session works on.'),
   project: z.string().optional().describe('The project a new task is made in, and where new sessions of the task start.'),
   provider: z.string().optional(),

@@ -14,9 +14,9 @@ import type { JobStore } from './job-store.js'
  *                             while none is saved, so the last page loaded never moves the user's times.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
  *
- * What the Jobs view did with one job sits on its task now (tasks-api.ts): pause, resume, run now, remove one
- * repeating time and End schedule as task commands, and the user's own decisions (their OK for new channel
- * addresses, send or draft, the Limited switch, lent tools) under /api/v1/tasks/<id>/record.
+ * A schedule's controls sit on its task (tasks-api.ts): pause, resume, run now, remove one repeating time and End
+ * schedule are task commands, and the user's own decisions (their OK for new channel addresses, send or draft, the
+ * Limited switch, lent tools) are under /api/v1/tasks/<id>/record.
  */
 
 export interface JobsApiDeps {

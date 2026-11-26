@@ -17,7 +17,7 @@ function load(): TopView {
       localStorage.setItem(STORAGE_KEY, 'desks');
       return 'desks';
     }
-    // The Jobs view is gone: a schedule sits on its task, so a cockpit left on Jobs opens on the task views.
+    // A stored view of 'jobs' opens the task views: a schedule sits on its task.
     if (raw === 'jobs') {
       localStorage.setItem(STORAGE_KEY, 'tasks');
       return 'tasks';
