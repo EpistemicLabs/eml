@@ -64,7 +64,7 @@ describe('the limits badge', () => {
     render(<LimitsBadge sessionId="s-badge-3" />);
     fireEvent.click(screen.getByRole('button', { name: 'Limited: 2 tools off' }));
     expect(screen.queryAllByRole('menuitem')).toEqual([]);
-    expect(screen.getByText(/Lend it tools in the Jobs view/)).toBeTruthy();
+    expect(screen.getByText(/Lend it tools in its task's panel, under Schedule/)).toBeTruthy();
   });
 
   it('is not there for a session without limits', () => {

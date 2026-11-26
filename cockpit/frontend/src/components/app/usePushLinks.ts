@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
-import { openSession } from '@/components/jobs/jobs';
 import type { AllSession } from '@/components/sidebar/allSessions';
+import { openSession } from '@/lib/open-session';
 import { getSpaces, loadSpaces, paneSpaceKey } from '@/stores/useSpaceStore';
 
 /** Open the session a notification names, in its own space; one the host no longer knows is ignored. */

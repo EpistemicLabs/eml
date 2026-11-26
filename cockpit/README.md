@@ -309,8 +309,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   (`application/channel-job-launch.ts`). Its drafts show on the session's review card, where the user edits, sends or
   skips them; the page reaches them through `/api/bridge/*` (`channel-bridge-api.ts`), which adds the bridge's
   cockpit token in the host.
-- **Jobs view:** the header's **Jobs** shows every space's jobs with their next and last runs (a missed run stands
-  out there), pause, resume, run now and delete. What a run needs from the user shows in the review section on the
+- **A task's schedule in its panel:** there is no Jobs view. A task's panel has a **Schedule** section: its repeating
+  times, each with Remove, the wake-up with its reason, the next run, one Pause or Resume, Run now and End for the
+  whole schedule, and the last runs (a missed one stands out there). What a run needs from the user shows in the review section on the
   run's session (Needs you, Check this). A job that could not run, or paused itself after three failures, has no
   session saying so, so the job's own session (else whoever made it) shows it as "Needs you". Everything that tells
   the user outside the cockpit goes through a `Notifier` (`notifications.ts`), which web push implements.
@@ -329,11 +330,11 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   beyond its triggers.
 - **Mail jobs:** the schedule tool's `mail: { domains, addresses }` makes a job that the channel bridge wakes when such
   mail arrives, in one session of its own (`job-session`). Its replies are drafts, and it reacts only once the user
-  clicked **Approve** in the Jobs view; adding addresses later asks again. Switching a channel to send is the Jobs
-  view's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
+  clicked **Approve** in the task panel's Schedule section; adding addresses later asks again. Switching a channel to
+  send is that section's alone, never a session's. A job's worker carries the job's id in its ledger entry (`jobId`), so its
   channel tools act for that job on every resume.
-- **Limited jobs and grants:** every job starts with its maker's tools; the user can mark one **limited** (the Jobs
-  view's switch, the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
+- **Limited jobs and grants:** every job starts with its maker's tools; the user can mark one **limited** (the task
+  panel's switch under Schedule, the user's alone): its sessions get no shell, no messages to other sessions and of the space's MCP
   servers only the brain; web tools stay, and the schedule tool reaches only their own job (next wake-up, goal,
   finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
   ends at its time or when the job's session reports done, and the host restarts the job's session to pick it up.

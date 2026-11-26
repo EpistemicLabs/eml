@@ -14,7 +14,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useProviders } from '@/lib/providers';
 import Sidebar from '../sidebar/view/Sidebar';
 import BrainDashboard from '../brain/BrainDashboard';
-import JobsView from '../jobs/JobsView';
 import { TaskBoard } from '../task-board/TaskBoard';
 import { taskSessionsKey, useTaskBoard } from '@/lib/task-board';
 import { loadTimeZone } from '@/lib/time-zone';
@@ -110,10 +109,6 @@ function AppContentInner() {
 
   // Header-level view: the fixed Brain tab vs the desk/pane grid.
   const topView = useTopView();
-  // The phone's navigation drawer leads back from the brain and the task views, not from Jobs.
-  useEffect(() => {
-    if (compact && topView === 'jobs') setTopView('desks');
-  }, [compact, topView]);
 
   // ── Turn state (finished / working / waiting) ─────────────────────────
   // Streams from the host (Claude Code hooks → /api/events). A finished
@@ -318,7 +313,7 @@ function AppContentInner() {
   }, []);
 
   // The tasks card: next to the sidebar or right of the desk, never on a phone. It belongs to a desk: the
-  // pages across spaces (Inbox, Now, Plan, Brain, Jobs) go without it.
+  // pages across spaces (Inbox, Now, Plan, Brain) go without it.
   const tasksCard = useTasksCard();
   const tasksCardPlace = !compact && tasksCard.shown && topView === 'desks' ? tasksCard.place : null;
 
@@ -376,11 +371,6 @@ function AppContentInner() {
           {topView === 'brain' && (
             <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
               <BrainDashboard />
-            </div>
-          )}
-          {topView === 'jobs' && (
-            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background">
-              <JobsView />
             </div>
           )}
           {/* With no banner above, the task views start below the phone's floating buttons, as a pane does. */}

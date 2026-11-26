@@ -1,5 +1,5 @@
-// How the Jobs view words a run: the last run as its session stands now, older
-// runs as they ended.
+// How a run of a task's schedule is worded (the task panel's last runs): the newest
+// run as its session stands now, older runs as they ended.
 
 export type RunOutcome = 'done' | 'review' | 'question' | 'failed';
 
@@ -23,7 +23,7 @@ const WAITS: Partial<Record<RunOutcome, { text: string; tone: RunTone }>> = {
 // What a question or a result reads as once the user took it up in the session.
 const TAKEN_UP: Partial<Record<RunOutcome, string>> = { question: 'answered', review: 'seen' };
 
-/** A run in a word, and its tone. `current`: the job's last run, read as its session stands now. */
+/** A run in a word, and its tone. `current`: the task's newest run, read as its session stands now. */
 export function runLabel(run: LabelRun, current: boolean): { text: string; tone: RunTone } {
   if (run.status === 'finished') {
     if (current && run.sessionKnown) {
@@ -41,9 +41,4 @@ export function runLabel(run: LabelRun, current: boolean): { text: string; tone:
   if (run.status === 'skipped') return { text: 'skipped', tone: 'muted' };
   if (run.status === 'waiting') return { text: 'waiting for room', tone: 'muted' };
   return { text: 'running', tone: 'ok' };
-}
-
-/** Running jobs in their order, and the ended ones apart (the view folds them). */
-export function splitEnded<T extends { endedAt: string | null }>(jobs: T[]): { open: T[]; ended: T[] } {
-  return { open: jobs.filter((job) => !job.endedAt), ended: jobs.filter((job) => job.endedAt) };
 }
