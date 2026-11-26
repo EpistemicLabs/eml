@@ -7,7 +7,9 @@ import type { SplitAnswer, SplitSession } from './application/split-session.js'
 import type { SortSession } from './application/sort-session.js'
 import { SORT_PICKS, type SortPick, type SortRow } from './domain/sort.js'
 import { HAND_OVER_MODES, readScheduleSpec, type HandOverMode } from './domain/hand-over.js'
-import { JOB_LIMITS } from './domain/job.js'
+import { GRANT_TOOLS, JOB_LIMITS, type GrantTool } from './domain/job.js'
+import { CHANNELS } from './domain/job-contract.js'
+import { GRANT_MINUTES, type RecordAnswer, type RecordRefusal, type TaskRecords } from './application/task-record.js'
 import { SPLIT_RELATIONS, SPLIT_WHENS, type SplitRelation, type SplitWhen } from './domain/split.js'
 import type { TaskStateMigration } from './application/task-state-migration.js'
 
@@ -28,6 +30,23 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *                                                     schedule is on
  *   POST /api/v1/tasks/<id>/end-schedule            { opId, spaceId }: End schedule and close: the owner clears the task's schedule
  *                                                     and the task closes as done; refused (not_scheduled) without a schedule
+ *   POST /api/v1/tasks/<id>/pause-schedule          { opId, spaceId }: the owner pauses the task's whole schedule; refused (not_scheduled)
+ *                                                     without one. It acts at once, like the next three: no undo window
+ *   POST /api/v1/tasks/<id>/resume-schedule         { opId, spaceId }: the schedule goes on from now; also lifts a pause the cockpit
+ *                                                     set after failed runs
+ *   POST /api/v1/tasks/<id>/run-now                 { opId, spaceId }: a run now, by the four-line order; refused (run_open) while its
+ *                                                     last run is open, (task_working) while a session of the task works,
+ *                                                     (needs_approval) while its channel waits for the user's OK
+ *   POST /api/v1/tasks/<id>/remove-time             { opId, spaceId, cron }: remove one repeating time; refused (unknown_time) when the
+ *                                                     schedule has none such. Removing the only time ends the schedule; the task stays open
+ *   GET  /api/v1/tasks/<id>/record?spaceId          what this cockpit keeps for the task (domain/job.ts): { record, runs, held, running };
+ *                                                     record null when it keeps nothing
+ *   POST /api/v1/tasks/<id>/record/approve          { spaceId }: the user's OK for new channel addresses
+ *   POST /api/v1/tasks/<id>/record/reply            { spaceId, channel, mode }: send or draft per channel
+ *   POST /api/v1/tasks/<id>/record/limited          { spaceId, limited }: the Limited switch (makes the record when there is none)
+ *   POST /api/v1/tasks/<id>/record/grant            { spaceId, tool, minutes?, reason? }: lend a tool for a while
+ *   POST /api/v1/tasks/<id>/record/revoke           { spaceId, tool }: take it back
+ *                                                     Each answers 200 { text, record }, or a refusal (no_record without a record)
  *   POST /api/v1/tasks/<id>/reopen                  { opId, spaceId, reason?, message? }: the owner reopens a closed task (active;
  *                                                     starts nothing, or with a message: its newest session gets it)
  *   POST /api/v1/tasks/<id>/follow-up               { opId, spaceId, message }: a new task spun off from this one, the message its brief
@@ -49,6 +68,8 @@ export interface TasksApiDeps {
   split: SplitSession
   brief: SplitBrief
   sort: SortSession
+  /** The user's per-machine settings of a scheduled task (application/task-record.ts). Without it the record routes answer 404. */
+  records?: TaskRecords
   /** The task state migration (application/task-state-migration.ts): a dry run, then the run. */
   migration?: TaskStateMigration
   /** Start a session of the user's own on a task: the host binds the task, the page opens the pane (in chat when that is the user's view). */
@@ -86,6 +107,10 @@ const MESSAGES: Record<CommandRefusal, string> = {
   parent_closed: 'Its parent is closed: reopen the parent first.',
   scheduled: SCHEDULE_ON,
   not_scheduled: 'It has no schedule to end: close it instead.',
+  unknown_time: 'Its schedule has no such repeating time.',
+  run_open: 'Its last run is still going: wait for it to finish.',
+  task_working: 'A session of the task is working right now: nothing is started beside it.',
+  needs_approval: 'Its channel waits for your OK first.',
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo: the action already happened.',
 }
@@ -122,8 +147,15 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
-  scheduled: 409, not_scheduled: 409,
+  scheduled: 409, not_scheduled: 409, unknown_time: 409, run_open: 409, task_working: 409, needs_approval: 409,
   no_brain: 503,
+}
+
+const RECORD_STATUS: Partial<Record<RecordRefusal, number>> = { unknown_space: 404, unknown_task: 404, no_record: 404, task_closed: 409, no_brain: 503 }
+
+function answerRecord(json: Json, res: http.ServerResponse, result: RecordAnswer): void {
+  if (result.ok) json(res, 200, { text: result.text, record: result.record })
+  else json(res, RECORD_STATUS[result.refusal] ?? 400, { error: { code: result.refusal, message: result.message, retry: result.refusal === 'no_brain' } })
 }
 
 function refuse(json: Json, res: http.ServerResponse, refusal: CommandRefusal, message?: string): void {
@@ -305,7 +337,44 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|reopen|follow-up)$/.exec(pathname)
+  // What this cockpit keeps for a scheduled task, and the user's own decisions on it: never reachable from a session's tool.
+  const record = /^\/api\/v1\/tasks\/([^/]+)\/record(?:\/(approve|reply|limited|grant|revoke))?$/.exec(pathname)
+  if (record && deps.records && ((method === 'GET' && !record[2]) || (method === 'POST' && record[2]))) {
+    const taskId = decodeURIComponent(record[1])
+    if (method === 'GET') {
+      const spaceId = str(new URL(req.url ?? '', 'http://host').searchParams.get('spaceId'))
+      if (!spaceId) { json(res, 400, { error: { code: 'invalid', message: 'Name the spaceId.', retry: false } }); return true }
+      const view = deps.records.view(spaceId, taskId)
+      if ('ok' in view) answerRecord(json, res, view)
+      else json(res, 200, view)
+      return true
+    }
+    const body = await readJson(req)
+    const spaceId = str(body.spaceId)
+    const invalid = (message: string) => { json(res, 400, { error: { code: 'invalid', message, retry: false } }); return true }
+    if (!spaceId) return invalid('spaceId is required')
+    const action = record[2]
+    if (action === 'approve') answerRecord(json, res, deps.records.approve(spaceId, taskId))
+    else if (action === 'limited') {
+      if (typeof body.limited !== 'boolean') return invalid('limited is true or false')
+      answerRecord(json, res, await deps.records.setLimited(spaceId, taskId, body.limited))
+    } else if (action === 'grant' || action === 'revoke') {
+      const tool = body.tool
+      if (!(GRANT_TOOLS as readonly unknown[]).includes(tool)) return invalid(`tool is one of ${GRANT_TOOLS.join(', ')}`)
+      answerRecord(json, res, action === 'grant'
+        ? deps.records.grant(spaceId, taskId, tool as GrantTool, body.minutes === undefined ? GRANT_MINUTES.default : Number(body.minutes), typeof body.reason === 'string' ? body.reason.slice(0, 200) : null)
+        : deps.records.revoke(spaceId, taskId, tool as GrantTool))
+    } else {
+      const channel = CHANNELS.find((c) => c === body.channel)
+      const mode = body.mode
+      if (!channel || (mode !== 'send' && mode !== 'draft')) return invalid(`channel is one of ${CHANNELS.join(', ')}; mode is send or draft`)
+      answerRecord(json, res, deps.records.setReply(spaceId, taskId, channel, mode))
+    }
+    void deps.board.refresh().catch(() => {})
+    return true
+  }
+
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|pause-schedule|resume-schedule|run-now|remove-time|reopen|follow-up)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -325,6 +394,12 @@ export async function handleTasksApi(
         input = { ...base, kind: verb, taskId }
       } else if (verb === 'end-schedule') {
         input = { ...base, kind: 'end_schedule', taskId }
+      } else if (verb === 'pause-schedule' || verb === 'resume-schedule' || verb === 'run-now') {
+        input = { ...base, kind: verb === 'pause-schedule' ? 'pause_schedule' : verb === 'resume-schedule' ? 'resume_schedule' : 'run_now', taskId }
+      } else if (verb === 'remove-time') {
+        const cron = str(body.cron)
+        if (!cron) { refuse(json, res, 'invalid', 'cron is required: the repeating time to remove'); return true }
+        input = { ...base, kind: 'remove_time', taskId, cron }
       } else if (verb === 'reopen') {
         const reason = str(body.reason)?.trim().slice(0, 500)
         const message = typeof body.message === 'string' ? body.message : undefined

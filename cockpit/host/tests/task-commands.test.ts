@@ -911,3 +911,126 @@ describe('a task whose schedule is still on', () => {
     expect(logs.at(-1)).toContain('reopening the task failed: brain is down')
   })
 })
+
+describe('the schedule\'s controls on the task: pause, resume, run now, remove one repeating time', () => {
+  const DAILY = { crons: ['0 8 * * 1-5', '0 18 * * 1-5'], time_zone: 'Europe/Berlin' }
+  const scheduled = (id: string, schedule: Record<string, unknown> = DAILY, props: Record<string, unknown> = {}, status = 'active') =>
+    owned(id, { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', schedule }, ...props }, status)
+  const scheduleOf = (w: ReturnType<typeof world>, id: string) => (w.byId.get(id)!.properties.delegation as { schedule?: Record<string, unknown> }).schedule
+  /** A world whose engine records what the commands tell it. */
+  const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval'; listens?: string[]; held?: string[] } = {}) => {
+    const w = world(tasks)
+    const told: string[] = []
+    w.deps.schedule = {
+      runNow: async (spaceId, task) => { told.push(`run:${spaceId}:${task.id}`); return engine.runNow ?? 'started' },
+      listens: (taskId) => (engine.listens ?? []).includes(taskId),
+      heldAfterFailures: (taskId) => (engine.held ?? []).includes(taskId),
+      paused: (taskId) => told.push(`paused:${taskId}`),
+      resumed: (taskId) => told.push(`resumed:${taskId}`),
+    }
+    return { ...w, commands: createTaskCommands(w.deps), told }
+  }
+
+  it('pauses the whole schedule at once, with no undo window, and tells the engine; the delegation is carried whole', async () => {
+    const w = withEngine([scheduled('daily')])
+    const r = await w.commands.submit({ opId: 'op-p', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', undoUntil: new Date(w.clock.now).toISOString() } })
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { ...DAILY, paused: true } }, text: 'The owner paused its schedule.' } }])
+    expect(w.told).toEqual(['paused:daily'])
+    expect(w.byId.get('daily')!.status).toBe('active')
+    // it happened: nothing to undo, and the same opId again does nothing more
+    expect(await w.commands.undo('op-p')).toEqual({ ok: false, refusal: 'undo_expired' })
+    await w.commands.submit({ opId: 'op-p', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(1)
+    expect(w.commands.pending()).toEqual([])
+  })
+
+  it('resumes it: the pause goes off the task and the engine goes on from now', async () => {
+    const w = withEngine([scheduled('daily', { ...DAILY, paused: true })])
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'resume_schedule', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: true, command: { state: 'applied' } })
+    expect(scheduleOf(w, 'daily')).toEqual(DAILY)
+    expect(w.posts[0].body.text).toBe('The owner resumed its schedule: it goes on from now.')
+    expect(w.told).toEqual(['resumed:daily'])
+  })
+
+  it('resume lifts a pause the cockpit set after failures on a task that only a channel wakes', async () => {
+    const w = withEngine([owned('mail', {}, 'active'), owned('plain', {}, 'active')], { held: ['mail'] })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'resume_schedule', spaceId: 'main', taskId: 'mail' })).toMatchObject({ ok: true })
+    expect(w.told).toEqual(['resumed:mail'])
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'resume_schedule', spaceId: 'main', taskId: 'plain' })).toMatchObject({ ok: false, refusal: 'not_scheduled' })
+  })
+
+  it('removes one repeating time and leaves the others, the wake-up and the pause alone', async () => {
+    const w = withEngine([scheduled('daily', { ...DAILY, at: '2026-11-20T08:00:00.000Z', why: 'Check.', paused: true })])
+    expect(await w.commands.submit({ opId: 'op-x', kind: 'remove_time', spaceId: 'main', taskId: 'daily', cron: ' 0 18 * * 1-5 ' })).toMatchObject({ ok: true, command: { state: 'applied' } })
+    expect(scheduleOf(w, 'daily')).toEqual({ crons: ['0 8 * * 1-5'], at: '2026-11-20T08:00:00.000Z', why: 'Check.', time_zone: 'Europe/Berlin', paused: true })
+    expect(w.posts[0].body.text).toBe('The owner removed the repeating time "0 18 * * 1-5".')
+  })
+
+  it('removing the only time ends the schedule and leaves the task open; with a wake-up left the schedule stays', async () => {
+    const w = withEngine([scheduled('one', { crons: ['0 8 * * *'], time_zone: 'UTC' }), scheduled('wake', { crons: ['0 8 * * *'], at: '2026-11-20T08:00:00.000Z' })])
+    await w.commands.submit({ opId: 'op-1', kind: 'remove_time', spaceId: 'main', taskId: 'one', cron: '0 8 * * *' })
+    expect(w.byId.get('one')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
+    expect(w.byId.get('one')!.status).toBe('active')
+    expect(w.posts[0].body.text).toBe('The owner removed the repeating time "0 8 * * *". It was its only time: the task has no schedule any more and stays open.')
+    await w.commands.submit({ opId: 'op-2', kind: 'remove_time', spaceId: 'main', taskId: 'wake', cron: '0 8 * * *' })
+    expect(scheduleOf(w, 'wake')).toEqual({ at: '2026-11-20T08:00:00.000Z' })
+    expect(w.posts[1].body.text).toBe('The owner removed the repeating time "0 8 * * *".')
+  })
+
+  it('refuses to remove a time the schedule does not have, or none', async () => {
+    const w = withEngine([scheduled('daily')])
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'remove_time', spaceId: 'main', taskId: 'daily', cron: '0 9 * * *' })).toMatchObject({ ok: false, refusal: 'unknown_time', message: 'Its schedule has no repeating time "0 9 * * *".' })
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'remove_time', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(w.posts).toEqual([])
+  })
+
+  it('runs it now through the engine, also when only a channel wakes the task', async () => {
+    const w = withEngine([scheduled('daily'), owned('mail', {}, 'active')], { listens: ['mail'] })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: true, command: { state: 'applied' } })
+    expect(await w.commands.submit({ opId: 'op-2', kind: 'run_now', spaceId: 'main', taskId: 'mail' })).toMatchObject({ ok: true })
+    expect(w.told).toEqual(['run:main:daily', 'run:main:mail'])
+    // run now writes nothing to the task
+    expect(w.posts).toEqual([])
+    // the same click again starts no second run
+    await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })
+    expect(w.told).toHaveLength(2)
+  })
+
+  it('says why a run cannot start now, and keeps no command of it: the next click tries again', async () => {
+    for (const refusal of ['run_open', 'task_working', 'needs_approval'] as const) {
+      const w = withEngine([scheduled('daily')], { runNow: refusal })
+      expect(await w.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal })
+      expect(w.store.get('op-1')).toBeUndefined()
+    }
+  })
+
+  it('refuses each on a task without a schedule, a closed one, an unknown one, and another owner\'s', async () => {
+    const w = withEngine([owned('plain', {}, 'active'), scheduled('closed', DAILY, {}, 'resolved'), scheduled('theirs', DAILY, { assignee_ids: ['dominik'] })])
+    for (const kind of ['pause_schedule', 'resume_schedule', 'run_now', 'remove_time'] as const) {
+      const submit = (taskId: string) => w.commands.submit({ opId: `${kind}-${taskId}`, kind, spaceId: 'main', taskId, cron: '0 8 * * 1-5' })
+      expect(await submit('plain')).toMatchObject({ ok: false, refusal: kind === 'remove_time' ? 'unknown_time' : 'not_scheduled' })
+      expect(await submit('closed')).toMatchObject({ ok: false, refusal: 'task_closed' })
+      expect(await submit('nope')).toMatchObject({ ok: false, refusal: 'unknown_task' })
+      expect(await submit('theirs')).toMatchObject({ ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can change its schedule.' })
+      expect(await w.commands.submit({ opId: `${kind}-none`, kind, spaceId: 'main' })).toMatchObject({ ok: false, refusal: 'invalid' })
+    }
+    expect(w.posts).toEqual([])
+    expect(w.told).toEqual([])
+  })
+
+  it('refuses run now without an engine, and answers a brain that fails as worth another try', async () => {
+    const bare = world([scheduled('daily')])
+    expect(await bare.commands.submit({ opId: 'op-1', kind: 'run_now', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal: 'not_scheduled' })
+    // pause and resume still write the task without one
+    expect(await bare.commands.submit({ opId: 'op-2', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: true })
+    const failing = world([scheduled('daily')])
+    const brain = failing.deps.brain({} as never)!
+    failing.deps.brain = () => ({ get: brain.get, post: async () => { throw new Error('brain is down') } })
+    const commands = createTaskCommands(failing.deps)
+    expect(await commands.submit({ opId: 'op-3', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal: 'no_brain', message: expect.stringContaining('brain is down') })
+    expect(failing.store.get('op-3')).toBeUndefined()
+  })
+})

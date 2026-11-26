@@ -3,7 +3,8 @@ import * as path from 'node:path'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planHandOver, planUndo, type HandOverRefusal, type HandOverRequest, type HandOverTask } from '../domain/hand-over.js'
-import { hasSchedule, scheduleOf, scheduleText, withSchedule } from '../domain/task-schedule.js'
+import { hasSchedule, removeCron, scheduleOf, scheduleText, setPaused, withSchedule } from '../domain/task-schedule.js'
+import { editTaskSchedule } from './task-schedule-write.js'
 import type { Snooze } from '../domain/inbox.js'
 import type { WaitingOn } from '../domain/task-turn.js'
 import type { DelegationFields } from '../domain/delegation.js'
@@ -29,8 +30,14 @@ import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '
  * losing them.
  *
  * A task that has a schedule (domain/task-schedule.ts hasSchedule) is not closed: Looks good approves that
- * one run and the task stays open, Close is refused, and End schedule clears its schedule and closes it. A run that
- * comes due on a closed task all the same reopens it first (reopenForRun), so its questions reach the owner.
+ * one run and the task stays open, Close is refused, and End schedule clears its schedule and closes it.
+ *
+ * The schedule's own controls sit on the task too (decision task-schedules-live-in-the-brain): Pause and Resume for
+ * the whole schedule, Run now, and Remove for one repeating time. They are the owner's, act at once and have no undo
+ * window: Resume undoes a pause, and a removed time is set again by handing the task over with it.
+ *
+ * Nothing fires on a closed task (application/job-runner.ts): a run that was due when its task closed is skipped.
+ * reopenForRun, which reopened the task for such a run before brain schema 24, is no longer called by the engine.
  */
 
 export const UNDO_WINDOW_MS = 8000
@@ -41,7 +48,10 @@ const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'end_schedule' | 'reopen' | 'follow_up' | 'split' | 'sort'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'end_schedule' | 'pause_schedule' | 'resume_schedule' | 'run_now' | 'remove_time' | 'reopen' | 'follow_up' | 'split' | 'sort'
+
+/** The schedule's controls on the task: they act at once, without an undo window. */
+const SCHEDULE_CONTROLS: readonly CommandKind[] = ['pause_schedule', 'resume_schedule', 'run_now', 'remove_time']
 
 /** The longest message a closed task's chat takes for Send or As follow-up. */
 export const MESSAGE_MAX = 20_000
@@ -58,6 +68,8 @@ export interface CommandInput {
   reason?: string
   /** Reopen from the task's chat: the message its newest session gets once the task is open. Follow-up: its brief. */
   message?: string
+  /** Remove one repeating time: its cron text, as the task's schedule lists it. */
+  cron?: string
 }
 
 /** A decision or note that closed with the task: a reopen lists it for the chat, which brings it back on the owner's yes. */
@@ -123,6 +135,14 @@ export type CommandRefusal =
   | 'parent_closed'
   | 'scheduled'
   | 'not_scheduled'
+  /** Remove: the task's schedule has no such repeating time. */
+  | 'unknown_time'
+  /** Run now: the task's previous run has not come to an end. */
+  | 'run_open'
+  /** Run now: a session of the task is working (the four-line order skips a time then). */
+  | 'task_working'
+  /** Run now: the task's channel still waits for the user's OK. */
+  | 'needs_approval'
   | 'unknown_command'
   | 'undo_expired'
 
@@ -237,6 +257,22 @@ export interface TaskCommandsDeps {
    * lent tools, a run that waits to start) ends too. Safe to call again.
    */
   endRecord?(spaceId: string, taskId: string): void
+  /**
+   * The engine that fires the tasks' schedules (application/job-runner.ts), for the schedule's controls on the task.
+   * Without it Run now is refused and Pause and Resume only write the task.
+   */
+  schedule?: {
+    /** Start a run by hand now; a refusal's code when it cannot. */
+    runNow(spaceId: string, task: { id: string; status: string }): Promise<'started' | 'run_open' | 'task_working' | 'needs_approval'>
+    /** This cockpit's record of the task listens on a channel: Run now works for it without a schedule. */
+    listens(taskId: string): boolean
+    /** The cockpit paused the task after failures (its record says why): Resume lifts that too. */
+    heldAfterFailures(taskId: string): boolean
+    /** The owner paused the schedule. */
+    paused(taskId: string): void
+    /** The owner resumed the schedule: it goes on from now, and a pause after failures is over. */
+    resumed(taskId: string): void
+  }
   /** A space's board changed. */
   changed(spaceId: string): void
   now(): number
@@ -501,6 +537,27 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       return { ok: true, command: save(base) }
     }
 
+    if (SCHEDULE_CONTROLS.includes(input.kind)) {
+      if (!input.taskId) return { ok: false, refusal: 'invalid' }
+      const task = await taskOf(brain, input.taskId)
+      if (!task) return { ok: false, refusal: 'unknown_task' }
+      if (!OPEN.has(task.status)) return { ok: false, refusal: 'task_closed' }
+      const notOwner = ownerRefusal(task, 'change its schedule')
+      if (notOwner) return notOwner
+      // They act at once and cannot be undone: the same opId again answers with what was done.
+      const done = (): Submitted => {
+        deps.log(`[commands] ${input.opId.slice(0, 8)} ${input.kind} applied to task ${task.id.slice(0, 8)}`)
+        return { ok: true, command: save({ ...base, undoUntil: base.createdAt, state: 'applied' }) }
+      }
+      const noSchedule: Submitted = { ok: false, refusal: 'not_scheduled', message: 'It has no schedule.' }
+      try {
+        return await control(brain, task, done, noSchedule)
+      } catch (err) {
+        deps.log(`[commands] ${input.opId.slice(0, 8)} ${input.kind} failed: ${(err as Error).message}`)
+        return { ok: false, refusal: 'no_brain', message: `The task's schedule could not be written (${(err as Error).message}); try again.` }
+      }
+    }
+
     if (input.kind === 'reopen') {
       if (!input.taskId) return { ok: false, refusal: 'invalid' }
       if (input.message !== undefined && (!input.message.trim() || input.message.length > MESSAGE_MAX)) return { ok: false, refusal: 'invalid', message: MESSAGE_RULE }
@@ -519,6 +576,42 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       return { ok: true, command: save(base) }
     }
     return { ok: false, refusal: 'invalid' }
+
+    /** One of the schedule's controls on an open task of the viewer's, carried out now. */
+    async function control(brain: Pick<EmlApi, 'get' | 'post'>, task: BrainTask, done: () => Submitted, noSchedule: Submitted): Promise<Submitted> {
+      if (input.kind === 'run_now') {
+        if (!isScheduled(task) && !deps.schedule?.listens(task.id)) return noSchedule
+        if (!deps.schedule) return noSchedule
+        const result = await deps.schedule.runNow(input.spaceId, task)
+        if (result === 'run_open') return { ok: false, refusal: 'run_open', message: 'Its last run is still going: wait for it to finish.' }
+        if (result === 'task_working') return { ok: false, refusal: 'task_working', message: 'A session of the task is working right now: nothing is started beside it.' }
+        if (result === 'needs_approval') return { ok: false, refusal: 'needs_approval', message: 'Its channel waits for your OK first.' }
+        return done()
+      }
+      if (input.kind === 'pause_schedule') {
+        if (!isScheduled(task)) return noSchedule
+        await editTaskSchedule(brain, task.id, (schedule) => setPaused(schedule, true), { text: 'The owner paused its schedule.' })
+        deps.schedule?.paused(task.id)
+        return done()
+      }
+      if (input.kind === 'resume_schedule') {
+        // A task without a schedule can still be held: the cockpit paused its channel after failures.
+        if (!isScheduled(task) && !deps.schedule?.heldAfterFailures(task.id)) return noSchedule
+        await editTaskSchedule(brain, task.id, (schedule) => setPaused(schedule, false), { text: 'The owner resumed its schedule: it goes on from now.' })
+        deps.schedule?.resumed(task.id)
+        return done()
+      }
+      const cron = input.cron?.trim()
+      if (!cron) return { ok: false, refusal: 'invalid', message: 'Name the repeating time to remove (cron).' }
+      const crons = (scheduleOf(task)?.crons ?? []).map((c) => c.trim())
+      if (!crons.includes(cron)) return { ok: false, refusal: 'unknown_time', message: `Its schedule has no repeating time "${cron}".` }
+      const written = await editTaskSchedule(brain, task.id, (schedule) => removeCron(schedule, cron), {
+        text: `The owner removed the repeating time "${cron}".${crons.length === 1 && !scheduleOf(task)?.at ? ' It was its only time: the task has no schedule any more and stays open.' : ''}`,
+      })
+      // No schedule is left: what this cockpit kept for it goes by the rule for every record (the next pass).
+      if (written.schedule === null) deps.log(`[commands] task ${task.id.slice(0, 8)}: its last repeating time was removed, its schedule has ended`)
+      return done()
+    }
   }
 
   /** A reopened task's message: to its newest session (resumed when stopped), or a new session started with it. */
@@ -667,6 +760,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (!command || command.state === 'undone') return { ok: false, refusal: 'unknown_command' }
       const now = deps.now()
       if (now > Date.parse(command.undoUntil) || command.state === 'failed') return { ok: false, refusal: 'undo_expired' }
+      // The schedule's controls act at once and have no undo: Resume undoes a pause.
+      if (SCHEDULE_CONTROLS.includes(command.kind)) return { ok: false, refusal: 'undo_expired' }
       if (command.kind === 'snooze') {
         // A snooze from before parking lived in the local store; one since then is on the wait.
         deps.store.setSnoozes(deps.store.snoozes(now).filter((s) => s.key !== command.snooze!.key))
@@ -712,7 +807,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     },
 
     /**
-     * A job's run came due on a closed task: the task reopens first, by the board's reopen rules. The run is about to
+     * Not called since brain schema 24: nothing fires on a closed task (application/job-runner.ts skips the run).
+     * Before it, a job's run came due on a closed task: the task reopens first, by the board's reopen rules. The run is about to
      * work and ask on it, and a closed task waits on nobody (the router drops its questions). One that can't be
      * reopened (replaced, gone, under a closed parent, another owner's) stays closed, and the log says why; the run
      * starts either way. `job` is the job's name, for the task's journal; the log names the job by its id. Never throws.

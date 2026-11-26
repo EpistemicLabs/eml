@@ -3,27 +3,23 @@ import type { JobCaller, Jobs } from './application/jobs.js'
 import { isTimeZone } from './domain/schedule.js'
 import type { JobStore } from './job-store.js'
 import type { WorkerStatus } from './domain/session-attention.js'
-import { JOB_ACTIONS } from './application/jobs.js'
-import { GRANT_TOOLS, type GrantTool } from './domain/job.js'
 import type { JobV1 } from './domain/job-v1.js'
 
 /**
- * Jobs over HTTP (application/jobs.ts):
+ * The schedule tool and the user's time zone over HTTP:
  *   POST /api/jobs            from a session (schedule-cli.ts); X-Cockpit-Token = the
  *                             per-boot spawn token. Body: fromSession plus the schedule
  *                             tool's input. Answer: { text, job? }.
- *   GET  /api/jobs            the page: every space's jobs (with their goal) and runs; each run's
- *                             session as it stands now, with its attention (Needs you, Check this).
+ *   GET  /api/jobs            the Jobs view, which goes: an empty list of jobs, with the time zone.
  *   GET  /api/jobs/time-zone  the page: the user's time zone (Settings › Preferences); null until one is saved.
  *   PUT  /api/jobs/time-zone  the page: { timeZone, explicit? }. Only an explicit one (the user chose it in
  *                             Settings) replaces a saved zone; without it a browser fills in the zone only
  *                             while none is saved, so the last page loaded never moves the user's times.
- *   POST /api/jobs/<id>/<pause|resume|delete|run_now|finish>   the page (Jobs view).
- *   POST /api/jobs/<id>/approve, /api/jobs/<id>/reply { channel, mode }   the page only: the user's OK
- *                             for new channel addresses, and send vs draft per channel.
- *   POST /api/jobs/<id>/limited { limited }, /grant { tool, minutes?, reason? }, /revoke { tool }
- *                             the page only: the Limited switch and tools lent for a while.
  * The spawn inbox carries the session's request as kind 'schedule' (spawn-inbox.ts).
+ *
+ * What the Jobs view did with one job sits on its task now (tasks-api.ts): pause, resume, run now, remove one
+ * repeating time and End schedule as task commands, and the user's own decisions (their OK for new channel
+ * addresses, send or draft, the Limited switch, lent tools) under /api/v1/tasks/<id>/record.
  */
 
 export interface JobsApiDeps {
@@ -75,64 +71,6 @@ export async function handleJobsApi(
       runs: [...deps.store.runs(job.id)].reverse().slice(0, 20).map((run) => ({ ...run, session: run.sessionId ? deps.sessionInfo(run.sessionId) : null })),
     }))
     json(res, 200, { timeZone: deps.zones.timeZone(), jobs })
-    return true
-  }
-  // The user's own decisions: never reachable from a session's tool.
-  const decide = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/(approve|reply|limited|grant|revoke)$/)
-  if (decide && method === 'POST') {
-    const job = deps.store.get(decide[1])
-    if (!job) {
-      json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such job' } })
-      return true
-    }
-    if (decide[2] === 'approve') {
-      const answer = deps.jobs.approve(job)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    const body = await readJson(req)
-    if (decide[2] === 'limited') {
-      if (typeof body.limited !== 'boolean') {
-        json(res, 400, { error: { code: 'INVALID', message: 'limited is true or false' } })
-        return true
-      }
-      const answer = deps.jobs.setLimited(job, body.limited)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    if (decide[2] === 'grant' || decide[2] === 'revoke') {
-      const tool = body.tool
-      if (!(GRANT_TOOLS as readonly unknown[]).includes(tool)) {
-        json(res, 400, { error: { code: 'INVALID_TOOL', message: `tool is one of ${GRANT_TOOLS.join(', ')}` } })
-        return true
-      }
-      const answer = decide[2] === 'grant'
-        ? deps.jobs.grant(job, tool as GrantTool, body.minutes === undefined ? 60 : Number(body.minutes), typeof body.reason === 'string' ? body.reason.slice(0, 200) : null)
-        : deps.jobs.revoke(job, tool as GrantTool)
-      json(res, answer.status, { text: answer.text })
-      return true
-    }
-    const channel = body.channel
-    const mode = body.mode
-    if ((channel !== 'mail' && channel !== 'slack' && channel !== 'whatsapp') || (mode !== 'send' && mode !== 'draft')) {
-      json(res, 400, { error: { code: 'INVALID_REPLY', message: 'channel is mail, slack or whatsapp; mode is send or draft' } })
-      return true
-    }
-    const answer = deps.jobs.setReply(job, channel, mode)
-    json(res, answer.status, { text: answer.text })
-    return true
-  }
-  const act = pathname.match(/^\/api\/jobs\/([0-9a-f-]{36})\/([a-z_]+)$/)
-  if (act && method === 'POST') {
-    const job = deps.store.get(act[1])
-    const action = act[2]
-    if (!job || !(JOB_ACTIONS as readonly string[]).includes(action) || action === 'create' || action === 'list' || action === 'update') {
-      json(res, 404, { error: { code: 'NOT_FOUND', message: 'No such job or action' } })
-      return true
-    }
-    // The user acts on any space's job: as a caller of that space.
-    const answer = await deps.jobs.handle({ sessionId: null, spaceId: job.spaceId, projectId: null, toolProfile: null }, { action, job: job.id })
-    json(res, answer.status, { text: answer.text })
     return true
   }
   if (pathname === '/api/jobs/time-zone' && method === 'GET') {
