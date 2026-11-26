@@ -87,6 +87,7 @@ import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts, sessionRecordId } from './application/limited-job-scope.js'
+import { repairSessionJobIds } from './application/session-job-repair.js'
 import type { ProviderId } from './domain/agent-provider.js'
 import { isHeld, scheduleFactsOf, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
@@ -664,6 +665,12 @@ async function main() {
   // The local records of scheduled tasks and their runs (domain/job.ts, jobs.json version 2). A version 1 file
   // converted at this start keeps the spaces the cockpit has now: only those get the look for left-over schedules.
   const jobStore = new JobStore(undefined, spaces.list().map((space) => (space.main ? null : space.id)))
+  // Sessions of version 1 jobs the migration dropped kept those jobs' ids in the ledger: they name their task from now
+  // on (application/session-job-repair.ts). Not while jobs.json could not be read: every id would look stale then.
+  if (!jobStore.notUsable()) {
+    const repaired = repairSessionJobIds(ledger, (id) => jobStore.get(id) !== undefined || jobStore.pendingV1()?.jobs[id] !== undefined)
+    if (repaired > 0) log(`[jobs] ${repaired} session(s) named a job of version 1 that no longer exists: they name their task now`)
+  }
   // What tells the user outside the cockpit: web push to every subscribed device (push-store.ts).
   const pushStore = new PushStore()
   const pushNotifier = new PushNotifier({

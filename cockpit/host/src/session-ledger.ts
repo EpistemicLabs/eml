@@ -445,7 +445,7 @@ export class SessionLedger {
     this.persist()
   }
 
-  setJobId(sessionId: string, jobId: string): void {
+  setJobId(sessionId: string, jobId: string | null): void {
     const entry = this.data.sessions[sessionId]
     if (!entry || entry.jobId === jobId) return
     entry.jobId = jobId

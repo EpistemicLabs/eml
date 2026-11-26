@@ -60,8 +60,11 @@ export interface JobMigrationDeps {
   brainSchema(space: BrainSpace): number | null
   /** This cockpit's member. */
   me: string
-  /** The sessions that worked for a job work for the task's record from now on (the ledger's jobId). */
-  moveSessions(fromJobId: string, toRecordId: string): void
+  /**
+   * The sessions that worked for a job work for the task's record from now on (the ledger's jobId): the task's id, also
+   * for a job that did not move onto its task. Null: the job had no task.
+   */
+  moveSessions(fromJobId: string, toTaskId: string | null): void
   now(): number
   log(line: string): void
   /**
@@ -242,6 +245,10 @@ export function createJobMigration(deps: JobMigrationDeps) {
     const step = stepOf(task, taskId)
     deps.store.migrateV1(step)
     if (step.record) for (const jobId of task.renamed) deps.moveSessions(jobId, step.record.id)
+    // The sessions of the jobs that leave the version 1 data without going on under the record (dropped, or left out)
+    // work for their task too: no session keeps a version 1 job's id, which names no record and no task.
+    const moved = new Set(step.record ? task.renamed : [])
+    for (const jobId of task.settles) if (!moved.has(jobId)) deps.moveSessions(jobId, taskId)
   }
 
   /**
