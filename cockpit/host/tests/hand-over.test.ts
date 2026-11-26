@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { formatInZone } from '../src/domain/schedule.js'
 import { continuedBrief, planHandOver, planUndo, readScheduleSpec, type HandOverTask } from '../src/domain/hand-over.js'
 
 const NOW = '2026-11-24T10:00:00.000Z'
@@ -103,11 +104,17 @@ describe('planning a hand-over', () => {
     if (!once.ok) throw new Error(once.refusal)
     // its schedule starts it: no request for the runner
     expect(once.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-25T01:00:00.000Z', time_zone: 'Asia/Singapore' } })
-    expect(once.plan.journal).toBe('Scheduled atlas for 2026-11-25T01:00:00.000Z with checkpoint after; the owner stays.')
+    // The journal line is the task's status line on the board: the time as people read it, in the zone it was given in.
+    expect(once.plan.journal).toBe(`Scheduled atlas for ${formatInZone(Date.parse('2026-11-25T01:00:00.000Z'), 'Asia/Singapore')} (Asia/Singapore) with checkpoint after; the owner stays.`)
+    expect(once.plan.journal).toMatch(/^Scheduled atlas for Wed 25 Nov( 2026)? 09:00 \(Asia\/Singapore\) with/)
+    expect(once.plan.journal).not.toMatch(/\d{4}-\d{2}-\d{2}T/)
     const weekly = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 9 * * 1', timeZone: 'Asia/Singapore' } }, ctx)
     if (!weekly.ok) throw new Error(weekly.refusal)
     expect(weekly.plan.patch.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 9 * * 1'], time_zone: 'Asia/Singapore' } })
-    expect(weekly.plan.journal).toBe('Scheduled atlas for "0 9 * * 1" (Asia/Singapore) with checkpoint after; the owner stays.')
+    expect(weekly.plan.journal).toBe('Scheduled atlas every Monday at 09:00 (Asia/Singapore) with checkpoint after; the owner stays.')
+    // a rule the words do not fit is named as it is
+    const odd = planHandOver(task(), { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '*/20 * * * *', timeZone: 'UTC' } }, ctx)
+    expect(odd.ok && odd.plan.journal).toBe('Scheduled atlas for "*/20 * * * *" (UTC) with checkpoint after; the owner stays.')
   })
 
   it('schedule on a task that has a schedule: a wake-up replaces its wake-up and keeps the repeating times; a repeat rule joins them once', () => {

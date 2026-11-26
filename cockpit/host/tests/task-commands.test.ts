@@ -138,9 +138,9 @@ describe('hand over', () => {
     await w.commands.tick()
     expect(w.posts).toEqual([
       // one time: the task's wake-up; no request for the runner
-      { path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', time_zone: 'Asia/Singapore' } }, text: 'Scheduled atlas for 2026-11-20T01:00:00.000Z with checkpoint after; the owner stays.' } },
+      { path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', time_zone: 'Asia/Singapore' } }, text: expect.stringMatching(/^Scheduled atlas for Fri 20 Nov( 2026)? 09:00 \(Asia\/Singapore\) with checkpoint after; the owner stays\.$/) } },
       // a repeat rule joins the repeating times the task has
-      { path: '/task/t2/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' } }, text: 'Scheduled atlas for "0 18 * * *" (UTC) with checkpoint after; the owner stays.' } },
+      { path: '/task/t2/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' } }, text: 'Scheduled atlas every day at 18:00 (UTC) with checkpoint after; the owner stays.' } },
     ])
     expect(w.store.get('op-s')).toMatchObject({ state: 'applied' })
     expect(w.store.get('op-s')!.effects).toBeUndefined()

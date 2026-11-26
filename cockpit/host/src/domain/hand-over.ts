@@ -1,5 +1,6 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
 import type { DelegationFields } from './delegation.js'
+import { cronInWords } from './run-text.js'
 import { parseAt, isTimeZone, formatInZone } from './schedule.js'
 import { addCron, cronRefusal, cronZoneRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
@@ -166,8 +167,10 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   }
   if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.${req.fresh ? ' It starts in a new session (Start fresh).' : ''}`)
   if (req.mode === 'schedule') {
-    const when = req.schedule!.at ?? `"${req.schedule!.cron}" (${req.schedule!.timeZone})`
-    lines.push(`Scheduled ${req.delegate} for ${when} with checkpoint ${req.checkpoint}; the owner stays.`)
+    // The line is read as the task's status on the board: a time as people read it, never the stored instant.
+    const { at, cron, timeZone } = req.schedule!
+    const when = at !== undefined ? `for ${formatInZone(Date.parse(at), timeZone)} (${timeZone})` : `${cronInWords(cron) ?? `for "${cron}"`} (${timeZone})`
+    lines.push(`Scheduled ${req.delegate} ${when} with checkpoint ${req.checkpoint}; the owner stays.`)
   }
   if (req.mode === 'together') {
     const where = req.desk ? ` in desk ${req.desk}` : ''
