@@ -295,7 +295,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   `application/task-schedule-write.ts`). An agent sets it in two ways. Ending a turn with a time (`end_turn`,
   `next.when`) sets the wake-up of the session's task and replaces the one it had; a turn without a time clears the
   wake-up only when that session set it, a hand-over to the owner clears it whoever did, and a task that has a next run
-  needs no time (`application/turn-wake.ts`, `domain/turn-end.ts`). The `schedule` tool (in the chat view's `cockpit`
+  needs no time; while its record waits for the user's OK only the wake-up is one (`application/turn-wake.ts`,
+  `domain/turn-end.ts`). The `schedule` tool (in the chat view's `cockpit`
   MCP server, next to `end_turn`) or `$COCKPIT_SCHEDULE_JS` (skill `schedule`) adds a repeating time, sets the wake-up,
   pauses, resumes, ends or runs a task's schedule; the task is `task_id`, the caller's own (`target self`), or a new one
   made from name and prompt (`application/jobs.ts`, `domain/schedule-tool.ts`). What a time is for stands in the task's

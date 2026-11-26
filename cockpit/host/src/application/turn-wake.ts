@@ -3,7 +3,7 @@ import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { parseAt } from '../domain/schedule.js'
 import { isOpenTask } from '../domain/schedule-tool.js'
-import { clearWake, nextRunOfSchedule, setWake } from '../domain/task-schedule.js'
+import { clearWake, nextRunOfSchedule, setWake, whileHeldForOk, type ScheduleFacts } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { CheckFix, CheckTime, WakeEdit } from '../domain/turn-end.js'
 import type { JobStore } from '../job-store.js'
@@ -25,7 +25,8 @@ import { editTaskSchedule } from './task-schedule-write.js'
  * must never be more than the session that set it had.
  *
  * The answer also says whether the task has a next run once the call is applied: a task that has one needs no time
- * from the agent (domain/turn-end.ts missingOf).
+ * from the agent (domain/turn-end.ts missingOf). While the task's record waits for the user's OK only its wake-up
+ * counts (domain/task-schedule.ts whileHeldForOk): the OK holds the repeating times, as every other reader has it.
  */
 
 export interface TurnWakeDeps {
@@ -41,6 +42,11 @@ export interface TurnWakeDeps {
    * migration replaces its schedule with what they say, so nothing is written to it until they have moved.
    */
   moving?(taskId: string): boolean
+  /**
+   * What this cockpit's record says of the task's schedule (domain/job.ts scheduleFactsOf): a record that waits for
+   * the user's OK (`needsOk`) holds the repeating times, and only the wake-up is a next run then. Absent: nothing held.
+   */
+  scheduleFacts?(taskId: string): ScheduleFacts
   /** The user's time zone now: a call's when is read in it. */
   zone(): string
   now?: () => number
@@ -120,7 +126,8 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
       deps.log(`[wake] ${sessionId.slice(0, 8)} task ${where.taskId.slice(0, 8)}: wake-up ${edit.kind === 'set' ? `set for ${edit.when} (${zone}) = ${at}` : 'cleared'}`)
     }
     const saved = edit.kind === 'set' && written.schedule?.at ? { at: Date.parse(written.schedule.at), zone } : null
-    return { problem: null, saved, nextRun: open && nextRunOfSchedule(written.schedule, now()) !== null }
+    const firing = deps.scheduleFacts?.(where.taskId).needsOk ? whileHeldForOk(written.schedule) : written.schedule
+    return { problem: null, saved, nextRun: open && nextRunOfSchedule(firing, now()) !== null }
   }
 
   return {

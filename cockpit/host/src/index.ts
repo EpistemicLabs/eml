@@ -874,6 +874,7 @@ async function main() {
     },
     records: jobStore,
     moving: (taskId) => jobStore.hasV1Jobs(taskId),
+    scheduleFacts,
     zone: userTimeZone, log,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
   })

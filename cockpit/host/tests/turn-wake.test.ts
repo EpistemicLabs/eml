@@ -12,7 +12,7 @@ const WEEKDAYS: ScheduleFields = { crons: ['0 8 * * 1-5'], time_zone: 'Asia/Maka
 const WHY = 'The check you set with end_turn is due. You planned: look again. See where the task stands and act on it.'
 
 /** A brain that keeps one task and applies each track call's delegation to it, as the real one does. */
-function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean; moving?: boolean; profile?: ToolProfile | null; record?: ToolProfile | null } = {}) {
+function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId?: string | null; known?: boolean; noBrain?: boolean; failing?: boolean; delegation?: boolean; moving?: boolean; profile?: ToolProfile | null; record?: ToolProfile | null; held?: boolean } = {}) {
   const task: ScheduledTask = {
     id: 't1', status: opts.status ?? 'active',
     properties: opts.delegation === false ? {} : { delegation: { agent: 'atlas', checkpoint: 'after', ...(opts.schedule ? { schedule: opts.schedule } : {}) } },
@@ -38,6 +38,8 @@ function world(opts: { schedule?: ScheduleFields | null; status?: string; taskId
     where: () => (opts.known === false ? null : { taskId: opts.taskId === undefined ? 't1' : opts.taskId, brain: opts.noBrain ? null : brain, agent: 'atlas', spaceId: null, toolProfile: opts.profile ?? null }),
     records,
     moving: () => opts.moving === true,
+    // The task's record waits for the user's OK (its pendingApproval), as domain/job.ts scheduleFactsOf says it.
+    scheduleFacts: () => (opts.held ? { needsOk: true } : {}),
     zone: () => ZONE, now: () => NOW, log: (line) => log.push(line), changed: () => { changed += 1 },
   })
   const schedule = () => task.properties?.delegation?.schedule ?? null
@@ -122,6 +124,16 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
     expect(await run({ at: '2026-11-25T09:00:00.000Z' })).toBe(true)
     // Its own wake-up is cleared by the very call, so it is no next run.
     expect(await run({ at: '2026-11-25T09:00:00.000Z', by_session: 's1' })).toBe(false)
+  })
+
+  it('counts no repeating time held for the user\'s OK as a next run; the wake-up still counts', async () => {
+    const held = async (schedule: ScheduleFields | null) => (await world({ schedule, held: true }).wake.settle('s1', clear('own'))).nextRun
+    // A record waiting for the OK holds the repeating times: the task has no next run, end_turn asks for a time.
+    expect(await held(WEEKDAYS)).toBe(false)
+    expect(await held({ ...WEEKDAYS, at: '2026-11-25T09:00:00.000Z' })).toBe(true)
+    expect(await held({ ...WEEKDAYS, at: '2026-11-25T09:00:00.000Z', by_session: 's1' })).toBe(false)
+    // A time the call sets is a wake-up, which fires while held.
+    expect((await world({ schedule: WEEKDAYS, held: true }).wake.settle('s1', set('2026-11-26T10:00'))).nextRun).toBe(true)
   })
 
   it('gives a task without a delegation one for the space\'s agent with its wake-up', async () => {
