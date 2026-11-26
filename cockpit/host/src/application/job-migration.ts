@@ -70,7 +70,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
     if (!pending || mine.length === 0) return null
     const now = deps.now()
     const plan = planJobMigration({
-      jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name },
+      jobs, runs: pending.runs, keys: pending.keys, space: { key: keyOf(space), name: space.name, shared: space.shared },
       tasks: await tasksOfJobs(brain, mine), me: deps.me, now, routineTaskOf: routineTaskOfJob(deps.me),
     })
     return { space, plan, report: jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun }) }

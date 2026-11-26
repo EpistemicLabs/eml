@@ -35,12 +35,12 @@ export function pendingJobsOf(raw: string): V1Data | null {
 }
 
 function taskFrom(db: Db, id: string): JobMigrationTask | null {
-  const row = db.prepare("SELECT id, status, title, content, properties FROM engrams WHERE id = ? AND type = 'task'").get(id) as
-    | { id: string; status: string; title: string | null; content: string; properties: string | null } | undefined
+  const row = db.prepare("SELECT id, status, title, content, properties, ingested_by FROM engrams WHERE id = ? AND type = 'task'").get(id) as
+    | { id: string; status: string; title: string | null; content: string; properties: string | null; ingested_by: string | null } | undefined
   if (!row) return null
   let properties: JobMigrationTask['properties'] = null
   try { properties = row.properties ? JSON.parse(row.properties) as JobMigrationTask['properties'] : null } catch { /* a task without readable properties has none */ }
-  return { id: row.id, status: row.status, title: row.title, content: row.content, properties }
+  return { id: row.id, status: row.status, title: row.title, content: row.content, ingested_by: row.ingested_by, properties }
 }
 
 export async function runMigrateJobsCommand(argv: string[], out: (text: string) => void = (text) => { process.stdout.write(text) }): Promise<boolean> {
@@ -69,7 +69,10 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
     try {
       const tasks: Record<string, JobMigrationTask | null> = {}
       for (const id of new Set(mine.flatMap((j) => (j.taskId ? [j.taskId] : [])))) tasks[id] = taskFrom(db, id)
-      const plan = planJobMigration({ jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name }, tasks, me, now, routineTaskOf: routineTaskOfJob(me) })
+      // The main space is a local brain: every task in it is this member's. Whether another space is shared only its
+      // brain server says, so here it is planned as a shared one: only the tasks this member owns (domain/task-owner.ts).
+      const plan = planJobMigration({ jobs, runs: pending.runs, keys: pending.keys, space: { key, name: space.name, shared: space.main ? false : null }, tasks, me, now, routineTaskOf: routineTaskOfJob(me) })
+      if (!space.main) out(`(${space.name}: planned as a shared space, where this cockpit fires only the tasks ${me} owns. The host asks the brain server; in a local space every task is moved.)\n\n`)
       out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
     } finally {
       db.close()

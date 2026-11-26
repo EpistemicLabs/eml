@@ -1,6 +1,7 @@
 import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, type JobGrant, type JobRun, type ReplyChannel, type ReplyMode } from './job.js'
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
+import { ownerOf, runsHere } from './task-owner.js'
 import { addCron, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
 /**
@@ -29,7 +30,7 @@ import { addCron, sameSchedule, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPau
  *   - a job that has ended: only its runs stay, as history under its id;
  *   - a job whose task is closed or gone: dropped (a closed task gets a journal line and loses a mirrored schedule);
  *   - a job on a task another member owns: dropped here and nothing written. A schedule has one writer, the cockpit
- *     of the task's owner, as the mirror held it; it fires what the task's schedule says;
+ *     of the task's owner (domain/task-owner.ts runsHere, the rule the engine fires by); it fires what the task's schedule says;
  *   - a job in another space: left for that space's pass;
  *   - a job without a task: a task is made for it first (application/task-state-migration.ts routineTask); without
  *     a project of the brain it stays as it is, to be looked at.
@@ -43,6 +44,8 @@ export interface JobMigrationTask {
   status: string
   title?: string | null
   content?: string
+  /** The task's author: its owner when nobody is assigned (domain/task-owner.ts ownerOf). */
+  ingested_by?: string | null
   properties?: { delegation?: DelegationFields | null; assignee_ids?: string[]; display_title?: string } | null
 }
 
@@ -54,11 +57,18 @@ export interface JobMigrationInput {
   jobs: readonly JobV1[]
   runs: Readonly<Record<string, JobRun[]>>
   keys: Readonly<Record<string, Record<string, string>>>
-  /** The space planned: `key` is what its jobs carry as spaceId (null for the main space). */
-  space: { key: string | null; name: string }
+  /**
+   * The space planned: `key` is what its jobs carry as spaceId (null for the main space). `shared`: false for a local
+   * brain, where every task is this member's; true or null (not confirmed yet, or left out) counts as shared.
+   */
+  space: { key: string | null; name: string; shared?: boolean | null }
   /** The task of each job of the space, as the brain has it now; null: the brain has no such task. */
   tasks: Readonly<Record<string, JobMigrationTask | null>>
-  /** This cockpit's member: only the schedules of the tasks it owns (or nobody owns) are written. */
+  /**
+   * This cockpit's member: only the schedules of the tasks this cockpit fires are written, by the one rule for a
+   * cockpit's background work (domain/task-owner.ts runsHere): in a local space every task, in a shared one the tasks
+   * this member owns — the first assignee, else the task's author.
+   */
   me: string
   now: number
   /** The task a job without one gets; null when its project is none of the brain's. */
@@ -336,9 +346,12 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
       tasks.push(dropped(taskId, taskId.slice(0, 8), jobs, input, 'its task is gone', null, null, (j) => `${describe(j)} → dropped: its task is gone`))
       continue
     }
-    const owner = task.properties?.assignee_ids?.[0]
-    if (owner && owner !== input.me) {
-      tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is ${owner}'s: its schedule is left to their cockpit, nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped here: the cockpit of the task's owner (${owner}) fires what the task's schedule says`))
+    // The one owner rule, the engine's (application/job-runner.ts): what is written here is what this cockpit fires.
+    if (!runsHere(input.space.shared ?? null, task, input.me)) {
+      const owner = ownerOf(task)
+      const whose = owner ? `${owner}'s` : 'nobody\'s (no assignee, no author)'
+      const their = owner ? `the cockpit of the task's owner (${owner}) fires what the task's schedule says` : 'no cockpit fires a task nobody owns: assign it to bring its schedule back'
+      tasks.push(dropped(taskId, nameOf(task), jobs, input, `the task is ${whose}: its schedule is left to their cockpit, nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped here: ${their}`))
       continue
     }
     if (!OPEN.has(task.status)) {

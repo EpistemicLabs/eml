@@ -172,8 +172,50 @@ describe('planning jobs onto their tasks', () => {
     // the task's own schedule stays as its owner's cockpit has it
     expect(t.schedule).toEqual({ crons: ['0 7 * * *'], time_zone: 'UTC' })
     expect(t.jobs[0].what).toContain('the cockpit of the task\'s owner (dominik) fires what the task\'s schedule says')
-    // a task nobody owns is this cockpit's to write, as the mirror held it
-    expect(plan([cron('0 8 * * 1-5')], [task('t1', {}, { assignee_ids: [] })]).tasks[0].outcome).toBe('moved')
+  })
+
+  describe('whose jobs move: the tasks this cockpit fires, by the engine\'s one owner rule (the first assignee, else the author)', () => {
+    const shared = { space: { key: null, name: 'Team', shared: true } }
+    const outcome = (t: JobMigrationTask, patch: Partial<JobMigrationInput> = shared) => plan([cron('0 8 * * 1-5')], [t], patch).tasks[0]
+
+    it('moves the job of my task', () => {
+      expect(outcome(task('t1', { ingested_by: 'dominik' }, { assignee_ids: ['lasse', 'dominik'] })).outcome).toBe('moved')
+    })
+
+    it('drops the job of another member\'s task, whoever wrote the task', () => {
+      const t = outcome(task('t1', { ingested_by: 'lasse' }, { assignee_ids: ['dominik', 'lasse'] }))
+      expect(t).toMatchObject({ outcome: 'dropped', brain: null, record: null })
+      expect(t.why).toContain('the task is dominik\'s')
+    })
+
+    it('moves the job of a task nobody is assigned to that I authored', () => {
+      expect(outcome(task('t1', { ingested_by: 'lasse' }, { assignee_ids: [] })).outcome).toBe('moved')
+    })
+
+    it('drops the job of a task nobody is assigned to that another member authored: their cockpit fires it', () => {
+      const t = outcome(task('t1', { ingested_by: 'dominik' }, { assignee_ids: [] }))
+      expect(t).toMatchObject({ outcome: 'dropped', brain: null, record: null })
+      expect(t.jobs[0].what).toContain('the cockpit of the task\'s owner (dominik) fires what the task\'s schedule says')
+    })
+
+    it('drops the job of a task nobody owns at all in a shared space, and says no cockpit fires it', () => {
+      const t = outcome(task('t1', {}, { assignee_ids: [] }))
+      expect(t.outcome).toBe('dropped')
+      expect(t.why).toBe('the task is nobody\'s (no assignee, no author): its schedule is left to their cockpit, nothing is written')
+      expect(t.jobs[0].what).toContain('no cockpit fires a task nobody owns')
+    })
+
+    it('counts a space whose sharing is not confirmed, or not said, as shared', () => {
+      const theirs = task('t1', { ingested_by: 'dominik' }, { assignee_ids: [] })
+      expect(outcome(theirs, { space: { key: null, name: 'Team', shared: null } }).outcome).toBe('dropped')
+      expect(outcome(theirs, {}).outcome).toBe('dropped')
+    })
+
+    it('moves every task\'s jobs in a local space: each task there is this member\'s', () => {
+      const local = { space: { key: null, name: 'Main', shared: false } }
+      expect(outcome(task('t1', { ingested_by: 'dominik' }, { assignee_ids: ['dominik'] }), local).outcome).toBe('moved')
+      expect(outcome(task('t1', {}, { assignee_ids: [] }), local).outcome).toBe('moved')
+    })
   })
 
   it('planned again against what it wrote, it writes nothing more to the brain', () => {
