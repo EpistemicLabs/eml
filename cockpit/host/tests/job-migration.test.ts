@@ -190,6 +190,16 @@ describe('planning jobs onto their tasks', () => {
     expect(other.tasks.map((t) => [t.taskId, t.settles, t.record?.spaceId])).toEqual([['t2', [there.id], 'space-2']])
   })
 
+  it('two jobs on one task with different reply modes: the stricter one wins, whichever job is older', () => {
+    const mail = { type: 'mail' as const, match: [{ kind: 'domain', domain: 'customer.example' }] }
+    const drafts = () => job({ triggers: [mail], reply: { mail: 'draft' } })
+    const sends = () => job({ triggers: [mail], reply: { mail: 'send' } })
+    expect(plan([drafts(), sends()]).tasks[0].record?.reply).toEqual({ mail: 'draft' })
+    expect(plan([sends(), drafts()]).tasks[0].record?.reply).toEqual({ mail: 'draft' })
+    // both send: nothing is made stricter than either was
+    expect(plan([sends(), sends()]).tasks[0].record?.reply).toEqual({ mail: 'send' })
+  })
+
   it('two jobs on one task: the record\'s tools are the narrowest of both, whichever is older, and a job without a profile widens nothing', () => {
     const narrow = { deniedTools: ['Bash'], mcpServers: [] as string[] }
     // the older job had all its tools, the newer one was narrowed: the task's sessions keep the narrow profile
