@@ -15,6 +15,11 @@ import { readAgentSettings, writeAgentSettings } from '../../../provider-setting
  *   sandboxNetwork    off (default): shell commands in the sandbox have no
  *                     network. on: they do. Codex knows no narrower setting.
  *
+ *   chatView          off (default): Codex sessions run in the terminal only.
+ *                     on: they can run in the chat view too, through
+ *                     `codex app-server` (chat-runtime.ts). Workers stay in
+ *                     the terminal either way.
+ *
  * Unattended sessions (workers, task runs) ignore permissionMode and always
  * run in auto: nobody is watching them, and nobody chose to run them without
  * a sandbox.
@@ -26,10 +31,12 @@ export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
 export interface CodexSettings {
   permissionMode: CodexPermissionMode
   sandboxNetwork: boolean
+  chatView: boolean
 }
 
 const MODE_KEY = 'codexPermissionMode'
 const NETWORK_KEY = 'codexSandboxNetwork'
+const CHAT_KEY = 'codexChatView'
 
 const isMode = (value: unknown): value is CodexPermissionMode =>
   (CODEX_PERMISSION_MODES as readonly unknown[]).includes(value)
@@ -39,6 +46,7 @@ export function readCodexSettings(): CodexSettings {
   return {
     permissionMode: isMode(stored[MODE_KEY]) ? stored[MODE_KEY] : 'auto',
     sandboxNetwork: stored[NETWORK_KEY] === true,
+    chatView: stored[CHAT_KEY] === true,
   }
 }
 
@@ -53,6 +61,9 @@ export const codexSettings: AgentSettings = {
       } else if (key === 'sandboxNetwork') {
         if (typeof value !== 'boolean') return 'sandboxNetwork must be true or false'
         next[NETWORK_KEY] = value
+      } else if (key === 'chatView') {
+        if (typeof value !== 'boolean') return 'chatView must be true or false'
+        next[CHAT_KEY] = value
       } else {
         return `unknown setting "${key}"`
       }

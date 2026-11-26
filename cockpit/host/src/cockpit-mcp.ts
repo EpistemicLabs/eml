@@ -2,7 +2,7 @@ import type * as http from 'node:http'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { McpHttpEndpoint } from '@engramprotocol/mcp-server'
 import type { MessageRequest } from './application/deliver-message.js'
-import { recordEndTurn, type RecordEndTurnDeps } from './application/record-end-turn.js'
+import { recordEndTurn, type RecordEndTurnDeps, type SaidTurn } from './application/record-end-turn.js'
 import { endTurn, listSessions, schedule, sendMessage, type ToolAnswer } from './application/session-tools.js'
 import type { TerminalTurns } from './application/terminal-turns.js'
 import { header, mcpStatus, refuse, sessionCaller } from './brain-mcp.js'
@@ -17,24 +17,30 @@ import type { SessionLedger } from './session-ledger.js'
 /**
  * The cockpit MCP endpoint: the cockpit's own session tools (domain/session-tools.ts:
  * end_turn, schedule, send_message, list_sessions) over Streamable HTTP
- * (/mcp/cockpit), for a session that runs in a terminal. A chat session has
- * them in its own process (providers/claude/sdk-runtime.ts); a terminal
- * session's agent CLI reaches them here, under the same server name, cockpit.
+ * (/mcp/cockpit), for a session whose agent CLI gets them from an MCP server:
+ * one that runs in a terminal, and a chat session of the same providers
+ * (Codex through its app-server, providers/codex/chat-runtime.ts). Claude
+ * Code's chat sessions have them in their own process
+ * (providers/claude/sdk-runtime.ts), under the same server name, cockpit.
+ * A chat session also gets offer_split and propose_sort here: the chat
+ * renders their calls as cards, a terminal has nothing to show them with.
  *
  * Who may call is what the brain endpoint asks (brain-mcp.ts sessionCaller):
  * this machine only, the space's MCP token, a session the ledger knows in that
  * space. The space needs no agent bound: no brain is reached from here. On top,
  * the session has to be one the endpoint serves (`served`, notServed): a
- * terminal session of a provider whose terminal sessions get the tools here.
+ * session of a provider whose sessions get the tools here.
  *
  * Every tool acts as the calling session and no other: the MCP session is
  * bound to it on initialize (McpHttpEndpoint), and no tool takes a session to
  * act for.
  *
- * end_turn only keeps the call (application/terminal-turns.ts) and sets the
- * check its next.when asks for; the session's Stop hook ends the turn with it
- * (terminalTurnEnded). Nothing goes into the ledger at the call: the tools a
- * turn still runs after it would clear it again (application/apply-session-hook.ts).
+ * end_turn only keeps the call and sets the check its next.when asks for. A
+ * terminal session's is kept until its Stop hook ends the turn with it
+ * (application/terminal-turns.ts, terminalTurnEnded): nothing goes into the
+ * ledger at the call, the tools a turn still runs after it would clear it again
+ * (application/apply-session-hook.ts). A chat session's is kept where the
+ * chat keeps what a session said (chat-bridge.ts said).
  */
 
 export const COCKPIT_MCP_PATH = '/mcp/cockpit'
@@ -45,14 +51,15 @@ export { COCKPIT_MCP_SERVER }
 export const CHAT_HAS_ITS_OWN = 'The cockpit MCP endpoint serves sessions that run in a terminal. This session runs in chat and has the cockpit\'s tools built in: call those instead.'
 
 /**
- * Why the endpoint does not serve a session, or null: one that runs in chat has the tools built in, and a terminal
- * session is served only when its provider's terminal sessions get the tools here (capability terminalTools);
- * another provider's is refused with that provider's reason.
+ * Why the endpoint does not serve a session, or null. A session is served when its provider's sessions get the
+ * tools here (capability terminalTools): in a terminal, and in the chat, where such a provider's agent CLI has
+ * no other way to them. Another provider's terminal session is refused with that provider's reason, its chat
+ * session because it has the tools built in.
  */
 export function notServed(session: { runtime: string } | undefined, provider: Pick<AgentProvider, 'capabilities'>): string | null {
-  if (session?.runtime !== 'terminal') return CHAT_HAS_ITS_OWN
   const { terminalTools } = provider.capabilities
-  return terminalTools.supported ? null : terminalTools.reason
+  if (session?.runtime === 'terminal') return terminalTools.supported ? null : terminalTools.reason
+  return session?.runtime === 'sdk' && terminalTools.supported ? null : CHAT_HAS_ITS_OWN
 }
 
 export interface CockpitMcpDeps {
@@ -65,6 +72,8 @@ export interface CockpitMcpDeps {
   served?: (sessionId: string) => string | null
   /** What a terminal session said until its Stop hook takes it. */
   terminalTurns: Pick<TerminalTurns, 'said'>
+  /** What a chat session said, where the chat keeps it (chat-bridge.ts said); absent: no chat session is served. */
+  chatTurns?: { said(sessionId: string, turn: SaidTurn): unknown }
   /** Whom a call is read against, when it is read and the check its next.when sets: as a chat session's (chat-bridge.ts). */
   turnOf: RecordEndTurnDeps['turnOf']
   callTime?: RecordEndTurnDeps['callTime']
@@ -88,7 +97,10 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
 
   const answered = ({ text, isError }: ToolAnswer) => ({ content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) })
 
-  /** The four tools for one session. Each handler closes over `sessionId`: the caller the MCP session is bound to. */
+  /** Where the session runs now: it can move between the two while its agent CLI keeps the MCP session. */
+  const inChat = (sessionId: string) => deps.ledger.get(sessionId)?.runtime === 'sdk'
+
+  /** The tools for one session. Each handler closes over `sessionId`: the caller the MCP session is bound to. */
   const serverFor = (sessionId: string): McpServer => {
     const server = new McpServer({ name: COCKPIT_MCP_SERVER, version: deps.serverVersion ?? '0.0.0' })
     const T = SESSION_TOOLS
@@ -96,7 +108,7 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
     const recording: RecordEndTurnDeps = {
       turnOf: deps.turnOf,
       ...(deps.callTime ? { callTime: deps.callTime } : {}),
-      keep: (id, said) => deps.terminalTurns.said(id, said),
+      keep: (id, said) => { if (inChat(id) && deps.chatTurns) deps.chatTurns.said(id, said); else deps.terminalTurns.said(id, said) },
       ...(deps.turnCheck ? { turnCheck: deps.turnCheck } : {}),
       ...(deps.checkSaved ? { checkSaved: deps.checkSaved } : {}),
     }
@@ -111,12 +123,19 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
       async (input) => answered(await sendMessage({
         directory: () => deps.directory(sessionId),
         from: deps.addressOf(sessionId),
-        // The sender runs in a terminal: a message sent back would not reach it (deliver-message.ts).
-        noReply: true,
+        // A sender that runs in a terminal: a message sent back would not reach it (deliver-message.ts).
+        noReply: !inChat(sessionId),
         deliver: deps.deliver,
       }, input)))
     server.registerTool(T.listSessions.name, { description: T.listSessions.description(), inputSchema: T.listSessions.input },
       async (input) => answered(listSessions({ directory: () => deps.directory(sessionId) }, input)))
+    if (inChat(sessionId)) {
+      // Change nothing: the chat renders the call as a card, and the user's choice comes back as a message.
+      server.registerTool(T.offerSplit.name, { description: T.offerSplit.description(), inputSchema: T.offerSplit.input },
+        async () => answered({ text: T.offerSplit.answer, isError: false }))
+      server.registerTool(T.proposeSort.name, { description: T.proposeSort.description(), inputSchema: T.proposeSort.input },
+        async () => answered({ text: T.proposeSort.answer, isError: false }))
+    }
     return server
   }
 

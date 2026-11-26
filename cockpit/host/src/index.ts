@@ -1076,6 +1076,7 @@ async function main() {
   // serves is theirs to say (capability terminalTools): the others are refused with the provider's reason.
   const cockpitMcp = createCockpitMcpHandler({
     spaces, ledger, terminalTurns,
+    chatTurns: { said: (sessionId, turn) => chat.said(sessionId, turn) },
     served: (sessionId) => notServed(ledger.get(sessionId), providers.forSession(sessionId)),
     turnOf: (sessionId) => turnContexts.of(sessionId),
     callTime,

@@ -26,7 +26,7 @@
  */
 import type { EngramType } from '@/lib/types';
 import type { LLMProvider } from '@/types/app';
-import { providerCanChat, type AgentProviderInfo } from '@/lib/providers';
+import { chatProvider, providerCanChat, type AgentProviderInfo } from '@/lib/providers';
 import { useCallback, useSyncExternalStore } from 'react';
 import { startsInChat } from '@/components/chat/chat-default';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
@@ -1026,6 +1026,11 @@ let providers: AgentProviderInfo[] | undefined;
 
 export function setProviders(list: AgentProviderInfo[] | undefined): void {
   providers = list;
+}
+
+/** The provider a new chat in this pane starts with, as its socket tells the host (lib/providers.ts chatProvider). */
+export function chatProviderOfPane(paneId: string): string | null {
+  return chatProvider(providers, getPane(paneId)?.provider, defaultProvider);
 }
 
 /** The view a new session opens in, so it never starts a terminal just to leave it. */

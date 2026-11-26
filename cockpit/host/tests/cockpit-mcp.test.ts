@@ -37,6 +37,11 @@ type Ended = [sessionId: string, text: string, turn?: { call: EndTurn; ctx: Turn
 
 let host: http.Server
 let url: string
+/** The endpoint as index.ts builds it: who is served is each session's provider's to say, and a chat session's call goes to the chat. */
+let ruledHost: http.Server
+let ruledUrl: string
+let closeRuled: (sessionId?: string) => Promise<void>
+const saidInChat: Array<[string, EndTurn]> = []
 let closeHandler: (sessionId?: string) => Promise<void>
 let ledger: import('../src/session-ledger.js').SessionLedger
 let terminalTurns: import('../src/application/terminal-turns.js').TerminalTurns
@@ -89,6 +94,29 @@ beforeAll(async () => {
   host = http.createServer((req, res) => { void handler.handle(req, res) })
   url = `http://127.0.0.1:${await listen(host)}${COCKPIT_MCP_PATH}`
 
+  // Codex gets the tools here, in a terminal and in the chat; Claude Code has them built into its chat.
+  ledger.recordSpawn('chat-codex', null, 'bp-eml', 'codex')
+  ledger.setRuntime('chat-codex', 'sdk')
+  const capabilities = {
+    codex: { terminalTools: { supported: true } },
+    claude: { terminalTools: { supported: false, reason: 'Claude Code sessions have the tools built in.' } },
+  } as Record<string, never>
+  const ruled = createCockpitMcpHandler({
+    spaces: { byMcpToken: (token: string | undefined) => SPACES.find((s) => s.mcpToken === token) ?? null },
+    ledger, terminalTurns,
+    chatTurns: { said: (sessionId, turn) => { saidInChat.push([sessionId, turn.call]) } },
+    served: (sessionId) => notServedRule(ledger.get(sessionId), { capabilities: capabilities[ledger.get(sessionId)?.provider ?? 'claude'] }),
+    turnOf: async () => ({ ctx: CTX, task: null }),
+    callTime: () => ({ now: NOW, zone: 'UTC' }),
+    directory: () => [entry('eml-aaaa', 'Catalogue import')],
+    addressOf: (sessionId) => `eml-${sessionId}`,
+    deliver: async (request) => { delivered.push(request); return 'delivered' },
+    timeZone: () => ZONE,
+  })
+  closeRuled = ruled.close
+  ruledHost = http.createServer((req, res) => { void ruled.handle(req, res) })
+  ruledUrl = `http://127.0.0.1:${await listen(ruledHost)}${COCKPIT_MCP_PATH}`
+
   const turns = new TurnTracker()
   const provider = {
     adoptsSessionId: false,
@@ -107,17 +135,19 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await closeHandler()
+  await closeRuled()
   await new Promise((r) => host.close(r))
+  await new Promise((r) => ruledHost.close(r))
   rmSync(home, { recursive: true, force: true })
 })
 
 beforeEach(() => {
-  for (const list of [scheduled, delivered, listed, checks, ended]) list.length = 0
+  for (const list of [scheduled, delivered, listed, checks, ended, saidInChat]) list.length = 0
 })
 
 const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'codex', version: '1' } } }
 
-const post = (headers: Record<string, string>, body: unknown = initialize) => fetch(url, {
+const post = (headers: Record<string, string>, body: unknown = initialize, to = url) => fetch(to, {
   method: 'POST',
   headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
   body: JSON.stringify(body),
@@ -125,8 +155,8 @@ const post = (headers: Record<string, string>, body: unknown = initialize) => fe
 
 const as = (sessionId: string, token = TOKEN_A) => ({ 'x-cockpit-mcp-token': token, 'x-eml-session': sessionId })
 
-async function connect(sessionId: string, token = TOKEN_A) {
-  const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: as(sessionId, token) } })
+async function connect(sessionId: string, token = TOKEN_A, to = url) {
+  const transport = new StreamableHTTPClientTransport(new URL(to), { requestInit: { headers: as(sessionId, token) } })
   const client = new Client({ name: 'codex', version: '1.0.0' })
   await client.connect(transport)
   return { client, transport }
@@ -175,14 +205,14 @@ describe('cockpit MCP endpoint access', () => {
     expect(CHAT_HAS_ITS_OWN).toBe('The cockpit MCP endpoint serves sessions that run in a terminal. This session runs in chat and has the cockpit\'s tools built in: call those instead.')
   })
 
-  it('serves a terminal session only when its provider\'s terminal sessions get the tools here, and refuses another with that provider\'s reason', () => {
+  it('serves a session when its provider\'s sessions get the tools here, in a terminal and in the chat, and refuses another', () => {
     const provider = (terminalTools: { supported: true } | { supported: false; reason: string }) => ({ capabilities: { terminalTools } as never })
     const served = provider({ supported: true })
     const builtIn = provider({ supported: false, reason: 'Its sessions end a turn in the text of their reply.' })
     expect(notServed({ runtime: 'terminal' }, served)).toBeNull()
     expect(notServed({ runtime: 'terminal' }, builtIn)).toBe('Its sessions end a turn in the text of their reply.')
-    // The runtime comes first: a chat session has the tools built in, whatever its provider's terminal sessions get.
-    expect(notServed({ runtime: 'sdk' }, served)).toBe(CHAT_HAS_ITS_OWN)
+    // A chat session of such a provider has no other way to the tools (Codex); another's has them built in (Claude Code).
+    expect(notServed({ runtime: 'sdk' }, served)).toBeNull()
     expect(notServed({ runtime: 'sdk' }, builtIn)).toBe(CHAT_HAS_ITS_OWN)
     expect(notServed(undefined, served)).toBe(CHAT_HAS_ITS_OWN)
   })
@@ -247,6 +277,52 @@ describe('the tools a terminal session gets', () => {
     const res = await post({ ...as('term-2'), 'mcp-session-id': transport.sessionId! }, { jsonrpc: '2.0', id: 3, method: 'tools/list' })
     expect(res.status).toBe(404)
     await client.close().catch(() => undefined)
+  })
+})
+
+describe('a chat session whose agent CLI gets the tools here', () => {
+  it('is served, and a chat session with the tools built in is not', async () => {
+    const served = await post(as('chat-codex'), initialize, ruledUrl)
+    expect(served.status).toBe(200)
+    await served.text()
+    const builtIn = await post(as('chat-1'), initialize, ruledUrl)
+    expect([builtIn.status, (await builtIn.json()).error.message]).toEqual([409, CHAT_HAS_ITS_OWN])
+  })
+
+  it('gets the two tools the chat renders as cards on top; a terminal session keeps the four', async () => {
+    const chat = await connect('chat-codex', TOKEN_A, ruledUrl)
+    const T = SESSION_TOOLS
+    const { tools } = await chat.client.listTools()
+    // No schedule here: this endpoint was built without the jobs.
+    expect(tools.map((t) => t.name)).toEqual(['end_turn', 'send_message', 'list_sessions', 'offer_split', 'propose_sort'])
+    expect(tools.slice(-2).map((t) => t.description)).toEqual([T.offerSplit.description(), T.proposeSort.description()])
+    expect(await call(chat.client, 'propose_sort', { reason: 'Three topics', rows: [{ topic: 'Notes', pick: 'keep' }] })).toEqual({ text: T.proposeSort.answer, isError: false })
+    const terminal = await connect('term-1', TOKEN_A, ruledUrl)
+    expect((await terminal.client.listTools()).tools.map((t) => t.name)).toEqual(['end_turn', 'send_message', 'list_sessions'])
+    await chat.client.close()
+    await terminal.client.close()
+  })
+
+  it('has its end_turn call kept by the chat, not for a Stop hook', async () => {
+    const { client } = await connect('chat-codex', TOKEN_A, ruledUrl)
+    const answer = await call(client, 'end_turn', { result: 'Draft ready', questions: ['Send it today?'] })
+    expect(answer.isError).toBe(false)
+    expect(saidInChat).toEqual([['chat-codex', { result: 'Draft ready', questions: ['Send it today?'] }]])
+    expect(terminalTurns.take('chat-codex')).toBeNull()
+    // A session in a terminal on the same endpoint keeps its call for its hook.
+    const terminal = await connect('term-1', TOKEN_A, ruledUrl)
+    await call(terminal.client, 'end_turn', { result: 'One is done' })
+    expect(saidInChat).toHaveLength(1)
+    expect(terminalTurns.take('term-1')?.call.result).toBe('One is done')
+    await client.close()
+    await terminal.client.close()
+  })
+
+  it('can be answered: its message does not tell the receiver otherwise', async () => {
+    const { client } = await connect('chat-codex', TOKEN_A, ruledUrl)
+    await call(client, 'send_message', { to: 'eml-aaaa', text: 'The notes are ready.' })
+    expect(delivered).toEqual([{ target: 'eml-aaaa', text: 'The notes are ready.', from: 'eml-chat-codex', caller: 'session' }])
+    await client.close()
   })
 })
 

@@ -15,6 +15,14 @@ import type {
  */
 
 const MAX_TOOL_OUTPUT = 20_000
+
+/**
+ * Around text the cockpit puts into a turn for the agent alone (chat-runtime.ts): what it adds to a
+ * prompt, and the turn it sends a session back with. A stored thread keeps it as the user's input;
+ * the conversation leaves it out.
+ */
+export const HIDDEN_INPUT_OPEN = '<cockpit-context>'
+export const HIDDEN_INPUT_CLOSE = '</cockpit-context>'
 const MAX_NOTICE_DETAIL = 300
 
 // The names a tool row and a permission card show for Codex's built-in work.
@@ -160,7 +168,9 @@ function reasoningText(summary: unknown, content: unknown): string {
 /** A stored user message. Its id is the one it was sent under, so the chat knows its own message again. */
 function userMessage(item: Partial<UserMessageItem>): RuntimeEvent[] {
   const content = list(item.content).map(fields)
-  const words = content.filter((part) => part.type === 'text').map((part) => text(part.text)).join('\n')
+  const words = content
+    .filter((part) => part.type === 'text' && !text(part.text).startsWith(HIDDEN_INPUT_OPEN))
+    .map((part) => text(part.text)).join('\n')
   const images = content.filter((part) => part.type === 'image' || part.type === 'localImage').map(() => ({ url: null }))
   if (!words.trim() && images.length === 0) return []
   return [{ kind: 'user_message', id: text(item.clientId) || text(item.id), text: words, queued: false, ...(images.length > 0 ? { images } : {}) }]

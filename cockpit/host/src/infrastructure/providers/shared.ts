@@ -256,3 +256,11 @@ export function terminalOnly(label: string): ProviderCapabilities {
     terminalTools: { supported: true },
   }
 }
+
+/**
+ * The same provider with its chat view switched on (Codex, codex/chat-runtime.ts): everything else stays as it is.
+ * Its chat sessions get the cockpit's tools from the same endpoint as its terminal sessions (cockpit-mcp.ts).
+ */
+export function withChat(capabilities: ProviderCapabilities): ProviderCapabilities {
+  return { ...capabilities, chat: { supported: true } }
+}

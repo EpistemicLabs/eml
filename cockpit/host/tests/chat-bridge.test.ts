@@ -10,7 +10,7 @@ import { InMemoryEventStore } from '../src/application/session-events.js'
 import { SessionHandoff } from '../src/application/session-handoff.js'
 import { TurnTracker } from '../src/turn-state.js'
 import { PASTE_IMAGES_DIR } from '../src/paste-images.js'
-import { reminder, type EndTurn } from '../src/domain/turn-end.js'
+import { deriveTurn, reminder, type EndTurn } from '../src/domain/turn-end.js'
 import type { ImageInput, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, ToolServer, WorkflowWait } from '../src/domain/session-runtime.js'
 import { claudeStartOptions, type ClaudeStartOptions } from '../src/infrastructure/providers/claude/sdk-runtime.js'
 
@@ -631,6 +631,29 @@ describe('ChatBridge', () => {
         ['The draft is ready.', { call, ctx, reminded: true, said: true }],
         ['Welcome.', { call: null, ctx: null, reminded: false, said: false }],
       ])
+    })
+
+    it('keeps a call that arrives over the cockpit MCP endpoint like its own: the reply is what follows the call', async () => {
+      const ends: Array<[string, unknown]> = []
+      const { worker, runtime, bridge, attention } = started({ turnDone: (_id, text, turn) => ends.push([text, turn]) })
+      const call: EndTurn = { result: 'Draft ready', questions: ['Send it today?'] }
+      runtime.emit({ kind: 'text', blockId: 'b1', text: 'Let me write the draft.' })
+      // The agent CLI calls the tool on the host's endpoint: the chat shows the call, the endpoint hands it on (cockpit-mcp.ts).
+      runtime.emit({ kind: 'tool_call', toolId: 't1', name: 'mcp__cockpit__end_turn', toolKind: 'other', title: 'mcp__cockpit__end_turn', input: call })
+      expect(bridge.said('s1', { call, ctx, derived: deriveTurn(call, ctx) })).toBe(true)
+      expect(attention()).toEqual({ kind: 'question', reason: 'Send it today?' })
+      // Nothing written after the call yet: the reply and its question are missing.
+      expect(await worker.onTurnEnding()).toBe(reminder(['reply', 'questions']))
+      runtime.emit({ kind: 'text', blockId: 'b2', text: 'The draft is ready. Send it today?' })
+      runtime.emit({ kind: 'turn_end', reason: 'success' })
+      expect(ends).toEqual([['Let me write the draft.The draft is ready. Send it today?', { call, ctx, reminded: true, said: true }]])
+    })
+
+    it('keeps nothing for a session it does not run', () => {
+      const { bridge, ledgerEntries } = setup()
+      const call: EndTurn = { result: 'Done' }
+      expect(bridge.said('nobody', { call, ctx, derived: deriveTurn(call, ctx) })).toBe(false)
+      expect(ledgerEntries.size).toBe(0)
     })
 
     it('does not send back the turn a delivered reminder starts: the stop had its one reminder', async () => {
@@ -1583,6 +1606,18 @@ describe('ChatBridge', () => {
     ws.client({ type: 'stop_agent', taskId: 'a1' })
     ws.client({ type: 'stop_agent', taskId: 'bad id!' })
     expect(runtimes[0].stopped).toEqual(['a1'])
+  })
+
+  it('binds the id the agent gave the conversation, and shows no view the event', async () => {
+    const { bridge, runtimes } = setup({ transcript: true })
+    const ws = connect(bridge)
+    await flush()
+    const before = ws.events().length
+    runtimes[0].emit({ kind: 'conversation', conversationId: 'thread-1' })
+    expect(ws.events()).toHaveLength(before)
+    runtimes[0].emit({ kind: 'runtime_exit', expected: false })
+    ws.client({ type: 'send', text: 'go on' })
+    expect(runtimes[1].start).toMatchObject({ resume: true, conversationId: 'thread-1' })
   })
 
   it('follows a cleared conversation: the next run resumes the new one', async () => {

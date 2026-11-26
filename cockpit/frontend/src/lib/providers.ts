@@ -88,6 +88,16 @@ export function providerCanChat(providers: AgentProviderInfo[] | undefined, id: 
 }
 
 /**
+ * The provider a new chat names to the host: the one its pane was opened for, else the cockpit's
+ * default. Only one that can run in the chat is named; without one the host starts its own
+ * default for a chat, as it always did.
+ */
+export function chatProvider(providers: AgentProviderInfo[] | undefined, paneProvider: string | null | undefined, defaultProvider: string | null): string | null {
+  const named = paneProvider ?? defaultProvider;
+  return named && providerCanChat(providers, named) ? named : null;
+}
+
+/**
  * The "+" menus' wording for a new agent session: "New Claude Code session".
  * Without a provider (list not loaded, none set up) it reads "New session".
  */
