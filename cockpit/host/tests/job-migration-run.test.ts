@@ -127,7 +127,9 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(w.moved).toEqual([['j1', 't1'], ['j2', 't2']])
     expect(w.saved).toHaveLength(1)
     // once it is over, a new call is a pass of its own
-    expect(w.migration.run()).not.toBe(first)
+    const next = w.migration.run()
+    expect(next).not.toBe(first)
+    await next
   })
 
   it('a task without a delegation gets one for the space\'s agent with its schedule', async () => {
