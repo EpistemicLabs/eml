@@ -187,6 +187,23 @@ describe('task runner', () => {
     expect(started.map((s) => s.id)).toEqual(['owned', 'paused'])
   })
 
+  it('is held off a task whose schedule starts it now: a wake-up that is due and not fired yet, a run that waits to start', async () => {
+    const now = Date.now()
+    const passed = { at: new Date(now - 60_000).toISOString() }
+    const facts: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null }> = {
+      // this cockpit fired that wake-up already: clearing it on the task has not arrived, nothing is coming
+      'fired-wake': { firedWake: passed.at },
+      'waiting-run': { waitingRunDueAt: new Date(now - 120_000).toISOString() },
+    }
+    const { started } = await run([
+      { id: 'due-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: passed },
+      { id: 'fired-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: passed },
+      { id: 'waiting-run', status: 'planned', checkpoint: 'after', delegate: 'atlas' },
+      { id: 'paused-wake', status: 'planned', checkpoint: 'after', delegate: 'atlas', schedule: { ...passed, paused: true } },
+    ], undefined, () => null, () => false, { scheduleFacts: (id: string) => facts[id] ?? {} } as never)
+    expect(started.map((s) => s.id)).toEqual(['fired-wake', 'paused-wake'])
+  })
+
   it('starts a standalone task with a checkpoint, at most five at a time, and none a session already works on', async () => {
     const { started } = await run([
       { id: 'running-1', status: 'active', checkpoint: 'after', delegate: 'atlas' },

@@ -79,7 +79,7 @@ export interface GateInput {
   busy?: boolean
   /** Its hand-over can still be undone, or the owner works on it with the agent (Work on it now). */
   held?: boolean
-  /** Its schedule has a run coming up that will start it (domain/task-schedule.ts nextRunOfSchedule). */
+  /** Its schedule has a run coming up that will start it: a time ahead, one due now, or a run waiting to start (domain/task-schedule.ts runComingAt). */
   scheduled?: boolean
   /** When the newest run on the task started (any state), or null: a request is open while no run started after it. */
   lastRunStartedAt?: string | null

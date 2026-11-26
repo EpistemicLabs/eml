@@ -92,6 +92,8 @@ describe('next-step check', () => {
     /** The provider's chat sessions have the end_turn tool (default: they do). */
     tool?: boolean
     delivers?: boolean
+    /** What this cockpit's record of the task says of its schedule. */
+    scheduleFacts?: { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null }
   } = {}) => {
     const ledger = new SessionLedger()
     // The ledger file outlives a test: earlier tests' sessions are put away.
@@ -106,6 +108,7 @@ describe('next-step check', () => {
       owner: 'lasse', log: () => {},
       endTurnTool: (id) => ledger.get(id)?.runtime === 'sdk' && (opts.tool ?? true),
       jobsOf: () => opts.jobs ?? [],
+      ...(opts.scheduleFacts ? { scheduleFacts: () => opts.scheduleFacts! } : {}),
       runStartedAt: () => RUN,
       working: () => state.working,
       watched: () => state.watched,
@@ -131,9 +134,9 @@ describe('next-step check', () => {
     expect(waited).toEqual(['w1-1'])
   })
 
-  it('a task whose schedule has a run coming up has its next step: a repeating time or a wake-up ahead; not a paused one, not a wake-up that has passed', async () => {
-    const check = async (id: string, schedule: Record<string, unknown>) => {
-      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule } } } })
+  it('a task whose schedule has a run coming up has its next step: a repeating time or a wake-up ahead, or one that is due and not fired yet; not a paused one, not one past its end', async () => {
+    const check = async (id: string, schedule: Record<string, unknown>, scheduleFacts?: { cursor?: string | null; firedWake?: string | null }) => {
+      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule } } } }, scheduleFacts ? { scheduleFacts } : {})
       w.ledger.recordSpawn(id, null, 'bp-eml', 'claude', true, 't1')
       await w.check.turnEnded(id)
       return w.delivered.length
@@ -141,8 +144,13 @@ describe('next-step check', () => {
     expect(await check('w-s1', { crons: ['0 8 * * *'], time_zone: 'UTC' })).toBe(0)
     expect(await check('w-s2', { at: '2026-11-19T12:00:00.000Z', by_session: 'w-s2' })).toBe(0)
     expect(await check('w-s3', { crons: ['0 8 * * *'], time_zone: 'UTC', paused: true })).toBe(1)
-    expect(await check('w-s4', { at: '2026-11-19T09:00:00.000Z' })).toBe(1)
     expect(await check('w-s5', { crons: ['0 8 * * *'], time_zone: 'UTC', ends_at: '2026-11-19T09:00:00.000Z' })).toBe(1)
+    // a wake-up that has passed and is not fired yet is a run coming up: the next pass fires it
+    expect(await check('w-s4', { at: '2026-11-19T09:00:00.000Z' })).toBe(0)
+    // one this cockpit fired already (clearing it on the task has not arrived) is not
+    expect(await check('w-s6', { at: '2026-11-19T09:00:00.000Z' }, { firedWake: '2026-11-19T09:00:00.000Z' })).toBe(1)
+    // a paused schedule's passed wake-up fires nothing
+    expect(await check('w-s7', { at: '2026-11-19T09:00:00.000Z', paused: true })).toBe(1)
   })
 
   it('flags at once when the prompt does not arrive', async () => {

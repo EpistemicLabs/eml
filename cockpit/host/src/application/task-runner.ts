@@ -3,7 +3,8 @@ import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
-import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import { runComingAt, type ScheduleFacts } from '../domain/task-schedule.js'
+import { JOB_LIMITS } from '../domain/job.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
 import { CHECKPOINT_STOP } from '../domain/turn-end.js'
@@ -59,6 +60,11 @@ export interface TaskRunnerDeps {
    * it (application/worker-task.ts, keyed on its request's time until its id is known).
    */
   held?(taskId: string, requestedAt?: string | null): boolean
+  /**
+   * What this cockpit's record of the task says of its schedule (domain/job.ts): the cursor, the wake-up it fired, a
+   * run that waits to start. With it a time that is due and not fired yet holds the runner off too.
+   */
+  scheduleFacts?(taskId: string): ScheduleFacts
   /** What the delegate reads first, e.g. an open question carried over in the hand-over. */
   brief?(taskId: string): string | undefined
   /** The open question the hand-over carried, for a continued session's own brief. */
@@ -103,8 +109,8 @@ export const CLOSING_RULE = 'Never close the task yourself: its owner reviews th
 
 /**
  * The prompt a step's session starts with (or, `continued`, the one its own session carries on with); its task, the rules, how a turn ends and what happens until it is done come
- * with its start hook. A job's prompt (ofJob) never tells the run to close the task: its run header carries the rule
- * (domain/job-v1.ts JOB_TASK_RULE).
+ * with its start hook. The prompt of a run for the task's schedule (ofJob) never tells the run to close the task: the
+ * line that names what fired carries the rule (domain/run-text.ts SCHEDULE_TASK_RULE).
  */
 export function stepPrompt(step: { id: string; title: string; content: string; brief?: string; startedBy?: string; ofJob?: boolean; continued?: boolean }, checkpoint: string): string {
   const how = checkpoint === 'before'
@@ -194,8 +200,8 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         shared: space.shared, me: deps.me,
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
         busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id, step.properties?.delegation?.requested_at ?? null),
-        // Its schedule starts it at its time (domain/task-schedule.ts).
-        scheduled: Boolean(nextRunOfSchedule(step.properties?.delegation?.schedule, Date.now())),
+        // Its schedule starts it at its time: one ahead, one due now, or a run that waits to start (domain/task-schedule.ts).
+        scheduled: Boolean(runComingAt(step.properties?.delegation?.schedule, deps.scheduleFacts?.(step.id) ?? {}, Date.now(), JOB_LIMITS.lateLimitMs)),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
       if (block) continue

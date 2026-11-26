@@ -1,5 +1,6 @@
 import type { DelegationFields } from '../domain/delegation.js'
-import { nextRunOfSchedule } from '../domain/task-schedule.js'
+import { runComingAt, type ScheduleFacts } from '../domain/task-schedule.js'
+import { JOB_LIMITS } from '../domain/job.js'
 import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace, BrainSpaces } from '../brain-space.js'
 import { needsAnswer, wasSpawned, worksAlone } from '../domain/session-attention.js'
@@ -17,9 +18,10 @@ import { trackWaits } from './task-waits.js'
  *   - a wait this session set since its run began, on whomever (the user, another
  *     member, someone outside), or one on the user set by a newer run (an older
  *     wait answered() should have cleared does not count);
- *   - the task's schedule has a run coming up (a repeating time or its wake-up,
- *     domain/task-schedule.ts), or this cockpit's record of the task has a
- *     channel that wakes it or a run waiting to start;
+ *   - the task's schedule has a run coming up (a repeating time or its wake-up
+ *     ahead, or one that is due and not fired yet, domain/task-schedule.ts
+ *     runComingAt), or this cockpit's record of the task has a channel that
+ *     wakes it or a run waiting to start;
  *   - another session on the task that is working, or one of the user's own
  *     (not a worker): the task is in their conversation;
  *   - a step of the task the runner can move: active, or planned with a
@@ -123,6 +125,8 @@ export interface NextStepDeps {
   owner: string
   /** What this cockpit's record of the task (domain/job.ts) says; its next run comes from the task's schedule, not from here. */
   jobsOf(taskId: string): JobFacts[]
+  /** What this cockpit's record of the task says of its schedule: the cursor and the wake-up it fired (domain/job.ts). */
+  scheduleFacts?(taskId: string): ScheduleFacts
   /** When the session's current run began: its job run's start, else its creation. */
   runStartedAt(sessionId: string): string
   /** The session can call end_turn (application/turn-context.ts hasEndTurnTool); one that cannot is pointed at the block. */
@@ -219,8 +223,9 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     }
     const otherSession = deps.ledger.list().some((e) => e.sessionId !== sessionId && e.taskId === task.id && !e.archivedAt
       && (!e.worker || deps.working(e.sessionId)))
-    // The task's schedule is the truth for its next run; a paused or ended one has none.
-    const nextRunAt = nextRunOfSchedule(task.properties?.delegation?.schedule, now().getTime())
+    // The task's schedule is the truth for its next run; a paused or ended one has none. A time that is due and not
+    // fired yet is a run coming up too: the next pass fires it.
+    const nextRunAt = runComingAt(task.properties?.delegation?.schedule, deps.scheduleFacts?.(task.id) ?? {}, now().getTime(), JOB_LIMITS.lateLimitMs)
     const jobs = [...deps.jobsOf(task.id), ...(nextRunAt ? [{ ended: false, held: false, nextRunAt, channel: false, runWaiting: false }] : [])]
     const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs, otherSession, steps })
 

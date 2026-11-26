@@ -5,7 +5,8 @@ import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
-import { hasSchedule, nextRunOfSchedule, scheduleOf } from '../domain/task-schedule.js'
+import { hasSchedule, runComingAt, scheduleOf, type ScheduleFacts } from '../domain/task-schedule.js'
+import { JOB_LIMITS } from '../domain/job.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
@@ -199,6 +200,11 @@ export interface TaskBoardDeps {
   runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
   ledgerSessionsOn?(taskId: string): string[]
+  /**
+   * What this cockpit's record of the task says of its schedule (domain/job.ts): the cursor, the wake-up it fired, a
+   * run that waits to start. Without it the next run is the schedule's next time ahead.
+   */
+  scheduleFacts?(taskId: string): ScheduleFacts
   now(): number
   log(line: string): void
   /**
@@ -434,8 +440,15 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
   /** The task's schedule, whoever's cockpit fires it. A closed task has none: nothing fires there, so it shows no next run. */
   const scheduleOfRow = (row: Row) => (row.status === 'planned' || row.status === 'active' ? scheduleOf(row) : null)
-  /** The task's next run, from its schedule. */
-  const nextRunOfRow = (row: Row, now: number) => nextRunOfSchedule(scheduleOfRow(row), now)
+  /**
+   * The task's next run: its schedule's, read with what this cockpit's record knows (domain/task-schedule.ts
+   * runComingAt). A time that is due and not fired yet, and a run that waits for room, still count: the time shown is
+   * then the one it was due at.
+   */
+  const nextRunOfRow = (row: Row, now: number) => {
+    const open = row.status === 'planned' || row.status === 'active'
+    return open ? runComingAt(scheduleOfRow(row), deps.scheduleFacts?.(row.id) ?? {}, now, JOB_LIMITS.lateLimitMs) : null
+  }
 
   /** A pending command's effect on the task, shown before it is applied. */
   const overlay = (row: Row, command: TaskCommand | undefined, agents: string[]): Row => {
