@@ -552,8 +552,10 @@ describe('planning jobs onto their tasks', () => {
 
     it('a repeating job\'s run that waits is carried, and says which time fired: its due time as a firing of the job\'s cron', () => {
       const daily = cron('0 8 * * 1-5', { runCount: 1, target: { type: 'session', sessionId: 'sess-1234-abcd' } })
-      const [t] = plan([daily], [task()], { runs: { [daily.id]: [unreached(daily.id, 'r1', 'waiting')] } }).tasks
-      expect(t.runs).toMatchObject([{ id: 'r1', jobId: 't1', status: 'waiting', fired: { crons: [{ cron: '0 8 * * 1-5', dueAt: PAST }], timeZone: 'Europe/Berlin' } }])
+      // due within the engine's late limit (a time older than that is missed, not carried)
+      const dueAt = '2026-11-26T07:00:00.000Z'
+      const [t] = plan([daily], [task()], { runs: { [daily.id]: [{ ...unreached(daily.id, 'r1', 'waiting'), dueAt }] } }).tasks
+      expect(t.runs).toMatchObject([{ id: 'r1', jobId: 't1', status: 'waiting', fired: { crons: [{ cron: '0 8 * * 1-5', dueAt }], timeZone: 'Europe/Berlin' } }])
       // the job's prompt is in the task's text, where a new session of the task reads it
       expect(t.brain?.appended).toEqual(['Every 0 8 * * 1-5: Write the brief.'])
     })

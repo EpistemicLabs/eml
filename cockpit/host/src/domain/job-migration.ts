@@ -3,6 +3,7 @@ import { activeGrants, isOpenRun, JOB_LIMITS, type ChannelTrigger, type Job, typ
 import { isScheduleTrigger, type JobV1, type ScheduleTrigger } from './job-v1.js'
 import { atParagraph, atReason, everyParagraph, isOpenTask, nameOfTask, narrowedProfile, withParagraph } from './schedule-tool.js'
 import { firesHere, firingOf, ownerOf } from './task-owner.js'
+import { formatDuration } from './schedule.js'
 import type { ToolProfile } from './tool-profile.js'
 import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHEDULE_LIMITS, setEndsAt, setPaused, setWake } from './task-schedule.js'
 
@@ -29,7 +30,9 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  *     journal, and the report says so. One that has run has nothing to carry over. A run that waited to start, or
  *     was starting, never reached a session: by it the job has not run, and the run is closed, so the wake-up fires
  *     in its place, once. A repeating job's run of that kind is carried, naming its due time as a firing of its cron,
- *     only when the job's time is on the task: of a job left out (below) it is settled as history under the job's id;
+ *     only when the job's time is on the task: of a job left out (below) it is settled as history under the job's id.
+ *     A carried run starts afresh (its hour to start in counts from the migration, its attempts from 0); one of a
+ *     repeating time due longer ago than the engine runs one late (JOB_LIMITS.lateLimitMs) is missed, not carried;
  *   - a paused job → the pause wins: with all of the task's timed jobs paused, or one of its repeating jobs, the
  *     whole schedule is paused with every repeating time on it, and the journal says why and how to resume. A paused
  *     one-time job next to running ones is left out, with a journal line;
@@ -469,7 +472,19 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
       return []
     }
     const cron = cronOf.get(j.id)
-    return [cron && r.trigger === 'schedule' && !r.fired ? { ...r, fired: { crons: [{ cron, dueAt: r.dueAt }], ...(schedule?.time_zone ? { timeZone: schedule.time_zone } : {}) } } : r]
+    const timeZone = schedule?.time_zone ? { timeZone: schedule.time_zone } : {}
+    // A repeating time due longer ago than the engine runs one late is missed, as the engine records a missed time.
+    if (cron && r.trigger === 'schedule' && now - Date.parse(r.dueAt) > JOB_LIMITS.lateLimitMs) {
+      settled.set(j.id, [...(settled.get(j.id) ?? []), {
+        ...r, status: 'missed', note: `due ${formatDuration(now - Date.parse(r.dueAt))} before schedules moved onto tasks, and it had not started: too late to run`, finishedAt: iso(now),
+        ...(r.fired ? {} : { fired: { crons: [{ cron, dueAt: r.dueAt }], ...timeZone } }),
+      }])
+      return []
+    }
+    // Carried, it starts afresh: its hour to start in counts from now (the engine counts from the later of its due
+    // time and its createdAt), and its attempts begin again.
+    const fresh: JobRun = { ...r, createdAt: iso(now), attempts: 0, nextAttemptAt: null }
+    return [cron && r.trigger === 'schedule' && !r.fired ? { ...fresh, fired: { crons: [{ cron, dueAt: r.dueAt }], ...timeZone } } : fresh]
   }))
   const closedRuns = (j: JobV1) => (settled.get(j.id) ?? []).filter((r) => r.number > 0).length
   const triggers = live.flatMap(channelsOf)

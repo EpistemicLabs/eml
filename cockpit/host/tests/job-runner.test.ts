@@ -470,6 +470,27 @@ describe('deriving what is due', () => {
       expect(runs('brief')).toEqual([])
       expect(planned.history.berlin).toMatchObject([{ id: 'run-berlin', status: 'skipped' }])
     })
+
+    it('that had tried to start before, due 2 hours ago: it gets a fresh hour from the migration and starts', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate([v1('brief', '30 14 * * 1-5', ZONE)], { brief: [waiting('brief', '2026-11-09T06:30:00.000Z', 3)] }, now)
+      await runner.tick()
+      expect(world.started).toHaveLength(1)
+      expect(runs('brief')).toMatchObject([{ id: 'run-brief', status: 'started', dueAt: '2026-11-09T06:30:00.000Z' }])
+      // its hour counts from the migration, and its attempts start again
+      expect(planned.runs).toMatchObject([{ id: 'run-brief', status: 'waiting', attempts: 0, nextAttemptAt: null, createdAt: '2026-11-09T08:30:00.000Z' }])
+    })
+
+    it('of a repeating time due longer ago than the late limit: it is missed, kept as history, and not started', async () => {
+      const now = Date.parse('2026-11-09T08:30:00Z')
+      const planned = migrate([v1('brief', '30 8 * * 1-5', ZONE)], { brief: [waiting('brief', '2026-11-09T00:30:00.000Z', 3)] }, now)
+      await runner.tick()
+      expect(world.started).toEqual([])
+      expect(runs('brief')).toEqual([])
+      expect(planned.runs).toEqual([])
+      expect(planned.history.brief).toMatchObject([{ id: 'run-brief', status: 'missed', finishedAt: '2026-11-09T08:30:00.000Z' }])
+      expect(planned.record).toMatchObject({ runCount: 0 })
+    })
   })
 
   it('a pause seen after the schedule ran forgets the cursor, so the times of the pause are never made up', async () => {
