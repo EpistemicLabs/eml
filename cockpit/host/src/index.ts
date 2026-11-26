@@ -47,7 +47,7 @@ import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTurnContexts, hasEndTurnTool } from './application/turn-context.js'
-import { createTurnCheck } from './application/turn-check.js'
+import { createTurnWake } from './application/turn-wake.js'
 import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createContinueSession } from './application/continue-session.js'
@@ -583,9 +583,8 @@ async function main() {
     worksAlone: (sessionId) => sessionKind.worksAlone(sessionId),
     turnContext: (sessionId) => turnContexts.of(sessionId),
     callTime: () => ({ now: Date.now(), zone: userTimeZone() }),
-    // The check a call's next.when asks for (application/turn-check.ts).
-    turnCheck: (sessionId, { at, call, turn }) => turnCheck.settle(sessionId, { at, taskName: turn.task?.name ?? null, prompt: checkPrompt(call, turn.ctx) }),
-    checkSaved: (sessionId) => turnCheck.saved(sessionId),
+    // A call's next.when sets the wake-up of the session's task; a call without one clears it (application/turn-wake.ts).
+    turnWake: (sessionId, { edit, call, turn }) => turnWake.settle(sessionId, { edit, why: checkPrompt(call, turn.ctx) }),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
     userWrote: (sessionId) => userWrote(sessionId),
     handoffBeforeStop: (sessionId) => sessionTask.handoffBeforeStop(sessionId),
@@ -856,7 +855,16 @@ async function main() {
   // SEAM (part B3): every call of the schedule tool, from a session's tool, its CLI, the spawn inbox or end_turn's
   // next.when, is answered here that the tool is being rebuilt; `jobs` itself only serves the Jobs page's empty list.
   const scheduleTool = { handle: async (_caller: JobCaller, _input: Record<string, unknown>): Promise<JobAnswer> => ({ status: 503, text: SCHEDULE_TOOL_REBUILT }) }
-  const turnCheck = createTurnCheck({ jobs: scheduleTool, store: legacyJobStore, callerOf: (sessionId) => jobCaller(sessionId), zone: userTimeZone, log })
+  const turnWake = createTurnWake({
+    where: (sessionId) => {
+      const entry = ledger.get(sessionId)
+      if (!entry) return null
+      const space = spaces.resolve(entry.spaceId ?? null)
+      return { taskId: entry.taskId ?? null, brain: taskBrain(space), agent: space.agent ?? null }
+    },
+    zone: userTimeZone, log,
+    changed: () => { void taskBoard.refresh().catch(() => {}) },
+  })
   // jobs.json version 1 → 2: the jobs of before brain schema 24 move onto their tasks (application/job-migration.ts).
   const jobMigration = createJobMigration({
     store: jobStore, spaces: () => spaces.list(), brain: taskBrain, me: owner, now: () => Date.now(), log,

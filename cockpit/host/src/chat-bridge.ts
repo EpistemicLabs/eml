@@ -18,7 +18,8 @@ import { chatSessionShouldStop, IDLE_MS, sessionToStopForRoom } from './domain/s
 import { ceilingNotice, heapCapEnv, type SessionLimits, type SessionMemory } from './domain/session-memory.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { attentionAfterTurn, missingReply, shouldAskForStatus, stillRunning, type WorkerStatus } from './domain/session-attention.js'
-import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, type CheckTime, type EndTurn, type Missing, type TurnContext } from './domain/turn-end.js'
+import { deriveTurn, END_TURN_TOOL, LEGACY_STATUS_TOOL, missingOf, passedWhen, reminder, wakeEditOf, type EndTurn, type Missing, type TurnContext, type WakeEdit } from './domain/turn-end.js'
+import type { WakeSettled } from './application/turn-wake.js'
 import { zoneLabel } from './domain/schedule.js'
 import { turnContextOf, type SessionTurn } from './application/turn-context.js'
 import { greetingFor } from './session-greeting.js'
@@ -213,12 +214,11 @@ export interface ChatContext {
   /** The moment a call is read and the zone its next.when is read in (the user's); absent: now, in this machine's zone. */
   callTime?: () => { now: number; zone: string }
   /**
-   * The check a call's next.when asks for: set, moved, or removed when the call has none
-   * (application/turn-check.ts). Answers why it could not be set, or null.
+   * What a call does to the wake-up of the session's task: its next.when sets it, a call without one clears it
+   * (application/turn-wake.ts). Answers why it could not be set, the wake-up as saved, and whether the task has a
+   * next run now.
    */
-  turnCheck?: (sessionId: string, check: { at: string | null; call: EndTurn; turn: SessionTurn }) => Promise<string | null>
-  /** The session's check as the schedule saved it: the zone its time was read in and the instant (application/turn-check.ts saved). */
-  checkSaved?: (sessionId: string) => CheckTime | null
+  turnWake?: (sessionId: string, wake: { edit: WakeEdit; call: EndTurn; turn: SessionTurn }) => Promise<WakeSettled>
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */
   answered?: (sessionId: string) => void
   /** The user wrote to the session from a client: a closed task it works on reopens first (task-commands.ts). */
@@ -970,13 +970,25 @@ export class ChatBridge {
         this.ctx.ledger.setAttention(entry.sessionId, { kind: derived.status, reason })
         // Kept until the router wrote it into the task, so a host going down before the turn's end loses nothing.
         this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx: turn.ctx })
-        const problem = await this.ctx.turnCheck?.(entry.sessionId, { at: derived.checkAt, call, turn }) ?? null
-        const saved = derived.checkAt && !problem ? this.ctx.checkSaved?.(entry.sessionId) ?? null : null
+        const wake = await this.ctx.turnWake?.(entry.sessionId, { edit: wakeEditOf(derived), call, turn }) ?? null
+        if (!wake?.nextRun) {
+          return {
+            derived,
+            missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
+            ...(wake?.problem && derived.checkAt ? { checkProblem: wake.problem, ...(wake.fix ? { checkFix: wake.fix } : {}) } : {}),
+            ...(wake?.saved ? { checkTime: wake.saved } : {}),
+          }
+        }
+        // The task has a next run from its schedule: a step for someone else counts without a time, and none is missing.
+        const ctx: TurnContext = { ...turn.ctx, nextRun: true }
+        entry.callCtx = ctx
+        this.ctx.ledger.setUnrouted(entry.sessionId, { call, ctx })
         return {
-          derived,
-          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx: turn.ctx }),
-          ...(problem && derived.checkAt ? { checkProblem: problem } : {}),
-          ...(saved ? { checkTime: saved } : {}),
+          derived: deriveTurn(call, ctx),
+          missing: missingOf(call, { taskOpen: turn.task?.open ?? false, ctx, nextRun: true }),
+          ...(wake.problem && derived.checkAt ? { checkProblem: wake.problem, ...(wake.fix ? { checkFix: wake.fix } : {}) } : {}),
+          ...(wake.saved ? { checkTime: wake.saved } : {}),
+          nextRun: true,
         }
       },
       report: (status, reason) => {

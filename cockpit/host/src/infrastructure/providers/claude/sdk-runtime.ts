@@ -558,8 +558,8 @@ export async function endTurnReply(worker: Pick<NonNullable<SessionRuntimeStart[
   const read = readEndTurn(input)
   if (!read.ok) return { text: read.error, refused: true }
   try {
-    const { derived, missing, checkProblem, checkTime } = await worker.endTurn(read.call)
-    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkTime }), refused: false }
+    const { derived, missing, checkProblem, checkFix, checkTime, nextRun } = await worker.endTurn(read.call)
+    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkFix, checkTime, nextRun }), refused: false }
   } catch (error: unknown) {
     return { text: notRecorded(error instanceof Error ? error.message : 'unknown error'), refused: true }
   }

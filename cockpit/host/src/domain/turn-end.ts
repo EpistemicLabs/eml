@@ -7,7 +7,7 @@ import type { WaitKind } from './task-turn.js'
 /**
  * How a turn ends: one end_turn call says where the task stands and whose move
  * it is, and the cockpit derives the rest (the session's status, the task's
- * wait, the check). Every text an agent reads about ending a turn is built
+ * wait, the task's wake-up). Every text an agent reads about ending a turn is built
  * here, from shared fragments, so no rule is worded twice.
  *
  * A session without the tool (a terminal, an older session) writes the same
@@ -36,6 +36,8 @@ export interface TurnContext {
   agent: string
   members: readonly string[]
   checkpoint?: string
+  /** The task has a next run from its schedule: a step for someone else counts without a time (deriveTurn). */
+  nextRun?: boolean
 }
 
 export interface TurnWait {
@@ -49,6 +51,17 @@ export interface DerivedTurn {
   wait: TurnWait | null
   /** The time the agent looks again, as written in the call; null for a step of the owner's, which sets no check. */
   checkAt: string | null
+}
+
+/**
+ * What a turn's end does to the wake-up of the session's task (domain/task-schedule.ts): a time sets it, a hand-over
+ * to the owner clears it whoever set it, and any other end without a time clears it only when this session set it.
+ */
+export type WakeEdit = { kind: 'set'; when: string } | { kind: 'clear'; whose: 'any' | 'own' }
+
+export function wakeEditOf(derived: Pick<DerivedTurn, 'status' | 'checkAt'>): WakeEdit {
+  if (derived.checkAt) return { kind: 'set', when: derived.checkAt }
+  return { kind: 'clear', whose: derived.status === 'review' ? 'any' : 'own' }
 }
 
 /** What a reminder can name. missingOf finds call, next and when; the chat finds reply and questions. */
@@ -196,9 +209,9 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
   if (call.next && who) {
     const what = call.next.what
     if (who.kind === 'owner') return { status: 'review', wait: wait(ctx.owner, 'review', what || `Review: ${call.result}`), checkAt: null }
-    // A step for anyone but the owner counts only with the time the agent looks again: without one nothing would
-    // bring it back up, so it is no next step, from a call and from a block alike.
-    if (!checkAt) return { status: 'done', wait: null, checkAt: null }
+    // A step for anyone but the owner counts only with something that brings it back up: the time the agent looks
+    // again, or the next run of the task's schedule. Without either it is no next step, from a call and from a block alike.
+    if (!checkAt && !ctx.nextRun) return { status: 'done', wait: null, checkAt: null }
     // Another member or agent is waited on like someone outside: the task stays its owner's, and nobody else's Inbox gets it.
     if (who.kind === 'member' || who.kind === 'outside') return { status: 'done', wait: wait(who.name, 'outside', what || call.result), checkAt }
     return { status: 'done', wait: null, checkAt }
@@ -210,13 +223,15 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
  * What the stop still lacks: no call at all; an open task whose call names no
  * next step; a next step for anyone but the owner without the time the agent
  * looks again (the owner sees theirs in the Inbox; nothing else brings a wait
- * on someone else back up).
+ * on someone else back up). `nextRun`: the task has a next run from its schedule
+ * (a repeating time of a schedule that is not paused or ended, or a wake-up
+ * still ahead): that brings it back up, so no time is needed.
  */
-export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'> }): Array<'call' | 'next' | 'when'> {
+export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'>; nextRun?: boolean }): Array<'call' | 'next' | 'when'> {
   if (!call) return ['call']
   if (call.failed || call.questions?.length) return []
   if (!call.next) return facts.taskOpen ? ['next'] : []
-  return whoOf(call.next.who, facts.ctx).kind !== 'owner' && !call.next.when ? ['when'] : []
+  return whoOf(call.next.who, facts.ctx).kind !== 'owner' && !call.next.when && !facts.nextRun ? ['when'] : []
 }
 
 /** Where the task stands after a turn, for the run's record: the call's result, else the block's. */
@@ -244,7 +259,9 @@ const whenField = (zone?: string | null) => (zone ? `${FIELD.when}: ${zone}` : F
 
 const STOP = 'when you stop and the stop changes who has to act or where the task stands'
 const PLAIN = 'for a turn that is plain conversation'
-const WHEN_REQUIRED = 'required unless who is the user, where it is not used'
+const WHEN_REQUIRED = 'required unless who is the user, where it is not used, or the task has a next run from its schedule'
+/** Said once, with the next step: an agent that waits for nothing has no reason to stop. */
+const KEEP_WORKING = 'If the next step is yours and you wait for nothing, do not end the turn: keep working.'
 const nextRequired = (next: string, questions: string, failed: string) => `${next} is required while the task is open, unless ${questions} or ${failed} is set`
 const VISIBLE = 'as visible text'
 const NO_TOOL = `Without the ${END_TURN_TOOL} tool, end your reply with the ${HANDOFF_LABELS.heading} block instead.`
@@ -258,7 +275,7 @@ export function endTurnDescription(zone?: string | null): string {
     `Call ${END_TURN_TOOL} once ${STOP}. Make no call ${PLAIN}.`,
     `Call it first, then write your reply once ${VISIBLE}, as the last thing in the turn: the user reads only that, never the call or your thinking.`,
     `result: ${FIELD.result}. It is shown under the task's name in every list.`,
-    `next: whose move it is. who: ${FIELD.who}. what: ${FIELD.what}. when: ${whenField(zone)}; ${WHEN_REQUIRED}. ${nextRequired('next', 'questions', 'failed')}.`,
+    `next: whose move it is. who: ${FIELD.who}. what: ${FIELD.what}. when: ${whenField(zone)}; ${WHEN_REQUIRED}. ${nextRequired('next', 'questions', 'failed')}. ${KEEP_WORKING}`,
     `questions: ${FIELD.questions}, one entry per question. Ask them in your reply as a numbered list and copy that list here.`,
     `failed: only when you could not do it: ${FIELD.failed}.`,
     `checked, claimed, decided: for whoever picks the task up next: ${FIELD.checked}, ${FIELD.claimed}, ${FIELD.decided}. They go to the task's journal, not the chat.`,
@@ -278,7 +295,7 @@ const MISSING: Record<Missing, string> = {
   reply: `No visible reply follows your call. Write it now, as text, not in thinking: what was asked, what you did, what changed.`,
   questions: `Your ${END_TURN_TOOL} call has questions, but your reply does not ask them. Write them in your reply as a numbered list.`,
   next: `The task is still open and no next step is recorded. ${CALL_WITH_NEXT}`,
-  when: `A next step for anyone but the user needs a time. Call ${END_TURN_TOOL} with next.when: ${FIELD.when}.`,
+  when: `A next step for anyone but the user needs a time, and this task has no next run from its schedule. Call ${END_TURN_TOOL} with next.when: ${FIELD.when}.`,
 }
 
 const MISSING_ORDER: readonly Missing[] = ['call', 'reply', 'questions', 'next', 'when']
@@ -308,8 +325,11 @@ export interface CheckTime {
 export const savedAs = (time: CheckTime) => `(${time.zone}, ${new Date(time.at).toISOString().slice(0, 16)}Z)`
 
 /** What the answer opens with: what the cockpit now holds. A check that was not set is not named as one. */
-function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; check: boolean }, time?: CheckTime | null): string {
-  const again = derived.checkAt && !lacks.check ? `you look again at ${derived.checkAt}${time ? ` ${savedAs(time)}` : ''}` : ''
+function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; check: boolean }, time?: CheckTime | null, nextRun = false): string {
+  // A step for someone else without a time of its own: the task's schedule brings it back up.
+  const byRun = nextRun && call.next && derived.status === 'done' && (!derived.checkAt || lacks.check)
+  const again = derived.checkAt && !lacks.check ? `you look again at ${derived.checkAt}${time ? ` ${savedAs(time)}` : ''}`
+    : byRun ? 'the task\'s next run brings it back up' : ''
   if (!derived.wait) {
     if (again) return `Recorded: ${again}.`
     return lacks.step || lacks.check ? 'Recorded: where the task stands, but no next step.' : 'Recorded: done, nobody has to act.'
@@ -323,24 +343,30 @@ function recorded(call: EndTurn, derived: DerivedTurn, lacks: { step: boolean; c
   return `Recorded: ${what}.${again ? ` Also: ${again}.` : ''}`
 }
 
+/** What helps when a check could not be set: another time, the same call again, or nothing the agent can do. */
+export type CheckFix = 'time' | 'again' | 'none'
+
 /** The check at next.when could not be set: the rest of the call is recorded. `why` is the schedule's own word on it. */
-const checkNotSet = (when: string, why: string) =>
-  `The check at ${when} was NOT set: ${why.replace(/^at:\s*/i, '').replace(/[.\s]+$/, '')}. Call ${END_TURN_TOOL} again with another next.when (${FIELD.when}).`
+const checkNotSet = (when: string, why: string, fix: CheckFix) =>
+  `The check at ${when} was NOT set: ${why.replace(/^at:\s*/i, '').replace(/[.\s]+$/, '')}.${
+    fix === 'time' ? ` Call ${END_TURN_TOOL} again with another next.when (${FIELD.when}).` : fix === 'again' ? ` Call ${END_TURN_TOOL} again.` : ''}`
 
 const NOW_REPLY = `Now write your reply ${VISIBLE}.`
 
 /**
  * The tool's answer: what was recorded, then what the call still lacks (the
  * agent can call again in the same turn), then the reply, which comes after
- * the call. `checkProblem`: why the check at next.when could not be set;
- * `checkTime`: the zone next.when was read in and the instant the check was saved for.
+ * the call. `checkProblem`: why the check at next.when could not be set, and
+ * `checkFix` what helps; `checkTime`: the zone next.when was read in and the
+ * instant the task's wake-up was saved for; `nextRun`: the task has a next run
+ * from its schedule.
  */
-export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null; checkTime?: CheckTime | null } = {}): string {
+export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null; checkFix?: CheckFix; checkTime?: CheckTime | null; nextRun?: boolean } = {}): string {
   const missing = opts.missing ?? []
-  const problem = derived.checkAt && opts.checkProblem ? checkNotSet(derived.checkAt, opts.checkProblem) : ''
+  const problem = derived.checkAt && opts.checkProblem ? checkNotSet(derived.checkAt, opts.checkProblem, opts.checkFix ?? 'time') : ''
   // The opening says there is no next step: the task being open is all that is left to add.
   const lacking = !derived.wait && missing.includes('next') ? `The task is still open. ${CALL_WITH_NEXT}` : missingText(missing)
-  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }, opts.checkTime), problem, lacking, NOW_REPLY].filter(Boolean).join(' ')
+  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }, opts.checkTime, opts.nextRun), problem, lacking, NOW_REPLY].filter(Boolean).join(' ')
 }
 
 /** The older tool's answer: what was recorded, then the reply that is still to come. */
@@ -385,13 +411,10 @@ export function turnEndRules(opts: { owner: string; agent?: string | null; tool:
 export const FOR_REVIEW = 'hand the result over for review (next names the owner)'
 
 /**
- * How a task whose schedule is still on comes to its end: its job ends first. Which way depends on who made the job;
- * the rules about closing a task say it in these words.
+ * How a task whose schedule is still on comes to its end: its schedule ends first. Which way depends on what it
+ * holds; the rules about closing a task say it in these words.
  */
-export const END_SCHEDULE_FIRST = `end its job first, then ${FOR_REVIEW}: a job you made with the schedule tool you end with it (action finish), a check you set by ending a turn with a time the cockpit removes once you end a turn without one`
-
-/** What the run of a check reads in its header instead of the schedule tool's rules (domain/job.ts runHeader). */
-export const CHECK_RUN_RULE = `This job is the check you set by ending a turn with a time. End this turn with a new time and it is set again; end it without one and the check is over. While it is set, never close its task: once its goal is reached, ${FOR_REVIEW} without a time; the owner closes the task.`
+export const END_SCHEDULE_FIRST = `end its schedule first, then ${FOR_REVIEW}: repeating times you end with the schedule tool (action finish), a wake-up the cockpit clears with the hand-over`
 
 /** Who sets the task's waits: said once, among the task's rules. */
 export const COCKPIT_ROUTES = 'Whose move it is you say only when you end a turn; the cockpit writes it into the task.'
@@ -412,7 +435,7 @@ export function untilDoneRules(checkpoint?: string): string {
     checkpoint === 'none'
       ? '- Reached: close it yourself (eml_track_task with status resolved and the outcome), unless its schedule is still on (see Closing).'
       : `- Reached: ${FOR_REVIEW}. Do not close it yourself.`,
-    '- Not reached: name yourself as next, with the time you look again (when). The cockpit wakes you then: a simple check needs no schedule tool call. You decide whether and when to check again; do not ask the user about it.',
+    '- Not reached: name yourself as next, with the time you look again (when); a task that has a next run from its schedule needs no time. The cockpit wakes you then: a simple check needs no schedule tool call. You decide whether and when to check again; do not ask the user about it.',
     '- Ask the user only what only they can decide. A stop without a next step (a check, a question, a review hand-over, or the task closed) is caught by the cockpit.',
   ].join('\n')
 }
@@ -429,10 +452,7 @@ export const BEFORE_IDLE_STOP = `The cockpit is about to stop this session becau
 /** The half sentence the line of a run for a task's schedule ends "Nobody may be watching: …" with (domain/run-text.ts firedText). */
 export const JOB_HEADER_STATUS = `end your turn with ${END_TURN_TOOL} if you have it`
 
-/** The name of the one-time job a call's when creates. */
-export const checkJobName = (taskName: string) => `Check: ${taskName}`
-
-/** What the session reads when that job wakes it. */
+/** The reason of the wake-up a call's when sets (schedule.why): what the session reads when the wake-up fires. */
 export function checkPrompt(call: Pick<EndTurn, 'next' | 'questions'>, ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'>): string {
   const who = call.next ? whoOf(call.next.who, ctx) : null
   const what = call.next?.what.replace(/[.\s]+$/, '')

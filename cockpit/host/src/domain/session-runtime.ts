@@ -1,5 +1,5 @@
 import type { WorkerStatus } from './session-attention.js'
-import type { CheckTime, DerivedTurn, EndTurn, Missing } from './turn-end.js'
+import type { CheckFix, CheckTime, DerivedTurn, EndTurn, Missing } from './turn-end.js'
 /**
  * A session driven through a structured harness instead of a terminal: the port
  * the chat view runs on. It says nothing about any one agent: an adapter
@@ -240,8 +240,12 @@ export interface EndTurnRecorded {
   missing: readonly Missing[]
   /** Why the check at next.when could not be set; the rest of the call is recorded. */
   checkProblem?: string
-  /** The zone next.when was read in and the instant the check was saved for. */
+  /** What helps then: another time, the same call again, or nothing the agent can do. */
+  checkFix?: CheckFix
+  /** The zone next.when was read in and the instant the task's wake-up was saved for. */
   checkTime?: CheckTime
+  /** The task has a next run from its schedule: it needs no time from the agent. */
+  nextRun?: boolean
 }
 
 export interface SessionRuntimeFactory {
