@@ -493,7 +493,7 @@ async function main() {
     // The task's record here: its channels and a run waiting to start. Its next run is the task's schedule's, read with
     // the record's cursor and fired wake-up (next-step.ts).
     jobsOf: (taskId) => jobStore.list().filter((job) => job.taskId === taskId).map((job) => ({
-      ended: false, held: isHeld(job), nextRunAt: null,
+      held: isHeld(job),
       channel: job.triggers.length > 0,
       runWaiting: jobStore.runs(job.id).some((run) => run.status === 'waiting'),
     })),

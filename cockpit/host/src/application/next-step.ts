@@ -65,12 +65,10 @@ const SEEN_SLACK_MS = 5_000
 /** wait: someone is waited on (the user, or whomever this session named). */
 export type Trigger = 'wait' | 'job' | 'session' | 'step'
 
+/** What this cockpit's record of a task says (domain/job.ts). */
 export interface JobFacts {
-  /** It ended (finished, or its end came). */
-  ended: boolean
   /** Paused, or waiting for the user's approval. */
   held: boolean
-  nextRunAt: string | null
   /** A mail, Slack or WhatsApp trigger wakes it. */
   channel: boolean
   /** A run of it waits to start. */
@@ -102,6 +100,8 @@ export function nextTriggers(facts: {
   /** When this session's run began: a wait from before it does not count. */
   runStartedAt: string
   jobs: JobFacts[]
+  /** The next run the task's schedule brings (domain/task-schedule.ts runComingAt); null: none. */
+  nextRunAt: string | null
   /** Another session holds the task: working on it, or the user's own. */
   otherSession: boolean
   steps: StepFacts[]
@@ -109,7 +109,7 @@ export function nextTriggers(facts: {
   const found: Trigger[] = []
   const counts = (w: { id: string; who: string; session_id?: string }) => w.who === facts.owner || (w.session_id ?? w.id) === facts.sessionId
   if (waitsOf(facts.task.properties).some((w) => counts(w) && (w.since ?? '') >= facts.runStartedAt)) found.push('wait')
-  if (facts.jobs.some((j) => !j.ended && !j.held && (j.nextRunAt !== null || j.channel || j.runWaiting))) found.push('job')
+  if (facts.nextRunAt !== null || facts.jobs.some((j) => !j.held && (j.channel || j.runWaiting))) found.push('job')
   if (facts.otherSession) found.push('session')
   const runnable = (s: StepFacts) => s.status === 'active'
     || (s.status === 'planned' && Boolean(s.checkpoint) && s.delegated && s.depsCanResolve && facts.task.status === 'active')
@@ -226,8 +226,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
     // The task's schedule is the truth for its next run; a paused or ended one has none. A time that is due and not
     // fired yet is a run coming up too: the next pass fires it.
     const nextRunAt = runComingAt(task.properties?.delegation?.schedule, deps.scheduleFacts?.(task.id) ?? {}, now().getTime(), JOB_LIMITS.lateLimitMs)
-    const jobs = [...deps.jobsOf(task.id), ...(nextRunAt ? [{ ended: false, held: false, nextRunAt, channel: false, runWaiting: false }] : [])]
-    const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs, otherSession, steps })
+    const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs: deps.jobsOf(task.id), nextRunAt, otherSession, steps })
 
     if (triggers.length > 0) {
       nudged.delete(sessionId)

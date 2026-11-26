@@ -15,7 +15,7 @@ type Ledger = typeof import('../src/session-ledger.js')['SessionLedger']
 
 const RUN = '2026-11-19T08:00:00.000Z'
 const job = (patch: Partial<import('../src/application/next-step.js').JobFacts> = {}) =>
-  ({ ended: false, held: false, nextRunAt: null, channel: false, runWaiting: false, ...patch })
+  ({ held: false, channel: false, runWaiting: false, ...patch })
 
 function fakeBrain(tasks: Record<string, Record<string, unknown>>) {
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -38,7 +38,7 @@ describe('next triggers', () => {
   beforeAll(async () => { mod = await import('../src/application/next-step.js') })
 
   const facts = (patch: Partial<Parameters<NextStep['nextTriggers']>[0]> = {}) => ({
-    task: { status: 'active', properties: {} }, owner: 'lasse', sessionId: 'me', runStartedAt: RUN, jobs: [], otherSession: false, steps: [], ...patch,
+    task: { status: 'active', properties: {} }, owner: 'lasse', sessionId: 'me', runStartedAt: RUN, jobs: [], nextRunAt: null, otherSession: false, steps: [], ...patch,
   })
 
   it('finds none for an open task with nothing ahead', () => {
@@ -59,11 +59,13 @@ describe('next triggers', () => {
     expect(mod.nextTriggers(wait({ id: 'other', session_id: 'other' }))).toEqual([])
   })
 
-  it('counts a job that will run again, not an ended or held one', () => {
-    expect(mod.nextTriggers(facts({ jobs: [job({ nextRunAt: '2026-11-20T10:00:00Z' })] }))).toEqual(['job'])
+  it('counts a next run of the schedule, a channel and a run that waits, not a held record', () => {
+    expect(mod.nextTriggers(facts({ nextRunAt: '2026-11-20T10:00:00Z' }))).toEqual(['job'])
     expect(mod.nextTriggers(facts({ jobs: [job({ channel: true })] }))).toEqual(['job'])
     expect(mod.nextTriggers(facts({ jobs: [job({ runWaiting: true })] }))).toEqual(['job'])
-    expect(mod.nextTriggers(facts({ jobs: [job({ nextRunAt: 'x', ended: true }), job({ nextRunAt: 'x', held: true }), job()] }))).toEqual([])
+    expect(mod.nextTriggers(facts({ jobs: [job({ channel: true, held: true }), job({ runWaiting: true, held: true }), job()] }))).toEqual([])
+    // the schedule's next run is the task's: a record held here does not take it away
+    expect(mod.nextTriggers(facts({ nextRunAt: '2026-11-20T10:00:00Z', jobs: [job({ held: true })] }))).toEqual(['job'])
   })
 
   it('counts only steps the runner can move', () => {
@@ -215,8 +217,8 @@ describe('next-step check', () => {
   })
 
   it('archives a job worker that rescheduled quietly, and keeps one that asks the user', async () => {
-    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } as Record<string, unknown> } }
-    const { ledger, check, delivered, quiet } = setup(tasks, { jobs: [job({ nextRunAt: '2026-11-20T10:00:00Z' })] })
+    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-20T10:00:00.000Z' } } } as Record<string, unknown> } }
+    const { ledger, check, delivered, quiet } = setup(tasks)
     ledger.recordSpawn('j1-8', null, 'bp-eml', 'claude', true, 't1')
     ledger.setJobId('j1-8', 'job-1')
     ledger.setAttention('j1-8', { kind: 'done', reason: 'Not answered yet; next check tomorrow 10:00' })
@@ -296,8 +298,8 @@ describe('next-step check', () => {
     expect(waited.delivered).toEqual([])
     expect(waited.brain.posts).toEqual([])
 
-    // next names the agent itself with a time: the check is a job of the task by the time the turn ends.
-    const scheduled = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } }, { jobs: [job({ nextRunAt: '2026-11-27T10:00:00Z' })] })
+    // next names the agent itself with a time: the check is the task's wake-up by the time the turn ends.
+    const scheduled = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-27T10:00:00.000Z' } } } } })
     scheduled.ledger.recordSpawn('w2-16', null, 'bp-eml', 'claude', true, 't1')
     await scheduled.check.turnEnded('w2-16', { endedAt: scheduled.state.now.toISOString(), call: { result: 'No answer yet', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } } })
     expect(scheduled.delivered).toEqual([])
