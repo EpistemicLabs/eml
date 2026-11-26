@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
 import type { WorkerStatus } from '../domain/session-attention.js'
 import {
-  activeGrants, CLOSED_BEFORE_START, isHeld, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
+  activeGrants, CLOSED_BEFORE_START, isHeld, isNewRecord, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
   type GrantTool, type Job, type JobRun, type ReplyChannel, type RunFired, type RunNowRefusal,
 } from '../domain/job.js'
 import { delegationOf, type DelegationFields } from '../domain/delegation.js'
@@ -37,7 +37,8 @@ import { stepPrompt } from './task-runner.js'
  * missed; the cursor moves before anything starts, so no time fires twice. A wake-up has fired once a run that carries
  * it got to a session: then it is remembered on the record and cleared on the task. The same read keeps the records: one is made when a schedule is first seen on a task of this member's
  * (its cursor is now, so no time of the past fires), and one goes by domain/job.ts recordKeeping; a closed task's
- * record stops listening first.
+ * record stops listening first, and a record that was just made or changed is left as it is (domain/job.ts
+ * RECORD_GRACE_MS).
  *
  * What a firing does follows the four-line order (domain/firing-order.ts): a repeating time is skipped and recorded
  * while a session of the task works, else it goes to the session that waits on an answer, else to the session that set
@@ -457,6 +458,8 @@ export class JobRunner {
   /** A record whose task has no schedule this cockpit fires: it stops listening when the task is closed, and goes when nothing holds it. */
   private keep(record: Job, standing: 'open' | 'closed', now: number): void {
     const { store } = this.deps
+    // Just made or changed: the schedule that came with it may be newer than this pass's read of the tasks.
+    if (standing === 'open' && isNewRecord(record, now)) return
     if (recordKeeping(record, standing, store.runs(record.id)).stopListening) {
       endTaskRecord(store, record.id, now, this.deps.onGrantEnd, CLOSED_BEFORE_START)
       this.deps.log(`[jobs] ${tagOf(record.id)}: its task is closed, so nothing wakes it any more`)

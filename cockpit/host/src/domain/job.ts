@@ -226,6 +226,18 @@ export function mailKeys(job: { triggers: ReadonlyArray<{ type: string; match?: 
   return keys
 }
 
+/**
+ * How long a record that was just made or changed is left as it is by a pass that finds no schedule on its task.
+ * Whoever sets a schedule writes it to the task first and the record after it, but a pass may have read the tasks
+ * before that write and come to the record after it: removed then, the record's settings (an end after so many runs,
+ * who hears of a run, the project, the tools) would be lost. A pass reads the tasks about once a minute
+ * (application/job-runner.ts), so a few minutes cover the pass under way and the reads that follow it.
+ */
+export const RECORD_GRACE_MS = 5 * 60_000
+
+/** The record was made or changed within the grace: too new to be judged by a task read that may be older than it. */
+export const isNewRecord = (record: Pick<Job, 'updatedAt'>, now: number): boolean => now - Date.parse(record.updatedAt) < RECORD_GRACE_MS
+
 /** Where the task of a record stands when this cockpit fires no schedule of it: open, or closed (or gone). */
 export type TaskStanding = 'open' | 'closed'
 
@@ -239,6 +251,8 @@ export type TaskStanding = 'open' | 'closed'
  *     trigger and no open run, and holds no limit the user or its maker set: a limited record and one with a tool
  *     profile stay while the task is open, so a schedule set later starts no session with more than was allowed.
  *     For a closed task it goes once no run of it is open (a waiting one is skipped first).
+ *
+ * The pass asks this only of a record that is not new (isNewRecord), when its task is open.
  */
 export function recordKeeping(
   record: Pick<Job, 'triggers' | 'grants' | 'pendingApproval' | 'limited' | 'toolProfile'>, standing: TaskStanding, runs: readonly JobRun[],

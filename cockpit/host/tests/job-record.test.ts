@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { newRecord, recordKeeping, scheduleFactsOf, type Job, type JobRun, type TaskStanding } from '../src/domain/job.js'
+import { isNewRecord, newRecord, RECORD_GRACE_MS, recordKeeping, scheduleFactsOf, type Job, type JobRun, type TaskStanding } from '../src/domain/job.js'
 
 // What a pass does with a task's record: it stays while this cockpit fires the task's schedule; without one it goes
 // when nothing holds it; a closed task's record stops listening first.
@@ -67,5 +67,21 @@ describe('what a record says of its task\'s schedule', () => {
   it('says that the channel waits for the user\'s OK only while it does', () => {
     expect(scheduleFactsOf(record({ pendingApproval: true }), [])).toMatchObject({ needsOk: true })
     expect(scheduleFactsOf(record(), [])).not.toHaveProperty('needsOk')
+  })
+})
+
+describe('a record that was just made or changed', () => {
+  const at = Date.parse('2026-11-26T10:00:00.000Z')
+  const changed = record({ updatedAt: '2026-11-26T10:00:00.000Z' })
+
+  it('is new for the grace, counted from its last change and not from when it was made', () => {
+    expect(changed.createdAt).toBe('2026-11-01T00:00:00.000Z')
+    expect(isNewRecord(changed, at)).toBe(true)
+    expect(isNewRecord(changed, at + RECORD_GRACE_MS - 1)).toBe(true)
+    expect(isNewRecord(changed, at + RECORD_GRACE_MS)).toBe(false)
+  })
+
+  it('the grace spans several of the engine\'s reads of the tasks, which come about once a minute', () => {
+    expect(RECORD_GRACE_MS).toBeGreaterThanOrEqual(3 * 60_000)
   })
 })

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JobStore } from '../src/job-store.js'
 import { JobRunner, runProjectOf, type JobRunnerDeps, type RunnerSpace, type RunnerTask, type RunSessionState } from '../src/application/job-runner.js'
-import { newRecord, type Job, type JobRun } from '../src/domain/job.js'
+import { newRecord, RECORD_GRACE_MS, type Job, type JobRun } from '../src/domain/job.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
 import { withSchedule } from '../src/domain/task-schedule.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
@@ -454,7 +454,10 @@ describe('deriving what is due', () => {
     await runner.tick()
     expect(world.edits).toEqual([{ taskId: 'twice', schedule: null, text: 'Its repeating times ended after the runs they were set to have.' }])
     expect(world.tasks.get('twice')!.status).toBe('active')
-    // without a schedule, a channel or an open run the record goes with the next pass
+    // without a schedule, a channel or an open run the record goes, once it has not changed for the grace
+    await runner.tick()
+    expect(world.store.get('twice')).toMatchObject({ end: null })
+    world.now += RECORD_GRACE_MS
     await runner.tick()
     expect(world.store.get('twice')).toBeUndefined()
     expect(world.started).toHaveLength(2)
@@ -650,6 +653,7 @@ describe('who fires: the task\'s owner, by the one rule (the first assignee, els
     await runner.tick()
     expect(world.store.get('moved')).toBeDefined()
     world.patch('moved', { properties: { ...world.tasks.get('moved')!.properties, assignee_ids: ['dominik'] } })
+    world.now += RECORD_GRACE_MS
     await runner.tick()
     expect(world.store.get('moved')).toBeUndefined()
     expect(world.taskReads).toEqual([])
@@ -991,6 +995,42 @@ describe('the wake-up fires once', () => {
 describe('keeping the records in step with their tasks', () => {
   const mail: Job['triggers'] = [{ type: 'mail', match: [{ kind: 'domain', domain: 'customer.example' }] }]
 
+  it('a record made while a pass was under way is left alone: that pass read the tasks before the schedule was written', async () => {
+    world.task('fresh', null)
+    const read = world.deps().openTasks
+    let raced = false
+    runner = new JobRunner(world.deps({
+      openTasks: async (space) => {
+        const tasks = await read(space)
+        if (!raced) {
+          raced = true
+          // the schedule tool, after this pass read the tasks: the schedule onto the task, then the record with its settings
+          world.setSchedule('fresh', HOURLY)
+          world.store.put({ ...newRecord({ id: 'fresh', spaceId: null }, new Date(world.now).toISOString(), 's-maker'), end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops' })
+        }
+        return tasks
+      },
+    }))
+    await runner.tick()
+    expect(world.store.get('fresh')).toMatchObject({ end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops', createdBy: 's-maker', cursor: null })
+    // the next read sees the schedule: it is first seen now, with every setting it was given
+    world.now += MIN
+    await runner.tick()
+    expect(world.store.get('fresh')).toMatchObject({ end: { afterRuns: 3 }, notify: 'always', projectId: 'bp-ops', createdBy: 's-maker', cursor: '2026-11-09T00:01:00.000Z' })
+  })
+
+  it('a record without anything that keeps it goes once it has not changed for the grace, not before', async () => {
+    world.task('plain', null)
+    world.store.put({ ...newRecord({ id: 'plain', spaceId: null }, new Date(world.now).toISOString()), end: { afterRuns: 3 } })
+    await runner.tick()
+    world.now += RECORD_GRACE_MS - 1
+    await runner.tick()
+    expect(world.store.get('plain')).toMatchObject({ end: { afterRuns: 3 }, updatedAt: '2026-11-09T00:00:00.000Z' })
+    world.now += 1
+    await runner.tick()
+    expect(world.store.get('plain')).toBeUndefined()
+  })
+
   it('removes a record when its task has no schedule, no channel trigger and no open run', async () => {
     world.task('once', { at: '2026-11-09T02:00:00.000Z' })
     await firstSeenThen('2026-11-09T02:00:10Z')
@@ -1001,7 +1041,7 @@ describe('keeping the records in step with their tasks', () => {
     await runner.tick()
     expect(world.store.get('once')).toBeDefined()
     world.statuses.set(sessionId, 'done')
-    world.now += MIN
+    world.now += RECORD_GRACE_MS
     await runner.tick()
     expect(world.store.get('once')).toBeUndefined()
     expect(runs('once')).toEqual([])
@@ -1014,7 +1054,7 @@ describe('keeping the records in step with their tasks', () => {
     await runner.tick()
     world.store.put({ ...world.store.get('mail')!, triggers: mail, firedWake: '2026-11-01T00:00:00.000Z' })
     world.setSchedule('mail', null)
-    world.now += MIN
+    world.now += RECORD_GRACE_MS
     await runner.tick()
     expect(world.store.get('mail')).toMatchObject({ triggers: mail, cursor: null, firedWake: null })
     // a schedule set later counts from then
