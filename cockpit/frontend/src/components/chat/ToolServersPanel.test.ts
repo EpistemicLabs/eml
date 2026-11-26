@@ -10,7 +10,7 @@ describe('shouldPoll', () => {
     expect(shouldPoll(null)).toBe(false);
     expect(shouldPoll([server('connected'), server('needs-auth')])).toBe(false);
     expect(shouldPoll([server('connected'), server('pending')])).toBe(true);
-    expect(shouldPoll([server('needs-auth')], { x: 'https://auth.example.com' })).toBe(true);
+    expect(shouldPoll([server('needs-auth')], { x: { url: 'https://auth.example.com', takesCode: false } })).toBe(true);
   });
 });
 

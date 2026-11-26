@@ -48,9 +48,15 @@ class FakeRuntime implements SessionRuntime {
     if (effort === 'ultra') throw new Error('not for this model')
     this.efforts.push(effort)
   }
-  async signInToolServer(name: string): Promise<ToolServerSignIn> {
+  signInCodes: string[] = []
+  async signInToolServer(name: string): Promise<ToolServerSignIn | null> {
     if (name === 'tools') throw new Error('OAuth login is only supported for streamable HTTP servers.')
-    return { url: `https://auth.example.com/${name}` }
+    if (name === 'signed') return null
+    return { url: `https://auth.example.com/${name}`, ...(name === 'linear' ? { takesCode: true } : {}) }
+  }
+  async finishToolServerSignIn(name: string, code: string): Promise<void> {
+    if (code !== 'fake-code') throw new Error('Callback URL not accepted.')
+    this.signInCodes.push(`${name}:${code}`)
   }
   async stopAgent(taskId: string): Promise<void> { this.stopped.push(taskId) }
   async toolServers(): Promise<ToolServer[]> { return this.servers }
@@ -1707,6 +1713,26 @@ describe('ChatBridge', () => {
     ws.client({ type: 'tool_server', name: 'tools', action: 'sign_in' })
     await flush()
     expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: 'tools: OAuth login is only supported for streamable HTTP servers.' })
+  })
+
+  it('says when a sign-in takes the address back, hands that to the runtime alone and sends no page for a server signed in already', async () => {
+    const { bridge, runtimes } = setup()
+    const ws = connect(bridge)
+    await flush()
+    ws.client({ type: 'tool_server', name: 'linear', action: 'sign_in' })
+    await flush()
+    expect(ws.frames.at(-2)).toEqual({ type: 'tool_server_sign_in', name: 'linear', url: 'https://auth.example.com/linear', takesCode: true })
+    ws.client({ type: 'tool_server', name: 'linear', action: 'sign_in_code', code: 'fake-code' })
+    await flush()
+    expect(runtimes[0].signInCodes).toEqual(['linear:fake-code'])
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: null })
+    ws.client({ type: 'tool_server', name: 'linear', action: 'sign_in_code', code: 'wrong' })
+    await flush()
+    expect(ws.frames.at(-1)).toMatchObject({ type: 'tool_servers', error: 'linear: Callback URL not accepted.' })
+    const count = ws.frames.length
+    ws.client({ type: 'tool_server', name: 'signed', action: 'sign_in' })
+    await flush()
+    expect(ws.frames.slice(count)).toMatchObject([{ type: 'tool_servers', error: null }])
   })
 
   it('reports a failed change next to the current servers', async () => {

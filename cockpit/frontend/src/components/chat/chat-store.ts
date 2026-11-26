@@ -2,7 +2,7 @@
 // the connection, and the events waiting for the next animation frame.
 import { useSyncExternalStore } from 'react';
 
-import { EMPTY_CHAT, reduceChat, type ChatEvent, type ChatState, type ToolServer } from './chat-state';
+import { EMPTY_CHAT, reduceChat, type ChatEvent, type ChatState, type ToolServer, type ToolServerSignIn } from './chat-state';
 
 export type Connection = 'connecting' | 'open' | 'closed' | 'superseded';
 
@@ -18,8 +18,8 @@ export interface ChatSnapshot {
   /** The session's tool servers as last asked for; null until then. */
   toolServers: ToolServer[] | null;
   toolServersError: string | null;
-  /** Sign-ins under way: the page to open, by server name. */
-  toolServerSignIns: Record<string, string>;
+  /** Sign-ins under way, by server name. */
+  toolServerSignIns: Record<string, ToolServerSignIn>;
   /** What the session may not use, as the host last said; null until it did. */
   limits: SessionLimits | null;
 }
@@ -129,9 +129,9 @@ export function setToolServers(sessionId: string, toolServers: ToolServer[], too
   publish(store, { toolServers, toolServersError, toolServerSignIns: signIns });
 }
 
-export function setToolServerSignIn(sessionId: string, name: string, url: string): void {
+export function setToolServerSignIn(sessionId: string, name: string, signIn: ToolServerSignIn): void {
   const store = storeOf(sessionId);
-  publish(store, { toolServerSignIns: { ...store.snapshot.toolServerSignIns, [name]: url } });
+  publish(store, { toolServerSignIns: { ...store.snapshot.toolServerSignIns, [name]: signIn } });
 }
 
 export function setProblem(sessionId: string, problem: string | null): void {

@@ -113,6 +113,7 @@ function memoryHarness(): Harness {
         reconnectToolServer: async () => {},
         setEffort: async () => {},
         signInToolServer: async () => { throw new Error('unsupported') },
+        finishToolServerSignIn: async () => { throw new Error('unsupported') },
         close: async () => exit(true),
       }
       return runtime

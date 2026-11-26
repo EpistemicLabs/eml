@@ -111,6 +111,13 @@ export interface ToolServer {
   toolCount: number;
 }
 
+/** A sign-in to a tool server under way: the page to open, and whether the address it ends on can be pasted back. */
+export interface ToolServerSignIn {
+  url: string;
+  /** The page returns to an address on the cockpit's machine; a browser elsewhere pastes it back. */
+  takesCode: boolean;
+}
+
 export type ChatEvent =
   | { kind: 'settings'; model?: string | null; mode?: string; effort?: string | null }
   | { kind: 'capabilities'; models: ModelOption[]; modes: ModeOption[]; features?: RuntimeFeature[] }

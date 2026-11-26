@@ -36,7 +36,8 @@ describe('AgentSignIn', () => {
     fireEvent.change(screen.getByLabelText('Code from the sign-in page'), { target: { value: 'fake-code' } });
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
     await screen.findByText('Signed in.');
-    expect(onDone).toHaveBeenCalled();
+    // The done effect runs after the render that shows it.
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(calls[0][0]).toBe('/api/providers/claude/sign-in');
     expect(calls[1][0]).toBe('/api/providers/claude/sign-in/a1/code');
     expect(JSON.parse(String(calls[1][1]?.body))).toEqual({ code: 'fake-code' });

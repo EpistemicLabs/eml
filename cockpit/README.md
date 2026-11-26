@@ -426,6 +426,14 @@ cockpit's `.claude.json`, survives restarts), claude.ai connectors via `/mcp`, p
 `/plugin`, and a project's `.mcp.json` (Claude asks before loading it). MCPs from your normal
 `~/.claude.json` are not carried over.
 
+A server that needs a sign-in signs in from a chat session's MCP panel too (`/mcp` or the panel's key button,
+`sdk-runtime.ts`): the host runs Claude Code's own sign-in on the running session (the SDK's
+`mcp_authenticate`), so the token lands in that session's config folder as with `/mcp` in a terminal. The
+page returns to a callback address on the cockpit's machine (`http://localhost:<port>/callback`); a browser
+there finishes by itself, from another computer that address does not open and the user pastes it (or the
+code in it) into the panel, which hands it to the CLI (`mcp_oauth_callback_url`) and nowhere else. A notice
+says when the server is signed in.
+
 Every terminal pane pre-mints its Claude session id. The host keeps a PTY registry keyed by
 session + pane: a reload (or a second tab) reattaches to the running `claude` with a
 snapshot replay of the rendered terminal state instead of spawning again; a detached PTY is
