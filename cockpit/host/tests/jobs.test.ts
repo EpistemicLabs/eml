@@ -92,7 +92,7 @@ function setup(opts: { sharedSpaces?: string[] } = {}) {
     moving: (id) => world.moving.has(id),
     resolveProject: async (_space, input) => (input === 'eml' ? 'bp-eml' : input === 'folder' ? 'plain-folder' : null),
     projectName: (_space, id) => (id === 'bp-eml' ? 'EML' : id),
-    providerKnown: (id) => id === 'claude',
+    providerKnown: (id): id is 'claude' => id === 'claude',
     defaultTimeZone: () => ZONE,
     onGrantEnd: (record, tools) => { world.ended.push(`${record.id}:${tools.join(',')}`) },
     sharedSpace: (spaceId) => !!spaceId && (opts.sharedSpaces ?? []).includes(spaceId),

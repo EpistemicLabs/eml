@@ -83,6 +83,7 @@ import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
 import { clearJobProfile } from './application/clear-job-profile.js'
 import { takeBackJobTools } from './application/take-back-job-tools.js'
 import { sessionJobFacts } from './application/limited-job-scope.js'
+import type { ProviderId } from './domain/agent-provider.js'
 import { isHeld, type GrantTool, type Job } from './domain/job.js'
 import type { ScheduleFacts } from './domain/task-schedule.js'
 import { createJobMigration, membersOf } from './application/job-migration.js'
@@ -850,7 +851,7 @@ async function main() {
       const project = spaces.resolve(spaceId).registry.get(projectId)
       return project ? project.customName ?? project.displayName : projectId
     },
-    providerKnown: (id) => providers.get(id) !== undefined,
+    providerKnown: (id): id is ProviderId => providers.get(id) !== undefined,
     // The main space is local by construction; any other counts as shared until the brain server said otherwise.
     sharedSpace: (spaceId) => {
       const space = spaces.resolve(spaceId)

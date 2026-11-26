@@ -16,6 +16,9 @@ import type { ToolProfile } from './tool-profile.js'
 export const JOB_ACTIONS = ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'] as const
 export type JobAction = typeof JOB_ACTIONS[number]
 
+/** The value is one of the tool's actions. */
+export const isJobAction = (value: unknown): value is JobAction => (JOB_ACTIONS as readonly unknown[]).includes(value)
+
 /** A task as the tool reads it from the brain. */
 export interface ToolTask {
   id: string

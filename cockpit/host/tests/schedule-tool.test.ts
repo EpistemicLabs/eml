@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  describeTask, everyParagraph, findTask, limitRefusal, mailParagraph, mailTrigger, narrowedProfile, nextRuns, readAt, scheduledCount, timesInWords, withParagraph, type ToolTask,
+  describeTask, everyParagraph, findTask, isJobAction, limitRefusal, mailParagraph, mailTrigger, narrowedProfile, nextRuns, readAt, scheduledCount, timesInWords, withParagraph, type ToolTask,
 } from '../src/domain/schedule-tool.js'
 import { JOB_LIMITS, newRecord, type JobRun } from '../src/domain/job.js'
 
@@ -11,6 +11,13 @@ const task = (id: string, name: string, schedule?: Record<string, unknown> | nul
   properties: { display_title: name, ...(schedule ? { delegation: { agent: 'atlas', schedule } } : {}), ...more.properties },
 })
 const WEEKDAYS = { crons: ['0 8 * * 1-5'], time_zone: ZONE }
+
+describe('the tool\'s actions', () => {
+  it('are told from any other value: a word it does not know, a number, nothing', () => {
+    expect(['create', 'list', 'update', 'pause', 'resume', 'delete', 'run_now', 'finish'].every(isJobAction)).toBe(true)
+    expect([isJobAction('approve'), isJobAction(''), isJobAction(1), isJobAction(undefined), isJobAction(null)]).toEqual([false, false, false, false, false])
+  })
+})
 
 describe('the task a key names', () => {
   const tasks = [task('aaaaaaaa-1111', 'Daily brief', WEEKDAYS), task('aaaaaaaa-2222', 'Refund'), task('bbbbbbbb-3333', 'Refund', WEEKDAYS), task('cccccccc-4444', 'Notes')]

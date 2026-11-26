@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { EmlApi } from '@engramprotocol/mcp-server'
+import type { ProviderId } from '../domain/agent-provider.js'
 import type { ScheduleFields } from '../domain/delegation.js'
 import { JOB_LIMITS, mailKeys, newRecord, type ChannelTrigger, type Job, type JobNotify, type JobRun, type GrantTool, type RunNowRefusal } from '../domain/job.js'
 import { isTimeZone, parseAt, unknownTimeZone } from '../domain/schedule.js'
 import {
-  APPROVAL_NOTE, describeTask, everyParagraph, findTask, ID_PREFIX, isOpenTask, JOB_ACTIONS, limitRefusal, mailParagraph, mailTrigger,
+  APPROVAL_NOTE, describeTask, everyParagraph, findTask, ID_PREFIX, isJobAction, isOpenTask, JOB_ACTIONS, limitRefusal, mailParagraph, mailTrigger,
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
 } from '../domain/schedule-tool.js'
 import {
@@ -84,7 +85,7 @@ export interface JobsDeps {
   resolveProject(spaceId: string | null, input: string): Promise<string | null>
   /** A project's name as the user sees it; the id when unknown. */
   projectName?(spaceId: string | null, projectId: string): string
-  providerKnown(id: string): boolean
+  providerKnown(id: string): id is ProviderId
   /** A shared space (or one the host could not ask about): its tasks get no channel, so no mail reaches its brain's other members. */
   sharedSpace?(spaceId: string | null): boolean
   /** The zone times read in when neither the call nor the task names one: the user's. */
@@ -142,7 +143,7 @@ export class Jobs {
 
   private async act(caller: JobCaller, input: Record<string, unknown>): Promise<JobAnswer> {
     const action = input.action
-    if (!JOB_ACTIONS.includes(action as never)) return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
+    if (!isJobAction(action)) return bad(`action must be one of ${JOB_ACTIONS.join(', ')}`)
     const brain = this.deps.brain(caller.spaceId)
     if (!brain) return NO_BRAIN
     const tasks = await openTasks<ToolTask>(brain)
@@ -449,8 +450,8 @@ export class Jobs {
     if (narrowedProfile(null, null, input.deny_tools) === 'invalid') refuse('deny_tools is a list of tool names')
     const projectInput = str(input.project)
     const projectId = projectInput ? await this.deps.resolveProject(caller.spaceId, projectInput) ?? refuse(`unknown project "${projectInput}"`) : null
-    const provider = str(input.provider)
-    if (provider && !this.deps.providerKnown(provider)) refuse(`unknown provider "${provider}"`)
+    const named = str(input.provider)
+    const provider = named === undefined ? undefined : this.deps.providerKnown(named) ? named : refuse(`unknown provider "${named}"`)
     return {
       notify: notify as JobNotify | undefined, maxRuns, deny: input.deny_tools, projectId, provider,
       given: { notify: notify !== undefined, maxRuns: maxRuns !== undefined, deny: input.deny_tools !== undefined && input.deny_tools !== null, project: projectId !== null, provider: provider !== undefined },
@@ -475,7 +476,7 @@ export class Jobs {
     let next: Job = {
       ...base, toolProfile,
       projectId: settings.projectId ?? base.projectId ?? (ownProject ? null : caller.projectId),
-      ...(settings.provider ? { provider: settings.provider as never } : {}),
+      ...(settings.provider ? { provider: settings.provider } : {}),
       ...(settings.notify ? { notify: settings.notify } : {}),
       // An end after so many runs counts from now: the runs the task had before are not part of it.
       ...(settings.maxRuns !== undefined ? { end: settings.maxRuns === null ? null : { afterRuns: base.runCount + settings.maxRuns } } : cronsReplaced ? { end: null } : {}),
