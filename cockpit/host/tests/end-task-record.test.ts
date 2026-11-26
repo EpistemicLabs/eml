@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { endTaskRecord } from '../src/application/end-task-record.js'
+import { endRunCount, endTaskRecord } from '../src/application/end-task-record.js'
 import { JobStore } from '../src/job-store.js'
 import { CLOSED_BEFORE_START, isHeld, newRecord, type JobRun } from '../src/domain/job.js'
 
@@ -60,5 +60,32 @@ describe('a record this cockpit holds back', () => {
     expect(isHeld(record)).toBe(false)
     expect(isHeld({ ...record, pendingApproval: true })).toBe(true)
     expect(isHeld({ ...record, pausedReason: '3 failed runs in a row' })).toBe(true)
+  })
+})
+
+describe('an end after so many runs goes with the repeating times it was set for', () => {
+  const mail = [{ type: 'mail' as const, match: [] }]
+
+  it('takes the end off a record that stays for its channel, and leaves the channel and the count of its runs', () => {
+    const store = new JobStore(null)
+    store.put({ ...newRecord({ id: 't1', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail, end: { afterRuns: 5 }, runCount: 2 })
+    endRunCount(store, 't1', NOW)
+    expect(store.get('t1')).toMatchObject({ end: null, triggers: mail, runCount: 2, updatedAt: '2026-11-26T10:00:00.000Z' })
+  })
+
+  it('writes nothing to a record without such an end', () => {
+    const store = new JobStore(null)
+    const record = { ...newRecord({ id: 't1', spaceId: null }, '2026-11-01T00:00:00.000Z'), triggers: mail }
+    store.put(record)
+    const puts: string[] = []
+    endRunCount({ get: (id) => store.get(id), put: (r) => { puts.push(r.id) } }, 't1', NOW)
+    expect(puts).toEqual([])
+    expect(store.get('t1')).toEqual(record)
+  })
+
+  it('does nothing for a task without a record', () => {
+    const store = new JobStore(null)
+    endRunCount(store, 't1', NOW)
+    expect(store.list()).toEqual([])
   })
 })
