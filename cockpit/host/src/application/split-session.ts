@@ -66,7 +66,7 @@ export interface SplitSessionDeps {
 
 export type SplitAnswer =
   | { ok: true; command: TaskCommand }
-  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'unknown_task' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight' | 'task_starting' | 'task_held_by_you' | 'task_held_unreachable'; message?: string; retry?: boolean }
+  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'unknown_task' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight' | 'task_starting' | 'task_held_by_you' | 'task_held'; message?: string; retry?: boolean }
 
 /** The first message of the new session: the brief, not the chat it came from. */
 export function splitPrompt(input: { title: string; brief: string; fromTitle: string; taskId: string | null; existing?: boolean }): string {
@@ -137,7 +137,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
         const outcome = deps.deliver ? await deps.deliver(holder.sessionId, promptFor(existingTask!.id)) : 'refused'
         if (outcome !== 'delivered' && outcome !== 'resumed') {
           const retry = retryHelps(outcome)
-          return { ok: false, refusal: 'task_held_unreachable', retry, message: `"${existingTask!.title}" is held by session "${holder.title}", which cannot take the brief right now (${outcome}). A task has one session at a time: ${retry ? 'try again in a moment' : 'open that session and paste the brief'}.` }
+          return { ok: false, refusal: 'task_held', retry, message: `"${existingTask!.title}" is held by session "${holder.title}", which cannot take the brief right now (${outcome}). A task has one session at a time: ${retry ? 'try again in a moment' : 'open that session and paste the brief'}.` }
         }
         routedTo = holder.sessionId
       }

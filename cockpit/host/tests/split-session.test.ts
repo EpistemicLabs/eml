@@ -167,7 +167,7 @@ describe('splitting off from a session', () => {
     for (const [outcome, retry] of [['busy', true], ['running', true], ['refused', false], ['unknown', false]] as const) {
       const held = setup({ holder: { sessionId: 's-task', title: 'Mail job' }, outcome })
       const answer = await held.split.submit(input({ existingTaskId: 't-open' }))
-      expect(answer).toMatchObject({ ok: false, refusal: 'task_held_unreachable', retry })
+      expect(answer).toMatchObject({ ok: false, refusal: 'task_held', retry })
       expect(!answer.ok && answer.message).toContain('Mail job')
       expect(held.posts).toEqual([])
       expect(held.spawned).toEqual([])

@@ -37,7 +37,7 @@ const deps = {
       splits.push(input)
       if (input.relation === 'sub') return { ok: false, refusal: 'sub_needs_task' }
       // A split onto a task the lease refuses: the title names the refusal, the brief its message.
-      if (String(input.title).startsWith('task_')) return { ok: false, refusal: input.title, message: input.brief, ...(input.title === 'task_held_unreachable' ? { retry: input.projectId === 'busy' } : {}) }
+      if (String(input.title).startsWith('task_')) return { ok: false, refusal: input.title, message: input.brief, ...(input.title === 'task_held' ? { retry: input.projectId === 'busy' } : {}) }
       if (input.existingTaskId === 't-held') return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: null, existingTaskId: 't-held', spawnedSessionId: 's-task', routed: true } } }
       return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: 't-new', spawnedSessionId: 's-new' } } }
     },
@@ -233,8 +233,8 @@ describe('task board routes', () => {
     const refuse = (title: string, projectId = 'p-ui') => post('/api/v1/sessions/s1/split', { opId: `split-${title}-${projectId}`, title, brief: `why ${title}`, relation: 'spun', when: 'now', projectId, existingTaskId: 't-open' })
     expect(await refuse('task_starting')).toEqual({ status: 409, body: { error: { code: 'task_starting', message: 'why task_starting', retry: true } } })
     expect(await refuse('task_held_by_you')).toEqual({ status: 409, body: { error: { code: 'task_held_by_you', message: 'why task_held_by_you', retry: false } } })
-    expect(await refuse('task_held_unreachable', 'busy')).toEqual({ status: 409, body: { error: { code: 'task_held_unreachable', message: 'why task_held_unreachable', retry: true } } })
-    expect(await refuse('task_held_unreachable')).toEqual({ status: 409, body: { error: { code: 'task_held_unreachable', message: 'why task_held_unreachable', retry: false } } })
+    expect(await refuse('task_held', 'busy')).toEqual({ status: 409, body: { error: { code: 'task_held', message: 'why task_held', retry: true } } })
+    expect(await refuse('task_held')).toEqual({ status: 409, body: { error: { code: 'task_held', message: 'why task_held', retry: false } } })
   })
 
   it('refuses a split with a missing field or a sub-task without a task', async () => {

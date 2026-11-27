@@ -132,11 +132,11 @@ const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
   in_flight: 'This split is still running.',
   task_starting: 'A session is starting on that task right now; try again once it runs.',
   task_held_by_you: 'This session already works on that task: carry on here.',
-  task_held_unreachable: 'That task already has its session, which cannot take the brief.',
+  task_held: 'That task already has its session, which cannot take the brief.',
 }
 
 const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
-  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, no_project: 409, undo_expired: 409, in_flight: 409, task_starting: 409, task_held_by_you: 409, task_held_unreachable: 409, no_brain: 503,
+  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, no_project: 409, undo_expired: 409, in_flight: 409, task_starting: 409, task_held_by_you: 409, task_held: 409, no_brain: 503,
 }
 
 /** `retry`: whether trying again later can help; a refusal that knows it says so, else its code decides. */
