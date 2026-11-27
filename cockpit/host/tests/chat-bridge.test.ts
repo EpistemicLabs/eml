@@ -99,7 +99,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
     id: opts.provider ?? 'claude',
     chatRuntime: opts.chatRuntime ?? factory,
     capabilities: {
-      chat: opts.provider === 'codex' ? { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' } : { supported: true },
+      chat: opts.provider === 'codex' ? { supported: false, reason: 'This agent has no chat.' } : { supported: true },
       messaging: { supported: true },
     },
     runtime: { problem: () => null, problemHint: '' },
@@ -1838,11 +1838,11 @@ describe('ChatBridge', () => {
     expect(ws.frames[0]).toMatchObject({ type: 'error' })
   })
 
-  it('refuses a session of a provider without a chat, in the words it always had', async () => {
+  it('refuses a session of a provider without a chat, with that provider\'s reason', async () => {
     const { bridge, runtimes } = setup({ provider: 'codex', runtimeOf: 'terminal' })
     const ws = connect(bridge)
     await flush()
-    expect(ws.frames[0]).toEqual({ type: 'error', message: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' })
+    expect(ws.frames[0]).toEqual({ type: 'error', message: 'This agent has no chat.' })
     expect(runtimes).toEqual([])
   })
 

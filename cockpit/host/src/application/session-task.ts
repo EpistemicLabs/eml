@@ -134,7 +134,7 @@ export function taskContext(task: Task, placeholder: boolean, turn: TurnParty, u
     `- ${COCKPIT_ROUTES}`,
     '- When the work drifts from the task\'s name (the scope changed), rename it: eml_track_task display_title, with text saying why. The journal keeps the old name; the kebab title stays.',
     ...(unattended ? [] : [
-      '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. In the chat call offer_split (name the open task it belongs to, if one exists); in a terminal ask in one line whether to split it off (the user does it from the chat view). If they keep it here, carry on and do not offer it again.',
+      '- New work the user brings up that is not part of this task: offer to split it off before you start on it, once per topic; do not create a task for it yourself. Call offer_split (name the open task it belongs to, if one exists); without it (the terminal fallback) ask in one line whether to split it off (the user does it from the chat). If they keep it here, carry on and do not offer it again.',
       '- Steps of this task\'s own work, and a task the user explicitly asks you to note, you create yourself; the chat shows each new task to the user with Undo.',
     ]),
     ...(unattended ? [WORKER_NEW_WORK_RULE] : []),

@@ -249,7 +249,7 @@ skill list. A space without one behaves as described above; the main space keeps
 ```
 
 Stop the cockpit, then set one up. Start it again and sign in once with the space active (Settings › Models ›
-Claude Code › Sign in, or `/login` in a session of the space):
+Claude Code › Sign in):
 
 ```bash
 eml-cockpit agent create <id> --space <name|brain id> \
@@ -266,7 +266,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   their definition names, plus a few basics (`CLAUDE_CODE_MCP_ALLOWLIST_ENV`).
 - **Skills:** exactly the list plus the cockpit's managed ones, as copies. On every start the host removes anything else.
 - **Browser:** an agent's sessions get no Claude in Chrome unless its `agent.json` says `"chrome": true`. Chrome reaches every site the browser is signed in to, so give an agent its own browser profile.
-- **Login:** one sign-in per folder (Settings › Models with the space active, or `/login`). The cockpit does not store or
+- **Login:** one sign-in per folder (Settings › Models with the space active). The cockpit does not store or
   pass Claude tokens for this, and Settings › Models' setup-token mode does not apply to these sessions.
 - **How long sessions run** is one rule (`domain/session-lifecycle.ts`). A session nobody looks at stops one hour
   after its last activity (Settings › Preferences › Sessions), a worker too; one with a window open after 2 hours, one
@@ -277,11 +277,18 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   512 MB swap by default; `infrastructure/platform/linux-cgroups.ts`). At the ceiling the kernel stops the session's
   largest process alone, normally the runaway tool, and the session shows a notice. The unit has `OOMPolicy=continue`
   and `Delegate=yes`; the host rewrites an older unit at start and reloads systemd, which applies both to the running unit.
+- **Chat, and the terminal fallback:** every Claude Code, Codex and Qwen Code session runs in its chat runtime (Agent
+  SDK, `codex app-server`, Qwen Code's SDK). The PTY session process is only a hidden fallback behind the cockpit-wide
+  switch Settings › Advanced › Terminal fallback (`terminal-fallback.ts`, `terminalFallback` in `agents.json`, off by
+  default; `GET`/`PATCH /api/terminal-fallback` with `{ "enabled": boolean }`). While it is off the PTY bridge refuses
+  an agent session's `init` with `TERMINAL_FALLBACK_OFF`; the Shell plugin's terminal is not affected. While it is on, a
+  session moves between terminal and chat as before (`application/session-handoff.ts`); a session in the terminal has
+  no turn routing. A session that last ran in a terminal resumes in the chat.
 - **Workers** a session asks for start in chat on the host, with the prompt as the first message, and a pane only
-  joins (`application/start-worker.ts`). The host's own sessions, Settings › Models › Chat view off and Codex with
-  its own chat view off stay in the terminal; a worker with tool limits starts only where its chat holds them
-  (capability `toolLimits`: Claude Code), else it is refused. The same switch decides where new Claude sessions open (on by default); a browser can choose
-  chat or terminal for itself in Preferences. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
+  joins (`application/start-worker.ts`); so do the host's own sessions (getting started, brain hygiene), a project
+  lead and the cycle planner. A chat start that fails is refused with its reason (the claim's or the route's
+  `NOT_STARTED`), never moved to a terminal. A worker with tool limits starts only where its chat holds them
+  (capability `toolLimits`: Claude Code), else it is refused. New workers wait while free memory is below 1 GB or the running cap is reached with every session busy. In chat a worker reports
   `done`, `question`, `review` or `failed` through a status tool; a turn that says nothing is asked once, then marked
   `review`. After a host restart a worker cut off mid-turn gets one message to continue, one at a time as there is room, then is marked `failed`.
 - **One live session per task** (`domain/task-lease.ts`): a task's lease is held by a request for it still waiting in
@@ -297,7 +304,7 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   answers what the first did and delivers nothing twice (`application/recent-operations.ts`).
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
   (`application/deliver-message.ts`); a session in a terminal answers busy. Whether a session can be sent a message
-  is read per session (`sessionMessaging`): a Codex session only once it runs in the chat, never one that ran in a terminal. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
+  is read per session (`sessionMessaging`): a Codex or Qwen Code session in the chat, never one that ran in a terminal. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a
   stopped session through it and cancels the call with a result saying it was delivered; a running target, an unknown
   one or any failure leaves `SendMessage` as it is. `$COCKPIT_MESSAGE_JS` is the same for scripts. To find a target by what the user calls it,
   `$COCKPIT_SESSIONS_JS <words>` searches the sessions SendMessage reaches, stopped ones too, by name, first prompt,
@@ -397,8 +404,8 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   finish; `application/limited-job-scope.ts`). The user lends it Chrome or SendMessage for a while (`grants`, default 1 h); a grant
   ends at its time or when the task's session reports done, and the host restarts the session to pick it up.
 - **Tool limits:** `--deny-tools` and `--mcp-servers` on a worker hold for its whole life in both views.
-- **Terminal and chat view** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
-  folder, MCP allowlist, environment and refusal. `/login` runs in a terminal session; Settings › Models signs in without one.
+- **Chat and the terminal fallback** both start from the same space (`sessionSpaceOf`), so an agent's chat session gets the same
+  folder, MCP allowlist, environment and refusal. Settings › Models signs in without a session.
 - **Failure:** the space's entry in the cockpit config names the agent. If its record, config folder or an MCP file is
   missing, or the record does not fit, the session does not start and the pane says why. It never falls back to the
   shared folder, and nothing recreates the folder.
@@ -447,7 +454,7 @@ there finishes by itself, from another computer that address does not open and t
 code in it) into the panel, which hands it to the CLI (`mcp_oauth_callback_url`) and nowhere else. A notice
 says when the server is signed in.
 
-Every terminal pane pre-mints its Claude session id. The host keeps a PTY registry keyed by
+With the terminal fallback on, a session can open in a terminal pane. Every terminal pane pre-mints its Claude session id. The host keeps a PTY registry keyed by
 session + pane: a reload (or a second tab) reattaches to the running `claude` with a
 snapshot replay of the rendered terminal state instead of spawning again; a detached PTY is
 kept for 30 minutes. Across host restarts the host consults its own session ledger
@@ -660,13 +667,13 @@ the launchers starts a chat with either). The cockpit owns its copy the same way
   own `hooks.json`, with the hash Codex computes for it, and none left for hooks that file no longer has
   (`providers/codex/hook-trust.ts`). So sessions run them in the chat and in a terminal without asking. Hooks that
   are not the cockpit's — a project's own, yours — keep whatever trust Codex gave them.
-- **Chat view (beta):** on `codex app-server` (`chat-runtime.ts`). What a chat runtime offers beside the
+- **Chat:** on `codex app-server` (`chat-runtime.ts`). What a chat runtime offers beside the
   basics it names in `capabilities.features` (domain `RuntimeFeature`), and the view shows only those controls.
   A Codex chat has no `/` commands, stops a subagent by interrupting its thread's turn, takes a reasoning effort
   per session (Settings › Models › Codex: the default), reconnects its tool servers by reloading their
   configuration (no per-server on/off) and signs in to a web tool server over OAuth from the MCP panel. A
-  subagent's thread is kept apart from the session's: its calls show on its agent card. With the chat view on,
-  workers and task runs start in the chat too (in Auto), a session in the chat can be sent a message — a stopped
+  subagent's thread is kept apart from the session's: its calls show on its agent card. Workers and task runs
+  start in the chat too (in Auto), a session in the chat can be sent a message — a stopped
   one resumes its thread for it — and answers with `send_message` of the MCP server `cockpit`; a Codex session
   that ran in a terminal still takes no message. Tool limits cannot be held: a Codex worker given them is refused.
   The session's turn state comes from app-server's own turns (`reportsTurns`), not from the hooks: app-server
@@ -697,12 +704,11 @@ a snapshot of the brain as it was when the log began (once, roughly a quarter of
 is never rewritten — a secret that lands in a brain stays in its history, so rotate the secret.
 Claude sign-in (Settings › Models): by default the regular Claude Code login, which the host runs with
 `claude auth login` from the page (`providers/claude/sign-in.ts`: the page shows the link, the code the user pastes goes
-to the CLI's stdin and nowhere else; `/login` in a session works too), and which Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
+to the CLI's stdin and nowhere else), and which Claude Code keeps per config dir — separate from your own Claude login. Optionally a `claude setup-token` for
 runtimes without a browser: stored as `claude-login` (chmod 600, write-only from the browser) and injected via
 env only when `agents.json` switches sessions to token mode — into a terminal session's environment and into the
-one the Agent SDK starts Claude Code with for a chat session, never into a file. Sessions keep the input at the bottom
-of the pane: they start with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_FLICKER=1`), which `/tui`
-cannot switch inside a cockpit session — Settings › Models › Terminal turns it off. Every session gets the EML
+one the Agent SDK starts Claude Code with for a chat session, never into a file. A terminal fallback session keeps the
+input at the bottom of the pane: it starts with Claude Code's fullscreen renderer (`CLAUDE_CODE_NO_FLICKER=1`). Every session gets the EML
 hooks (`eml-mcp-server hook session-start|user-prompt-submit|stop`: boot, reminder, consolidate before a compaction) and the EML skills
 (`consolidate`, `checkpoint`, `getting-started`) from the bundled `@engramprotocol/mcp-server` — nothing is read from `~/.claude`
 or `~/.eml`. The Worktrees and Repository plugins run `git` in the projects' folders (Repository without

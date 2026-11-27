@@ -612,7 +612,7 @@ export class ChatBridge {
     if (!project?.path) return refuse('Unknown project, or it has no folder')
     const named = text(data.provider)
     const provider = this.ctx.ledger.has(sessionId) ? this.ctx.providers.forSession(sessionId) : this.ctx.providers.get(named || DEFAULT_CHAT_PROVIDER)
-    if (!provider) return refuse(named ? 'This cockpit has no such agent.' : 'The chat view runs Claude Code sessions only. This session stays in the terminal.')
+    if (!provider) return refuse(named ? 'This cockpit has no such agent.' : 'This cockpit has no agent to run this session.')
     const chat = provider.capabilities.chat
     if (!chat.supported) return refuse(chat.reason)
     const problem = provider.runtime.problem()
@@ -917,7 +917,7 @@ export class ChatBridge {
     const address = sessionAddress(sessionId, projectId)
     const { providerSessionId } = this.ctx.ledger.ref(sessionId, null)
     const sessionSpace = sessionSpaceOf(space)
-    // Never `unattended`, a worker neither: that picks a terminal's arguments (permission mode, Remote Control),
+    // Never `unattended`, a worker neither: that picks a terminal's arguments (permission mode),
     // and a worker's mode here is its runtime's (workerMode).
     const launch = provider.launch({
       sessionId, address, providerSessionId, resume, initialPrompt: null, unattended: false,

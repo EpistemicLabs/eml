@@ -76,7 +76,7 @@ interface McpSignIn {
 function mcpSignIn(query: Query): McpSignIn {
   const calls = query as unknown as Partial<McpSignIn>
   if (typeof calls.mcpAuthenticate !== 'function' || typeof calls.mcpSubmitOAuthCallbackUrl !== 'function') {
-    throw new Error('This Claude Code cannot sign in to a tool server from the chat. To sign in, switch this pane to the terminal and run /mcp.')
+    throw new Error('This Claude Code cannot sign in to a tool server from the chat yet. Update it (Settings › Models › Claude Code › Check now), then sign in again from the chat\'s tool servers.')
   }
   return calls as McpSignIn
 }

@@ -565,7 +565,7 @@ const notStored = (error: AppServerError) => NOT_STORED.test(error.message)
 /** Another process writes to the thread: "thread … already has an active writer". */
 const ACTIVE_WRITER = /already has an active writer/i
 
-export const HOOKS_UNTRUSTED = 'Codex skips the cockpit\'s hooks until you trust them, so this session started without its brain boot, project and task context. Open a Codex session in a terminal once and choose "Trust all"; sessions started after that get them.'
+export const HOOKS_UNTRUSTED = 'Codex skips the cockpit\'s hooks until they are trusted, so this session started without its brain boot, project and task context. The cockpit trusts them itself, but a newer Codex may ask once: turn on Settings › Advanced › Terminal fallback, open a Codex session in a terminal and choose "Trust all". Sessions started after that get them.'
 export const OPEN_ELSEWHERE = 'this conversation is still open in another process (a terminal pane of this session, or a Codex that did not exit). Close it there, then send your message again.'
 
 export function createCodexChatRuntimes(spawnProcess: SpawnAppServer = spawnAppServer, host: CodexChatHost = {}): SessionRuntimeFactory {
