@@ -5,7 +5,7 @@ import {
   activeGrants, CLOSED_BEFORE_START, isHeld, isNewRecord, isOpenRun, JOB_LIMITS, newRecord, recordKeeping, retryDelay, HELD_FOR_OK, SKIPPED_NOT_STARTED, SKIPPED_WORKING,
   type GrantTool, type Job, type JobRun, type ReplyChannel, type RunFired, type RunNowRefusal,
 } from '../domain/job.js'
-import { delegationOf, type DelegationFields } from '../domain/delegation.js'
+import { delegationOf, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { decideFiring, type Fired, type FiringFacts } from '../domain/firing-order.js'
 import { firedText, startedBy } from '../domain/run-text.js'
 import { formatDuration } from '../domain/schedule.js'
@@ -39,6 +39,10 @@ import { stepPrompt } from './task-runner.js'
  * (its cursor is now, so no time of the past fires), and one goes by domain/job.ts recordKeeping; a closed task's
  * record stops listening first, and a record that was just made or changed is left as it is (domain/job.ts
  * RECORD_GRACE_MS).
+ *
+ * A wake-up names who it is for (schedule.by, brain schema 25). An agent's is a run on the task, as below; a person's
+ * is a reminder: a do wait for them with the wake-up's reason (their Inbox shows it as their move), and the wake-up is
+ * used up. Every firing is recorded on the record and in the task's journal, never a silent no-op.
  *
  * What a firing does follows the four-line order (domain/firing-order.ts): a repeating time is skipped and recorded
  * while a session of the task works, else it goes to the session that waits on an answer, else to the session that set
@@ -92,7 +96,7 @@ export interface RunnerTask {
   ingested_by?: string | null
   properties?: {
     assignee_ids?: string[]
-    delegation?: DelegationFields | null
+    delegation?: DelegationFields | null; schedule?: ScheduleFields | null
     delegate?: string
     checkpoint?: string
     display_title?: string
@@ -152,6 +156,12 @@ export interface JobRunnerDeps {
   sessionsOf(taskId: string): Array<{ sessionId: string; working: boolean; linked?: boolean }>
   /** Write an edit of the task's schedule to the brain, with a journal line (application/task-schedule-write.ts). */
   editSchedule(space: RunnerSpace, taskId: string, edit: ScheduleEdit, text?: string): Promise<void>
+  /**
+   * A person's wake-up fired (schedule.by names a person): a reminder. Adds a do wait for them with its reason, takes
+   * the wake-up off the task and journals it, in one write (application/reminder.ts). Without it a person's wake-up
+   * fires as an agent's does.
+   */
+  remind?(space: RunnerSpace, taskId: string, reminder: { at: string; who: string; why: string | null }): Promise<void>
   /** Room for one more running session (StartWorker.hasRoom; may stop a quiet one to make it). */
   hasRoom(): boolean
   /** queued: not started yet (no ledger entry); working: mid-turn; idle: runs, waiting for input; stopped. */
@@ -206,6 +216,16 @@ export const WAKE_WAIT_NOTICE_MS = 60 * 60_000
 const NO_ROOM = 'no room: too little free memory, or the running cap with every session busy'
 /** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
 const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
+
+/**
+ * A wake-up for a person (a reminder) rather than an agent (a run): its by is this cockpit's member or one of the
+ * task's owners; assignee_ids name people only. A wake-up without by (set before brain schema 25 moved it) is the
+ * delegated agent's.
+ */
+export function isPersonWake(by: string | null | undefined, task: Pick<RunnerTask, 'properties'>, me: string): boolean {
+  if (!by) return false
+  return by === me || (task.properties?.assignee_ids ?? []).includes(by)
+}
 
 /** A task in a log line: its id, never its name. */
 const tagOf = (taskId: string): string => `task ${taskId.slice(0, 8)}`
@@ -582,7 +602,12 @@ export class JobRunner {
     const zoned = timeZone ? { timeZone } : {}
     const crons = firing.crons.length > 0 ? firing.crons : null
     // A wake-up that rides in a run which has not ended is not due again: that run brings it.
-    const wake = firing.wake && !openRuns.some((run) => sameInstant(run.fired?.wake?.at, firing.wake!.at)) ? firing.wake : null
+    let wake = firing.wake && !openRuns.some((run) => sameInstant(run.fired?.wake?.at, firing.wake!.at)) ? firing.wake : null
+    // A person's wake-up is a reminder: it goes into their Inbox, and no session is started for it.
+    if (wake && this.deps.remind && isPersonWake(wake.by, task, this.deps.me)) {
+      await this.remind(space, task.id, record, wake, zoned)
+      wake = null
+    }
     if (!crons && !wake) return
     const cronsDueAt = crons ? crons.map((c) => c.dueAt).sort()[0] : firing.dueAt
     /**
@@ -617,6 +642,20 @@ export class JobRunner {
   }
 
   /**
+   * A person's wake-up fired: the reminder is written on the task (a do wait, the wake-up used up, the journal line),
+   * then remembered on the record so it fires once, and recorded among the record's runs.
+   */
+  private async remind(space: RunnerSpace, taskId: string, record: Job, wake: { at: string; why: string | null; by: string | null }, zoned: { timeZone?: string }): Promise<void> {
+    await this.deps.remind!(space, taskId, { at: wake.at, who: wake.by!, why: wake.why })
+    const current = this.deps.store.get(taskId) ?? record
+    this.deps.store.put({ ...current, firedWake: wake.at, updatedAt: new Date(this.now()).toISOString() })
+    this.heldWakes.delete(taskId)
+    this.record(taskId, wake.at, 'finished', `a reminder for ${wake.by}: it is in their Inbox`, { wake: { ...wake, bySession: null }, ...zoned })
+    this.tell(current, 'question', `Reminder: ${wake.why ?? 'its time has come'}`)
+    this.deps.log(`[jobs] ${tagOf(taskId)}: a reminder fired for ${wake.by}`)
+  }
+
+  /**
    * A due wake-up is held back because a session of the task works: it stays due, and that is not left unseen. The
    * first pass says so in the log, once; when it has been due for more than an hour the user is told, once.
    */
@@ -637,19 +676,28 @@ export class JobRunner {
    * A run that carries the wake-up got to a session (or failed for good): the wake-up has fired. It is remembered on
    * the record first, so it fires once even when the write that takes it off the task fails, then cleared on the task.
    */
-  private wakeFired(run: JobRun): void {
-    const at = run.fired?.wake?.at
+  private wakeFired(run: JobRun, failed?: string): void {
+    const wake = run.fired?.wake
+    const at = wake?.at
     const record = this.deps.store.get(run.jobId)
     const space = record ? this.spaceOf(record) : null
     if (at) this.heldWakes.delete(run.jobId)
     if (!at || !record || !space) return
     if (!sameInstant(record.firedWake, at)) this.deps.store.put({ ...record, firedWake: at })
-    this.clearFiredWake(space, record.id, at)
+    // The journal says which session the wake-up went to: the one that set it, or a new one.
+    const who = wake.by ?? 'The agent'
+    const how = failed ? `its run failed (${failed})`
+      : run.sessionId && wake.bySession && run.sessionId === wake.bySession ? `${who} continues the session that set it`
+        : `${who} starts in a new session`
+    this.clearFiredWake(space, record.id, at, `Wake-up fired: ${how}.`)
   }
 
-  /** The wake-up fired: it goes off the task, unless the task has another one by now. Failing, the next read tries again. */
-  private clearFiredWake(space: RunnerSpace, taskId: string, at: string): void {
-    this.writes.push(this.deps.editSchedule(space, taskId, (schedule) => (sameInstant(schedule?.at, at) ? clearWake(schedule) : schedule))
+  /**
+   * The wake-up fired: it goes off the task, unless the task has another one by now, with the journal line `text`.
+   * Failing, the next read tries again (without the line: it was written with the first try, or the write failed).
+   */
+  private clearFiredWake(space: RunnerSpace, taskId: string, at: string, text?: string): void {
+    this.writes.push(this.deps.editSchedule(space, taskId, (schedule) => (sameInstant(schedule?.at, at) ? clearWake(schedule) : schedule), text)
       .catch((err: unknown) => this.deps.log(`[jobs] ${tagOf(taskId)}: its fired wake-up was not cleared on the task: ${(err as Error).message}`)))
   }
 
@@ -725,7 +773,7 @@ export class JobRunner {
   }
 
   /** A time that never ran: missed or skipped, kept in the history without a run number. */
-  private record(taskId: string, dueAt: string, status: 'missed' | 'skipped', note: string, fired: RunFired): void {
+  private record(taskId: string, dueAt: string, status: 'missed' | 'skipped' | 'finished', note: string, fired: RunFired): void {
     const at = new Date(this.now()).toISOString()
     this.deps.store.addRun({
       id: randomUUID(), jobId: taskId, trigger: 'schedule', number: 0, dueAt, createdAt: at,
@@ -894,7 +942,7 @@ export class JobRunner {
 
   private failRun(run: JobRun, why: string): void {
     // A run that fails for good uses its wake-up up: the failure is told, and it is not tried again pass after pass.
-    this.wakeFired(this.current(run))
+    this.wakeFired(this.current(run), why)
     this.update(run, { status: 'failed', note: why, finishedAt: new Date(this.now()).toISOString() })
     const record = this.deps.store.get(run.jobId)
     this.deps.log(`[jobs] ${tagOf(run.jobId)}: run ${run.number} failed: ${why}`)

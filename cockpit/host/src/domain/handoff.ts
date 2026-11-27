@@ -1,4 +1,4 @@
-import { HANDOFF_LABELS as L, readNextLine } from './turn-end.js'
+import { HANDOFF_LABELS as L, readAskLine, readCheckLine, readNextLine, type Ask, type Check } from './turn-end.js'
 
 /**
  * The handoff block: how a session without the end_turn tool (a terminal, an
@@ -11,14 +11,17 @@ import { HANDOFF_LABELS as L, readNextLine } from './turn-end.js'
  *   Failed: …
  *   Checked: … · Claimed: …
  *   Decided: …
- *   Next: [who] … @ when
+ *   Ask: [who] … · do · due YYYY-MM-DD
+ *   Check: YYYY-MM-DDTHH:MM · …   (or: none)
  *   Questions:
  *   - [owner] …
  *   - [task] …
  *
  * Read leniently: any heading level, the block inside a code fence or not,
  * labels in any case, lines left out. A question without a tag is the user's;
- * one tagged [task] is from before end_turn and stays in the journal only.
+ * one tagged [task] is from before end_turn and stays in the journal only. A block
+ * of a session started before 0.25 has "Next: [who] … @ when" instead of Ask and
+ * Check; it is still read (domain/turn-end.ts askAndCheckOf).
  * The labels and the shape of the Next line are turn-end.ts's.
  */
 
@@ -30,6 +33,10 @@ export interface Handoff {
   next: string | null
   /** The Next line read as "[who] what @ when"; who is null when it has no tag. */
   nextStep?: { who: string | null; what: string; when: string | null } | null
+  /** The Ask line: whose move it is; null without one (or one without a [who]). */
+  ask?: Ask | null
+  /** The Check line: when the agent looks again, or "none"; null without one. */
+  check?: Check | 'none' | null
   failed?: string | null
   checked?: string | null
   claimed?: string | null
@@ -71,7 +78,7 @@ export function parseHandoff(message: string): Handoff | null {
       const item = raw.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim()
       if (!item || /^(none|no|—|-)\.?$/i.test(item)) continue
       // The next label ends the list.
-      if ([L.result, L.failed, L.checked, L.claimed, L.decided, L.next].some((name) => label(name).test(item))) break
+      if ([L.result, L.failed, L.checked, L.claimed, L.decided, L.ask, L.check, L.next].some((name) => label(name).test(item))) break
       // A tag is a handle in brackets; a markdown link is not one.
       const tagged = /^\[([^\]\s]+)\](?!\()\s*(.*)$/.exec(item)
       if (tagged && tagged[1].toLowerCase() === 'task') forTask.push(tagged[2].trim())
@@ -82,12 +89,16 @@ export function parseHandoff(message: string): Handoff | null {
   // "Checked: … · Claimed: …" on one line, or each on its own.
   const [checked, claimedInline] = (field(L.checked) ?? '').split(new RegExp(`\\s*·\\s*${L.claimed}\\s*:\\s*`, 'i'))
   const next = field(L.next)
+  const ask = field(L.ask)
+  const check = field(L.check)
 
   return {
     text: block.join('\n').trim(),
     result: field(L.result),
     next,
     nextStep: next ? readNextLine(next) : null,
+    ask: ask ? readAskLine(ask) : null,
+    check: check ? readCheckLine(check) : null,
     failed: field(L.failed),
     checked: checked?.trim() || null,
     claimed: claimedInline?.trim() || field(L.claimed),

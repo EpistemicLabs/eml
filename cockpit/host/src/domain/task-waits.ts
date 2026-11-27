@@ -8,8 +8,8 @@ import { waitKind, type WaitingOn } from './task-turn.js'
  * A session's wait has the session's id as its id, so a session holds at most
  * one wait per task: its next wait replaces its last, and an answer removes it.
  * The order is core's (packages/core/src/task-state.ts mostUrgentWait): a wait
- * that is not parked first, then question > go > stopped > review > outside (a
- * question blocks the agent, a review does not), an entry without a kind last,
+ * that is not parked first, then question > go > stopped > do > review > outside
+ * (a question blocks the agent, a review does not), an entry without a kind last,
  * then the oldest since, then list order.
  *
  * On a wait of kind outside, `who` is either the person keeping an eye on it
@@ -28,7 +28,7 @@ export interface Wait extends WaitingOn {
 }
 
 /** Most urgent first, as core orders them. */
-const URGENCY = ['question', 'go', 'stopped', 'review', 'outside'] as const
+const URGENCY = ['question', 'go', 'stopped', 'do', 'review', 'outside'] as const
 
 /** A wait parked without an end date. */
 export const SNOOZED_OPEN = 'open'
@@ -99,7 +99,7 @@ export function withoutSession(waits: readonly Wait[], sessionId: string): Wait[
  */
 export function withSessionWait(waits: readonly Wait[], wait: WaitingOn & { session_id: string }): Wait[] {
   const i = waits.findIndex((w) => sessionOf(w) === wait.session_id)
-  if (i >= 0 && waits[i].kind === wait.kind && waits[i].why === wait.why && waits[i].who === wait.who) return [...waits]
+  if (i >= 0 && waits[i].kind === wait.kind && waits[i].why === wait.why && waits[i].who === wait.who && waits[i].due === wait.due) return [...waits]
   const entry: Wait = { id: wait.session_id, ...wait }
   if (i < 0) return [...waits, entry]
   return waits.map((w, j) => (j === i ? entry : w))
@@ -132,7 +132,7 @@ export function withoutReviewsOn(waits: readonly Wait[], who: string | undefined
 /** Whether two lists hold the same waits in the same order. */
 export function sameWaits(a: readonly Wait[], b: readonly Wait[]): boolean {
   if (a.length !== b.length) return false
-  const key = (w: Wait) => JSON.stringify([w.id, w.who, w.kind ?? null, w.why ?? null, w.since ?? null, w.session_id ?? null, w.snoozed_until ?? null])
+  const key = (w: Wait) => JSON.stringify([w.id, w.who, w.kind ?? null, w.why ?? null, w.since ?? null, w.session_id ?? null, w.snoozed_until ?? null, w.due ?? null])
   return a.every((w, i) => key(w) === key(b[i]))
 }
 
@@ -148,6 +148,7 @@ function storable(w: Wait): Wait {
   if (typeof w.since === 'string' && /^\d{4}-\d{2}-\d{2}/.test(w.since) && !Number.isNaN(Date.parse(w.since))) out.since = w.since
   if (typeof w.session_id === 'string' && w.session_id) out.session_id = w.session_id
   if (typeof w.snoozed_until === 'string' && (w.snoozed_until === SNOOZED_OPEN || !Number.isNaN(Date.parse(w.snoozed_until)))) out.snoozed_until = w.snoozed_until
+  if (typeof w.due === 'string' && /^\d{4}-\d{2}-\d{2}/.test(w.due) && !Number.isNaN(Date.parse(w.due))) out.due = w.due
   return out
 }
 

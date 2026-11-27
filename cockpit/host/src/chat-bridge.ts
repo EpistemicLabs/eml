@@ -219,12 +219,12 @@ export interface ChatContext {
   worksAlone?: (sessionId: string) => Promise<boolean>
   /** Whom an end_turn call is read against, and the session's task (application/turn-context.ts); absent: the space's agent and no task. */
   turnContext?: (sessionId: string) => Promise<SessionTurn>
-  /** The moment a call is read and the zone its next.when is read in (the user's); absent: now, in this machine's zone. */
+  /** The moment a call is read and the zone its check.when is read in (the user's); absent: now, in this machine's zone. */
   callTime?: () => { now: number; zone: string }
   /**
-   * What a call does to the wake-up of the session's task: its next.when sets it, a call without one clears it
-   * (application/turn-wake.ts). Answers why it could not be set, the wake-up as saved, and whether the task has a
-   * next run now.
+   * What a call does to the wake-up of the session's task: its check sets it, check "none" removes it, a call without
+   * one keeps it (application/turn-wake.ts). Answers why it could not be set, the schedule before and after, and
+   * whether the task has a next run now.
    */
   turnWake?: (sessionId: string, wake: { edit: WakeEdit; call: EndTurn; turn: SessionTurn }) => Promise<WakeSettled>
   /** Someone wrote to the session while it waited: the wait it set on its task is over (task router). */

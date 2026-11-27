@@ -115,7 +115,7 @@ const MOVED_LINE = (jobs: JobMigrationResult['jobs']) => `Schedules moved onto t
 
 /** The space's open tasks that have a schedule, as the engine lists them: two reads, none per task. */
 async function scheduledTasks(brain: Pick<EmlApi, 'get'>): Promise<JobMigrationTask[]> {
-  return (await openTasks<JobMigrationTask>(brain)).filter((task) => task.properties?.delegation?.schedule)
+  return (await openTasks<JobMigrationTask>(brain)).filter((task) => task.properties?.schedule)
 }
 
 const keyOf = (space: BrainSpace): string | null => (space.main ? null : space.id)
@@ -239,7 +239,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
       const fields = { ...(task.brain.content !== null ? { content: task.brain.content } : {}), ...(task.brain.goal ? { goal: task.brain.goal } : {}) }
       const schedule = task.schedule
       await editTaskSchedule(brain, taskId, task.brain.setSchedule ? () => schedule : (current) => current, {
-        agent: space.agent, ...(text ? { text } : {}), fields, ...(typeof read?.rev === 'number' ? { baseRev: read.rev } : {}),
+        ...(text ? { text } : {}), fields, ...(typeof read?.rev === 'number' ? { baseRev: read.rev } : {}),
       })
     }
     const step = stepOf(task, taskId)

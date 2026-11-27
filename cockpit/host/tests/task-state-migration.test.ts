@@ -29,7 +29,7 @@ describe('the task state migration', () => {
       task('ready', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }),
       task('running', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } }, 'active'),
       // its schedule starts it
-      task('scheduled', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *'] } } }),
+      task('scheduled', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 8 * * *'] } }),
       task('asked', { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-24T11:00:00.000Z' } }),
     ]))
     expect(plan.changes.map((c) => [c.taskId, c.rules])).toEqual([['ready', ['requested']]])

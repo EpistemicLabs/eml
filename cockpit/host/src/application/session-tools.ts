@@ -35,8 +35,8 @@ export async function endTurn(ports: EndTurnPorts, input: unknown): Promise<Tool
   const read = readEndTurn(input)
   if (!read.ok) return { text: read.error, isError: true }
   try {
-    const { derived, missing, checkProblem, checkFix, checkTime, nextRun } = await ports.endTurn(read.call)
-    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkFix, checkTime, nextRun }), isError: false }
+    const { derived, missing, checkProblem, checkFix, checkTime, nextRun, state } = await ports.endTurn(read.call)
+    return { text: endTurnAnswer(read.call, derived, { missing, checkProblem, checkFix, checkTime, nextRun, state }), isError: false }
   } catch (error: unknown) {
     return { text: notRecorded(reasonOf(error)), isError: true }
   }

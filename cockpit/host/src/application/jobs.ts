@@ -9,7 +9,7 @@ import {
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
 } from '../domain/schedule-tool.js'
 import {
-  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake, withSchedule,
+  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
 } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
@@ -237,8 +237,9 @@ export class Jobs {
     }
     // A wake-up continues the session that set it when that session works on the task; any other one starts anew.
     const bySession = task && caller.sessionId && caller.taskId === task.id ? caller.sessionId : null
+    const by = at ? this.by(caller, input) : null
     const edit = (schedule: ScheduleFields | null): ScheduleFields | null => {
-      const timed = cron ? addCron(schedule, cron, zone) : at ? setWake(schedule, { at, why: prompt, bySession, timeZone: zone }) : schedule
+      const timed = cron ? addCron(schedule, cron, zone) : at ? setWake(schedule, { at, why: prompt, by, bySession: by === this.deps.me ? null : bySession, timeZone: zone }) : schedule
       return endsAt !== undefined && timed ? setEndsAt(timed, endsAt) : timed
     }
     const planned = edit(current)
@@ -247,7 +248,7 @@ export class Jobs {
 
     const made = !task
     if (!task) {
-      if (!this.deps.agent(caller.spaceId)) return bad('this space has no agent to hold a schedule')
+      if (!this.deps.agent(caller.spaceId)) return bad('this space has no agent to run a new task\'s schedule')
       const draft = routineTask({ id: randomUUID(), name: name!, prompt }, settings.projectId ?? caller.projectId, this.deps.me)
       if (!draft) return bad('a new task needs a project of the brain: pass project, or put the time on a task that exists (task_id)')
       task = (await taskById<ToolTask>(brain, (await makeRoutineTask(brain, draft)).id)) ?? refuse('the new task could not be read back; try again', 502)
@@ -258,10 +259,9 @@ export class Jobs {
     const setGoal = goal && !task.properties?.goal ? goal : null
     // A repeating time the task already has is not added twice: then only its text may still be new.
     const same = sameSchedule(planned, current)
-    const what = same ? null : cron ? `added the repeating time "${cron}"` : at ? `set the wake-up for ${at}` : null
+    const what = same ? null : cron ? `added the repeating time "${cron}"` : at ? `set the wake-up for ${at}${by ? ` (${wakeOwner(by, this.deps.me)})` : ''}` : null
     const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
     const written = await editTaskSchedule(brain, task.id, edit, {
-      agent: this.deps.agent(caller.spaceId),
       ...(said ? { text: said } : {}),
       fields: { ...(content ? { content } : {}), ...(setGoal ? { goal: setGoal } : {}) },
     })
@@ -308,12 +308,13 @@ export class Jobs {
       if (full) return bad(full)
     }
     const bySession = caller.sessionId && caller.taskId === task.id ? caller.sessionId : null
+    const by = at ? this.by(caller, input, current?.by) : null
     const edit = (schedule: ScheduleFields | null): ScheduleFields | null => {
       let next = schedule
       // The one cron replaces the list, so the zone it is written in is the zone the task's repeating times are read in.
       if (cron) next = setCrons(next, [cron], zone)
       // Only a task without a schedule takes the wake-up's zone (setWake never gives one to repeating times).
-      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, bySession, ...(next ? {} : { timeZone: zone }) })
+      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, by, bySession: by === this.deps.me ? null : bySession, ...(next ? {} : { timeZone: zone }) })
       if (endsAt !== undefined) next = next ? setEndsAt(next, endsAt) : next
       return next
     }
@@ -329,10 +330,9 @@ export class Jobs {
     const setGoal = goal && !task.properties?.goal ? goal : null
     let schedule = current
     if (changesTask) {
-      const what = [cron ? `set the repeating time "${cron}" (it replaces the ones before)` : null, at ? `set the wake-up for ${at}` : null].filter(Boolean).join(' and ')
+      const what = [cron ? `set the repeating time "${cron}" (it replaces the ones before)` : null, at ? `set the wake-up for ${at}${by ? ` (${wakeOwner(by, this.deps.me)})` : ''}` : null].filter(Boolean).join(' and ')
       const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
       const written = await editTaskSchedule(brain, task.id, edit, {
-        agent: this.deps.agent(caller.spaceId),
         ...(said ? { text: said } : {}),
         fields: { ...(content ? { content } : {}), ...(setGoal ? { goal: setGoal } : {}) },
       })
@@ -403,6 +403,21 @@ export class Jobs {
   }
 
   // ── The parts of a call ────────────────────────────────────────────────────
+
+  /**
+   * Who a wake-up the call sets is for (schedule.by): the agent by default, so the cockpit runs it on the task then;
+   * the user's handle (or "user") makes it a reminder, a do-ask in their Inbox at that time. `kept`: the one the
+   * task's wake-up has, which an update without by keeps.
+   */
+  private by(caller: JobCaller, input: Record<string, unknown>, kept?: string): string | null {
+    const agent = this.deps.agent(caller.spaceId)
+    const given = str(input.by)
+    if (!given) return kept ?? agent ?? (caller.sessionId ? null : this.deps.me)
+    const h = given.replace(/^@/, '').toLowerCase()
+    if (h === this.deps.me.toLowerCase() || h === 'user' || h === 'owner') return this.deps.me
+    if (['self', 'me', 'agent', 'myself'].includes(h) || (agent && h === agent.toLowerCase())) return agent
+    return refuse(`by is who the wake-up is for: leave it out (or "self") for yourself, the agent, or name the user (${this.deps.me}) for a reminder in their Inbox`)
+  }
 
   /** The zone the call's times read in: its own, else the user's (a session writes every time in it). */
   private zone(input: Record<string, unknown>): string {
@@ -512,7 +527,10 @@ export class Jobs {
   }
 }
 
+/** Who a wake-up is for, as the journal says it: "a reminder for <person>" or "<agent> checks back". */
+export const wakeOwner = (by: string, me: string): string => (by === me ? `a reminder for ${by}` : `${by} checks back`)
+
 /** The task with this schedule, for describing it after a write. */
 function taskWithSchedule(task: ToolTask, schedule: ScheduleFields | null): ToolTask {
-  return { ...task, properties: { ...task.properties, delegation: withSchedule(task.properties?.delegation ?? { agent: '' }, schedule) } }
+  return { ...task, properties: { ...task.properties, schedule } }
 }

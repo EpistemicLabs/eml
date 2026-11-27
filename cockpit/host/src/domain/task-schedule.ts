@@ -1,20 +1,22 @@
 import { nextCronTime, parseCron, shortestGap } from './schedule.js'
-import type { DelegationFields, ScheduleFields } from './delegation.js'
+import type { ScheduleFields } from './delegation.js'
 
 /**
- * A task's schedule (decision task-schedules-live-in-the-brain; brain schema 24): delegation.schedule is the only place
- * a schedule lives. It holds repeating times (crons, read in time_zone) and at most one wake-up (at, with its reason
- * why and the session that set it, by_session). paused holds for the whole schedule; ends_at ends the repeating times
- * and leaves the wake-up alone, which fires at its own time. The next run is computed from it, never stored, and the
+ * A task's schedule (decision task-schedules-live-in-the-brain; brain schema 24): the task's schedule field is the only
+ * place a schedule lives (inside its delegation until schema 25; decision asks-and-check-backs-are-separate). It holds
+ * repeating times (crons, read in time_zone) and at most one wake-up (at, with its reason why, who it is for, by, and
+ * the session that set it, by_session). paused holds for the whole schedule; ends_at ends the repeating times and
+ * leaves the wake-up alone, which fires at its own time. The next run is computed from it, never stored, and the
  * task's text says what each time is for.
+ *
+ * Only firing, an explicit removal or the task closing ends a wake-up: a hand-over never does.
  *
  * The cockpit of the task's owner fires it. What only that machine needs it keeps in a local record per task
  * (domain/job.ts): among it the cursor the crons are due after and the wake-up it fired last.
  *
  * Everything here is pure. The edit helpers take a schedule (or null: none) and return the next one, or null when
  * nothing is left; a bad input throws a ScheduleError whose message the caller shows. A schedule is written to the
- * brain through application/task-schedule-write.ts, never by hand: a write of a whole delegation without its schedule
- * ends the schedule.
+ * brain through application/task-schedule-write.ts, never by hand.
  */
 
 /**
@@ -38,17 +40,16 @@ export const SCHEDULE_LIMITS = {
 /** A schedule edit that cannot be made; its message says why, for whoever asked. */
 export class ScheduleError extends Error {}
 
-type Scheduled = { properties?: { delegation?: { schedule?: ScheduleFields | null } | null } | null }
+type Scheduled = { properties?: { schedule?: ScheduleFields | null } | null }
 
 /** The task's schedule, or null: one without a repeating time and without a wake-up is none. */
 export function scheduleOf(task: Scheduled): ScheduleFields | null {
-  return tidy(task.properties?.delegation?.schedule)
+  return tidy(task.properties?.schedule)
 }
 
 /**
- * The task has a schedule: the task is the truth, whatever this cockpit knows of it. Such a task is not closed: a
- * review approves one run, Close is refused, End schedule clears it and closes the task. A paused schedule and one
- * past its end still count: only ending it takes it off the task.
+ * The task has a schedule: the task is the truth, whatever this cockpit knows of it. A paused schedule and one past
+ * its end still count: only ending it takes it off the task.
  */
 export function hasSchedule(task: Scheduled): boolean {
   return scheduleOf(task) !== null
@@ -71,6 +72,7 @@ function tidy(schedule: ScheduleFields | null | undefined): ScheduleFields | nul
     ...(crons.length > 0 ? { crons } : {}),
     ...(at !== null ? { at: iso(at) } : {}),
     ...(at !== null && schedule.why?.trim() ? { why: schedule.why.trim().slice(0, SCHEDULE_LIMITS.whyChars) } : {}),
+    ...(at !== null && schedule.by?.trim() ? { by: schedule.by.trim() } : {}),
     ...(at !== null && schedule.by_session ? { by_session: schedule.by_session } : {}),
     ...(schedule.time_zone ? { time_zone: schedule.time_zone } : {}),
     ...(schedule.paused ? { paused: true } : {}),
@@ -136,7 +138,7 @@ export interface ScheduleState {
   firedWake?: string | null
 }
 
-export interface DueWake { at: string; why: string | null; bySession: string | null }
+export interface DueWake { at: string; why: string | null; by: string | null; bySession: string | null }
 export interface DueCron { cron: string; dueAt: string }
 
 export interface ScheduleDue {
@@ -173,7 +175,7 @@ export function dueOf(schedule: ScheduleFields | null | undefined, state: Schedu
 
   const at = time(s.at)
   const wake: DueWake | null = at !== null && at <= now && at !== time(state.firedWake)
-    ? { at: iso(at), why: s.why ?? null, bySession: s.by_session ?? null }
+    ? { at: iso(at), why: s.why ?? null, by: s.by ?? null, bySession: s.by_session ?? null }
     : null
 
   const due: DueCron[] = []
@@ -244,31 +246,29 @@ const checked = (cron: string): string => {
 }
 
 /**
- * Set the wake-up: it replaces the task's wake-up and never touches a repeating time. `at` is an instant (ISO).
+ * Set the wake-up: it replaces the task's wake-up and never touches a repeating time. `at` is an instant (ISO); `by`
+ * who it is for (an agent's handle: a run; a person's: a reminder).
  * `timeZone` (where its writer reads it) is kept only on a schedule that names no zone and has no repeating time:
  * time_zone is the zone the repeating times are read in, and a wake-up never moves them (ones without a zone are
  * read in UTC, and stay there).
  */
-export function setWake(schedule: ScheduleFields | null | undefined, wake: { at: string; why?: string | null; bySession?: string | null; timeZone?: string }): ScheduleFields {
+export function setWake(schedule: ScheduleFields | null | undefined, wake: { at: string; why?: string | null; by?: string | null; bySession?: string | null; timeZone?: string }): ScheduleFields {
   const at = time(wake.at)
   if (at === null) throw new ScheduleError(`at: "${wake.at}" is not a date and time`)
-  const { why: _why, by_session: _by, ...rest } = schedule ?? {}
+  const { why: _why, by: _who, by_session: _by, ...rest } = schedule ?? {}
   return tidy({
     ...rest, at: iso(at),
     ...(wake.why ? { why: wake.why } : {}),
+    ...(wake.by ? { by: wake.by } : {}),
     ...(wake.bySession ? { by_session: wake.bySession } : {}),
     ...(rest.time_zone || rest.crons?.length || !wake.timeZone ? {} : { time_zone: wake.timeZone }),
   })!
 }
 
-/**
- * Clear the wake-up, with its reason and its session; the repeating times stay. With `onlyBySession` it is cleared
- * only when that session set it. Null when nothing is left.
- */
-export function clearWake(schedule: ScheduleFields | null | undefined, opts: { onlyBySession?: string } = {}): ScheduleFields | null {
+/** Clear the wake-up, with its reason, who it was for and its session; the repeating times stay. Null when nothing is left. */
+export function clearWake(schedule: ScheduleFields | null | undefined): ScheduleFields | null {
   if (!schedule) return null
-  if (opts.onlyBySession !== undefined && schedule.by_session !== opts.onlyBySession) return tidy(schedule)
-  const { at: _at, why: _why, by_session: _by, ...rest } = schedule
+  const { at: _at, why: _why, by: _who, by_session: _by, ...rest } = schedule
   return tidy(rest)
 }
 
@@ -337,15 +337,8 @@ export function sameSchedule(a: ScheduleFields | null | undefined, b: ScheduleFi
   return JSON.stringify(tidy(a)) === JSON.stringify(tidy(b))
 }
 
-/**
- * The delegation with this schedule, everything else unchanged; null takes the schedule off. What every write of a
- * whole delegation goes through: the brain reads a delegation without a schedule as the end of the schedule.
- */
-export function withSchedule<D extends DelegationFields>(delegation: D, schedule: ScheduleFields | null | undefined): D {
-  const { schedule: _old, ...rest } = delegation
-  const next = tidy(schedule)
-  return (next ? { ...rest, schedule: next } : rest) as D
-}
+/** The schedule as the brain stores it (keys in order, nothing empty), or null for none. */
+export const storedSchedule = (schedule: ScheduleFields | null | undefined): ScheduleFields | null => tidy(schedule)
 
 /** "0 8 * * 1-5; 0 18 * * 1-5 (Europe/Berlin), wake-up 2026-11-27T02:00:00.000Z, paused": a schedule for a journal line or a report. */
 export function scheduleText(schedule: ScheduleFields | null | undefined): string {
@@ -353,7 +346,7 @@ export function scheduleText(schedule: ScheduleFields | null | undefined): strin
   if (!s) return 'none'
   const parts = [
     ...(s.crons ? [`${s.crons.join('; ')}${s.time_zone ? ` (${s.time_zone})` : ''}`] : []),
-    ...(s.at ? [`wake-up ${s.at}`] : []),
+    ...(s.at ? [`wake-up ${s.at}${s.by ? ` for ${s.by}` : ''}`] : []),
     ...(s.ends_at ? [`until ${s.ends_at}`] : []),
     ...(s.paused ? ['paused'] : []),
   ]

@@ -34,7 +34,7 @@ import type { SessionLedger } from './session-ledger.js'
  * bound to it on initialize (McpHttpEndpoint), and no tool takes a session to
  * act for.
  *
- * end_turn only keeps the call and sets the check its next.when asks for. A
+ * end_turn only keeps the call and brings the task's wake-up in line with its check. A
  * chat session's is kept where the chat keeps what a session said
  * (chat-bridge.ts said). A session in the terminal fallback has no turn
  * routing: its call is not kept.
@@ -69,7 +69,7 @@ export interface CockpitMcpDeps {
   served?: (sessionId: string) => string | null
   /** What a chat session said, where the chat keeps it (chat-bridge.ts said); absent: no chat session is served. */
   chatTurns?: { said(sessionId: string, turn: SaidTurn): unknown }
-  /** Whom a call is read against, when it is read and the wake-up its next.when sets on the task: as a chat session's (chat-bridge.ts). */
+  /** Whom a call is read against, when it is read and what its check does to the task's wake-up: as a chat session's (chat-bridge.ts). */
   turnOf: RecordEndTurnDeps['turnOf']
   callTime?: RecordEndTurnDeps['callTime']
   turnWake?: RecordEndTurnDeps['turnWake']

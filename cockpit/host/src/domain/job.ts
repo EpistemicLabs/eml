@@ -6,7 +6,7 @@ import type { ToolProfile } from './tool-profile.js'
 /**
  * The local record of a scheduled task, and its runs (jobs.json version 2, job-store.ts).
  *
- * A task holds its schedule in the brain (delegation.schedule, domain/task-schedule.ts): when it runs, what a run is
+ * A task holds its schedule in the brain (its schedule field, domain/task-schedule.ts): when it runs, what a run is
  * for and whether it is paused are read from the task. What only this machine needs sits here, ONE record per task
  * with the task's id as its id — so a session's ledger entry (jobId), the channel bridge's routes, push tags, grants
  * and the limited-profile lookup name the task. It keeps:
@@ -203,7 +203,7 @@ export function retryDelay(attempts: number): number {
 
 /**
  * This cockpit holds it back: it waits for the user's OK, or the cockpit paused it after failures. A pause the user
- * set is on the task's schedule (delegation.schedule.paused), not here.
+ * set is on the task's schedule (schedule.paused), not here.
  */
 export const isHeld = (job: Pick<Job, 'pendingApproval' | 'pausedReason'>): boolean => job.pendingApproval === true || job.pausedReason !== null
 

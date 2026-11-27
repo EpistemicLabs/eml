@@ -14,8 +14,9 @@ import { isParked } from './task-waits.js'
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done'
 export const TURNS: readonly Turn[] = ['needs_you', 'review', 'agent_working', 'agent_scheduled', 'waiting_on_others', 'parked', 'done']
 
-export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'outside'
-export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'outside']
+/** v0.25: do is a step the person takes themselves (an agent asked for it, "Your move"): it is Needs you, asked. */
+export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'do' | 'outside'
+export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'do', 'outside']
 
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
 export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale'
@@ -30,6 +31,8 @@ export interface WaitingOn {
   session_id?: string
   /** Parked until then (an ISO date) or "open" (domain/task-waits.ts). */
   snoozed_until?: string
+  /** v0.25: when the step it asks for is due: a date (YYYY-MM-DD) or an instant. */
+  due?: string
 }
 
 /** What the brain says about a task, read tolerantly. */

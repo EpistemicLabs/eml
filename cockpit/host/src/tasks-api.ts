@@ -27,8 +27,8 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *   POST /api/v1/tasks/<id>/review                  { opId, spaceId }: Looks good, done; on a task whose schedule is on it approves
  *                                                     that run and the task stays open
  *   POST /api/v1/tasks/<id>/snooze                  { opId, spaceId, key, until }
- *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed; refused (scheduled) while its
- *                                                     schedule is on
+ *   POST /api/v1/tasks/<id>/close                   { opId, spaceId }: drop a task that is not needed; refused (scheduled) while it
+ *                                                     has repeating times. A wake-up alone ends with it
  *   POST /api/v1/tasks/<id>/end-schedule            { opId, spaceId }: End schedule and close: the owner clears the task's schedule
  *                                                     and the task closes as done; refused (not_scheduled) without a schedule
  *   POST /api/v1/tasks/<id>/pause-schedule          { opId, spaceId }: the owner pauses the task's whole schedule; refused (not_scheduled)
@@ -40,6 +40,13 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *                                                     (needs_approval) while its channel waits for the user's OK
  *   POST /api/v1/tasks/<id>/remove-time             { opId, spaceId, cron }: remove one repeating time; refused (unknown_time) when the
  *                                                     schedule has none such. Removing the only time ends the schedule; the task stays open
+ *   POST /api/v1/tasks/<id>/remove-wake             { opId, spaceId }: remove the task's wake-up (who checks back); refused
+ *                                                     (not_scheduled) without one. At once, no undo window
+ *   POST /api/v1/tasks/<id>/reschedule-wake         { opId, spaceId, at }: move the wake-up to `at` (an instant); it keeps who it is
+ *                                                     for and its reason. At once, no undo window
+ *   POST /api/v1/tasks/<id>/done                    { opId, spaceId, waitId }: the owner did the step a do wait asks for ("Your
+ *                                                     move"): the wait goes, the journal says so, and the task's agent is woken now;
+ *                                                     refused (unknown_wait) when the step is not open. At once, no undo window
  *   GET  /api/v1/tasks/<id>/record?spaceId          what this cockpit keeps for the task (domain/job.ts): { record, runs, held, running };
  *                                                     record null when it keeps nothing
  *   POST /api/v1/tasks/<id>/record/approve          { spaceId }: the user's OK for new channel addresses
@@ -109,6 +116,7 @@ const MESSAGES: Record<CommandRefusal, string> = {
   scheduled: SCHEDULE_ON,
   not_scheduled: 'It has no schedule to end: close it instead.',
   unknown_time: 'Its schedule has no such repeating time.',
+  unknown_wait: 'That step is not open on the task any more.',
   run_open: 'Its last run is still going: wait for it to finish.',
   task_working: 'A session of the task is working right now: nothing is started beside it.',
   needs_approval: 'Its channel waits for your OK first.',
@@ -153,7 +161,7 @@ const STATUS: Partial<Record<CommandRefusal, number>> = {
   unknown_space: 404, unknown_task: 404, unknown_command: 404,
   task_closed: 409, bound_items: 409, open_steps: 409, undo_expired: 409,
   task_open: 409, superseded: 409, parent_closed: 409, not_owner: 403,
-  scheduled: 409, not_scheduled: 409, unknown_time: 409, schedule_zone: 409, run_open: 409, task_working: 409, needs_approval: 409,
+  scheduled: 409, not_scheduled: 409, unknown_time: 409, unknown_wait: 409, schedule_zone: 409, run_open: 409, task_working: 409, needs_approval: 409,
   no_project: 422,
   no_brain: 503,
 }
@@ -386,7 +394,7 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|pause-schedule|resume-schedule|run-now|remove-time|reopen|follow-up)$/.exec(pathname)
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|pause-schedule|resume-schedule|run-now|remove-time|remove-wake|reschedule-wake|done|reopen|follow-up)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -412,6 +420,16 @@ export async function handleTasksApi(
         const cron = str(body.cron)
         if (!cron) { refuse(json, res, 'invalid', 'cron is required: the repeating time to remove'); return true }
         input = { ...base, kind: 'remove_time', taskId, cron }
+      } else if (verb === 'remove-wake') {
+        input = { ...base, kind: 'remove_wake', taskId }
+      } else if (verb === 'reschedule-wake') {
+        const at = str(body.at)
+        if (!at || !Number.isFinite(Date.parse(at))) { refuse(json, res, 'invalid', 'at is required: the new time of the wake-up'); return true }
+        input = { ...base, kind: 'reschedule_wake', taskId, at }
+      } else if (verb === 'done') {
+        const waitId = str(body.waitId)
+        if (!waitId) { refuse(json, res, 'invalid', 'waitId is required: the step that is done'); return true }
+        input = { ...base, kind: 'done', taskId, waitId }
       } else if (verb === 'reopen') {
         const reason = str(body.reason)?.trim().slice(0, 500)
         const message = typeof body.message === 'string' ? body.message : undefined

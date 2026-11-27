@@ -4,7 +4,7 @@ import { planSort, type SortRow } from '../domain/sort.js'
 import type { SessionFacts } from './split-session.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
-import type { DelegationFields } from '../domain/delegation.js'
+import type { DelegationFields, ScheduleFields } from '../domain/delegation.js'
 
 /**
  * Apply a sort of a drifted session (domain/sort.ts plans it): link, create and close as the rows say,
@@ -28,7 +28,7 @@ export interface SortSessionDeps {
   scheduled?(task: ScheduledTask): boolean
 }
 
-type ScheduledTask = { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields } }
+type ScheduledTask = { id: string; properties?: { assignee_ids?: string[]; delegation?: DelegationFields; schedule?: ScheduleFields | null } }
 
 export type SortAnswer =
   | { ok: true; command: TaskCommand }

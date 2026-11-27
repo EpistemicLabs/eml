@@ -138,7 +138,7 @@ describe('next-step check', () => {
 
   it('a task whose schedule has a run coming up has its next step: a repeating time or a wake-up ahead, or one that is due and not fired yet; not a paused one, not one past its end', async () => {
     const check = async (id: string, schedule: Record<string, unknown>, scheduleFacts?: { cursor?: string | null; firedWake?: string | null }) => {
-      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule } } } }, scheduleFacts ? { scheduleFacts } : {})
+      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas' }, schedule } } }, scheduleFacts ? { scheduleFacts } : {})
       w.ledger.recordSpawn(id, null, 'bp-eml', 'claude', true, 't1')
       await w.check.turnEnded(id)
       return w.delivered.length
@@ -157,7 +157,7 @@ describe('next-step check', () => {
 
   it('a repeating time held for the user\'s OK is no next step; the wake-up still is', async () => {
     const check = async (id: string, schedule: Record<string, unknown>) => {
-      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule } } } }, { scheduleFacts: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true } })
+      const w = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas' }, schedule } } }, { scheduleFacts: { cursor: '2026-11-19T10:00:00.000Z', needsOk: true } })
       w.ledger.recordSpawn(id, null, 'bp-eml', 'claude', true, 't1')
       await w.check.turnEnded(id)
       return w.delivered.length
@@ -228,7 +228,7 @@ describe('next-step check', () => {
   })
 
   it('archives a job worker that rescheduled quietly, and keeps one that asks the user', async () => {
-    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-20T10:00:00.000Z' } } } as Record<string, unknown> } }
+    const tasks = { t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas' }, schedule: { at: '2026-11-20T10:00:00.000Z' } } as Record<string, unknown> } }
     const { ledger, check, delivered, quiet } = setup(tasks)
     ledger.recordSpawn('j1-8', null, 'bp-eml', 'claude', true, 't1')
     ledger.setJobId('j1-8', 'job-1')
@@ -310,7 +310,7 @@ describe('next-step check', () => {
     expect(waited.brain.posts).toEqual([])
 
     // next names the agent itself with a time: the check is the task's wake-up by the time the turn ends.
-    const scheduled = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas', schedule: { at: '2026-11-27T10:00:00.000Z' } } } } })
+    const scheduled = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas', delegation: { agent: 'atlas' }, schedule: { at: '2026-11-27T10:00:00.000Z' } } } })
     scheduled.ledger.recordSpawn('w2-16', null, 'bp-eml', 'claude', true, 't1')
     await scheduled.check.turnEnded('w2-16', { endedAt: scheduled.state.now.toISOString(), call: { result: 'No answer yet', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } } })
     expect(scheduled.delivered).toEqual([])

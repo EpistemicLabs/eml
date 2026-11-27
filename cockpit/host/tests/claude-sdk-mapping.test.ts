@@ -304,10 +304,10 @@ describe('the end_turn tool\'s answer', () => {
   it('says what the call lacks and that the check could not be set, and always ends with the reply to come', async () => {
     const call = { result: 'Half way' }
     expect(await endTurnReply(worker({ missing: ['next'] }), call)).toEqual({ text: endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'] }), refused: false })
-    const timed = { result: 'Half way', next: { who: 'me', what: 'look', when: '2028-01-01T10:00' } }
+    const timed = { result: 'Half way', check: { when: '2028-01-01T10:00', why: 'look' } }
     const answer = await endTurnReply(worker({ checkProblem: 'at: at most a year ahead' }), timed)
     expect(answer).toEqual({ text: endTurnAnswer(timed, deriveTurn(timed, ctx), { checkProblem: 'at: at most a year ahead' }), refused: false })
-    expect(answer.text).toMatch(/^Recorded: where the task stands, but no next step\. The check at 2028-01-01T10:00 was NOT set: at most a year ahead\./)
+    expect(answer.text).toMatch(/^Recorded: where the task stands, but nobody has a move\. The check at 2028-01-01T10:00 was NOT set: at most a year ahead\./)
     expect(answer.text.endsWith('Now write your reply as visible text.')).toBe(true)
   })
 

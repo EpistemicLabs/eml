@@ -1,7 +1,10 @@
 /**
- * A task's delegation (brain schema 23; its schedule since 24): the hand-over to an agent that works on it on its own.
+ * A task's delegation (brain schema 23): the hand-over to an agent that works on it on its own.
  *
- *   delegation { agent, checkpoint, requested_at?, schedule? }
+ *   delegation { agent, checkpoint, requested_at? }
+ *
+ * The task's schedule is not part of it (brain schema 25, decision asks-and-check-backs-are-separate): who works on a
+ * task and when someone looks again are separate, and taking a task back from its agent leaves its schedule alone.
  *
  * requested_at is the runner's trigger. A request is open while no run on the task started at or after it, so the
  * status never has to go back to planned to start a task again: it moves forward only (planned → active → closed).
@@ -12,8 +15,9 @@
  */
 
 /**
- * The task's schedule (brain schema 24, domain/task-schedule.ts): repeating times and at most one wake-up. The keys in
- * the order the brain stores them; at least one of crons and at.
+ * The task's schedule (brain schema 24; its own task field since 25, domain/task-schedule.ts): repeating times and at
+ * most one wake-up, which names who it is for. The keys in the order the brain stores them; at least one of crons
+ * and at.
  */
 export interface ScheduleFields {
   /** Repeating times, five-field cron each: 1 to 10, no duplicates. */
@@ -22,6 +26,11 @@ export interface ScheduleFields {
   at?: string
   /** The wake-up's reason, what to do then; only with at. */
   why?: string
+  /**
+   * Who the wake-up is for, a handle; only with at. An agent's wake-up is a run of it on the task; a person's is a
+   * reminder: a do-ask in their Inbox (application/job-runner.ts).
+   */
+  by?: string
   /** The session that set the wake-up; only with at. */
   by_session?: string
   /** The IANA zone the crons are read in. */
@@ -39,13 +48,12 @@ export interface DelegationFields {
   agent?: string
   checkpoint?: string
   requested_at?: string
-  schedule?: ScheduleFields
 }
 
 export interface DelegatedTask {
   status: string
   properties?: {
-    delegation?: DelegationFields | null
+    delegation?: DelegationFields | null; schedule?: ScheduleFields | null
     delegate?: string
     checkpoint?: string
   } | null

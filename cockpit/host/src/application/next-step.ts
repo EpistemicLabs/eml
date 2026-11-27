@@ -1,4 +1,4 @@
-import type { DelegationFields } from '../domain/delegation.js'
+import type { DelegationFields, ScheduleFields } from '../domain/delegation.js'
 import { runComingAt, type ScheduleFacts } from '../domain/task-schedule.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import type { EmlApi } from '@engramprotocol/mcp-server'
@@ -87,7 +87,7 @@ export interface StepFacts {
 interface Task {
   id: string
   status: string
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waits?: unknown; waiting_on?: unknown }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; schedule?: ScheduleFields | null; waits?: unknown; waiting_on?: unknown }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -225,7 +225,7 @@ export function createNextStepCheck(deps: NextStepDeps): NextStepCheck {
       && (!e.worker || deps.working(e.sessionId)))
     // The task's schedule is the truth for its next run; a paused or ended one has none. A time that is due and not
     // fired yet is a run coming up too: the next pass fires it.
-    const nextRunAt = runComingAt(task.properties?.delegation?.schedule, deps.scheduleFacts?.(task.id) ?? {}, now().getTime(), JOB_LIMITS.lateLimitMs)
+    const nextRunAt = runComingAt(task.properties?.schedule, deps.scheduleFacts?.(task.id) ?? {}, now().getTime(), JOB_LIMITS.lateLimitMs)
     const triggers = nextTriggers({ task, owner: deps.owner, sessionId, runStartedAt: deps.runStartedAt(sessionId), jobs: deps.jobsOf(task.id), nextRunAt, otherSession, steps })
 
     if (triggers.length > 0) {

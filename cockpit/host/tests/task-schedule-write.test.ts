@@ -14,66 +14,98 @@ function brainWith(task: ScheduledTask) {
   }
 }
 const daily = { crons: ['0 8 * * *'], time_zone: 'UTC' }
+const DELEGATION = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z' }
 const delegated = (schedule?: Record<string, unknown>): ScheduledTask => ({
-  id: 't1', status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', ...(schedule ? { schedule } : {}) } },
+  id: 't1', status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', delegation: { ...DELEGATION }, ...(schedule ? { schedule } : {}) },
 })
 
 describe('writing a task\'s schedule to the brain', () => {
-  it('reads the task, applies the edit and posts the whole delegation with everything else unchanged', async () => {
+  it('reads the task, applies the edit and posts the task\'s schedule alone: its delegation is not written', async () => {
     const w = brainWith(delegated(daily))
-    const written = await editTaskSchedule(w.brain, 't1', (schedule) => setWake(schedule, { at: '2026-11-27T02:00:00Z', why: 'Look again', bySession: 's1' }))
+    const written = await editTaskSchedule(w.brain, 't1', (schedule) => setWake(schedule, { at: '2026-11-27T02:00:00Z', why: 'Look again', by: 'atlas', bySession: 's1' }))
     expect(w.gets).toEqual(['/engram/t1'])
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: {
-      agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z',
-      schedule: { crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z', why: 'Look again', by_session: 's1', time_zone: 'UTC' },
-    } } }])
-    expect(written).toMatchObject({ changed: true, schedule: { crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z' }, task: { id: 't1' } })
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: {
+      schedule: { crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z', why: 'Look again', by: 'atlas', by_session: 's1', time_zone: 'UTC' },
+    } }])
+    expect(written).toMatchObject({ changed: true, before: daily, schedule: { crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z' }, task: { id: 't1' } })
   })
 
-  it('an edit that leaves no schedule writes the delegation without one, which ends it in the brain', async () => {
+  it('an edit that leaves no schedule writes schedule null, which ends it in the brain; the delegation stays as it is', async () => {
     const w = brainWith(delegated({ at: '2026-11-27T02:00:00.000Z', by_session: 's1' }))
-    const written = await editTaskSchedule(w.brain, 't1', (schedule) => clearWake(schedule, { onlyBySession: 's1' }))
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z' } } }])
-    expect(written).toMatchObject({ changed: true, schedule: null })
+    const written = await editTaskSchedule(w.brain, 't1', (schedule) => clearWake(schedule))
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { schedule: null } }])
+    expect(written).toMatchObject({ changed: true, before: { at: '2026-11-27T02:00:00.000Z', by_session: 's1' }, schedule: null })
   })
 
   it('an edit that changes nothing writes nothing', async () => {
     const w = brainWith(delegated({ at: '2026-11-27T02:00:00.000Z', by_session: 's1' }))
-    const written = await editTaskSchedule(w.brain, 't1', (schedule) => clearWake(schedule, { onlyBySession: 's2' }))
+    const written = await editTaskSchedule(w.brain, 't1', (schedule) => schedule)
     expect(w.posts).toEqual([])
-    expect(written).toMatchObject({ changed: false, schedule: { at: '2026-11-27T02:00:00.000Z', by_session: 's1' } })
+    expect(written).toMatchObject({ changed: false, before: { at: '2026-11-27T02:00:00.000Z', by_session: 's1' }, schedule: { at: '2026-11-27T02:00:00.000Z', by_session: 's1' } })
     await writeTaskSchedule(w.brain, 't1', { by_session: 's1', at: '2026-11-27T02:00:00Z' })
     expect(w.posts).toEqual([])
   })
 
-  it('a journal line and further fields go in the same call, or on their own when the schedule stays', async () => {
+  it('a journal line and further fields go in the same call, or on their own when the schedule stays; a schedule among the fields is not taken', async () => {
     const w = brainWith(delegated(daily))
-    await editTaskSchedule(w.brain, 't1', (schedule) => addCron(schedule, '0 18 * * *'), { text: 'An evening time was added.', fields: { content: 'New text', delegation: { agent: 'someone' } } })
-    expect(w.posts[0].body).toEqual({ content: 'New text', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' } }, text: 'An evening time was added.' })
+    await editTaskSchedule(w.brain, 't1', (schedule) => addCron(schedule, '0 18 * * *'), { text: 'An evening time was added.', fields: { content: 'New text', schedule: { crons: ['0 3 * * *'] } } })
+    expect(w.posts[0].body).toEqual({ content: 'New text', schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' }, text: 'An evening time was added.' })
     await editTaskSchedule(w.brain, 't1', (schedule) => schedule, { text: 'Looked at.' })
     expect(w.posts[1].body).toEqual({ text: 'Looked at.' })
   })
 
-  it('a task without a delegation gets one for the given agent with its schedule; without an agent the write is refused', async () => {
+  it('the journal line may be worked out from the schedule before and after the edit, and whether it changed', async () => {
+    const w = brainWith(delegated(daily))
+    const seen: unknown[] = []
+    const text = (before: unknown, after: unknown, changed: boolean) => { seen.push({ before, after, changed }); return changed ? 'The schedule changed.' : null }
+    const written = await editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true), { text })
+    expect(seen).toEqual([{ before: daily, after: { ...daily, paused: true }, changed: true }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { schedule: { ...daily, paused: true }, text: 'The schedule changed.' } }])
+    expect(written).toMatchObject({ before: daily, schedule: { ...daily, paused: true }, changed: true })
+    // no change and no line: nothing is written
+    await editTaskSchedule(w.brain, 't1', (schedule) => schedule, { text })
+    expect(seen[1]).toEqual({ before: daily, after: daily, changed: false })
+    expect(w.posts).toHaveLength(1)
+  })
+
+  it('fieldsOf works further fields out from the task as read, over the fixed ones', async () => {
+    const w = brainWith(delegated(daily))
+    await editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true), {
+      fields: { content: 'Fixed', goal: 'Kept' }, fieldsOf: (task) => ({ content: `Read as ${task.status}` }),
+    })
+    expect(w.posts[0].body).toEqual({ content: 'Read as active', goal: 'Kept', schedule: { ...daily, paused: true } })
+  })
+
+  it('scheduling never delegates: a task without a delegation gets only its schedule, and nothing is refused for want of an agent', async () => {
     const plain: ScheduledTask = { id: 't1', status: 'active', properties: {} }
     const w = brainWith(plain)
-    await writeTaskSchedule(w.brain, 't1', daily, { agent: 'atlas' })
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', schedule: daily } } }])
-    await expect(writeTaskSchedule(w.brain, 't1', daily)).rejects.toThrow(ScheduleWriteError)
-    // nothing to end on a task without a delegation
+    const written = await writeTaskSchedule(w.brain, 't1', daily)
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { schedule: daily } }])
+    expect(w.posts[0].body).not.toHaveProperty('delegation')
+    expect(written).toMatchObject({ before: null, schedule: daily, changed: true })
+    // nothing to end on a task without a schedule
     await writeTaskSchedule(w.brain, 't1', null)
     expect(w.posts).toHaveLength(1)
   })
 
-  it('a delegation written only flat (before schema 23) is carried as agent and checkpoint', () => {
-    expect(scheduleWrite({ id: 't1', status: 'active', properties: { delegate: 'atlas', checkpoint: 'none' } }, daily)).toEqual({ delegation: { agent: 'atlas', checkpoint: 'none', schedule: daily } })
+  it('the body of the write is the schedule alone, also for a task delegated only flat (before schema 23); null when nothing changes', () => {
+    expect(scheduleWrite({ id: 't1', status: 'active', properties: { delegate: 'atlas', checkpoint: 'none' } }, daily)).toEqual({ schedule: daily })
+    expect(scheduleWrite({ id: 't1', status: 'active', properties: {} }, { at: '2026-11-27T02:00:00Z', by: 'atlas' })).toEqual({ schedule: { at: '2026-11-27T02:00:00.000Z', by: 'atlas' } })
+    expect(scheduleWrite(delegated(daily), null)).toEqual({ schedule: null })
     expect(scheduleWrite(delegated(daily), daily)).toBeNull()
+    expect(scheduleWrite({ id: 't1', status: 'active', properties: {} }, null)).toBeNull()
+  })
+
+  it('a schedule still in the delegation (before schema 25) is not the task\'s: the write gives the task its own field and leaves the delegation alone', () => {
+    const old = { id: 't1', status: 'active', properties: { delegation: { agent: 'atlas', schedule: daily } } } as unknown as ScheduledTask
+    expect(scheduleWrite(old, daily)).toEqual({ schedule: daily })
   })
 
   it('the edit sees the task, and an edit that throws writes nothing', async () => {
     const w = brainWith(delegated(daily))
     await expect(editTaskSchedule(w.brain, 't1', (schedule, task) => addCron(schedule, task.status === 'active' ? 'not a cron' : '0 9 * * *'))).rejects.toThrow('cron:')
     expect(w.posts).toEqual([])
+    expect(ScheduleChangedError.prototype).toBeInstanceOf(ScheduleWriteError)
   })
 })
 
@@ -94,11 +126,11 @@ function slowBrain(task: ScheduledTask & { rev?: number }, opts: { conflicts?: n
           conflicts -= 1
           // someone else wrote the task in between
           state.rev = (state.rev ?? 0) + 1
-          state.properties = { ...state.properties, delegation: { ...state.properties!.delegation!, checkpoint: 'before' } }
+          state.properties = { ...state.properties, schedule: { ...state.properties!.schedule!, at: '2026-11-28T09:00:00.000Z' } }
           throw Object.assign(new Error('the engram changed since it was read'), { status: 409 })
         }
         if (typeof body.base_rev === 'number' && body.base_rev !== state.rev) throw Object.assign(new Error('the engram changed since it was read'), { status: 409 })
-        if (body.delegation) state.properties = { ...state.properties, delegation: body.delegation as never }
+        if ('schedule' in body) state.properties = { ...state.properties, schedule: body.schedule as never }
         if (typeof state.rev === 'number') state.rev += 1
         return {}
       },
@@ -114,11 +146,12 @@ describe('schedule writes of one task never overlap', () => {
       editTaskSchedule(w.brain, 't1', (schedule) => setWake(schedule, { at: '2026-11-27T02:00:00Z', why: 'Look again' })),
       editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true), { text: 'The owner paused its schedule.' }),
     ])
-    expect(w.state.properties?.delegation?.schedule).toEqual({ crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z', why: 'Look again', time_zone: 'UTC', paused: true })
+    expect(w.state.properties?.delegation).toEqual(DELEGATION)
+    expect(w.state.properties?.schedule).toEqual({ crons: ['0 8 * * *'], at: '2026-11-27T02:00:00.000Z', why: 'Look again', time_zone: 'UTC', paused: true })
     expect(woken.schedule).not.toHaveProperty('paused')
     expect(paused.schedule).toMatchObject({ at: '2026-11-27T02:00:00.000Z', paused: true })
     // in the order they were asked for, one after the other
-    expect(w.posts.map((body) => Object.keys((body.delegation as { schedule: object }).schedule).includes('paused'))).toEqual([false, true])
+    expect(w.posts.map((body) => Object.keys(body.schedule as object).includes('paused'))).toEqual([false, true])
   })
 
   it('writes to different tasks do not wait for each other, and a write that fails holds nothing up', async () => {
@@ -143,7 +176,8 @@ describe('schedule writes of one task never overlap', () => {
     const written = await editTaskSchedule(w.brain, 't1', (schedule) => setPaused(schedule, true))
     expect(w.posts.map((body) => body.base_rev)).toEqual([7, 8])
     // the second try wrote onto what the other writer had left
-    expect(w.posts[1].delegation).toMatchObject({ checkpoint: 'before', schedule: { paused: true } })
+    expect(w.posts[1]).toMatchObject({ schedule: { at: '2026-11-28T09:00:00.000Z', paused: true }, base_rev: 8 })
+    expect(w.posts[1]).not.toHaveProperty('delegation')
     expect(written).toMatchObject({ changed: true, schedule: { paused: true } })
     // a task that keeps changing: the second conflict is the caller's to see
     const busy = slowBrain({ ...delegated(daily), rev: 7 }, { conflicts: 2 })
@@ -161,7 +195,7 @@ describe('schedule writes of one task never overlap', () => {
     expect(kept).toMatchObject({ changed: false, schedule: daily })
     expect(w.posts).toEqual([])
     await editTaskSchedule(w.brain, 't1', () => null, { text: 'Its schedule was removed.', onlyWithChange: true })
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z' }, text: 'Its schedule was removed.' } }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { schedule: null, text: 'Its schedule was removed.' } }])
   })
 
   it('baseRev: the write is made only on the task as it was read by the caller; a task that changed since is not written, and not read again for another try', async () => {

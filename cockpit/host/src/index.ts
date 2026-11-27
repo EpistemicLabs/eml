@@ -54,7 +54,7 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createTurnContexts, endTurnAccess } from './application/turn-context.js'
 import { createTurnWake } from './application/turn-wake.js'
-import { checkPrompt, resultOfTurn } from './domain/turn-end.js'
+import { resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
 import { createContinueSession } from './application/continue-session.js'
 import { createWorkerTask, createWorkerTaskHolds, type WorkerTaskInput } from './application/worker-task.js'
@@ -82,6 +82,7 @@ import { JobRunner, runProjectOf, type RunnerSpace, type RunnerTask } from './ap
 import { sessionsOnTask } from './domain/firing-order.js'
 import { createTaskRecords } from './application/task-record.js'
 import { editTaskSchedule } from './application/task-schedule-write.js'
+import { fireReminder } from './application/reminder.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
 import { resolveProject, type SpawnOutcome } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
@@ -631,11 +632,12 @@ async function main() {
     const answer: JobAnswer = await scheduleTool.handle(caller, input)
     return answer.status >= 400 ? `Not done: ${answer.text}` : answer.text
   }
-  // When an end_turn call is read and the zone its next.when is read in.
+  // When an end_turn call is read and the zone its check.when is read in.
   const callTime = () => ({ now: Date.now(), zone: userTimeZone() })
-  // A call's next.when sets the wake-up of the session's task; a call without one clears it (application/turn-wake.ts).
-  const settleTurnWake: NonNullable<RecordEndTurnDeps['turnWake']> = (sessionId, { edit, call, turn }) =>
-    turnWake.settle(sessionId, { edit, why: checkPrompt(call, turn.ctx) })
+  // A call's check sets the wake-up of the session's task, check "none" removes it, a call without one keeps it
+  // (application/turn-wake.ts). The wake-up is for the session's agent.
+  const settleTurnWake: NonNullable<RecordEndTurnDeps['turnWake']> = (sessionId, { edit, turn }) =>
+    turnWake.settle(sessionId, { edit, by: turn.ctx.agent })
   // The models each agent's last chat offered, for the launchers' picker (GET /api/providers/models).
   const reportedModels = new ReportedModels(CHAT_MODELS_FILE)
   const chat = new ChatBridge({
@@ -836,7 +838,13 @@ async function main() {
     editSchedule: async (space, taskId, edit, text) => {
       const brain = brainOfRunnerSpace(space)
       if (!brain) throw new Error('its space has no agent')
-      await editTaskSchedule(brain, taskId, edit, { agent: spaces.resolve(space.key).agent, ...(text ? { text } : {}) })
+      await editTaskSchedule(brain, taskId, edit, text ? { text } : {})
+      void taskBoard.refresh().catch(() => {})
+    },
+    remind: async (space, taskId, reminder) => {
+      const brain = brainOfRunnerSpace(space)
+      if (!brain) throw new Error('its space has no agent')
+      await fireReminder(brain, taskId, { ...reminder, zone: userTimeZone(), now: new Date().toISOString() })
       void taskBoard.refresh().catch(() => {})
     },
     hasRoom: (): boolean => startWorker.hasRoom(),

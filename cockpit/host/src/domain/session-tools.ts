@@ -71,6 +71,8 @@ export const scheduleToolDescription = (zone?: string) => 'Schedule work for lat
   + 'The task: task_id (one that exists), or target self (the task this session works on); without either a new task is made from name and prompt, in project (by default this one\'s). '
   + 'A run reads the task, so the prompt goes into it: a repeating time\'s as its own paragraph of the task\'s text, a wake-up\'s as its reason. Write it so it stands alone (what to do, where, and what to report). '
   + 'A repeating time starts a new session per run; a wake-up continues the session that set it if that session works on the task. '
+  + 'by: who the wake-up is for. Leave it out for yourself: the cockpit runs you on the task then. Name the user\'s handle for a reminder: at the time the task lands in their Inbox as their move. '
+  + 'A wake-up stays until it fires, you remove it (update, finish) or the task closes: handing the task over or ending a turn does not remove it. '
   + 'update: cron replaces the task\'s repeating times with that one, at replaces its wake-up. '
   + 'For work that answers mail, pass mail: { domains, addresses } (with or without a time): the task is then started when such mail arrives. '
   + 'It reacts only after the user\'s OK on the task in the cockpit, and its replies are drafts the user approves; you cannot change either. '
@@ -93,6 +95,7 @@ const SCHEDULE_TOOL_INPUT = {
   max_runs: z.number().int().optional(),
   ends_at: z.string().optional(),
   task_id: z.string().optional().describe('The task that gets the time.'),
+  by: z.string().optional().describe('Who the wake-up (at) is for: yourself (default) or the user\'s handle for a reminder in their Inbox.'),
   goal: z.string().optional().describe('What has to be true for the task to be done; set when the task has none.'),
   deny_tools: z.array(z.string()).optional(),
   notify: z.enum(['needs-me', 'always', 'never']).optional(),

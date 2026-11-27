@@ -25,7 +25,7 @@ describe('what a session reads about its task', () => {
     expect(text).toContain('tells you explicitly in the chat to close it')
     expect(text).toContain('not when its PR is open or merged')
     expect(text).not.toContain('A task with checkpoint after you only close once')
-    expect(text).toContain('Hand the result over for review (next names the owner); its owner closes it')
+    expect(text).toContain('Hand the result over for review (an ask for the owner, kind review); its owner closes it')
   })
 
   it('names the user\'s time zone and its offset, in a chat and in the terminal fallback', async () => {
@@ -67,8 +67,10 @@ describe('what a session reads about its task', () => {
     for (const worker of [false, true]) {
       const text = taskContext(handed, false, WHO, worker)
       expect(text).toContain('## Until it is done')
-      expect(text).toContain('- Reached: hand the result over for review (next names the owner). Do not close it yourself.')
-      expect(text).toContain('- Not reached: name yourself as next, with the time you look again (when); a task that has a next run from its schedule needs no time. The cockpit wakes you then: a simple check needs no schedule tool call.')
+      expect(text).toContain('- Reached: hand the result over for review (an ask for the owner, kind review). Do not close it yourself.')
+      expect(text).toContain('- Not reached: set a check with the time you look again (check.when); a task that keeps a wake-up, or has a next run from its schedule, needs none. The cockpit wakes you then: a simple check needs no schedule tool call.')
+      // The owner's own step is an ask of kind do, and the check stays next to it.
+      expect(text).toContain('ask them for it (kind do) and keep your check: it shows as their move, and their Done wakes you.')
       expect(taskContext(own, false, WHO, worker)).not.toContain('## Until it is done')
     }
   })
@@ -86,7 +88,10 @@ describe('what a session reads about its task', () => {
       const text = taskContext({ id: 't1', title: 'daily-brief', content: 'Write it.', status: 'active', properties: { checkpoint, delegate: 'atlas' } } as never, false, WHO, true)
       const closing = text.split('\n').find((line) => line.startsWith('- Closing:'))!
       expect(closing).toContain('A task with checkpoint none, or one an agent owns, you close yourself when it is done.')
-      expect(closing.endsWith('A task whose schedule is still on (it has a repeating time or a wake-up: a routine, a mission that checks back) no run closes, whatever its checkpoint: once its goal is reached, end its schedule first, then hand the result over for review (next names the owner): repeating times you end with the schedule tool (action finish), a wake-up the cockpit clears with the hand-over; its owner closes it.')).toBe(true)
+      expect(closing).toContain('A task with repeating times (a routine) no run closes, whatever its checkpoint: once its goal is reached, end its repeating times first with the schedule tool (action finish), then hand the result over for review (an ask for the owner, kind review); a wake-up needs no step of yours: it ends when the task closes; its owner closes it.')
+      // A wake-up alone keeps no task open; a hand-over does not clear it, the task's end does.
+      expect(closing.endsWith('A wake-up (a check-back) keeps no task open: it ends when the task closes.')).toBe(true)
+      expect(closing).not.toContain('clears with the hand-over')
     }
   })
 

@@ -1,50 +1,95 @@
 import { describe, expect, it } from 'vitest'
 import { parseHandoff } from '../src/domain/handoff.js'
 import {
-  BEFORE_IDLE_STOP, END_TURN_DESCRIPTION, END_TURN_TOOL, endTurnDescription, JOB_HEADER_STATUS, checkPrompt, deriveTurn, endTurnAnswer,
-  fromHandoff, handoffBlock, missingOf, passedWhen, readEndTurn, reminder, resultOfTurn, shortQuestion, turnEndRules, untilDoneRules, wakeEditOf, whoOf, withoutOutside, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing, userZoneLine,
+  BEFORE_IDLE_STOP, END_SCHEDULE_FIRST, END_TURN_DESCRIPTION, END_TURN_TOOL, FOR_REVIEW, endTurnDescription, JOB_HEADER_STATUS, askAndCheckOf, checkPrompt, deriveTurn, endTurnAnswer,
+  fromHandoff, handoffBlock, missingOf, passedWhen, readAskLine, readCheckLine, readEndTurn, reminder, resultOfTurn, shortQuestion, storedDue, turnEndRules, untilDoneRules, wakeEditOf, whoOf, withoutOutside, statusAnswer, LEGACY_STATUS_DESCRIPTION, type EndTurn, type Missing, userZoneLine,
 } from '../src/domain/turn-end.js'
 import { zoneLabel } from '../src/domain/schedule.js'
 
 const ctx = { owner: 'kim', agent: 'nova', members: ['kim', 'sam', 'echo', 'nova'] }
 const WHEN = '2026-11-27T10:00'
+const REPLY = 'Now write your reply as visible text.'
+const prompt = (why: string) => `The check you set with end_turn is due. ${why} See where the task stands and act on it.`
 
 describe('reading an end_turn call', () => {
+  const error = (raw: unknown) => { const read = readEndTurn(raw); return read.ok ? '' : read.error }
+
   it('trims and drops empty fields', () => {
-    const read = readEndTurn({ result: '  PR is open.  ', next: { who: ' @Sam ', what: ' merges it ', when: '' }, questions: [' ', 'Ship it? '], failed: '', checked: ' CI ', claimed: '  ' })
-    expect(read).toEqual({ ok: true, call: { result: 'PR is open.', next: { who: 'Sam', what: 'merges it' }, questions: ['Ship it?'], checked: 'CI' } })
+    const read = readEndTurn({ result: '  PR is open.  ', ask: { who: ' @Sam ', what: ' merges it ', kind: '', due: '' }, questions: [' ', 'Ship it? '], failed: '', checked: ' CI ', claimed: '  ' })
+    expect(read).toEqual({ ok: true, call: { result: 'PR is open.', ask: { who: 'Sam', what: 'merges it' }, questions: ['Ship it?'], checked: 'CI' } })
   })
 
-  it('drops a next that names nothing', () => {
-    expect(readEndTurn({ result: 'Done.', next: { who: ' ', what: '' } })).toEqual({ ok: true, call: { result: 'Done.' } })
+  it('reads an ask with its kind and due, and a check with its time and reason', () => {
+    expect(readEndTurn({ result: 'Form ready.', ask: { who: 'kim', what: 'Sign it.', kind: ' DO ', due: '2026-11-28' }, check: { when: ` ${WHEN} `, why: ' Signed? ' } }))
+      .toEqual({ ok: true, call: { result: 'Form ready.', ask: { who: 'kim', what: 'Sign it.', kind: 'do', due: '2026-11-28' }, check: { when: WHEN, why: 'Signed?' } } })
+    expect(readEndTurn({ result: 'x', ask: { who: 'kim', what: 'Read it.', kind: 'review', due: '2026-11-28T17:00' } }))
+      .toEqual({ ok: true, call: { result: 'x', ask: { who: 'kim', what: 'Read it.', kind: 'review', due: '2026-11-28T17:00' } } })
+    // A check without a reason is kept; the cockpit writes one for it (askAndCheckOf).
+    expect(readEndTurn({ result: 'x', check: { when: WHEN } })).toEqual({ ok: true, call: { result: 'x', check: { when: WHEN, why: '' } } })
+    expect(readEndTurn({ result: 'x', check: { when: '2026-11-27T10:00:00+01:00', why: 'y' } }).ok).toBe(true)
+  })
+
+  it('reads check "none" as removing the wake-up, and a call without check as keeping it', () => {
+    expect(readEndTurn({ result: 'x', check: 'none' })).toEqual({ ok: true, call: { result: 'x', check: 'none' } })
+    expect(readEndTurn({ result: 'x', check: ' None ' })).toEqual({ ok: true, call: { result: 'x', check: 'none' } })
+    expect(readEndTurn({ result: 'x' })).toEqual({ ok: true, call: { result: 'x' } })
+  })
+
+  it('drops an ask that names nothing', () => {
+    expect(readEndTurn({ result: 'Done.', ask: { who: ' ', what: '' } })).toEqual({ ok: true, call: { result: 'Done.' } })
   })
 
   it('refuses a call it cannot record and says why', () => {
-    const error = (raw: unknown) => { const read = readEndTurn(raw); return read.ok ? '' : read.error }
     expect(error({ result: ' ' })).toContain('result is missing')
     expect(error(null)).toContain('result is missing')
-    expect(error({ result: 'x', next: { what: 'review' } })).toContain('next.who is missing')
-    expect(error({ result: 'x', next: { who: 'outside: ', what: 'answers' } })).toContain('without a name')
-    expect(error({ result: 'x', next: { who: 'me', what: 'check', when: 'tomorrow' } })).toBe('Not recorded: next.when "tomorrow" is not a time. Write it as YYYY-MM-DDTHH:MM. Call end_turn again.')
-    expect(readEndTurn({ result: 'x', next: { who: 'me', what: 'check', when: '2026-11-27T10:00:00+01:00' } }).ok).toBe(true)
+    expect(error({ result: 'x', ask: { what: 'review' } })).toBe('Not recorded: ask.who is missing (the handle of the user, or of another member or agent; outside:<name> for someone outside the space). Call end_turn again.')
+    expect(error({ result: 'x', ask: { kind: 'do' } })).toContain('ask.who is missing')
+    expect(error({ result: 'x', ask: { due: '2026-11-28' } })).toContain('ask.who is missing')
+    expect(error({ result: 'x', ask: { who: 'outside: ', what: 'answers' } })).toContain('without a name')
+    for (const self of ['me', 'self', 'agent', 'Myself', '@me']) {
+      expect(error({ result: 'x', ask: { who: self, what: 'look again' } }), self).toBe('Not recorded: ask.who is yourself: a step of your own is a check (check.when), or keep working. Call end_turn again.')
+    }
+    expect(error({ result: 'x', ask: { who: 'kim', what: 'x', kind: 'later' } })).toBe('Not recorded: ask.kind "later" is neither do nor review. Call end_turn again.')
+    expect(error({ result: 'x', ask: { who: 'kim', what: 'x', due: 'friday' } })).toBe('Not recorded: ask.due "friday" is not a date. Write it as YYYY-MM-DD or YYYY-MM-DDTHH:MM. Call end_turn again.')
+    expect(error({ result: 'x', ask: { who: 'kim', what: 'x', due: '2026-13-45' } })).toContain('ask.due "2026-13-45" is not a date')
+    expect(error({ result: 'x', check: { why: 'look' } })).toBe('Not recorded: check.when is missing (the time you look again, as YYYY-MM-DDTHH:MM in the user\'s time zone); to remove the wake-up, pass check "none". Call end_turn again.')
+    expect(error({ result: 'x', check: { when: 'tomorrow', why: 'look' } })).toBe('Not recorded: check.when "tomorrow" is not a time. Write it as YYYY-MM-DDTHH:MM. Call end_turn again.')
   })
 
-  it('refuses a time that has passed, read in the user\'s zone', () => {
+  it('keeps the older next of a session started before 0.25 when the call has neither ask nor check', () => {
+    expect(readEndTurn({ result: 'x', next: { who: ' @Sam ', what: ' merges it ', when: '' } })).toEqual({ ok: true, call: { result: 'x', next: { who: 'Sam', what: 'merges it' } } })
+    expect(readEndTurn({ result: 'x', next: { who: 'me', what: 'look', when: WHEN } })).toEqual({ ok: true, call: { result: 'x', next: { who: 'me', what: 'look', when: WHEN } } })
+    expect(error({ result: 'x', next: { who: 'me', what: 'check', when: 'tomorrow' } })).toBe('Not recorded: next.when "tomorrow" is not a time. Write it as YYYY-MM-DDTHH:MM. Call end_turn again.')
+    expect(error({ result: 'x', next: { who: 'outside: ', what: 'answers' } })).toContain('next.who is outside: without a name')
+    // A next that names nobody is dropped.
+    expect(readEndTurn({ result: 'Done.', next: { who: ' ', what: '' } })).toEqual({ ok: true, call: { result: 'Done.' } })
+    // Next next to an ask or a check is not read: the new fields say it.
+    expect(readEndTurn({ result: 'x', ask: { who: 'kim', what: 'Read it.' }, next: { who: 'sam', what: 'y', when: WHEN } })).toEqual({ ok: true, call: { result: 'x', ask: { who: 'kim', what: 'Read it.' } } })
+    expect(readEndTurn({ result: 'x', check: 'none', next: { who: 'sam', what: 'y', when: 'bad' } })).toEqual({ ok: true, call: { result: 'x', check: 'none' } })
+  })
+
+  it('refuses a check that has passed, read in the user\'s zone', () => {
     const at = { now: Date.parse('2026-11-27T09:00:00Z'), zone: 'Europe/Berlin' }
-    const call = (when?: string) => ({ next: { who: 'me', what: 'check', ...(when ? { when } : {}) } })
+    const check = (when: string) => ({ check: { when, why: 'look' } })
     // 09:30 in Berlin is 08:30 UTC: half an hour ago.
-    expect(passedWhen(call('2026-11-27T09:30'), at)).toBe('next.when "2026-11-27T09:30" has passed (read in Europe/Berlin); name a time that is still to come')
+    expect(passedWhen(check('2026-11-27T09:30'), at, ctx)).toBe('check.when "2026-11-27T09:30" has passed (read in Europe/Berlin); name a time that is still to come')
     // The moment itself has passed too.
-    expect(passedWhen(call('2026-11-27T10:00'), at)).not.toBeNull()
-    expect(passedWhen(call('2026-11-27T09:00:00Z'), at)).not.toBeNull()
-    expect(passedWhen(call('2026-11-27T10:01'), at)).toBeNull()
-    expect(passedWhen(call(), at)).toBeNull()
-    expect(passedWhen({}, at)).toBeNull()
+    expect(passedWhen(check('2026-11-27T10:00'), at, ctx)).not.toBeNull()
+    expect(passedWhen(check('2026-11-27T09:00:00Z'), at, ctx)).not.toBeNull()
+    expect(passedWhen(check('2026-11-27T10:01'), at, ctx)).toBeNull()
+    expect(passedWhen({ check: 'none' }, at, ctx)).toBeNull()
+    expect(passedWhen({}, at, ctx)).toBeNull()
+    // An ask has no time to pass: its due may lie in the past.
+    expect(passedWhen({ ask: { who: 'kim', what: 'sign', kind: 'do', due: '2020-01-01' } }, at, ctx)).toBeNull()
+    // The older next: a passed time of its own, and one for the owner, which stands for a check too.
+    expect(passedWhen({ next: { who: 'me', what: 'check', when: '2026-11-27T09:30' } }, at, ctx)).toBe('next.when "2026-11-27T09:30" has passed (read in Europe/Berlin); name a time that is still to come')
+    expect(passedWhen({ next: { who: 'kim', what: 'sign', when: '2026-11-27T09:30' } }, at, ctx)).not.toBeNull()
+    expect(passedWhen({ next: { who: 'kim', what: 'read it' } }, at, ctx)).toBeNull()
   })
 
   it('names the user\'s time zone where a session reads how to write a time', () => {
     const zone = 'Asia/Bangkok (UTC+7)'
-    expect(endTurnDescription(zone)).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7); required unless who is the user")
+    expect(endTurnDescription(zone)).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7). why:")
     expect(turnEndRules({ owner: 'kim', tool: true, zone })).toContain("Times: the user's time zone is Asia/Bangkok (UTC+7).")
     expect(turnEndRules({ owner: 'kim', tool: true })).not.toContain('Times:')
     expect(zoneLabel('Asia/Bangkok')).toBe(zone)
@@ -53,11 +98,17 @@ describe('reading an end_turn call', () => {
     expect(zoneLabel('UTC')).toBe('UTC (UTC)')
   })
 
-  it('refuses a time that has passed in the user\'s zone while the process runs in UTC', () => {
+  it('refuses a check that has passed in the user\'s zone while the process runs in UTC', () => {
     // 08:00 UTC is 15:00 in Bangkok: 14:59 there has passed, though 14:59 UTC has not.
     const at = { now: Date.parse('2026-11-25T08:00:00Z'), zone: 'Asia/Bangkok' }
-    expect(passedWhen({ next: { who: 'me', what: 'check', when: '2026-11-25T14:59' } }, at)).toContain('(read in Asia/Bangkok)')
-    expect(passedWhen({ next: { who: 'me', what: 'check', when: '2026-11-25T15:01' } }, at)).toBeNull()
+    expect(passedWhen({ check: { when: '2026-11-25T14:59', why: 'look' } }, at, ctx)).toContain('(read in Asia/Bangkok)')
+    expect(passedWhen({ check: { when: '2026-11-25T15:01', why: 'look' } }, at, ctx)).toBeNull()
+  })
+
+  it('keeps a due as the task keeps it: a date as written, a date and time as the instant in the user\'s zone', () => {
+    expect(storedDue('2026-11-28', 'Asia/Bangkok')).toBe('2026-11-28')
+    expect(storedDue('2026-11-28T17:00', 'Asia/Bangkok')).toBe('2026-11-28T10:00:00.000Z')
+    expect(storedDue('2026-11-28T17:00', 'UTC')).toBe('2026-11-28T17:00:00.000Z')
   })
 
   it('knows whom a who names', () => {
@@ -78,116 +129,162 @@ describe('reading an end_turn call', () => {
   })
 })
 
+describe('the ask and the check a call stands for', () => {
+  it('takes a call of 0.25 as it is, and gives a check without a reason the one the cockpit writes', () => {
+    const ask = { who: 'kim', what: 'Sign it.', kind: 'do' as const }
+    expect(askAndCheckOf({ ask, check: { when: WHEN, why: 'Signed?' } }, ctx)).toEqual({ ask, check: { when: WHEN, why: 'Signed?' } })
+    expect(askAndCheckOf({ ask, check: { when: WHEN, why: '' } }, ctx)).toEqual({ ask, check: { when: WHEN, why: prompt('You asked kim to: Sign it.') } })
+    expect(askAndCheckOf({ check: 'none' }, ctx)).toEqual({ check: 'none' })
+    expect(askAndCheckOf({}, ctx)).toEqual({})
+  })
+
+  it('the older next for yourself with a time is a check, and without one nothing', () => {
+    expect(askAndCheckOf({ next: { who: 'me', what: 'Look at the deploy.', when: WHEN } }, ctx)).toEqual({ check: { when: WHEN, why: prompt('You planned: Look at the deploy.') } })
+    expect(askAndCheckOf({ next: { who: 'nova', what: 'Look at the deploy.', when: WHEN } }, ctx)).toEqual({ check: { when: WHEN, why: prompt('You planned: Look at the deploy.') } })
+    expect(askAndCheckOf({ next: { who: 'me', what: 'Look at the deploy.' } }, ctx)).toEqual({})
+  })
+
+  it('the older next for the owner with a time is a do ask and a check: their step, and the agent looks again', () => {
+    expect(askAndCheckOf({ next: { who: 'kim', what: 'Sign it.', when: WHEN } }, ctx))
+      .toEqual({ ask: { who: 'kim', what: 'Sign it.', kind: 'do' }, check: { when: WHEN, why: prompt('You asked kim to: Sign it.') } })
+    expect(askAndCheckOf({ next: { who: 'user', what: 'Sign it.', when: WHEN } }, ctx).ask).toEqual({ who: 'kim', what: 'Sign it.', kind: 'do' })
+  })
+
+  it('the older next for the owner without a time is a review ask', () => {
+    expect(askAndCheckOf({ next: { who: 'kim', what: 'Read the draft.' } }, ctx)).toEqual({ ask: { who: 'kim', what: 'Read the draft.', kind: 'review' } })
+  })
+
+  it('the older next for anyone else is an ask on them as written, and a check when it has a time', () => {
+    expect(askAndCheckOf({ next: { who: 'sam', what: 'Merges the PR.', when: WHEN } }, ctx))
+      .toEqual({ ask: { who: 'sam', what: 'Merges the PR.' }, check: { when: WHEN, why: prompt('You waited on sam: Merges the PR.') } })
+    expect(askAndCheckOf({ next: { who: 'outside:Acme', what: 'Answers.' } }, ctx)).toEqual({ ask: { who: 'outside:Acme', what: 'Answers.' } })
+  })
+})
+
 describe('what a call means (the first match wins)', () => {
   const base: EndTurn = { result: 'The export is fixed.' }
+  const keep = { kind: 'keep' }
+  const setAt = (why: string) => ({ kind: 'set', when: WHEN, why })
 
-  it('1: failed stops the task for the owner, whatever else is set', () => {
-    expect(deriveTurn({ ...base, failed: 'No access to the shop.', questions: ['Why?'], next: { who: 'kim', what: 'x', when: WHEN } }, ctx))
-      .toEqual({ status: 'failed', wait: { who: 'kim', kind: 'stopped', why: 'No access to the shop.' }, checkAt: null })
+  it('1: failed stops the task for the owner, whatever else is set, and keeps the call\'s wake-up edit', () => {
+    expect(deriveTurn({ ...base, failed: 'No access to the shop.', questions: ['Why?'], ask: { who: 'kim', what: 'x' } }, ctx))
+      .toEqual({ status: 'failed', wait: { who: 'kim', kind: 'stopped', why: 'No access to the shop.' }, wake: keep })
+    expect(deriveTurn({ ...base, failed: 'No access.', check: { when: WHEN, why: 'Try again.' } }, ctx).wake).toEqual(setAt('Try again.'))
+    expect(deriveTurn({ ...base, failed: 'No access.', check: 'none' }, ctx).wake).toEqual({ kind: 'remove' })
   })
 
-  it('2: questions are a question for the owner, a go when the checkpoint is before', () => {
-    const call = { ...base, questions: ['Ship it today? It is ready.', 'Which price?'], next: { who: 'sam', what: 'x', when: WHEN } }
-    expect(deriveTurn(call, ctx)).toEqual({ status: 'question', wait: { who: 'kim', kind: 'question', why: 'Ship it today? · Which price?' }, checkAt: WHEN })
-    // The check goes with a step that is not the owner's; questions with a step for the owner set none.
-    expect(deriveTurn({ ...base, questions: ['Go?'], next: { who: 'me', what: 'x', when: WHEN } }, ctx).checkAt).toBe(WHEN)
-    expect(deriveTurn({ ...base, questions: ['Go?'], next: { who: 'kim', what: 'x', when: WHEN } }, ctx).checkAt).toBeNull()
-    expect(deriveTurn({ ...base, questions: ['Go?'] }, { ...ctx, checkpoint: 'before' })).toEqual({ status: 'question', wait: { who: 'kim', kind: 'go', why: 'Go?' }, checkAt: null })
+  it('2: questions are a question for the owner, a go when the checkpoint is before, and keep the call\'s wake-up edit', () => {
+    const call: EndTurn = { ...base, questions: ['Ship it today? It is ready.', 'Which price?'], check: { when: WHEN, why: 'Answered?' } }
+    expect(deriveTurn(call, ctx)).toEqual({ status: 'question', wait: { who: 'kim', kind: 'question', why: 'Ship it today? · Which price?' }, wake: setAt('Answered?') })
+    expect(deriveTurn({ ...base, questions: ['Go?'] }, ctx).wake).toEqual(keep)
+    expect(deriveTurn({ ...base, questions: ['Go?'], check: 'none' }, ctx).wake).toEqual({ kind: 'remove' })
+    expect(deriveTurn({ ...base, questions: ['Go?'] }, { ...ctx, checkpoint: 'before' })).toEqual({ status: 'question', wait: { who: 'kim', kind: 'go', why: 'Go?' }, wake: keep })
   })
 
-  it('3: next for the owner is a review', () => {
-    expect(deriveTurn({ ...base, next: { who: 'kim', what: 'Read the draft.' } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Read the draft.' }, checkAt: null })
-    // A hand-over sets no check, also with a time: the review has to be able to close the task.
-    expect(deriveTurn({ ...base, next: { who: 'kim', what: '', when: WHEN } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Review: The export is fixed.' }, checkAt: null })
-    expect(deriveTurn({ ...base, next: { who: 'user', what: 'Read it.', when: WHEN } }, ctx).checkAt).toBeNull()
+  it('3: an ask for the owner of kind do is their move: a wait of kind do, and the wake-up is kept', () => {
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: 'Sign the form.', kind: 'do' } }, ctx))
+      .toEqual({ status: 'review', wait: { who: 'kim', kind: 'do', why: 'Sign the form.' }, wake: keep })
+    expect(deriveTurn({ ...base, ask: { who: 'user', what: '', kind: 'do', due: '2026-11-28' } }, ctx).wait).toEqual({ who: 'kim', kind: 'do', why: 'The export is fixed.', due: '2026-11-28' })
   })
 
-  it('4: next for another member or agent waits on them like on someone outside: no review lands in their Inbox', () => {
-    expect(deriveTurn({ ...base, next: { who: 'Sam', what: 'Merges the PR.', when: WHEN } }, ctx)).toEqual({ status: 'done', wait: { who: 'sam', kind: 'outside', why: 'Merges the PR.' }, checkAt: WHEN })
-    expect(deriveTurn({ ...base, next: { who: 'echo', what: '', when: WHEN } }, ctx).wait).toEqual({ who: 'echo', kind: 'outside', why: 'The export is fixed.' })
+  it('4: an ask for the owner without a kind, or of kind review, is a review', () => {
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: 'Read the draft.' } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Read the draft.' }, wake: keep })
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: '', kind: 'review' } }, ctx).wait).toEqual({ who: 'kim', kind: 'review', why: 'Review: The export is fixed.' })
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: 'Read it.', due: '2026-11-28T10:00:00.000Z' } }, ctx).wait).toMatchObject({ kind: 'review', due: '2026-11-28T10:00:00.000Z' })
   })
 
-  it('5: next for someone outside waits on them by name', () => {
-    expect(deriveTurn({ ...base, next: { who: 'outside:Acme', what: 'Sends the file.', when: WHEN } }, ctx)).toEqual({ status: 'done', wait: { who: 'Acme', kind: 'outside', why: 'Sends the file.' }, checkAt: WHEN })
-    expect(deriveTurn({ ...base, next: { who: 'the supplier', what: 'Answers.', when: WHEN } }, ctx).wait).toEqual({ who: 'the supplier', kind: 'outside', why: 'Answers.' })
+  it('5: an ask for the owner with a check sets the wake-up next to the wait; with check "none" it removes it', () => {
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: 'Sign it.', kind: 'do' }, check: { when: WHEN, why: 'Signed?' } }, ctx))
+      .toEqual({ status: 'review', wait: { who: 'kim', kind: 'do', why: 'Sign it.' }, wake: setAt('Signed?') })
+    expect(deriveTurn({ ...base, ask: { who: 'kim', what: 'Read it.' }, check: 'none' }, ctx))
+      .toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Read it.' }, wake: { kind: 'remove' } })
   })
 
-  it('6: the agent\'s own next step with a time is a check and no wait', () => {
-    expect(deriveTurn({ ...base, next: { who: 'me', what: 'Look at the deploy.', when: WHEN } }, ctx)).toEqual({ status: 'done', wait: null, checkAt: WHEN })
-    expect(deriveTurn({ ...base, next: { who: 'nova', what: 'Look at the deploy.', when: WHEN } }, ctx).checkAt).toBe(WHEN)
+  it('6: an ask for another member or agent, or someone outside, is an outside wait only with a check or a next run', () => {
+    expect(deriveTurn({ ...base, ask: { who: 'Sam', what: 'Merges the PR.' }, check: { when: WHEN, why: 'Merged?' } }, ctx))
+      .toEqual({ status: 'done', wait: { who: 'sam', kind: 'outside', why: 'Merges the PR.' }, wake: setAt('Merged?') })
+    expect(deriveTurn({ ...base, ask: { who: 'echo', what: '' }, check: { when: WHEN, why: 'x' } }, ctx).wait).toEqual({ who: 'echo', kind: 'outside', why: 'The export is fixed.' })
+    expect(deriveTurn({ ...base, ask: { who: 'outside:Acme', what: 'Sends the file.' }, check: { when: WHEN, why: 'x' } }, ctx).wait).toEqual({ who: 'Acme', kind: 'outside', why: 'Sends the file.' })
+    expect(deriveTurn({ ...base, ask: { who: 'the supplier', what: 'Answers.', due: '2026-11-30' } }, { ...ctx, nextRun: true }))
+      .toEqual({ status: 'done', wait: { who: 'the supplier', kind: 'outside', why: 'Answers.', due: '2026-11-30' }, wake: keep })
+    // Without either nothing would bring it back up: no wait. Check "none" brings nothing back up either.
+    for (const call of [{ ...base, ask: { who: 'sam', what: 'Merges.' } }, { ...base, ask: { who: 'outside:Acme', what: 'Answers.' }, check: 'none' as const }]) {
+      expect(deriveTurn(call, ctx).wait, JSON.stringify(call)).toBeNull()
+      expect(deriveTurn(call, ctx).status).toBe('done')
+    }
+    // An ask that names the agent by its handle waits on nobody.
+    expect(deriveTurn({ ...base, ask: { who: 'nova', what: 'Look.' }, check: { when: WHEN, why: 'x' } }, ctx)).toEqual({ status: 'done', wait: null, wake: setAt('x') })
   })
 
-  it('7: anything else is done, nobody waits', () => {
-    const done = { status: 'done', wait: null, checkAt: null }
-    expect(deriveTurn(base, ctx)).toEqual(done)
-    expect(deriveTurn({ ...base, questions: [] }, ctx)).toEqual(done)
-    // A step for anyone but the owner without the time the agent looks again is no next step: no wait, no check.
-    for (const who of ['self', 'nova', 'sam', 'echo', 'outside:Acme', 'the supplier']) expect(deriveTurn({ ...base, next: { who, what: 'Look again.' } }, ctx), who).toEqual(done)
+  it('7: a check alone sets the wake-up and nobody waits; nothing at all keeps it', () => {
+    expect(deriveTurn({ ...base, check: { when: WHEN, why: 'Look at the deploy.' } }, ctx)).toEqual({ status: 'done', wait: null, wake: setAt('Look at the deploy.') })
+    expect(deriveTurn({ ...base, check: 'none' }, ctx)).toEqual({ status: 'done', wait: null, wake: { kind: 'remove' } })
+    expect(deriveTurn(base, ctx)).toEqual({ status: 'done', wait: null, wake: keep })
+    expect(deriveTurn({ ...base, questions: [] }, ctx)).toEqual({ status: 'done', wait: null, wake: keep })
+  })
+
+  it('reads the older next as the ask and the check it stands for', () => {
+    expect(deriveTurn({ ...base, next: { who: 'kim', what: 'Sign it.', when: WHEN } }, ctx))
+      .toEqual({ status: 'review', wait: { who: 'kim', kind: 'do', why: 'Sign it.' }, wake: setAt(prompt('You asked kim to: Sign it.')) })
+    expect(deriveTurn({ ...base, next: { who: 'kim', what: 'Read it.' } }, ctx)).toEqual({ status: 'review', wait: { who: 'kim', kind: 'review', why: 'Read it.' }, wake: keep })
+    expect(deriveTurn({ ...base, next: { who: 'me', what: 'Look.', when: WHEN } }, ctx)).toEqual({ status: 'done', wait: null, wake: setAt(prompt('You planned: Look.')) })
+    expect(deriveTurn({ ...base, next: { who: 'outside:Acme', what: 'Answers.', when: WHEN } }, ctx).wait).toEqual({ who: 'Acme', kind: 'outside', why: 'Answers.' })
+    for (const who of ['self', 'nova', 'sam', 'outside:Acme']) expect(deriveTurn({ ...base, next: { who, what: 'Look again.' } }, ctx), who).toEqual({ status: 'done', wait: null, wake: keep })
+  })
+
+  it('the wake-up edit follows the check alone', () => {
+    expect(wakeEditOf(undefined)).toEqual({ kind: 'keep' })
+    expect(wakeEditOf('none')).toEqual({ kind: 'remove' })
+    expect(wakeEditOf({ when: WHEN, why: 'x' })).toEqual({ kind: 'set', when: WHEN, why: 'x' })
   })
 })
 
 describe('what a stop still lacks', () => {
-  it('names the call, the next step or the time', () => {
-    const open = { taskOpen: true, ctx }
+  const open = { taskOpen: true, ctx }
+
+  it('names the call, who moves next, or the check', () => {
     expect(missingOf(null, open)).toEqual(['call'])
     expect(missingOf({ result: 'x' }, open)).toEqual(['next'])
     expect(missingOf({ result: 'x' }, { taskOpen: false, ctx })).toEqual([])
     expect(missingOf({ result: 'x', questions: ['Go?'] }, open)).toEqual([])
     expect(missingOf({ result: 'x', failed: 'No access.' }, open)).toEqual([])
-    expect(missingOf({ result: 'x', next: { who: 'kim', what: 'review' } }, open)).toEqual([])
-    expect(missingOf({ result: 'x', next: { who: 'user', what: 'review' } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', ask: { who: 'kim', what: 'review' } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', ask: { who: 'user', what: 'sign', kind: 'do' } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', check: { when: WHEN, why: 'look' } }, open)).toEqual([])
+    // Check "none" is no check: the open task still lacks who moves next.
+    expect(missingOf({ result: 'x', check: 'none' }, open)).toEqual(['next'])
   })
 
-  it('asks for the time the agent looks again whenever the next step is not the owner\'s', () => {
-    const open = { taskOpen: true, ctx }
-    for (const who of ['me', 'nova', 'sam', 'echo', 'outside:Acme', 'the supplier']) {
-      expect(missingOf({ result: 'x', next: { who, what: 'does it' } }, open), who).toEqual(['when'])
-      expect(missingOf({ result: 'x', next: { who, what: 'does it', when: WHEN } }, open), who).toEqual([])
+  it('asks for a check whenever the ask is not the owner\'s', () => {
+    for (const who of ['sam', 'echo', 'outside:Acme', 'the supplier']) {
+      expect(missingOf({ result: 'x', ask: { who, what: 'does it' } }, open), who).toEqual(['when'])
+      expect(missingOf({ result: 'x', ask: { who, what: 'does it' }, check: 'none' }, open), who).toEqual(['when'])
+      expect(missingOf({ result: 'x', ask: { who, what: 'does it' }, check: { when: WHEN, why: 'y' } }, open), who).toEqual([])
     }
     // Also on a closed task: the wait is written all the same.
-    expect(missingOf({ result: 'x', next: { who: 'sam', what: 'does it' } }, { taskOpen: false, ctx })).toEqual(['when'])
-    // A question goes to the owner, whoever next names.
-    expect(missingOf({ result: 'x', questions: ['Go?'], next: { who: 'sam', what: 'does it' } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', ask: { who: 'sam', what: 'does it' } }, { taskOpen: false, ctx })).toEqual(['when'])
+    // A question goes to the owner, whoever the ask names.
+    expect(missingOf({ result: 'x', questions: ['Go?'], ask: { who: 'sam', what: 'does it' } }, open)).toEqual([])
   })
 
-  it('asks for no time when the task has a next run from its schedule', () => {
+  it('counts a next run, a kept wake-up included, as what brings the task back up', () => {
     const run = { taskOpen: true, ctx, nextRun: true }
-    for (const who of ['me', 'nova', 'sam', 'echo', 'outside:Acme']) {
-      expect(missingOf({ result: 'x', next: { who, what: 'does it' } }, run), who).toEqual([])
-      expect(missingOf({ result: 'x', next: { who, what: 'does it', when: WHEN } }, run), who).toEqual([])
-      expect(missingOf({ result: 'x', next: { who, what: 'does it' } }, { ...run, nextRun: false }), who).toEqual(['when'])
+    for (const who of ['sam', 'echo', 'outside:Acme']) {
+      expect(missingOf({ result: 'x', ask: { who, what: 'does it' } }, run), who).toEqual([])
+      expect(missingOf({ result: 'x', ask: { who, what: 'does it' } }, { ...run, nextRun: false }), who).toEqual(['when'])
     }
-    // A next run stands for the time only: a stop without a call, and an open task without a next step, still lack theirs.
+    // A call without an ask on a task that kept its wake-up (the cockpit's nextRun) lacks nothing.
+    expect(missingOf({ result: 'x' }, run)).toEqual([])
+    // A stop without a call still lacks its call.
     expect(missingOf(null, run)).toEqual(['call'])
-    expect(missingOf({ result: 'x' }, run)).toEqual(['next'])
-    expect(missingOf({ result: 'x', next: { who: 'kim', what: 'review' } }, run)).toEqual([])
   })
 
-  it('counts a step for someone else without a time when the task has a next run', () => {
-    const run = { ...ctx, nextRun: true }
-    expect(deriveTurn({ result: 'Sent.', next: { who: 'outside:Acme', what: 'Answers the offer.' } }, run))
-      .toEqual({ status: 'done', wait: { who: 'Acme', kind: 'outside', why: 'Answers the offer.' }, checkAt: null })
-    expect(deriveTurn({ result: 'Sent.', next: { who: 'sam', what: 'Merges it.' } }, run).wait).toEqual({ who: 'sam', kind: 'outside', why: 'Merges it.' })
-    expect(deriveTurn({ result: 'Sent.', next: { who: 'me', what: 'Look again.' } }, run)).toEqual({ status: 'done', wait: null, checkAt: null })
-    // Without a next run nothing would bring it back up: no next step.
-    expect(deriveTurn({ result: 'Sent.', next: { who: 'outside:Acme', what: 'Answers the offer.' } }, ctx)).toEqual({ status: 'done', wait: null, checkAt: null })
-    // A time is still taken, and a hand-over still is a review.
-    expect(deriveTurn({ result: 'Sent.', next: { who: 'me', what: 'Look again.', when: WHEN } }, run).checkAt).toBe(WHEN)
-    expect(deriveTurn({ result: 'Done.', next: { who: 'kim', what: 'Read it.' } }, run).status).toBe('review')
-  })
-
-  it('says what a turn\'s end does to the task\'s wake-up: a time sets it, a hand-over clears it, any other end clears only its own', () => {
-    const edit = (call: EndTurn) => wakeEditOf(deriveTurn(call, ctx))
-    expect(edit({ result: 'x', next: { who: 'me', what: 'look', when: WHEN } })).toEqual({ kind: 'set', when: WHEN })
-    expect(edit({ result: 'x', next: { who: 'outside:Acme', what: 'answers', when: WHEN } })).toEqual({ kind: 'set', when: WHEN })
-    expect(edit({ result: 'x', questions: ['Go?'], next: { who: 'me', what: 'look', when: WHEN } })).toEqual({ kind: 'set', when: WHEN })
-    // A hand-over to the owner: whoever set the wake-up, a review is followed by no run. Its own time is not used.
-    expect(edit({ result: 'x', next: { who: 'kim', what: 'read it' } })).toEqual({ kind: 'clear', whose: 'any' })
-    expect(edit({ result: 'x', next: { who: 'user', what: 'read it', when: WHEN } })).toEqual({ kind: 'clear', whose: 'any' })
-    // Every other end without a time leaves another session's wake-up alone.
-    for (const call of [{ result: 'x' }, { result: 'x', next: { who: 'me', what: 'look' } }, { result: 'x', questions: ['Go?'] }, { result: 'x', failed: 'No access.' }]) {
-      expect(edit(call), JSON.stringify(call)).toEqual({ kind: 'clear', whose: 'own' })
-    }
+  it('reads the older next as the ask and the check it stands for', () => {
+    expect(missingOf({ result: 'x', next: { who: 'me', what: 'look' } }, open)).toEqual(['next'])
+    expect(missingOf({ result: 'x', next: { who: 'me', what: 'look', when: WHEN } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', next: { who: 'sam', what: 'does it' } }, open)).toEqual(['when'])
+    expect(missingOf({ result: 'x', next: { who: 'sam', what: 'does it', when: WHEN } }, open)).toEqual([])
+    expect(missingOf({ result: 'x', next: { who: 'kim', what: 'review' } }, open)).toEqual([])
   })
 
   it('keeps the call\'s result for the run, else the block\'s', () => {
@@ -200,37 +297,76 @@ describe('what a stop still lacks', () => {
 
 describe('the handoff block', () => {
   const call: EndTurn = {
-    result: 'The PR is open and CI is green.',
-    next: { who: 'sam', what: 'Reviews and merges #12.', when: WHEN },
+    result: 'The form is filled in and CI is green.',
+    ask: { who: 'kim', what: 'Sign the form.', kind: 'do', due: '2026-11-28' },
+    check: { when: WHEN, why: 'See whether it came back.' },
     questions: ['Ship it before Friday?', 'Which price goes on the page?'],
     checked: 'CI, the page in the dev cockpit',
     claimed: 'the price list',
     decided: 'One call instead of two.',
   }
 
-  it('renders a call and reads it back', () => {
+  it('renders a call with its Ask and Check lines and reads it back', () => {
     const block = handoffBlock(call, ctx)
     expect(block).toBe([
       '### Handoff',
-      'Result: The PR is open and CI is green.',
+      'Result: The form is filled in and CI is green.',
       'Checked: CI, the page in the dev cockpit · Claimed: the price list',
       'Decided: One call instead of two.',
-      'Next: [sam] Reviews and merges #12. @ 2026-11-27T10:00',
+      'Ask: [kim] Sign the form. · do · due 2026-11-28',
+      'Check: 2026-11-27T10:00 · See whether it came back.',
       'Questions:',
       '- [kim] Ship it before Friday?',
       '- [kim] Which price goes on the page?',
     ].join('\n'))
     const handoff = parseHandoff(`All done.\n\n${block}`)
     expect(handoff?.forUser).toEqual(call.questions)
+    expect(handoff?.ask).toEqual(call.ask)
+    expect(handoff?.check).toEqual(call.check)
     expect(fromHandoff(handoff!, ctx)).toEqual(call)
   })
 
-  it('round-trips a failed call, an alias and someone outside', () => {
+  it('round-trips check "none", a failed call, an alias and someone outside', () => {
+    const removed: EndTurn = { result: 'Done.', ask: { who: 'kim', what: 'Read it.' }, check: 'none' }
+    expect(handoffBlock(removed, ctx)).toBe('### Handoff\nResult: Done.\nAsk: [kim] Read it.\nCheck: none')
+    expect(fromHandoff(parseHandoff(handoffBlock(removed, ctx))!, ctx)).toEqual(removed)
     const failed: EndTurn = { result: 'Nothing was sent.', failed: 'The mailbox refused the login.', claimed: 'the address' }
     expect(fromHandoff(parseHandoff(handoffBlock(failed, ctx))!, ctx)).toEqual(failed)
-    expect(handoffBlock({ result: 'Deploy runs.', next: { who: 'me', what: 'Look at it.', when: WHEN } }, ctx)).toContain('Next: [nova] Look at it. @ 2026-11-27T10:00')
-    const outside: EndTurn = { result: 'Mail sent.', next: { who: 'Acme GmbH', what: 'Answers the mail.' } }
-    expect(fromHandoff(parseHandoff(handoffBlock(outside, ctx))!, ctx)).toEqual({ ...outside, next: { who: 'outside:Acme GmbH', what: 'Answers the mail.' } })
+    expect(handoffBlock({ result: 'Read it.', ask: { who: 'user', what: 'Read it.' } }, ctx)).toContain('Ask: [kim] Read it.')
+    const outside: EndTurn = { result: 'Mail sent.', ask: { who: 'Acme GmbH', what: 'Answers the mail.' }, check: { when: WHEN, why: 'Answered?' } }
+    expect(handoffBlock(outside, ctx)).toContain('Ask: [outside:Acme GmbH] Answers the mail.')
+    expect(fromHandoff(parseHandoff(handoffBlock(outside, ctx))!, ctx)).toEqual({ ...outside, ask: { who: 'outside:Acme GmbH', what: 'Answers the mail.' } })
+  })
+
+  it('keeps the reason the agent wrote, not one the cockpit wrote for it', () => {
+    expect(handoffBlock({ result: 'Deploy runs.', check: { when: WHEN, why: '' } }, ctx)).toBe('### Handoff\nResult: Deploy runs.\nCheck: 2026-11-27T10:00')
+  })
+
+  it('writes an older call\'s next as the ask and the check it stands for, never as a Next line', () => {
+    expect(handoffBlock({ result: 'Deploy runs.', next: { who: 'me', what: 'Look at it.', when: WHEN } }, ctx)).toBe('### Handoff\nResult: Deploy runs.\nCheck: 2026-11-27T10:00')
+    expect(handoffBlock({ result: 'Form ready.', next: { who: 'kim', what: 'Sign it.', when: WHEN } }, ctx)).toBe('### Handoff\nResult: Form ready.\nAsk: [kim] Sign it. · do\nCheck: 2026-11-27T10:00')
+    expect(handoffBlock({ result: 'Draft ready.', next: { who: 'kim', what: 'Read it.' } }, ctx)).toBe('### Handoff\nResult: Draft ready.\nAsk: [kim] Read it. · review')
+  })
+
+  it('reads the Ask and Check lines on their own', () => {
+    expect(readAskLine('[kim] Sign it · DO · due 2026-11-28T17:00')).toEqual({ who: 'kim', what: 'Sign it', kind: 'do', due: '2026-11-28T17:00' })
+    // A due that is no date stays part of what.
+    expect(readAskLine('[kim] Sign it · due friday')).toEqual({ who: 'kim', what: 'Sign it · due friday' })
+    expect(readAskLine('Kim signs it')).toBeNull()
+    expect(readAskLine('[the PR](https://example.com/pr/12) needs a review')).toBeNull()
+    expect(readCheckLine('none')).toBe('none')
+    expect(readCheckLine('None.')).toBe('none')
+    expect(readCheckLine('2026-11-27 10:00 look again')).toEqual({ when: '2026-11-27 10:00', why: 'look again' })
+    expect(readCheckLine('2026-11-27T10:00')).toEqual({ when: '2026-11-27T10:00', why: '' })
+    expect(readCheckLine('tomorrow')).toBeNull()
+  })
+
+  it('reads an Ask without a [who] as no ask, and a Next next to an Ask or a Check not at all', () => {
+    expect(fromHandoff(parseHandoff('### Handoff\nResult: Draft ready.\nAsk: Kim reads it')!, ctx)).toEqual({ result: 'Draft ready.' })
+    const both = parseHandoff('### Handoff\nResult: Draft ready.\nAsk: [kim] Read it.\nNext: [sam] merge it @ 2026-11-27T10:00')!
+    expect(fromHandoff(both, ctx)).toEqual({ result: 'Draft ready.', ask: { who: 'kim', what: 'Read it.' } })
+    const checked = parseHandoff('### Handoff\nResult: Draft ready.\nCheck: 2026-11-27T10:00 · look\nNext: [sam] merge it')!
+    expect(fromHandoff(checked, ctx)).toEqual({ result: 'Draft ready.', check: { when: WHEN, why: 'look' } })
   })
 
   it('keeps a multi-line field on its line', () => {
@@ -244,9 +380,12 @@ describe('the handoff block', () => {
     expect(fromHandoff(handoff, ctx)).toEqual({ result: 'Mockup is published.' })
   })
 
-  it('reads a tagged Next a session wrote by hand', () => {
+  it('reads a tagged Next a session started before 0.25 wrote', () => {
     const handoff = parseHandoff('## Handoff\n- **Result:** Draft is ready.\n- **Next:** [Kim] reads the draft @ 2026-11-27 10:00\nQuestions:\n- [task] Which channel?')!
-    expect(fromHandoff(handoff, ctx)).toEqual({ result: 'Draft is ready.', next: { who: 'kim', what: 'reads the draft', when: '2026-11-27 10:00' } })
+    const read = fromHandoff(handoff, ctx)!
+    expect(read).toEqual({ result: 'Draft is ready.', next: { who: 'kim', what: 'reads the draft', when: '2026-11-27 10:00' } })
+    // It stands for a do ask and a check, as a call's next does.
+    expect(deriveTurn(read, ctx)).toMatchObject({ status: 'review', wait: { who: 'kim', kind: 'do' }, wake: { kind: 'set', when: '2026-11-27 10:00' } })
     expect(fromHandoff(parseHandoff('### Handoff\nNext: [me] mail info @ acme.example')!, ctx)).toEqual({ result: 'mail info @ acme.example', next: { who: 'nova', what: 'mail info @ acme.example' } })
   })
 
@@ -267,7 +406,7 @@ describe('the handoff block', () => {
     expect(parseHandoff('### Handoff\nNext: [sam] [the PR](https://example.com/pr/12) needs a review')!.nextStep).toEqual({ who: 'sam', what: '[the PR](https://example.com/pr/12) needs a review', when: null })
   })
 
-  it('ends the Questions list at the next label: a Failed or Claimed line after it is that field, not a question', () => {
+  it('ends the Questions list at the next label: a Failed, Claimed, Ask or Check line after it is that field, not a question', () => {
     const handoff = parseHandoff([
       '### Handoff',
       'Result: Nothing was sent.',
@@ -280,6 +419,9 @@ describe('the handoff block', () => {
     expect(handoff.failed).toBe('The mailbox refused the login.')
     expect(handoff.claimed).toBe('the address')
     expect(fromHandoff(handoff, ctx)).toEqual({ result: 'Nothing was sent.', questions: ['Use the other mailbox?'], failed: 'The mailbox refused the login.', claimed: 'the address' })
+    const asked = parseHandoff('### Handoff\nResult: Ready.\nQuestions:\n- Which mailbox?\nAsk: [kim] Read it.\nCheck: none')!
+    expect(asked.forUser).toEqual(['Which mailbox?'])
+    expect(fromHandoff(asked, ctx)).toEqual({ result: 'Ready.', ask: { who: 'kim', what: 'Read it.' }, check: 'none', questions: ['Which mailbox?'] })
   })
 
   it('is no call when the block says nothing', () => {
@@ -289,16 +431,18 @@ describe('the handoff block', () => {
 
 describe('the texts', () => {
   const call: EndTurn = { result: 'x' }
+  const answer = (c: EndTurn, opts?: Parameters<typeof endTurnAnswer>[2], context = ctx) => endTurnAnswer(c, deriveTurn(c, context), opts)
 
   it('the reminder names each missing thing, and only that', () => {
-    const parts: Record<Missing, string> = { call: 'without an end_turn call', reply: 'No visible reply follows your call', questions: 'does not ask them', next: 'no next step is recorded', when: 'needs a time' }
+    const parts: Record<Missing, string> = { call: 'without an end_turn call', reply: 'No visible reply follows your call', questions: 'does not ask them', next: 'nothing says who moves next', when: 'needs something that brings the task back up' }
     for (const one of Object.keys(parts) as Missing[]) {
       const text = reminder([one])
       for (const [other, part] of Object.entries(parts)) expect(text.includes(part), `${one} names ${other}`).toBe(other === one)
     }
     expect(reminder(['questions', 'reply'])).toBe(`${reminder(['reply'])} ${reminder(['questions'])}`)
-    // Without a call, a next step cannot be missing from it.
+    // Without a call, who moves next cannot be missing from it.
     expect(reminder(['call', 'next'])).toBe(reminder(['call']))
+    expect(reminder(['call', 'when'])).toBe(reminder(['call']))
     // A session without the tool is not told about a block any more (a terminal fallback session has no turn routing).
     expect(reminder(['next'], { tool: false })).toBe(reminder(['next']))
     // A session that gets the tool from an MCP server: the name the tool goes by there.
@@ -309,73 +453,86 @@ describe('the texts', () => {
   })
 
   it('the tool answers with what it recorded, and always ends with the reply that comes after the call', () => {
-    const answer = (c: EndTurn, opts?: Parameters<typeof endTurnAnswer>[2]) => endTurnAnswer(c, deriveTurn(c, ctx), opts)
-    const REPLY = 'Now write your reply as visible text.'
+    const check = { when: WHEN, why: 'look' }
     expect(answer({ ...call, questions: ['Go?'] })).toBe(`Recorded: question for kim. ${REPLY}`)
     expect(answer({ ...call, questions: ['Go?', 'When?'] })).toBe(`Recorded: 2 questions for kim. ${REPLY}`)
     expect(answer({ ...call, failed: 'No access.' })).toBe(`Recorded: failed, for kim. ${REPLY}`)
-    expect(answer({ ...call, next: { who: 'kim', what: 'Read it.' } })).toBe(`Recorded: review for kim. ${REPLY}`)
-    expect(answer({ ...call, next: { who: 'sam', what: 'Merge.', when: WHEN } })).toBe(`Recorded: waiting on sam. Also: you look again at 2026-11-27T10:00. ${REPLY}`)
-    expect(answer({ ...call, next: { who: 'outside:Acme', what: 'Answer.', when: WHEN } })).toBe(`Recorded: waiting on Acme. Also: you look again at 2026-11-27T10:00. ${REPLY}`)
-    expect(answer({ ...call, next: { who: 'me', what: 'Check.', when: WHEN } })).toBe(`Recorded: you look again at 2026-11-27T10:00. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'kim', what: 'Read it.' } })).toBe(`Recorded: review for kim. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'kim', what: 'Sign it.', kind: 'do' } })).toBe(`Recorded: kim's move. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'kim', what: 'Sign it.', kind: 'do' }, check })).toBe(`Recorded: kim's move. Also: you look again at ${WHEN}. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'kim', what: 'Read it.' }, check: 'none' })).toBe(`Recorded: review for kim. Also: the task's wake-up is removed. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'sam', what: 'Merge.' }, check })).toBe(`Recorded: waiting on sam. Also: you look again at ${WHEN}. ${REPLY}`)
+    expect(answer({ ...call, ask: { who: 'outside:Acme', what: 'Answer.' }, check })).toBe(`Recorded: waiting on Acme. Also: you look again at ${WHEN}. ${REPLY}`)
+    expect(answer({ ...call, check })).toBe(`Recorded: you look again at ${WHEN}. ${REPLY}`)
+    expect(answer({ ...call, check: 'none' })).toBe(`Recorded: the task's wake-up is removed. ${REPLY}`)
     expect(answer(call)).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
+    expect(answer({ ...call, check }, { checkTime: { at: Date.parse('2026-11-27T03:00:00Z'), zone: 'Asia/Bangkok' } }))
+      .toBe(`Recorded: you look again at ${WHEN} (Asia/Bangkok, 2026-11-27T03:00Z). ${REPLY}`)
   })
 
-  it('a hand-over with a time is answered as a review, without a check', () => {
-    const review: EndTurn = { ...call, next: { who: 'kim', what: 'Read it.', when: WHEN } }
-    expect(endTurnAnswer(review, deriveTurn(review, ctx), { checkProblem: 'whatever' })).toBe('Recorded: review for kim. Now write your reply as visible text.')
+  it('ends with what the task holds after the call, after what it lacks and before the reply', () => {
+    const state = 'The task now — Lifecycle: open. Asks: none. Check: none. Repeating: none. Next run: none.'
+    expect(answer(call, { state })).toBe(`Recorded: done, nobody has to act. ${state} ${REPLY}`)
+    expect(answer(call, { state, missing: ['next'] })).toBe(`Recorded: where the task stands, but nobody has a move. The task is still open. Call end_turn with an ask, a check, questions or failed. ${state} ${REPLY}`)
+    expect(answer(call, { state: null })).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
   })
 
-  it('a call without a next step on an open task is not answered as done', () => {
-    const answer = endTurnAnswer(call, deriveTurn(call, ctx), { missing: missingOf(call, { taskOpen: true, ctx }) })
-    expect(answer).toBe('Recorded: where the task stands, but no next step. The task is still open. Call end_turn with next, questions or failed. Now write your reply as visible text.')
-    expect(answer).not.toContain('nobody has to act')
+  it('an ask for the owner without a check is answered as their move, and names no problem with a wake-up it kept', () => {
+    const review: EndTurn = { ...call, ask: { who: 'kim', what: 'Read it.' } }
+    expect(answer(review, { checkProblem: 'whatever' })).toBe(`Recorded: review for kim. ${REPLY}`)
   })
 
-  it('a next step for someone else without a time says the time is missing', () => {
-    const WHEN_MISSING = "A next step for anyone but the user needs a time, and this task has no next run from its schedule. Call end_turn with next.when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone."
-    const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.' } }
-    expect(endTurnAnswer(own, deriveTurn(own, ctx), { missing: missingOf(own, { taskOpen: true, ctx }) }))
-      .toBe(`Recorded: where the task stands, but no next step. ${WHEN_MISSING} Now write your reply as visible text.`)
-    // The same for every who that is not the user: nothing is waited on without the time.
+  it('a call without an ask on an open task is not answered as done', () => {
+    const text = answer(call, { missing: missingOf(call, { taskOpen: true, ctx }) })
+    expect(text).toBe(`Recorded: where the task stands, but nobody has a move. The task is still open. Call end_turn with an ask, a check, questions or failed. ${REPLY}`)
+    expect(text).not.toContain('nobody has to act')
+  })
+
+  it('an ask for someone else without a check says the check is missing', () => {
+    const WHEN_MISSING = "An ask for anyone but the user needs something that brings the task back up, and this task has no check and no next run from its schedule. Call end_turn with check.when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone."
     for (const who of ['sam', 'echo', 'outside:Acme']) {
-      const other: EndTurn = { ...call, next: { who, what: 'Merge.' } }
-      expect(endTurnAnswer(other, deriveTurn(other, ctx), { missing: missingOf(other, { taskOpen: true, ctx }) }), who)
-        .toBe(`Recorded: where the task stands, but no next step. ${WHEN_MISSING} Now write your reply as visible text.`)
+      const other: EndTurn = { ...call, ask: { who, what: 'Merge.' } }
+      expect(answer(other, { missing: missingOf(other, { taskOpen: true, ctx }) }), who)
+        .toBe(`Recorded: where the task stands, but nobody has a move. ${WHEN_MISSING} ${REPLY}`)
     }
   })
 
-  it('a step without a time on a task with a next run is answered as brought back up by that run', () => {
+  it('an ask for someone else on a task with a next run is answered as brought back up by that run', () => {
     const run = { ...ctx, nextRun: true }
-    const answer = (c: EndTurn) => endTurnAnswer(c, deriveTurn(c, run), { missing: missingOf(c, { taskOpen: true, ctx: run, nextRun: true }), nextRun: true })
-    expect(answer({ ...call, next: { who: 'me', what: 'Check.' } })).toBe("Recorded: the task's next run brings it back up. Now write your reply as visible text.")
-    expect(answer({ ...call, next: { who: 'outside:Acme', what: 'Answers.' } })).toBe("Recorded: waiting on Acme. Also: the task's next run brings it back up. Now write your reply as visible text.")
-    // A time of its own is named as before; a hand-over and a call without a next step say nothing of the run.
-    expect(answer({ ...call, next: { who: 'me', what: 'Check.', when: WHEN } })).toBe(`Recorded: you look again at ${WHEN}. Now write your reply as visible text.`)
-    expect(answer({ ...call, next: { who: 'kim', what: 'Read it.' } })).toBe('Recorded: review for kim. Now write your reply as visible text.')
-    expect(answer(call)).toBe('Recorded: where the task stands, but no next step. The task is still open. Call end_turn with next, questions or failed. Now write your reply as visible text.')
+    const withRun = (c: EndTurn) => answer(c, { missing: missingOf(c, { taskOpen: true, ctx: run, nextRun: true }), nextRun: true }, run)
+    expect(withRun({ ...call, ask: { who: 'outside:Acme', what: 'Answers.' } })).toBe(`Recorded: waiting on Acme. Also: the task's next run brings it back up. ${REPLY}`)
+    // A check of its own is named as before; an ask for the owner and a call without an ask say nothing of the run.
+    expect(withRun({ ...call, check: { when: WHEN, why: 'look' } })).toBe(`Recorded: you look again at ${WHEN}. ${REPLY}`)
+    expect(withRun({ ...call, ask: { who: 'kim', what: 'Read it.' } })).toBe(`Recorded: review for kim. ${REPLY}`)
+    expect(withRun(call)).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
   })
 
   it('says what helps when a check could not be set: another time, the same call again, or nothing', () => {
-    const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.', when: WHEN } }
-    const answer = (checkFix: 'time' | 'again' | 'none') => endTurnAnswer(own, deriveTurn(own, ctx), { checkProblem: 'the reason', checkFix })
-    const opening = `Recorded: where the task stands, but no next step. The check at ${WHEN} was NOT set: the reason.`
-    expect(answer('time')).toBe(`${opening} Call end_turn again with another next.when (the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone). Now write your reply as visible text.`)
-    expect(answer('again')).toBe(`${opening} Call end_turn again. Now write your reply as visible text.`)
-    expect(answer('none')).toBe(`${opening} Now write your reply as visible text.`)
+    const own: EndTurn = { ...call, check: { when: WHEN, why: 'look' } }
+    const withFix = (checkFix: 'time' | 'again' | 'none') => answer(own, { checkProblem: 'the reason', checkFix })
+    const opening = `Recorded: where the task stands, but nobody has a move. The check at ${WHEN} was NOT set: the reason.`
+    expect(withFix('time')).toBe(`${opening} Call end_turn again with another check.when (the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone). ${REPLY}`)
+    expect(withFix('again')).toBe(`${opening} Call end_turn again. ${REPLY}`)
+    expect(withFix('none')).toBe(`${opening} ${REPLY}`)
   })
 
   it('a check that could not be set is not answered as set: what was recorded, then that the check was not', () => {
-    const CALL_AGAIN = "Call end_turn again with another next.when (the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone)."
-    const own: EndTurn = { ...call, next: { who: 'me', what: 'Check.', when: '2028-01-01T10:00' } }
-    expect(endTurnAnswer(own, deriveTurn(own, ctx), { checkProblem: 'at: at most a year ahead' }))
-      .toBe(`Recorded: where the task stands, but no next step. The check at 2028-01-01T10:00 was NOT set: at most a year ahead. ${CALL_AGAIN} Now write your reply as visible text.`)
-    const other: EndTurn = { ...call, next: { who: 'sam', what: 'Merge.', when: '2028-01-01T10:00' } }
-    const answer = endTurnAnswer(other, deriveTurn(other, ctx), { checkProblem: 'This space has 30 jobs already.' })
-    expect(answer).toBe(`Recorded: waiting on sam. The check at 2028-01-01T10:00 was NOT set: This space has 30 jobs already. ${CALL_AGAIN} Now write your reply as visible text.`)
-    expect(answer).not.toContain('you look again at 2028')
-    // Without a time in the call there is no check to fail.
-    expect(endTurnAnswer(call, deriveTurn(call, ctx), { checkProblem: 'whatever' })).toBe('Recorded: done, nobody has to act. Now write your reply as visible text.')
+    const CALL_AGAIN = "Call end_turn again with another check.when (the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone)."
+    const own: EndTurn = { ...call, check: { when: '2028-01-01T10:00', why: 'look' } }
+    expect(answer(own, { checkProblem: 'at: at most a year ahead' }))
+      .toBe(`Recorded: where the task stands, but nobody has a move. The check at 2028-01-01T10:00 was NOT set: at most a year ahead. ${CALL_AGAIN} ${REPLY}`)
+    const other: EndTurn = { ...call, ask: { who: 'sam', what: 'Merge.' }, check: { when: '2028-01-01T10:00', why: 'look' } }
+    const text = answer(other, { checkProblem: 'This space has 30 jobs already.' })
+    expect(text).toBe(`Recorded: waiting on sam. The check at 2028-01-01T10:00 was NOT set: This space has 30 jobs already. ${CALL_AGAIN} ${REPLY}`)
+    expect(text).not.toContain('you look again at 2028')
+    // Without a check in the call there is no check to fail.
+    expect(answer(call, { checkProblem: 'whatever' })).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
+  })
+
+  it('a wake-up that could not be removed is said so, with the call to make again', () => {
+    const text = answer({ ...call, check: 'none' }, { checkProblem: 'the brain does not answer' })
+    expect(text).toContain('The wake-up was NOT removed: the brain does not answer. Call end_turn again.')
+    expect(text.endsWith(REPLY)).toBe(true)
   })
 
   it('end a turn with end_turn, never with session_status or the block', () => {
@@ -383,7 +540,7 @@ describe('the texts', () => {
       END_TURN_DESCRIPTION, JOB_HEADER_STATUS, BEFORE_IDLE_STOP, turnEndRules({ owner: 'kim', tool: true }),
       ...(['call', 'reply', 'questions', 'next', 'when'] as Missing[]).map((m) => reminder([m])),
       endTurnAnswer(call, deriveTurn(call, ctx), { missing: ['next'] }),
-      checkPrompt({ next: { who: 'me', what: 'Look at the deploy.' } }, ctx),
+      checkPrompt({ planned: 'Look at the deploy.' }, ctx),
     ]
     expect(END_TURN_TOOL).toBe('end_turn')
     for (const text of texts) {
@@ -395,11 +552,21 @@ describe('the texts', () => {
     for (const text of texts.filter((t) => t !== reminder(['reply']))) expect(text).toContain('end_turn')
     expect(END_TURN_DESCRIPTION).toContain('Make no call for a turn that is plain conversation.')
     expect(END_TURN_DESCRIPTION).toContain('Call it first, then write your reply once as visible text, as the last thing in the turn: the user reads only that, never the call or your thinking.')
-    expect(END_TURN_DESCRIPTION).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone; required unless who is the user, where it is not used, or the task has a next run from its schedule.")
-    // An agent that waits for nothing has no reason to stop: said with the next step, once.
-    expect(END_TURN_DESCRIPTION.split('\n')[3].endsWith('next is required while the task is open, unless questions or failed is set. If the next step is yours and you wait for nothing, do not end the turn: keep working.')).toBe(true)
+    expect(END_TURN_DESCRIPTION).toContain("check: when you look again. when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone. why: what you will check then; you read it when the cockpit wakes you.")
+    expect(END_TURN_DESCRIPTION).toContain('It replaces the task\'s wake-up. Leave check out to keep the wake-up the task has; "none" removes it. An ask never removes it: the user\'s move and your check-back stand side by side.')
+    expect(END_TURN_DESCRIPTION).toContain('kind: for the user: do (a step they take themselves, outside this chat: sign, call, send, decide; their Inbox shows it as their move) or review (a result to look at; the default).')
+    expect(END_TURN_DESCRIPTION).toContain('due: when the step is due, as YYYY-MM-DD or YYYY-MM-DDTHH:MM.')
+    expect(END_TURN_DESCRIPTION.split('\n').at(-1)).toBe('The answer says what the task holds after the call: its asks, its check, its repeating times and its next run. Check it against what you meant.')
+    // An agent that waits for nothing has no reason to stop: said with what an open task needs, once.
+    expect(END_TURN_DESCRIPTION.split('\n')[5]).toBe('While the task is open, a call needs an ask, questions, failed or a check, unless the task has a next run from its schedule. If the next step is yours and you wait for nothing, do not end the turn: keep working.')
     expect(END_TURN_DESCRIPTION.match(/keep working/g)).toHaveLength(1)
-    expect(untilDoneRules('after')).toContain('- Not reached: name yourself as next, with the time you look again (when); a task that has a next run from its schedule needs no time. The cockpit wakes you then: a simple check needs no schedule tool call.')
+    // The older next is no field of the tool any more.
+    expect(END_TURN_DESCRIPTION).not.toMatch(/^next:|next\.(?:who|when)/m)
+    expect(untilDoneRules('after')).toContain('- Not reached: set a check with the time you look again (check.when); a task that keeps a wake-up, or has a next run from its schedule, needs none. The cockpit wakes you then: a simple check needs no schedule tool call.')
+    expect(untilDoneRules('after')).toContain(`- Reached: ${FOR_REVIEW}. Do not close it yourself.`)
+    expect(untilDoneRules('after')).toContain('ask them for it (kind do) and keep your check')
+    expect(FOR_REVIEW).toBe('hand the result over for review (an ask for the owner, kind review)')
+    expect(END_SCHEDULE_FIRST).toBe(`end its repeating times first with the schedule tool (action finish), then ${FOR_REVIEW}; a wake-up needs no step of yours: it ends when the task closes`)
     expect(turnEndRules({ owner: 'kim', agent: 'nova', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are nova.')
   })
 
@@ -419,9 +586,13 @@ describe('the texts', () => {
   })
 
   it('the wake-up\'s reason tells the session what it waited for', () => {
-    expect(checkPrompt({ next: { who: 'me', what: 'Look at the deploy.' } }, ctx)).toBe('The check you set with end_turn is due. You planned: Look at the deploy. See where the task stands and act on it.')
-    expect(checkPrompt({ next: { who: 'sam', what: 'Merges the PR.' } }, ctx)).toBe('The check you set with end_turn is due. You waited on sam: Merges the PR. See where the task stands and act on it.')
-    expect(checkPrompt({ questions: ['Ship it?'] }, ctx)).toBe('The check you set with end_turn is due. You asked kim: Ship it? See where the task stands and act on it.')
+    expect(checkPrompt({ planned: 'Look at the deploy.' }, ctx)).toBe(prompt('You planned: Look at the deploy.'))
+    expect(checkPrompt({ ask: { who: 'sam', what: 'Merges the PR.' } }, ctx)).toBe(prompt('You waited on sam: Merges the PR.'))
+    expect(checkPrompt({ ask: { who: 'outside:Acme', what: '' } }, ctx)).toBe(prompt('You waited on Acme.'))
+    expect(checkPrompt({ ask: { who: 'kim', what: 'Sign it.', kind: 'do' } }, ctx)).toBe(prompt('You asked kim to: Sign it.'))
+    expect(checkPrompt({ ask: { who: 'user', what: '' } }, ctx)).toBe(prompt('You asked kim for a step.'))
+    expect(checkPrompt({ questions: ['Ship it?'], ask: { who: 'sam', what: 'x' } }, ctx)).toBe(prompt('You asked kim: Ship it?'))
+    expect(checkPrompt({}, ctx)).toBe('The check you set with end_turn is due. See where the task stands and act on it.')
   })
 
   it('a question is kept up to its first question mark', () => {

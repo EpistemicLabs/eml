@@ -32,7 +32,7 @@ export interface ToolTask {
     display_title?: string
     goal?: string
     assignee_ids?: string[]
-    delegation?: DelegationFields | null
+    delegation?: DelegationFields | null; schedule?: ScheduleFields | null
     delegate?: string
     checkpoint?: string
   } | null
@@ -219,6 +219,7 @@ export function describeTask(task: ToolTask, record: Job | undefined, runs: read
   if (next.length > 0) lines.push(`  next: ${next.map((at) => formatInZone(at, tz)).join(', ')}`)
   const heldTimes = held && schedule?.crons?.length ? nextRuns(clearWake(schedule), now, 3, left) : []
   if (heldTimes.length > 0) lines.push(`  held until the user approves: ${heldTimes.map((at) => formatInZone(at, tz)).join(', ')}`)
+  if (schedule?.at && schedule.by) lines.push(`  the wake-up is for ${schedule.by}`)
   if (schedule?.at && schedule.by_session) lines.push('  the wake-up continues the session that set it')
   const ends = [...(left !== null ? [`after ${Math.max(left, 0)} more run${left === 1 ? '' : 's'}`] : []), ...(schedule?.ends_at ? [`at ${formatInZone(Date.parse(schedule.ends_at), tz)}`] : [])]
   if (ends.length > 0) lines.push(`  ends: ${ends.join(', ')}`)

@@ -39,9 +39,10 @@ describe('the tool definitions', () => {
     expect(input.job.description).toBe('The task whose schedule to act on: its id (or the first 8 characters) or its exact name.')
   })
 
-  it('end_turn says that a task with a next run needs no time, and to keep working when nothing is waited for', () => {
+  it('end_turn says that a task with a next run needs no check, that leaving check out keeps the wake-up, and to keep working when nothing is waited for', () => {
     const text = SESSION_TOOLS.endTurn.description()
-    expect(text).toContain('or the task has a next run from its schedule')
+    expect(text).toContain('An ask for anyone but the user needs a check, or a next run from the task\'s schedule.')
+    expect(text).toContain('Leave check out to keep the wake-up the task has; "none" removes it. An ask never removes it')
     expect(text).toContain('If the next step is yours and you wait for nothing, do not end the turn: keep working.')
   })
 
@@ -73,10 +74,21 @@ describe('end_turn', () => {
   it('refuses input it cannot read, as an error, without handing it on', async () => {
     const p = ports()
     expect(await endTurn(p, {})).toMatchObject({ isError: true, text: expect.stringMatching(/^Not recorded: result is missing/) })
-    expect(await endTurn(p, { result: 'x', next: { what: 'look' } })).toMatchObject({ isError: true, text: expect.stringMatching(/^Not recorded: next\.who is missing/) })
+    expect(await endTurn(p, { result: 'x', ask: { what: 'look' } })).toMatchObject({ isError: true, text: expect.stringMatching(/^Not recorded: ask\.who is missing/) })
+    expect(await endTurn(p, { result: 'x', check: { when: 'tomorrow', why: 'look' } })).toMatchObject({ isError: true, text: expect.stringMatching(/^Not recorded: check\.when "tomorrow" is not a time\./) })
+    // The older form is read the same way.
     expect(await endTurn(p, { result: 'x', next: { who: 'me', what: 'look', when: 'tomorrow' } })).toMatchObject({ isError: true, text: expect.stringMatching(/^Not recorded: next\.when "tomorrow" is not a time\./) })
     expect(await endTurn(p, null)).toMatchObject({ isError: true })
     expect(p.calls).toEqual([])
+  })
+
+  it('ends its answer with what the task holds after the call, before the reply', async () => {
+    const state = 'The task now — Lifecycle: open. Asks: none. Check: kept, atlas checks back Fri 27 Nov 10:00 (UTC). Repeating: none. Next run: Fri 27 Nov 10:00 (UTC).'
+    const call = { result: 'Half way' }
+    const p = { endTurn: async (c: EndTurn) => ({ derived: deriveTurn(c, ctx), missing: [] as const, state }) }
+    const answer = await endTurn(p, call)
+    expect(answer).toEqual({ text: endTurnAnswer(call, deriveTurn(call, ctx), { state }), isError: false })
+    expect(answer.text.endsWith(`${state} Now write your reply as visible text.`)).toBe(true)
   })
 
   it('answers as an error with the reason when the call was not recorded', async () => {

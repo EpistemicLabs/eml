@@ -8,7 +8,6 @@ import { JobStore } from '../src/job-store.js'
 import { ensureJobTokens, handleJobContract, jobSpaceIdsOf } from '../src/job-contract-api.js'
 import { JobRunner, type RunnerTask } from '../src/application/job-runner.js'
 import { newRecord, type Job } from '../src/domain/job.js'
-import { withSchedule } from '../src/domain/task-schedule.js'
 
 // The channel bridge reaches the cockpit through /v1 with one space's token:
 // it learns which records listen on a channel and wakes one; the cockpit decides
@@ -106,10 +105,10 @@ describe('job contract v1', () => {
 
   it('marks the route of a task whose schedule is paused, once the engine has read the task', async () => {
     store.put(record(JOB_ID))
-    task = { ...task!, properties: { ...task!.properties, delegation: withSchedule({ agent: 'atlas' }, { crons: ['0 8 * * *'], paused: true }) } }
+    task = { ...task!, properties: { ...task!.properties, schedule: { crons: ['0 8 * * *'], paused: true } } }
     await runner.tick()
     expect((await call(`/v1/jobs?space=${SPACE}&channel=mail`, SPACE)).body).toEqual([{ ...fixture.routes.response[0], paused: true }])
-    task = { ...task!, properties: { ...task!.properties, delegation: withSchedule({ agent: 'atlas' }, { crons: ['0 8 * * *'] }) } }
+    task = { ...task!, properties: { ...task!.properties, schedule: { crons: ['0 8 * * *'] } } }
     runner.resumed(JOB_ID)
     expect((await call(`/v1/jobs?space=${SPACE}&channel=mail`, SPACE)).body).toEqual([fixture.routes.response[0]])
   })
@@ -187,7 +186,7 @@ describe('job contract v1', () => {
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
     store.put(record(JOB_ID))
     const open = task!
-    task = { ...open, properties: { ...open.properties, delegation: withSchedule({ agent: 'atlas' }, { crons: ['0 8 * * *'], paused: true }) } }
+    task = { ...open, properties: { ...open.properties, schedule: { crons: ['0 8 * * *'], paused: true } } }
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.retry)
     task = { ...open, status: 'resolved' }
     expect((await call(`/v1/jobs/${JOB_ID}/wake`, SPACE, fixture.wake.request.body)).body).toEqual(fixture.wake.responses.refused)

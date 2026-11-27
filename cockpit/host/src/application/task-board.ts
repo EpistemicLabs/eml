@@ -5,7 +5,7 @@ import { planHandOver } from '../domain/hand-over.js'
 import { holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock, type GateTask, type RunnerBlock } from '../domain/runner-gate.js'
 import { isStale, liveFactsOf, openRunsByTask, runsOf, sessionOfRun, type RunFacts } from '../domain/runs.js'
 import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
-import { hasSchedule, runComingAt, scheduleOf, type ScheduleFacts } from '../domain/task-schedule.js'
+import { runComingAt, scheduleOf, type ScheduleFacts } from '../domain/task-schedule.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
 import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
@@ -35,7 +35,10 @@ import type { ReopenItem, TaskCommand } from './task-commands.js'
  */
 
 export interface BoardTask {
-  /** Its schedule (delegation.schedule, domain/task-schedule.ts): repeating times, a wake-up, paused or not. Only on an open task. */
+  /**
+   * Its schedule (the task's schedule field, domain/task-schedule.ts): repeating times, a wake-up with who it is for
+   * (by), paused or not. Only on an open task.
+   */
   schedule?: ScheduleFields
   /** Its ended sessions, newest first, at most EARLIER_RUNS, on every member's cockpit. */
   earlierRuns?: EarlierRun[]
@@ -79,8 +82,9 @@ export interface BoardTask {
   working: boolean
   nextRunAt: string | null
   /**
-   * It has a schedule (domain/task-schedule.ts hasSchedule), also a paused one. Such a task is not closed: Looks good
-   * approves one run, and it closes with End schedule. Not the runner's `scheduled`, which is a run coming up.
+   * It has a schedule (domain/task-schedule.ts hasSchedule), also a paused one. With repeating times Looks good approves
+   * one run, and it closes with End schedule; a wake-up alone ends with the task. Not the runner's `scheduled`, which
+   * is a run coming up.
    */
   hasSchedule: boolean
   /**
@@ -268,7 +272,7 @@ interface Row {
     assignee_ids?: string[]
     delegate?: string
     checkpoint?: string
-    delegation?: DelegationFields
+    delegation?: DelegationFields; schedule?: ScheduleFields | null
     goal?: string
     priority?: string
     due_date?: string
@@ -461,8 +465,8 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   /** A pending command's effect on the task, shown before it is applied. */
   const overlay = (row: Row, command: TaskCommand | undefined, agents: string[]): Row => {
     if (!command || command.state !== 'pending') return row
-    if (command.kind === 'review' && (command.runOnly || hasSchedule(row))) {
-      // Its schedule is on: the review approves that run and the task stays open, without the reviews it answers.
+    if (command.kind === 'review' && (command.runOnly || (scheduleOf(row)?.crons?.length ?? 0) > 0)) {
+      // A routine: the review approves that run and the task stays open, without the reviews it answers.
       const props = row.properties ?? {}
       const all = waitsOf(props)
       const waits = withoutWaits(all, command.approves ?? reviewsOn(all, deps.viewer))
@@ -480,10 +484,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const planned = planHandOver({
         id: row.id, status: row.status, title: row.title, ...(props.display_title ? { displayTitle: props.display_title } : {}), ...(props.goal ? { goal: props.goal } : {}),
         owner: props.assignee_ids?.[0], delegate: props.delegate, checkpoint: props.checkpoint, waits: waitsOf(props), ...(props.delegation ? { delegation: props.delegation } : {}),
+        ...(props.schedule ? { schedule: props.schedule } : {}),
       }, command.handOver, { agents, now: command.createdAt || new Date(deps.now()).toISOString() })
       if (!planned.ok) return row
-      const { status, waits, delegation } = planned.plan.patch
+      const { status, waits, delegation, schedule } = planned.plan.patch
       const next = { ...props } as NonNullable<Row['properties']>
+      if (schedule !== undefined) next.schedule = schedule
       // The flat fields follow the delegation, as core keeps them (packages/core task-state.ts).
       if (delegation === null) { delete next.delegation; delete next.delegate; delete next.checkpoint }
       if (delegation) { next.delegation = delegation; next.delegate = delegation.agent; if (delegation.checkpoint) next.checkpoint = delegation.checkpoint; else delete next.checkpoint }
@@ -680,7 +686,13 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             return commands.length ? { commands } : {}
           })(),
         })
-        if (row.status !== 'resolved') slice.inboxTasks.push({ id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props) })
+        if (row.status !== 'resolved') {
+          slice.inboxTasks.push({
+            id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props),
+            ...(schedule?.at ? { wake: { at: schedule.at, by: schedule.by ?? null } } : {}),
+            ...(schedule?.crons?.length ? { repeating: true } : {}),
+          })
+        }
       }
       // A wait on a step names where that step stands, read from the step's own card.
       for (const t of spaceTasks) {

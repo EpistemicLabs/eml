@@ -319,14 +319,16 @@ export interface EndTurnRecorded {
   derived: DerivedTurn
   /** What the call still lacks (missingOf). */
   missing: readonly Missing[]
-  /** Why the check at next.when could not be set; the rest of the call is recorded. */
+  /** Why the check could not be set (or the wake-up removed); the rest of the call is recorded. */
   checkProblem?: string
   /** What helps then: another time, the same call again, or nothing the agent can do. */
   checkFix?: CheckFix
-  /** The zone next.when was read in and the instant the task's wake-up was saved for. */
+  /** The zone check.when was read in and the instant the task's wake-up was saved for. */
   checkTime?: CheckTime
   /** The task has a next run from its schedule: it needs no time from the agent. */
   nextRun?: boolean
+  /** What the task holds after the call, in words (domain/turn-state-echo.ts); absent when the task could not be read. */
+  state?: string
 }
 
 export interface SessionRuntimeFactory {
