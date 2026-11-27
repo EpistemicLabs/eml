@@ -9,7 +9,7 @@ import {
   nameOfTask, narrowedProfile, readAt, scheduledCount, withParagraph, type ToolTask,
 } from '../domain/schedule-tool.js'
 import {
-  addCron, cronRefusal, cronZoneRefusal, hasSchedule, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
+  addCron, cronRefusal, cronZoneRefusal, hasSchedule, isReminder, wakeOwnerText, nextRunOfSchedule, sameSchedule, ScheduleError, SCHEDULE_LIMITS, scheduleOf, scheduleText, setCrons, setEndsAt, setPaused, setWake,
 } from '../domain/task-schedule.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { JobStore } from '../job-store.js'
@@ -239,7 +239,7 @@ export class Jobs {
     const bySession = task && caller.sessionId && caller.taskId === task.id ? caller.sessionId : null
     const by = at ? this.by(caller, input) : null
     const edit = (schedule: ScheduleFields | null): ScheduleFields | null => {
-      const timed = cron ? addCron(schedule, cron, zone) : at ? setWake(schedule, { at, why: prompt, by, bySession: by === this.deps.me ? null : bySession, timeZone: zone }) : schedule
+      const timed = cron ? addCron(schedule, cron, zone) : at ? setWake(schedule, { at, why: prompt, by, bySession: isReminder(by, { me: this.deps.me, owners: task?.properties?.assignee_ids }) ? null : bySession, timeZone: zone }) : schedule
       return endsAt !== undefined && timed ? setEndsAt(timed, endsAt) : timed
     }
     const planned = edit(current)
@@ -259,7 +259,7 @@ export class Jobs {
     const setGoal = goal && !task.properties?.goal ? goal : null
     // A repeating time the task already has is not added twice: then only its text may still be new.
     const same = sameSchedule(planned, current)
-    const what = same ? null : cron ? `added the repeating time "${cron}"` : at ? `set the wake-up for ${at}${by ? ` (${wakeOwner(by, this.deps.me)})` : ''}` : null
+    const what = same ? null : cron ? `added the repeating time "${cron}"` : at ? `set the wake-up for ${at}${by ? ` (${wakeOwnerText(by, { me: this.deps.me, owners: task.properties?.assignee_ids })})` : ''}` : null
     const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
     const written = await editTaskSchedule(brain, task.id, edit, {
       ...(said ? { text: said } : {}),
@@ -314,7 +314,7 @@ export class Jobs {
       // The one cron replaces the list, so the zone it is written in is the zone the task's repeating times are read in.
       if (cron) next = setCrons(next, [cron], zone)
       // Only a task without a schedule takes the wake-up's zone (setWake never gives one to repeating times).
-      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, by, bySession: by === this.deps.me ? null : bySession, ...(next ? {} : { timeZone: zone }) })
+      if (at) next = setWake(next, { at, why: prompt ?? next?.why ?? null, by, bySession: isReminder(by, { me: this.deps.me, owners: task?.properties?.assignee_ids }) ? null : bySession, ...(next ? {} : { timeZone: zone }) })
       if (endsAt !== undefined) next = next ? setEndsAt(next, endsAt) : next
       return next
     }
@@ -330,7 +330,7 @@ export class Jobs {
     const setGoal = goal && !task.properties?.goal ? goal : null
     let schedule = current
     if (changesTask) {
-      const what = [cron ? `set the repeating time "${cron}" (it replaces the ones before)` : null, at ? `set the wake-up for ${at}${by ? ` (${wakeOwner(by, this.deps.me)})` : ''}` : null].filter(Boolean).join(' and ')
+      const what = [cron ? `set the repeating time "${cron}" (it replaces the ones before)` : null, at ? `set the wake-up for ${at}${by ? ` (${wakeOwnerText(by, { me: this.deps.me, owners: task.properties?.assignee_ids })})` : ''}` : null].filter(Boolean).join(' and ')
       const said = [what ? `The schedule tool ${what}.` : null, content ? 'The schedule tool added what a time is for to the task\'s text.' : null].filter(Boolean).join(' ')
       const written = await editTaskSchedule(brain, task.id, edit, {
         ...(said ? { text: said } : {}),
@@ -526,9 +526,6 @@ export class Jobs {
     return describeTask(task, record, this.deps.store.runs(task.id), this.now(), this.deps.defaultTimeZone(), project)
   }
 }
-
-/** Who a wake-up is for, as the journal says it: "a reminder for <person>" or "<agent> checks back". */
-export const wakeOwner = (by: string, me: string): string => (by === me ? `a reminder for ${by}` : `${by} checks back`)
 
 /** The task with this schedule, for describing it after a write. */
 function taskWithSchedule(task: ToolTask, schedule: ScheduleFields | null): ToolTask {

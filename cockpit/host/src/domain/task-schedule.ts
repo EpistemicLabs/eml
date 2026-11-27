@@ -337,6 +337,25 @@ export function sameSchedule(a: ScheduleFields | null | undefined, b: ScheduleFi
   return JSON.stringify(tidy(a)) === JSON.stringify(tidy(b))
 }
 
+/** Who a wake-up can be a person's reminder for: this cockpit's member and the task's owners (assignee_ids name people only). */
+export interface WakePeople {
+  me: string
+  owners?: readonly string[]
+}
+
+/**
+ * The wake-up is a person's reminder: its by is this cockpit's member or one of the task's owners. Any other by is an
+ * agent's, and a wake-up that names nobody is the delegated agent's: both fire as a run on the task.
+ */
+export function isReminder(by: string | null | undefined, people: WakePeople): boolean {
+  return Boolean(by) && (by === people.me || (people.owners ?? []).includes(by!))
+}
+
+/** Who a wake-up is for, as a journal or an answer says it: "a reminder for kim", "atlas checks back", "the agent checks back". */
+export function wakeOwnerText(by: string | null | undefined, people: WakePeople): string {
+  return isReminder(by, people) ? `a reminder for ${by}` : `${by || 'the agent'} checks back`
+}
+
 /** The schedule as the brain stores it (keys in order, nothing empty), or null for none. */
 export const storedSchedule = (schedule: ScheduleFields | null | undefined): ScheduleFields | null => tidy(schedule)
 

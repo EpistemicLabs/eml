@@ -1,7 +1,7 @@
 import type { ScheduleFields } from './delegation.js'
 import { cronInWords } from './run-text.js'
 import { formatInZone } from './schedule.js'
-import { nextRunOfSchedule } from './task-schedule.js'
+import { isReminder, nextRunOfSchedule, wakeOwnerText, type WakePeople } from './task-schedule.js'
 import { waitKind, type WaitingOn } from './task-turn.js'
 import { withoutOutside } from './turn-end.js'
 
@@ -29,8 +29,8 @@ export interface TaskStateFacts {
   /** The user's time zone: the times are said in it. */
   zone: string
   now: number
-  /** The viewer the cockpit runs for (the owner): a wake-up for them is a reminder. */
-  owner?: string
+  /** Who a wake-up can be a person's reminder for (domain/task-schedule.ts isReminder). */
+  people?: WakePeople
 }
 
 const LIFECYCLE: Record<string, string> = {
@@ -64,11 +64,10 @@ export function askPhrase(w: WaitingOn, zone: string): string {
   }
 }
 
-/** The wake-up as a phrase: "atlas checks back <time>", or "a reminder for lasse at <time>". */
-export function checkPhrase(schedule: ScheduleFields, zone: string, owner?: string): string {
+/** The wake-up as a phrase: "atlas checks back <time>", or "a reminder for dev-user at <time>". */
+export function checkPhrase(schedule: ScheduleFields, zone: string, people: WakePeople = { me: '' }): string {
   const at = localTime(schedule.at!, zone)
-  if (schedule.by && owner && schedule.by === owner) return `a reminder for ${schedule.by} at ${at}`
-  return `${schedule.by ?? 'the agent'} checks back ${at}`
+  return `${wakeOwnerText(schedule.by, people)}${isReminder(schedule.by, people) ? ' at' : ''} ${at}`
 }
 
 function repeatingText(schedule: ScheduleFields | null): string {
@@ -82,7 +81,7 @@ export function stateEcho(facts: TaskStateFacts): string {
   const { schedule, zone } = facts
   const asks = facts.waits.length > 0 ? facts.waits.map((w) => askPhrase(w, zone)).join('; ') : 'none'
   const check = schedule?.at
-    ? `${facts.outcome === 'set' ? 'set' : 'kept'}, ${checkPhrase(schedule, zone, facts.owner)}`
+    ? `${facts.outcome === 'set' ? 'set' : 'kept'}, ${checkPhrase(schedule, zone, facts.people)}`
     : facts.outcome === 'removed' ? 'removed, no wake-up' : 'none'
   const open = facts.status === 'planned' || facts.status === 'active'
   const next = open ? nextRunOfSchedule(schedule, facts.now) : null

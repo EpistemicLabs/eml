@@ -11,7 +11,7 @@ import { firedText, startedBy } from '../domain/run-text.js'
 import { formatDuration } from '../domain/schedule.js'
 import { isOpenTask, nameOfTask } from '../domain/schedule-tool.js'
 import { firesHere, firingOf, type TaskFiring } from '../domain/task-owner.js'
-import { clearWake, dueOf, hasSchedule, sameInstant, scheduleIsOff, scheduleOf, setCrons, setPaused } from '../domain/task-schedule.js'
+import { clearWake, dueOf, hasSchedule, isReminder, sameInstant, scheduleIsOff, scheduleOf, setCrons, setPaused } from '../domain/task-schedule.js'
 import { waitKind } from '../domain/task-turn.js'
 import { waitsOf } from '../domain/task-waits.js'
 import type { WakeOutcome } from '../domain/job-contract.js'
@@ -216,16 +216,6 @@ export const WAKE_WAIT_NOTICE_MS = 60 * 60_000
 const NO_ROOM = 'no room: too little free memory, or the running cap with every session busy'
 /** The journal line when a task's repeating times end after the runs they were set to have (max_runs). */
 const RUNS_USED_UP = 'Its repeating times ended after the runs they were set to have.'
-
-/**
- * A wake-up for a person (a reminder) rather than an agent (a run): its by is this cockpit's member or one of the
- * task's owners; assignee_ids name people only. A wake-up without by (set before brain schema 25 moved it) is the
- * delegated agent's.
- */
-export function isPersonWake(by: string | null | undefined, task: Pick<RunnerTask, 'properties'>, me: string): boolean {
-  if (!by) return false
-  return by === me || (task.properties?.assignee_ids ?? []).includes(by)
-}
 
 /** A task in a log line: its id, never its name. */
 const tagOf = (taskId: string): string => `task ${taskId.slice(0, 8)}`
@@ -604,7 +594,7 @@ export class JobRunner {
     // A wake-up that rides in a run which has not ended is not due again: that run brings it.
     let wake = firing.wake && !openRuns.some((run) => sameInstant(run.fired?.wake?.at, firing.wake!.at)) ? firing.wake : null
     // A person's wake-up is a reminder: it goes into their Inbox, and no session is started for it.
-    if (wake && this.deps.remind && isPersonWake(wake.by, task, this.deps.me)) {
+    if (wake && this.deps.remind && isReminder(wake.by, { me: this.deps.me, owners: task.properties?.assignee_ids })) {
       await this.remind(space, task.id, record, wake, zoned)
       wake = null
     }

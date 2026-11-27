@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   addCron, clearWake, cronRefusal, cronZoneRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, runComingAt, sameInstant, sameSchedule, scheduleIsOff, scheduleOf, ScheduleError,
   scheduleText, setCrons, setEndsAt, setPaused, setWake, storedSchedule,
+  isReminder, wakeOwnerText,
 } from '../src/domain/task-schedule.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
 
@@ -346,5 +347,24 @@ describe('when a task is started next for its schedule, as this cockpit knows it
     expect(runComingAt({ at: '2026-11-25T09:30:00.000Z', paused: true }, {}, NOW, LATE)).toBeNull()
     expect(runComingAt({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, {}, NOW, LATE)).toBeNull()
     expect(runComingAt(null, {}, NOW, LATE)).toBeNull()
+  })
+})
+
+describe('whose a wake-up is: one rule for firing, the schedule tool and the end_turn answer', () => {
+  const people = { me: 'dev-user', owners: ['dev-user', 'kim'] }
+  it('is a person\'s reminder for this cockpit\'s member and for any owner of the task', () => {
+    expect(isReminder('dev-user', people)).toBe(true)
+    expect(isReminder('kim', people)).toBe(true)
+    expect(isReminder('kim', { me: 'dev-user' })).toBe(false)
+  })
+  it('is an agent\'s run for anyone else, and for a wake-up that names nobody', () => {
+    expect(isReminder('atlas', people)).toBe(false)
+    expect(isReminder(undefined, people)).toBe(false)
+    expect(isReminder(null, people)).toBe(false)
+  })
+  it('is phrased the same everywhere', () => {
+    expect(wakeOwnerText('kim', people)).toBe('a reminder for kim')
+    expect(wakeOwnerText('atlas', people)).toBe('atlas checks back')
+    expect(wakeOwnerText(undefined, people)).toBe('the agent checks back')
   })
 })

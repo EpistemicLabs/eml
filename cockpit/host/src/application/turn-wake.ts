@@ -76,7 +76,7 @@ export interface WakeSettled {
   before?: ScheduleFields | null
   after?: ScheduleFields | null
   /** The task as read: its status and its waits (before this turn's wait is routed). */
-  task?: { status: string; waits: Wait[] }
+  task?: { status: string; waits: Wait[]; owners?: string[] }
   /** The zone the times are read in (the user's). */
   zone?: string
 }
@@ -166,7 +166,11 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
     return {
       problem: null, saved, nextRun: open && nextRunOfSchedule(firing, now()) !== null,
       outcome, before, after, zone,
-      task: { status: written.task.status, waits: waitsOf(written.task.properties as { waits?: unknown; waiting_on?: unknown } | undefined) },
+      task: {
+        status: written.task.status,
+        waits: waitsOf(written.task.properties as { waits?: unknown; waiting_on?: unknown } | undefined),
+        ...(written.task.properties?.assignee_ids ? { owners: written.task.properties.assignee_ids } : {}),
+      },
     }
   }
 

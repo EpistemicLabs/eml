@@ -71,7 +71,7 @@ export async function recordEndTurn(deps: RecordEndTurnDeps, sessionId: string, 
       status: wake.task.status,
       // The task's other waits, and the one this call puts on it (the router writes it as the turn ends).
       waits: [...wake.task.waits.filter((w) => (w.session_id ?? w.id) !== sessionId), ...(final.wait ? [final.wait] : [])],
-      schedule: wake.after ?? null, outcome: wake.outcome, zone: wake.zone, now: time.now, owner: ctx.owner,
+      schedule: wake.after ?? null, outcome: wake.outcome, zone: wake.zone, now: time.now, people: { me: ctx.owner, owners: wake.task.owners },
     })
     : null
   return {
