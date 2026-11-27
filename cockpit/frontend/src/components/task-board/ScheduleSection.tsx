@@ -7,9 +7,9 @@
 import { type ReactNode, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { activeGrants, agentName, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, NEEDS_OK, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
+import { activeGrants, type BoardTask, checkBackWho, type GrantTool, GRANT_TOOLS, isDue, isLastTime, NEEDS_OK, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
 import type { RunTone } from '@/lib/job-run-label';
-import { inputStamp, useTimeZone, zonedTime } from '@/lib/time-zone';
+import { inputStamp, parseInZone, useTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 import { Chip, FIELD, FOCUS, HUE, LABEL, LINK, MINI, PRIMARY } from '@/shared/view/ui';
 
@@ -30,21 +30,6 @@ function ConfirmRow({ text, action, busy, onConfirm, onCancel }: { text: string;
       <button type="button" className={MINI} disabled={busy} onClick={onCancel}>Cancel</button>
     </div>
   );
-}
-
-/** Who the wake-up is for, before its time: the agent checks back, or a reminder for the viewer; an older one names nobody. */
-export function wakeLabel(by: string | undefined, viewer: string | undefined): string {
-  if (!by) return 'Wake-up';
-  return viewer && by === viewer ? 'Reminder for you' : `${agentName(by)} checks back`;
-}
-
-/** The instant a date and a time from the inputs name in the zone; null when they name none (or a skipped hour). */
-export function pickedInstant(date: string, time: string, zone: string): string | null {
-  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  const t = /^(\d{2}):(\d{2})$/.exec(time);
-  if (!d || !t) return null;
-  const at = zonedTime({ year: Number(d[1]), month: Number(d[2]), day: Number(d[3]), hour: Number(t[1]), minute: Number(t[2]) }, zone);
-  return at === null ? null : new Date(at).toISOString();
 }
 
 export function ScheduleSection({ task, now, viewer, onAct, onEndSchedule, onAddTime }: {
@@ -150,7 +135,7 @@ export function ScheduleSection({ task, now, viewer, onAct, onEndSchedule, onAdd
       {schedule?.at && (
         <div aria-label="Wake-up" className="flex flex-col gap-0.5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-            <span><b className="font-semibold">{wakeLabel(schedule.by, viewer)}</b> <time className="tabular-nums">{when(schedule.at, now)}</time></span>
+            <span><b className="font-semibold">{checkBackWho(schedule.by, viewer, { own: 'Reminder for you' })}</b> <time className="tabular-nums">{when(schedule.at, now)}</time></span>
             {!moving && (
               <span className="flex gap-3">
                 <button type="button" className={LINK} disabled={busy} aria-label="Reschedule the wake-up" onClick={() => setMoving(inputStamp(Date.parse(schedule.at!), timeZone))}>Reschedule</button>
@@ -160,7 +145,8 @@ export function ScheduleSection({ task, now, viewer, onAct, onEndSchedule, onAdd
           </div>
           {schedule.why && <span title={schedule.why} className="line-clamp-3 whitespace-pre-wrap text-ui text-muted-foreground">{schedule.why}</span>}
           {moving && (() => {
-            const picked = pickedInstant(moving.date, moving.time, timeZone);
+            const at = parseInZone(`${moving.date}T${moving.time}`, timeZone);
+            const picked = at === null ? null : new Date(at).toISOString();
             const ok = picked !== null && Date.parse(picked) > now;
             return (
               <div role="group" aria-label="Reschedule the wake-up" className="mt-1 flex flex-wrap items-center gap-2 text-ui">

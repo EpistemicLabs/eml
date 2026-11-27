@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { activeGrants, changeRecord, cronWords, fetchTaskRecord, isDue, isLastTime, nextRunText, pauseSchedule, recordShows, removeTime, resumeSchedule, runLine, runNow, scheduleDone, scheduleZone, timeText, type TaskRecord, type TaskRun, modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask, askDueLabel, checkBackOf, checkBackText, looksGoodLabel, markDone, removeWake, repeats, rescheduleWake } from './task-board';
+import { activeGrants, changeRecord, cronWords, fetchTaskRecord, isDue, isLastTime, nextRunText, pauseSchedule, recordShows, removeTime, resumeSchedule, runLine, runNow, scheduleDone, scheduleZone, timeText, type TaskRecord, type TaskRun, modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask, askDueLabel, checkBackText, checkBackWho, looksGoodLabel, markDone, removeWake, repeats, rescheduleWake } from './task-board';
 import { DAY_MS } from './time';
 import { setTimeZoneForTest } from './time-zone';
 
@@ -642,8 +642,10 @@ describe('asks and check-backs (decision asks-and-check-backs-are-separate)', ()
     expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW)).toBe('Reminder tomorrow 09:00');
     expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW, 'Reminder for you')).toBe('Reminder for you tomorrow 09:00');
     expect(checkBackText({ at: local(19, 15), by: null }, 'lasse', NOW)).toBe('Wake-up 15:00');
-    expect(checkBackOf(task({ schedule: { at: local(20, 9), by: 'nova' } }))).toEqual({ at: local(20, 9), by: 'nova' });
-    expect(checkBackOf(task({ schedule: { crons: ['0 8 * * *'] } }))).toBeNull();
+    expect(checkBackWho('nova', 'dev-user')).toBe('Nova checks back');
+    expect(checkBackWho('nova', 'dev-user', { short: true })).toBe('Nova');
+    expect(checkBackWho('dev-user', 'dev-user', { own: 'Reminder for you' })).toBe('Reminder for you');
+    expect(checkBackWho(undefined, 'dev-user')).toBe('Wake-up');
   });
 
   it('Looks good says that it closes the task and ends the check, unless the task repeats', () => {

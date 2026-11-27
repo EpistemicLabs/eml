@@ -783,20 +783,19 @@ export function askDueLabel(due: string, now: number, zone: string = userTimeZon
 }
 
 /**
- * Who a wake-up is for and when, in words: "Nova checks back tomorrow 09:00", or "Reminder 09:00" when it is the
- * viewer's own. `own`: the words for the viewer's own ("Reminder for you" in the panel). A wake-up from an older host
- * names nobody: "Wake-up 09:00".
+ * Who a wake-up is for, in words: "Nova checks back", or `own` when it is the viewer's (a reminder: "Reminder", "Reminder
+ * for you" in the panel); "Wake-up" when it names nobody. `short`: the agent's name alone, for a chip ("Nova").
  */
-export function checkBackText(check: CheckBack, viewer: string | undefined, now: number, own = 'Reminder'): string {
-  const time = when(check.at, now);
-  if (!check.by) return `Wake-up ${time}`;
-  if (viewer && check.by === viewer) return `${own} ${time}`;
-  return `${agentName(check.by)} checks back ${time}`;
+export function checkBackWho(by: string | null | undefined, viewer: string | undefined, opts: { own?: string; short?: boolean } = {}): string {
+  if (!by) return 'Wake-up';
+  if (viewer && by === viewer) return opts.own ?? 'Reminder';
+  return opts.short ? agentName(by) : `${agentName(by)} checks back`;
 }
 
-/** A task's wake-up as an Inbox item and a card carry it, or null when it has none. */
-export const checkBackOf = (task: Pick<BoardTask, 'schedule'> | undefined): CheckBack | null =>
-  task?.schedule?.at ? { at: task.schedule.at, by: task.schedule.by ?? null } : null;
+/** Who a wake-up is for and when, in words: "Nova checks back tomorrow 09:00", "Reminder 09:00", "Wake-up 09:00". */
+export function checkBackText(check: CheckBack, viewer: string | undefined, now: number, own?: string): string {
+  return `${checkBackWho(check.by, viewer, own ? { own } : {})} ${when(check.at, now)}`;
+}
 
 /**
  * The approve button of a review in the Inbox: on a task without repeating times Looks good closes it, and a

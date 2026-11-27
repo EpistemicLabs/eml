@@ -5,7 +5,7 @@
 // sessions, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
 // without a browser.
-import { agentName, checkBackText, hueOf, OPEN_STATUSES, taskName, TURN_META, when, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
+import { agentName, checkBackText, checkBackWho, hueOf, OPEN_STATUSES, taskName, TURN_META, when, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
 import type { Hue } from '@/shared/view/ui/hue';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
@@ -145,7 +145,7 @@ export function taskChips(task: TaskLike, viewer: string | undefined, now: numbe
   const at = task.schedule?.at;
   if (at) {
     const by = task.schedule?.by;
-    const who = !by ? '' : viewer && by === viewer ? 'Reminder' : agentName(by);
+    const who = by ? checkBackWho(by, viewer, { short: true }) : '';
     chips.push({ kind: 'clock', label: [who, when(at, now)].filter(Boolean).join(' · '), words: checkBackText({ at, by: by ?? null }, viewer, now) });
   }
   return chips;
