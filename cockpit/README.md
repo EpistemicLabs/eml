@@ -633,8 +633,12 @@ starts a session with either). The cockpit owns its copy the same way
   against what the user asked for; it is not a barrier against the user's own instructions.
   *Network in the sandbox* opens the network for commands. Worker sessions and task runs always run
   in Auto.
-- **Hook trust:** Codex runs the cockpit's hooks only after you confirmed them once ("Trust all") in
-  the first session.
+- **Hook trust:** Codex runs a hook from its home's `hooks.json` only once its current text is trusted
+  (`hooks.state."<path>:<event>:<i>:<j>".trusted_hash` in `config.toml`, which Codex's terminal writes on "Trust
+  all"). The cockpit trusts its own hooks itself whenever it writes them, at every boot: one entry per hook of its
+  own `hooks.json`, with the hash Codex computes for it, and none left for hooks that file no longer has
+  (`providers/codex/hook-trust.ts`). So sessions run them in the chat and in a terminal without asking. Hooks that
+  are not the cockpit's — a project's own, yours — keep whatever trust Codex gave them.
 - **Chat view (beta):** on `codex app-server` (`chat-runtime.ts`). What a chat runtime offers beside the
   basics it names in `capabilities.features` (domain `RuntimeFeature`), and the view shows only those controls.
   A Codex chat has no `/` commands, stops a subagent by interrupting its thread's turn, takes a reasoning effort
@@ -645,9 +649,9 @@ starts a session with either). The cockpit owns its copy the same way
   one resumes its thread for it — and answers with `send_message` of the MCP server `cockpit`; a Codex session
   that ran in a terminal still takes no message. Tool limits cannot be held: a Codex worker given them is refused.
   The session's turn state comes from app-server's own turns (`reportsTurns`), not from the hooks: app-server
-  runs the cockpit's hooks only once they were trusted in a terminal ("Trust all") and never asks, so a chat
-  whose hooks are not trusted says so in the conversation. It then runs without the brain boot, project and
-  task context.
+  runs the cockpit's hooks only once they are trusted and never asks. Should they not be (a Codex that hashes
+  hooks differently than the cockpit trusted them), the chat says so in the conversation; it then runs without
+  the brain boot, project and task context.
 - **Workers and task runs:** a Codex session can request a worker and run a task like a Claude Code
   session. Its sandbox has no network, so `cockpit-spawn` hands the request over as a file in
   `~/.eml-cockpit/spawn-inbox` (owner-only; the request carries the same per-boot token as the HTTP
