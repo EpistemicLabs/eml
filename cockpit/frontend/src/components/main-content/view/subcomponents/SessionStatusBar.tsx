@@ -1,5 +1,5 @@
-// Cockpit addition: a status bar under every terminal
-// and chat pane — when the last message was, which model answered, how much context
+// Cockpit addition: a status bar under every session pane (the chat, and the terminal
+// fallback) — when the last message was, which model answered, how much context
 // the last turn carried. All three come from the session transcript the
 // host reads (session-summary.ts); the list refreshes with the projects poll.
 // A chat pane knows model and context live and passes them in.
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import type { ProjectSession } from '@/types/app';
 import { clock, formatInZone } from '@/lib/time-zone';
 
-type TerminalStatusBarProps = {
+type SessionStatusBarProps = {
   session: ProjectSession | null;
   /** Fresher than the transcript; a field that is null falls back to it. */
   live?: { model: string | null; contextTokens: number | null; contextWindow: number | null };
@@ -80,7 +80,7 @@ export function formatAge(iso: string, now: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function TerminalStatusBar({ session, live, modelSlot, endSlot, className }: TerminalStatusBarProps) {
+export default function SessionStatusBar({ session, live, modelSlot, endSlot, className }: SessionStatusBarProps) {
   // Minute clock so the relative age stays honest without re-fetching.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {

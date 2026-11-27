@@ -3,7 +3,7 @@
 // card shows what the transcript has: the call and its result.
 import { AlertCircle, Check, ChevronRight, CircleSlash, Loader2, Users } from 'lucide-react';
 
-import { formatTokens } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import { formatTokens } from '@/components/main-content/view/subcomponents/SessionStatusBar';
 import { cn } from '@/lib/utils';
 import { FOCUS } from '@/shared/view/ui';
 
