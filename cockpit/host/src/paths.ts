@@ -130,6 +130,8 @@ export const CONFIG_FILE = path.join(COCKPIT_HOME, 'config')     // { token } ch
 export const CLAUDE_LOGIN_FILE = path.join(COCKPIT_HOME, 'claude-login')
 // Agent settings (sign-in mode: Claude Code login by default, or the setup-token).
 export const AGENTS_FILE = path.join(COCKPIT_HOME, 'agents.json')
+// The models each agent's last chat offered, for the launchers' picker (reported-models.ts).
+export const CHAT_MODELS_FILE = path.join(COCKPIT_HOME, 'chat-models.json')
 // How much a session may hold: memory ceiling, idle stop, running cap (session-limits.ts).
 export const LIMITS_FILE = path.join(COCKPIT_HOME, 'limits.json')
 // Remote access through tailscale serve (remote-access.ts): allowed origins and users. chmod 600.

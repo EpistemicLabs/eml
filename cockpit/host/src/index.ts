@@ -16,6 +16,7 @@ import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry, defaultProviders } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
+import { ReportedModels } from './reported-models.js'
 import { PtyBridge } from './pty-bridge.js'
 import { mcpRelay, onSignInRefused, pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
 import { importBridgeAccounts, ownsBridgeAccounts, writeBridgeAccounts } from './infrastructure/plugins/bridge-accounts.js'
@@ -62,7 +63,7 @@ import { loadAgentBrains } from './agents.js'
 import { upgradeAtStart } from './agent-upgrade.js'
 import { runUpgradeAgentsCommand } from './agent-upgrade-cli.js'
 import { runMigrateJobsCommand } from './job-migration-cli.js'
-import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CONFIG_DIR, DATA_DIR, JOBS_MIGRATION_REPORT_FILE, PLUGINS_HOME } from './paths.js'
+import { BACKUPS_DIR, CHANNEL_BRIDGE_ACCOUNTS_FILE, CHAT_MODELS_FILE, CONFIG_DIR, DATA_DIR, JOBS_MIGRATION_REPORT_FILE, PLUGINS_HOME } from './paths.js'
 import type { UpgradeState } from './brain-space.js'
 import { loadSharedFlags, sweepOrphanBrains } from './team-space.js'
 import { SpawnQueue } from './spawn-queue.js'
@@ -605,6 +606,8 @@ async function main() {
   // A call's next.when sets the wake-up of the session's task; a call without one clears it (application/turn-wake.ts).
   const settleTurnWake: NonNullable<RecordEndTurnDeps['turnWake']> = (sessionId, { edit, call, turn }) =>
     turnWake.settle(sessionId, { edit, why: checkPrompt(call, turn.ctx) })
+  // The models each agent's last chat offered, for the launchers' picker (GET /api/providers/models).
+  const reportedModels = new ReportedModels(CHAT_MODELS_FILE)
   const chat = new ChatBridge({
     ledger, providers, spaces, sessionEnv,
     events: new InMemoryEventStore(),
@@ -639,6 +642,7 @@ async function main() {
     clearJobProfile: (jobId) => clearJobProfile(jobStore, jobId),
     jobs: scheduleFor,
     endTurnTool,
+    modelsOffered: (provider, models) => reportedModels.remember(provider, models),
     terminalRuns: (sessionId): boolean => bridge.isRunning(sessionId),
     terminalBusy: (sessionId): 'working' | 'waiting' | null => {
       const turn = turns.get(sessionId)
@@ -1219,7 +1223,7 @@ async function main() {
   })
 
   const hostDeps: HostDeps =
-    { spaces, bridge, chat, turns, time, providers, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
       tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
