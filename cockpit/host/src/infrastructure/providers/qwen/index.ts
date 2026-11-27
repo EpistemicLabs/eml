@@ -1,17 +1,21 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type {
-  AgentProvider, AgentRuntime, IsolationContext, LaunchRequest, LaunchSpec, SessionRef, SessionSummary, TurnSignal,
+  AgentProvider, AgentRuntime, Capability, IsolationContext, LaunchRequest, LaunchSpec, ProviderCapabilities, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
+import type { ModelOption, SessionRuntimeFactory, SessionRuntimeKind } from '../../../domain/session-runtime.js'
 import { COCKPIT_SKILLS_DIR, MCP_SKILLS_DIR, QWEN_CONFIG_DIR } from '../../../paths.js'
 import {
   COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS,
-  emlHookCommand, ensureHookNode, installManagedSkills, shellLine, taskHookCommand, terminalOnly, turnHookCommand, writeTurnHookConfig, type HookCommand,
+  emlHookCommand, ensureHookNode, installManagedSkills, noMessageInTerminal, shellLine, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig,
+  type HookCommand,
 } from '../shared.js'
 import { asAgentRuntime } from '../managed-runtime.js'
+import { createQwenChatRuntimes } from './chat-runtime.js'
+import { findChat } from './chats.js'
 import { qwenRuntime } from './runtime.js'
 import { readChatSummary } from './session-summary.js'
-import { qwenEndpointSet, qwenSettings, readQwenApiKey, readQwenSettings } from './settings.js'
+import { qwenEndpointSet, qwenSandboxed, qwenSettings, readQwenApiKey, readQwenSettings } from './settings.js'
 
 /**
  * Qwen Code as an agent provider, for open and own models behind an
@@ -45,8 +49,16 @@ import { qwenEndpointSet, qwenSettings, readQwenApiKey, readQwenSettings } from 
  * key is then readable by the model's shell commands; a keyless local
  * endpoint has no such exposure.
  *
- * macOS only for now (registry.ts): the sandbox the cockpit relies on for
- * unattended sessions is Qwen Code's sandbox-exec profile.
+ * A session runs in a terminal, or, once the user switches the chat view on
+ * (settings.ts chatView), in the chat through Qwen Code's SDK (chat-runtime.ts):
+ * the same home, hooks and MCP servers either way. With it on, workers run in
+ * the chat too, and a session there can be sent a message.
+ *
+ * Sandbox: on macOS Qwen Code's sandbox-exec profile for every mode but off. On
+ * Linux none, as for Claude Code: Qwen Code's own Linux sandboxes do not fit (its
+ * tool sandbox refuses MCP servers and SDK sessions, its container sandbox needs
+ * Docker), so a session there runs on its classifier alone in auto (decision
+ * qwen-linux-unattended-classifier-only).
  */
 
 const SETTINGS_JSON = path.join(QWEN_CONFIG_DIR, 'settings.json')
@@ -85,20 +97,6 @@ function writeSettings(settings: Json): void {
   fs.chmodSync(SETTINGS_JSON, 0o600)
 }
 
-// --- transcripts --------------------------------------------------------------
-
-/** Qwen Code files a conversation as projects/<project dir>/chats/<id>.jsonl. */
-function findChat(providerSessionId: string): string | null {
-  const projects = path.join(QWEN_CONFIG_DIR, 'projects')
-  let dirs: string[]
-  try { dirs = fs.readdirSync(projects) } catch { return null }
-  for (const dir of dirs) {
-    const file = path.join(projects, dir, 'chats', `${providerSessionId}.jsonl`)
-    if (fs.existsSync(file)) return file
-  }
-  return null
-}
-
 // --- provider -----------------------------------------------------------------
 
 class QwenProvider implements AgentProvider {
@@ -106,11 +104,45 @@ class QwenProvider implements AgentProvider {
   readonly label = 'Qwen Code'
   /** Qwen Code starts under the cockpit's id (--session-id). */
   readonly adoptsSessionId = true
-  readonly capabilities = terminalOnly(this.label)
   readonly settings = qwenSettings
+  private terminal = terminalOnly(this.label)
 
   /** The cockpit's own folders a session writes to (IsolationContext), as of the last prepare. */
   private writableDirs: string[] = []
+
+  /** Qwen Code through its SDK (chat-runtime.ts), in the same sandbox a terminal session gets. */
+  private runtimes = createQwenChatRuntimes(undefined, {
+    sandboxArgs: (mode, space) => this.sandboxArgs(mode === 'yolo', space),
+    configuredModel: () => readQwenSettings().model,
+  })
+
+  /** The chat view is the user's switch (settings.ts chatView), read each time: it holds from the next session on. */
+  get capabilities(): ProviderCapabilities {
+    return readQwenSettings().chatView ? withChat(this.terminal) : this.terminal
+  }
+
+  /** There exactly while the chat view is on. */
+  get chatRuntime(): SessionRuntimeFactory | undefined {
+    return readQwenSettings().chatView ? this.runtimes : undefined
+  }
+
+  /** An OpenAI-compatible endpoint lists no models to Qwen Code: the one set in the settings. */
+  chatModels(): Promise<ModelOption[]> {
+    const { model } = readQwenSettings()
+    return Promise.resolve(model ? [{ id: model, label: model, description: 'Set in Settings › Models › Qwen Code', resolved: model }] : [])
+  }
+
+  /**
+   * Qwen Code's sandbox for a session (macOS: sandbox-exec), none for one that runs without (`off`) or where
+   * the cockpit has none for it (Linux). Writes stay in the project folder, temp and QWEN_HOME, plus the
+   * cockpit's own folders a session writes to and the space's EML folder: the sandbox confines the whole CLI,
+   * its hooks included, and the EML hooks keep their state and logs next to the space's hook config.
+   */
+  private sandboxArgs(off: boolean, space: SessionSpace): string[] {
+    if (off || !qwenSandboxed()) return []
+    const writable = [...this.writableDirs, path.dirname(space.files.emlConfig)].slice(0, MAX_INCLUDE_DIRS)
+    return ['--sandbox', 'sandbox-exec', ...(writable.length ? ['--include-directories', writable.join(',')] : [])]
+  }
 
   /** Sessions need the CLI and a model endpoint to talk to. */
   readonly runtime: AgentRuntime = (() => {
@@ -195,24 +227,17 @@ class QwenProvider implements AgentProvider {
   launch(req: LaunchRequest): LaunchSpec {
     const settings = readQwenSettings()
     const apiKey = readQwenApiKey()
-    // Unattended sessions (workers, task runs) always run in auto mode in the
-    // sandbox, whatever the user chose for their own sessions: nobody is
-    // watching them, and nobody chose to run them without a sandbox. An
+    // Unattended sessions (workers, task runs) always run in auto mode, whatever
+    // the user chose for their own sessions: nobody is watching them. An
     // attended one follows the user's setting.
     const mode = req.unattended ? 'auto' : settings.permissionMode
-    // The sandbox confines the whole CLI, its hooks included: the EML hooks keep
-    // their state and logs next to the space's hook config.
-    const writable = [...this.writableDirs, path.dirname(req.space.files.emlConfig)].slice(0, MAX_INCLUDE_DIRS)
     const permissions = mode === 'off'
       ? ['--approval-mode', 'yolo']
       : [
         // Qwen Code's classifier allows safe actions and refuses risky ones; in
         // `default` every edit and command comes to the user.
         '--approval-mode', mode === 'auto' ? 'auto' : 'default',
-        // Writes stay in the project folder, temp and QWEN_HOME, plus the
-        // cockpit's own folders a session writes to and the space's EML folder.
-        '--sandbox', 'sandbox-exec',
-        ...(writable.length ? ['--include-directories', writable.join(',')] : []),
+        ...this.sandboxArgs(false, req.space),
       ]
     const args = [
       qwenRuntime.bin,
@@ -239,8 +264,16 @@ class QwenProvider implements AgentProvider {
     }
   }
 
+  /** With the chat view on, a worker runs through the SDK like a chat session the user opened, in the worker's mode (workerMode). */
   workerRunsInChat(): boolean {
-    return false
+    return readQwenSettings().chatView
+  }
+
+  /** Only a session in the chat can be handed a message; one that ran in a terminal is never typed into. */
+  messagingOf(session: { runtime: SessionRuntimeKind } | undefined): Capability {
+    const messaging = this.capabilities.messaging
+    if (!messaging.supported || session?.runtime !== 'terminal') return messaging
+    return { supported: false, reason: noMessageInTerminal(this.label) }
   }
 
   canResume(session: SessionRef): boolean {

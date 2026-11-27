@@ -56,12 +56,12 @@ describe('default provider', () => {
     expect(registry.get('nope')).toBeUndefined()
   })
 
-  it('offers Qwen Code on macOS only, also when the host wraps its Claude provider', async () => {
+  it('offers Qwen Code on macOS and Linux, also when the host wraps its Claude provider', async () => {
     const { defaultProviders } = await import('../src/infrastructure/providers/registry.js')
     const claude = stub('claude')
     expect(defaultProviders('darwin', claude).map((p) => p.id)).toEqual(['claude', 'codex', 'qwen'])
     expect(defaultProviders('darwin', claude)[0]).toBe(claude)
-    expect(defaultProviders('linux', claude).map((p) => p.id)).toEqual(['claude', 'codex'])
+    expect(defaultProviders('linux', claude).map((p) => p.id)).toEqual(['claude', 'codex', 'qwen'])
     expect(defaultProviders('win32', claude).map((p) => p.id)).toEqual(['claude', 'codex'])
   })
 })

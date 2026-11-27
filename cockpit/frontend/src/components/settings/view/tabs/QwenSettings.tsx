@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 
 import { useSetProviderSettings, type AgentProviderInfo } from '@/lib/providers';
-import { Button, Input } from '@/shared/view/ui';
+import { Button, Input, Switch } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -18,27 +18,33 @@ const RUNTIME_DESCRIPTION =
 const NOT_SET_UP_HINT =
   'Downloads Qwen Code from the npm registry into the cockpit home (about 150 MB) and verifies it. Only versions out for two days are taken.';
 
-// Host: providers/qwen/settings.ts.
-const PERMISSION_MODES: ReadonlyArray<{ value: QwenPermissionMode; label: string; description: string }> = [
-  {
-    value: 'auto',
-    label: 'Auto',
-    description:
-      'Auto (recommended) — Qwen Code works in its sandbox: it can only write inside the project folder. A classifier allows safe actions and refuses risky ones.',
-  },
-  {
-    value: 'ask',
-    label: 'Ask',
-    description:
-      'Ask — Qwen Code works in its sandbox, and every file edit and shell command comes to you; the session then shows as waiting.',
-  },
-  {
-    value: 'off',
-    label: 'Off',
-    description:
-      'Off — no sandbox and no questions: your sessions run every command and edit directly, anywhere on this computer. Only for throwaway work.',
-  },
-];
+// Host: providers/qwen/settings.ts. The sandbox is Qwen Code's sandbox-exec profile, so macOS only
+// (`sandboxed`); on Linux a session runs as Claude Code's do, its classifier deciding in Auto.
+function permissionModes(sandboxed: boolean): ReadonlyArray<{ value: QwenPermissionMode; label: string; description: string }> {
+  return [
+    {
+      value: 'auto',
+      label: 'Auto',
+      description: sandboxed
+        ? 'Auto (recommended) — Qwen Code works in its sandbox: it can only write inside the project folder. A classifier allows safe actions and refuses risky ones.'
+        : 'Auto (recommended) — a classifier, run by the model you set above, allows safe actions and refuses risky ones. There is no sandbox on this computer, as for Claude Code.',
+    },
+    {
+      value: 'ask',
+      label: 'Ask',
+      description: sandboxed
+        ? 'Ask — Qwen Code works in its sandbox, and every file edit and shell command comes to you; the session then shows as waiting.'
+        : 'Ask — every file edit and shell command comes to you; the session then shows as waiting.',
+    },
+    {
+      value: 'off',
+      label: 'Off',
+      description: sandboxed
+        ? 'Off — no sandbox and no questions: your sessions run every command and edit directly, anywhere on this computer. Only for throwaway work.'
+        : 'Off — no questions: your sessions run every command and edit directly, anywhere on this computer. Only for throwaway work.',
+    },
+  ];
+}
 
 const text = (value: boolean | string | undefined) => (typeof value === 'string' ? value : '');
 
@@ -131,8 +137,10 @@ function EndpointRows({ qwen }: { qwen: AgentProviderInfo }) {
 
 export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
   const setSettings = useSetProviderSettings('qwen');
+  const modes = permissionModes(qwen.settings?.sandboxed === true);
   const mode: QwenPermissionMode =
-    PERMISSION_MODES.find((option) => option.value === qwen.settings?.permissionMode)?.value ?? 'auto';
+    modes.find((option) => option.value === qwen.settings?.permissionMode)?.value ?? 'auto';
+  const chatView = qwen.settings?.chatView === true;
 
   if (!qwen.version) {
     return (
@@ -160,10 +168,10 @@ export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
         description="How much a Qwen Code session may do without asking. Applies to sessions started from now on."
       >
         <SettingsCard divided>
-          <SettingsRow label="Before risky actions" description={PERMISSION_MODES.find((option) => option.value === mode)?.description}>
+          <SettingsRow label="Before risky actions" description={modes.find((option) => option.value === mode)?.description}>
             <SettingsSegmented
               value={mode}
-              options={PERMISSION_MODES}
+              options={modes}
               onChange={(value) => setSettings.mutate({ permissionMode: value })}
               ariaLabel="Qwen Code permissions"
               disabled={setSettings.isPending}
@@ -173,6 +181,26 @@ export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
             Worker sessions opened by another session always run in Auto — nobody is watching them.
           </div>
           {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Chat view (beta)" description="Run Qwen Code sessions in the chat view, next to the terminal. Applies to sessions opened from now on.">
+        <SettingsCard divided>
+          <SettingsRow
+            label="Qwen Code in the chat view"
+            description={
+              chatView
+                ? 'On — a Qwen Code session can open in the chat view, workers run there, and other sessions can send it messages.'
+                : 'Off — Qwen Code sessions run in the terminal only.'
+            }
+          >
+            <Switch
+              checked={chatView}
+              onChange={(checked: boolean) => setSettings.mutate({ chatView: checked })}
+              ariaLabel="Qwen Code in the chat view"
+              disabled={setSettings.isPending}
+            />
+          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
 

@@ -154,10 +154,24 @@ async function codexHarness(): Promise<Harness> {
   }
 }
 
+/** Qwen Code's runtime on a CLI that is none (helpers/fake-qwen-cli.ts), the SDK itself between them. */
+async function qwenHarness(): Promise<Harness> {
+  const { createQwenChatRuntimes } = await import('../src/infrastructure/providers/qwen/chat-runtime.js')
+  const { fakeQwenSpawn } = await import('./helpers/fake-qwen-cli.js')
+  const { spawn, clis } = fakeQwenSpawn()
+  return {
+    factory: createQwenChatRuntimes(spawn),
+    received: () => clis.flatMap((cli) => cli.texts),
+    ask: () => { clis.at(-1)?.ask() },
+    die: () => clis.at(-1)?.exit(1),
+  }
+}
+
 const SUBJECTS: Subject[] = [
   { name: 'a runtime in memory', create: async () => memoryHarness() },
   { name: 'Claude Code (Agent SDK, without its CLI)', create: claudeHarness },
   { name: 'Codex (app-server, without its CLI)', create: codexHarness },
+  { name: 'Qwen Code (its SDK, without its CLI)', create: qwenHarness },
 ]
 
 const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)) }

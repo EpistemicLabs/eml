@@ -12,8 +12,8 @@ export function defaultProviders(os: string, claude: AgentProvider = createClaud
   return [
     claude,
     createCodexProvider(),
-    // macOS only for now: unattended sessions need Qwen Code's sandbox-exec sandbox.
-    ...(os === 'darwin' ? [createQwenProvider()] : []),
+    // macOS (in Qwen Code's sandbox-exec sandbox) and Linux (without one, as Claude Code: qwen/index.ts).
+    ...(os === 'darwin' || os === 'linux' ? [createQwenProvider()] : []),
   ]
 }
 
