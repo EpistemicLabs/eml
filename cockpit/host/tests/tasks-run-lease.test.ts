@@ -10,7 +10,9 @@ const home = mkdtempSync(join(tmpdir(), 'cockpit-tasks-run-lease-test-'))
 process.env.EML_COCKPIT_HOME = home
 
 // A task run from the page without a desk (POST /api/tasks/run) keeps to one live session per task: a task with its
-// session gets the run's prompt there, a session still starting on it refuses the run, naming it.
+// session gets the run's prompt there, a session still starting on it refuses the run, naming it. A holder whose
+// context is very long is put away and the run starts in its place. A queued runner request that went stale is
+// revoked when a tab claims it (spawn-api.ts).
 
 const ORIGIN = 'http://cockpit.test'
 
@@ -21,6 +23,9 @@ describe('a task run without a desk', () => {
   let spawns: import('../src/spawn-queue.js').SpawnQueue
   const delivered: Array<{ target: string; text: string }> = []
   let outcome = 'delivered'
+  const contextTokens = new Map<string, number>()
+  const putAway: string[] = []
+  const staleRequests = new Map<string, string>()
 
   beforeAll(async () => {
     const { SessionLedger } = await import('../src/session-ledger.js')
@@ -45,6 +50,11 @@ describe('a task run without a desk', () => {
       hookToken: 'hook-token',
       turnHookConfig: '',
       deliver: async (request: { target: string; text: string }) => { delivered.push(request); return outcome },
+      taskLease: {
+        contextTokensOf: (sessionId: string) => contextTokens.get(sessionId) ?? null,
+        putAway: async (sessionId: string) => { putAway.push(sessionId); ledger.archive(sessionId); return null },
+        stale: (request: { id: string }) => staleRequests.get(request.id) ?? null,
+      },
     }
     server = createHostServer(deps as never, [ORIGIN])
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -54,7 +64,7 @@ describe('a task run without a desk', () => {
     await new Promise((resolve) => server.close(resolve))
     rmSync(home, { recursive: true, force: true })
   })
-  beforeEach(() => { delivered.length = 0; outcome = 'delivered' })
+  beforeEach(() => { delivered.length = 0; outcome = 'delivered'; putAway.length = 0 })
 
   const run = async (taskId: string, prompt = 'Advance it') => {
     const res = await fetch(`${base}/api/tasks/run`, {
@@ -89,5 +99,25 @@ describe('a task run without a desk', () => {
     expect(out.status).toBe(409)
     expect(out.body.error).toMatchObject({ code: 'TASK_HELD', retry: true })
     expect(spawns.list().some((r) => r.taskId === 'busy-task')).toBe(false)
+  })
+
+  it('puts away a holder whose context is very long and queues the run in its place', async () => {
+    const { LONG_CONTEXT_TOKENS } = await import('../src/domain/own-session.js')
+    ledger.recordSpawn('long-session', null, 'bp-eml', 'claude', false, 'long-task')
+    contextTokens.set('long-session', LONG_CONTEXT_TOKENS)
+    const out = await run('long-task')
+    expect(out.status).toBe(202)
+    expect(putAway).toEqual(['long-session'])
+    expect(delivered).toEqual([])
+    expect(spawns.list().filter((r) => r.taskId === 'long-task')).toHaveLength(1)
+  })
+
+  it('revokes a stale runner request a tab claims, and hands nothing out', async () => {
+    const request = spawns.add({ projectId: 'bp-eml', prompt: 'Step', title: 'Step', fromSessionId: null, origin: 'runner', taskId: 'stale-task' })
+    staleRequests.set(request.id, 'the owner works on the task now')
+    const res = await fetch(`${base}/api/spawns/${request.id}/claim`, { method: 'POST', headers: { origin: ORIGIN } })
+    expect(res.status).toBe(409)
+    expect((await res.json() as { error: unknown }).error).toMatchObject({ code: 'REVOKED' })
+    expect(spawns.list().some((r) => r.id === request.id)).toBe(false)
   })
 })
