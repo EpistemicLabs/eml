@@ -229,7 +229,7 @@ export function goalBanner(args: { goal?: string | null; checkpoint?: string | n
 /** A task as GET /engram/:id returns it, as far as the hand-over needs it. */
 export interface TaskLike {
   status?: string
-  properties?: { delegate?: string; checkpoint?: string; delegation?: { requested_at?: string; schedule?: unknown } }
+  properties?: { delegate?: string; checkpoint?: string; delegation?: { requested_at?: string }; schedule?: unknown }
 }
 
 /**
@@ -245,8 +245,8 @@ export function handOver(before: TaskLike | null, args: { delegate?: unknown; ch
   const checkpoint = args.checkpoint !== undefined ? args.checkpoint : old.checkpoint
   if (typeof agent !== 'string' || agent === '' || typeof checkpoint !== 'string') return null
   if (old.delegate && old.checkpoint && old.delegate === agent) return null
-  // v0.24: the schedule is the task's and stays with a new agent, so a task that has one is never handed over here
-  if (old.delegation?.schedule !== undefined) return null
+  // a task with a schedule runs at its times (brain schema 25: its own field), so it is never handed over here
+  if (old.schedule !== undefined) return null
   if (old.delegate === agent && old.delegation?.requested_at !== undefined) return null
   return { agent, checkpoint, requested_at: now.toISOString() }
 }
