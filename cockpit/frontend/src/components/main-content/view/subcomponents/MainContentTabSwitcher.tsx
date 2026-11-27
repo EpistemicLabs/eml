@@ -169,7 +169,7 @@ export default function MainContentTabSwitcher({
           {addOpen && (
             <div
               role="menu"
-              className={cn(POPOVER, 'absolute top-full right-0 mt-1 max-h-[70vh] min-w-(--size-menu-min) overflow-y-auto')}
+              className={cn(POPOVER, 'absolute top-full right-0 mt-1 max-h-80 min-w-(--size-menu-min) overflow-y-auto')}
             >
               {shown.map(({ group, title }, index) => (
                 <Fragment key={group}>
