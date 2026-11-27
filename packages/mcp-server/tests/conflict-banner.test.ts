@@ -249,9 +249,17 @@ describe('handOver — an agent completing delegate + checkpoint hands the task 
   })
   it('never hands over a task that has a schedule: the flat write keeps the schedule', () => {
     const schedule = { crons: ['0 8 * * 1-5'] }
+    // the schedule as the task's own field
     expect(handOver({ status: 'active', properties: { delegate: 'atlas', delegation: {}, schedule } }, { checkpoint: 'after' }, NOW)).toBeNull()
-    // brain schema 25: the schedule is the task's own field; a task that has one runs at its times
     expect(handOver({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', schedule } }, { delegate: 'motti' }, NOW)).toBeNull()
+  })
+  it('never hands over a task whose schedule a server of an older schema keeps in the delegation', () => {
+    const schedule = { crons: ['0 8 * * 1-5'] }
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', delegation: { schedule } } }, { checkpoint: 'after' }, NOW)).toBeNull()
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', checkpoint: 'after', delegation: { schedule } } }, { delegate: 'motti' }, NOW)).toBeNull()
+  })
+  it('hands over a task without a schedule in either place', () => {
+    expect(handOver({ status: 'active', properties: { delegate: 'atlas', delegation: {} } }, { checkpoint: 'after' }, NOW)).toMatchObject({ agent: 'atlas', checkpoint: 'after' })
   })
 })
 
