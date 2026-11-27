@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import type { AgentSettings } from '../../../domain/agent-provider.js'
 import { QWEN_API_KEY_FILE } from '../../../paths.js'
 import { readAgentSettings, writeAgentSettings } from '../../../provider-settings.js'
+import { platform } from '../../platform/index.js'
 
 /**
  * Qwen Code's settings (Settings › Models › Qwen Code): the model endpoint and
@@ -17,16 +18,23 @@ import { readAgentSettings, writeAgentSettings } from '../../../provider-setting
  *                    session as OPENAI_API_KEY in its environment — the model's
  *                    shell commands can read it there.
  *   permissionMode
- *     auto (default)  the sandbox — writes stay in the project folder and the
- *                     cockpit's own folders — and Qwen Code's classifier
- *                     allows safe actions; risky ones come to the user.
- *     ask             the sandbox, and every file edit or shell command comes
- *                     to the user.
+ *     auto (default)  Qwen Code's classifier allows safe actions; risky ones
+ *                     come to the user. On macOS in the sandbox too — writes
+ *                     stay in the project folder and the cockpit's own folders.
+ *     ask             every file edit or shell command comes to the user (on
+ *                     macOS in the sandbox).
  *     off             no sandbox and no questions.
+ *   chatView          off (default): Qwen Code sessions run in the terminal only.
+ *                     on: they can run in the chat view too, through Qwen Code's
+ *                     SDK (chat-runtime.ts), and workers run there.
+ *
+ * The sandbox is Qwen Code's sandbox-exec profile, so macOS only. On Linux a
+ * session runs as Claude Code's do: without one, its classifier deciding in
+ * auto (decision qwen-linux-unattended-classifier-only). `read` says which
+ * (`sandboxed`), for the settings' wording.
  *
  * Unattended sessions (workers, task runs) ignore permissionMode and always
- * run in auto: nobody is watching them, and nobody chose to run them without
- * a sandbox.
+ * run in auto: nobody is watching them.
  */
 
 export const QWEN_PERMISSION_MODES = ['auto', 'ask', 'off'] as const
@@ -36,11 +44,16 @@ export interface QwenSettings {
   permissionMode: QwenPermissionMode
   baseUrl: string
   model: string
+  chatView: boolean
 }
 
 const MODE_KEY = 'qwenPermissionMode'
 const BASE_URL_KEY = 'qwenBaseUrl'
 const MODEL_KEY = 'qwenModel'
+const CHAT_KEY = 'qwenChatView'
+
+/** Whether sessions run in Qwen Code's sandbox (sandbox-exec, macOS) when their mode is not off. */
+export const qwenSandboxed = (os: string = platform.os): boolean => os === 'darwin'
 
 const isMode = (value: unknown): value is QwenPermissionMode =>
   (QWEN_PERMISSION_MODES as readonly unknown[]).includes(value)
@@ -51,6 +64,7 @@ export function readQwenSettings(): QwenSettings {
     permissionMode: isMode(stored[MODE_KEY]) ? stored[MODE_KEY] : 'auto',
     baseUrl: typeof stored[BASE_URL_KEY] === 'string' ? stored[BASE_URL_KEY] : '',
     model: typeof stored[MODEL_KEY] === 'string' ? stored[MODEL_KEY] : '',
+    chatView: stored[CHAT_KEY] === true,
   }
 }
 
@@ -90,7 +104,7 @@ function urlProblem(value: string): string | null {
 }
 
 export const qwenSettings: AgentSettings = {
-  read: () => ({ ...readQwenSettings(), apiKeySet: readQwenApiKey() !== null }),
+  read: () => ({ ...readQwenSettings(), apiKeySet: readQwenApiKey() !== null, sandboxed: qwenSandboxed() }),
   write(patch) {
     const next: Record<string, unknown> = {}
     let apiKey: string | undefined
@@ -107,6 +121,9 @@ export const qwenSettings: AgentSettings = {
       } else if (key === 'model') {
         if (typeof value !== 'string') return 'model must be a string'
         next[MODEL_KEY] = value.trim()
+      } else if (key === 'chatView') {
+        if (typeof value !== 'boolean') return 'chatView must be true or false'
+        next[CHAT_KEY] = value
       } else if (key === 'apiKey') {
         // An empty string removes the key.
         if (typeof value !== 'string' || /\s/.test(value.trim())) return 'apiKey must be a string without spaces'

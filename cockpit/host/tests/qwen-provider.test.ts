@@ -40,9 +40,9 @@ describe('Qwen Code settings', () => {
   })
 
   it('keeps the endpoint in agents.json and the key in its own owner-only file, never back to the UI', () => {
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: '', model: '', apiKeySet: false })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: '', model: '', chatView: false, apiKeySet: false, sandboxed: darwin })
     expect(provider.settings?.write({ baseUrl: ' https://openrouter.ai/api/v1 ', model: 'qwen/qwen3.8-27b', apiKey: API_KEY })).toBeNull()
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3.8-27b', apiKeySet: true })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3.8-27b', chatView: false, apiKeySet: true, sandboxed: darwin })
     expect(JSON.stringify(provider.settings?.read())).not.toContain(API_KEY)
     expect(readFileSync(join(home, 'agents.json'), 'utf8')).not.toContain(API_KEY)
     const keyFile = join(home, 'qwen-api-key')
@@ -60,14 +60,17 @@ describe('Qwen Code settings', () => {
     expect(provider.settings?.write({ baseUrl: 'not a url' })).toMatch(/http\(s\) URL/)
     expect(provider.settings?.write({ permissionMode: 'yolo' })).toMatch(/one of auto, ask, off/)
     expect(provider.settings?.write({ apiKey: 'a b' })).toMatch(/without spaces/)
+    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/true or false/)
     expect(provider.settings?.write({ somethingElse: true })).toMatch(/unknown setting/)
   })
 })
 
 describe('Qwen Code in the registry', () => {
-  it('is offered on macOS only for now', async () => {
-    const { ProviderRegistry } = await import('../src/infrastructure/providers/registry.js')
-    expect(new ProviderRegistry().all().map((provider) => provider.id)).toEqual(darwin ? ['claude', 'codex', 'qwen'] : ['claude', 'codex'])
+  it('is offered on macOS and Linux', async () => {
+    const { defaultProviders } = await import('../src/infrastructure/providers/registry.js')
+    expect(defaultProviders('darwin').map((provider) => provider.id)).toEqual(['claude', 'codex', 'qwen'])
+    expect(defaultProviders('linux').map((provider) => provider.id)).toEqual(['claude', 'codex', 'qwen'])
+    expect(defaultProviders('win32').map((provider) => provider.id)).toEqual(['claude', 'codex'])
   })
 })
 
@@ -88,6 +91,22 @@ describe('what Qwen Code can do', () => {
     })
   })
 
+  it('runs in the chat view too once the user switches it on: workers there, and a chat session can be sent a message', () => {
+    expect(provider.chatRuntime).toBeUndefined()
+    expect(provider.workerRunsInChat(space)).toBe(false)
+    expect(provider.settings?.write({ chatView: true })).toBeNull()
+    try {
+      expect(provider.capabilities.chat).toEqual({ supported: true })
+      expect(provider.chatRuntime?.workerMode).toBe('auto')
+      expect(provider.chatRuntime?.reportsTurns).toBe(true)
+      expect(provider.workerRunsInChat(space)).toBe(true)
+      expect(provider.messagingOf?.({ runtime: 'sdk' })).toEqual({ supported: true })
+      expect(provider.messagingOf?.({ runtime: 'terminal' })).toMatchObject({ supported: false })
+    } finally {
+      expect(provider.settings?.write({ chatView: false })).toBeNull()
+    }
+  })
+
   it('reads the last reply from a Stop hook\'s own field only', () => {
     expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
     const file = join(home, 'qwen-transcript.jsonl')
@@ -97,7 +116,8 @@ describe('what Qwen Code can do', () => {
   })
 })
 
-describe.runIf(darwin)('Qwen Code provider', () => {
+// Where the registry offers Qwen Code (registry.ts): not on Windows, whose paths and hook quoting differ.
+describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('Qwen Code provider', () => {
   let provider: AgentProvider
   const settings = () => JSON.parse(readFileSync(join(qwenHome, 'settings.json'), 'utf8'))
 
@@ -162,10 +182,11 @@ describe.runIf(darwin)('Qwen Code provider', () => {
 
   const launch = (unattended: boolean, initialPrompt: string | null = null) =>
     provider.launch({ sessionId: 'c-1', address: 'x-c1', space, providerSessionId: null, resume: false, initialPrompt, unattended })
-  // The cockpit's folders, and the space's EML folder: the sandbox covers the hooks too, and they keep their state there.
-  const sandbox = ['--sandbox', 'sandbox-exec', '--include-directories', `${join(home, 'spawn-inbox')},${join(home, 'tasks')},${join(home, 'eml', 'spaces', 'space-1')}`]
+  // macOS: the cockpit's folders, and the space's EML folder: the sandbox covers the hooks too, and they keep their state there.
+  // Linux: no sandbox, as for Claude Code (decision qwen-linux-unattended-classifier-only).
+  const sandbox = darwin ? ['--sandbox', 'sandbox-exec', '--include-directories', `${join(home, 'spawn-inbox')},${join(home, 'tasks')},${join(home, 'eml', 'spaces', 'space-1')}`] : []
 
-  it('launches the cockpit\'s own Qwen Code with the host\'s node, under the cockpit\'s session id, in the sandbox', () => {
+  it('launches the cockpit\'s own Qwen Code with the host\'s node, under the cockpit\'s session id, in the sandbox on macOS', () => {
     const spec = launch(false, 'hello')
     expect(spec.bin).toBe(process.execPath)
     expect(spec.args).toEqual([join(home, 'qwen', 'bin', 'qwen'), '--session-id', 'c-1', '--approval-mode', 'auto', ...sandbox, '--prompt-interactive', 'hello'])
@@ -191,7 +212,7 @@ describe.runIf(darwin)('Qwen Code provider', () => {
     expect(modes()).toEqual(['--approval-mode', 'default', ...sandbox])
     expect(provider.settings?.write({ permissionMode: 'off' })).toBeNull()
     expect(modes()).toEqual(['--approval-mode', 'yolo'])
-    // A worker keeps the sandbox and the classifier whatever the user chose for their own sessions.
+    // A worker keeps the classifier (and on macOS the sandbox) whatever the user chose for their own sessions.
     expect(launch(true).args.slice(3)).toEqual(['--approval-mode', 'auto', ...sandbox])
     expect(provider.settings?.write({ permissionMode: 'auto' })).toBeNull()
   })

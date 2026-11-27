@@ -159,6 +159,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
+      '@qwen-code/sdk':
+        specifier: 0.1.35
+        version: 0.1.35(typescript@5.9.3)
       '@xterm/addon-serialize':
         specifier: ^0.14.0
         version: 0.14.0
@@ -832,6 +835,13 @@ packages:
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
+
+  '@qwen-code/sdk@0.1.35':
+    resolution: {integrity: sha512-3JPCAW5wsgm1Mx8i746L4fTI6bGGtVhQriBb74UR3i5KvH34kMyB6ITQ1tgTSVoa5ZfQpyW28I7v47/cgwhuGQ==}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
+    peerDependencies:
+      typescript: '>=5.0.0'
 
   '@radix-ui/primitive@1.1.7':
     resolution: {integrity: sha512-rqWnm76nYT8HoNNqEjpgJ7Pw/DrBj5iBTrmEPo6HTX5+VJyBNOqTdv4g89G63HuR5g0AaENoAcH7Is5fF2kZ8Q==}
@@ -3542,6 +3552,15 @@ snapshots:
   '@opentelemetry/api@1.9.1': {}
 
   '@oxc-project/types@0.156.0': {}
+
+  '@qwen-code/sdk@0.1.35(typescript@5.9.3)':
+    dependencies:
+      '@modelcontextprotocol/sdk': 1.32.2(zod@4.6.7)
+      typescript: 5.9.3
+      zod: 4.6.7
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
 
   '@radix-ui/primitive@1.1.7': {}
 
