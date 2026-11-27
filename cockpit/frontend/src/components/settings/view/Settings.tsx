@@ -16,6 +16,7 @@ import AccountTab from './tabs/AccountTab';
 import AgentTab from './tabs/AgentTab';
 import ModelsTab from './tabs/ModelsTab';
 import DataTab from './tabs/DataTab';
+import AdvancedTab from './tabs/AdvancedTab';
 import PluginsTab from './tabs/PluginsTab';
 import SettingsHeading from './SettingsHeading';
 import SpacesTab from './tabs/SpacesTab';
@@ -114,6 +115,8 @@ function Settings({ isOpen, onClose, initialTab }: SettingsProps) {
               {activeTab === 'about' && <AboutTab />}
 
               {activeTab === 'data' && <DataTab tab={activeMeta} />}
+
+              {activeTab === 'advanced' && <AdvancedTab />}
 
               {activeTab === 'plugins' && <PluginsTab tab={activeMeta} />}
             </div>

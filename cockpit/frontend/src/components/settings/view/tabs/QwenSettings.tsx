@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 
 import { useSetProviderSettings, type AgentProviderInfo } from '@/lib/providers';
-import { Button, Input, Switch } from '@/shared/view/ui';
+import { Button, Input } from '@/shared/view/ui';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -140,7 +140,6 @@ export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
   const modes = permissionModes(qwen.settings?.sandboxed === true);
   const mode: QwenPermissionMode =
     modes.find((option) => option.value === qwen.settings?.permissionMode)?.value ?? 'auto';
-  const chatView = qwen.settings?.chatView === true;
 
   if (!qwen.version) {
     return (
@@ -181,26 +180,6 @@ export default function QwenSettings({ qwen }: { qwen: AgentProviderInfo }) {
             Worker sessions opened by another session always run in Auto — nobody is watching them.
           </div>
           {setSettings.isError && <p className="px-4 pb-4 text-body text-stopped-ink">{setSettings.error.message}</p>}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection title="Chat view (beta)" description="Run Qwen Code sessions in the chat view, next to the terminal. Applies to sessions opened from now on.">
-        <SettingsCard divided>
-          <SettingsRow
-            label="Qwen Code in the chat view"
-            description={
-              chatView
-                ? 'On — a Qwen Code session can open in the chat view, workers run there, and other sessions can send it messages.'
-                : 'Off — Qwen Code sessions run in the terminal only.'
-            }
-          >
-            <Switch
-              checked={chatView}
-              onChange={(checked: boolean) => setSettings.mutate({ chatView: checked })}
-              ariaLabel="Qwen Code in the chat view"
-              disabled={setSettings.isPending}
-            />
-          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
 

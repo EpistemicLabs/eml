@@ -1,6 +1,5 @@
 // Settings › Models › Claude Code, in the order every provider uses: sign-in,
-// permissions, version, then Claude Code's own display switch and the advanced
-// setup-token. Sign-in default: the regular Claude Code sign-in, which the host
+// permissions, version, then the advanced setup-token. Sign-in default: the regular Claude Code sign-in, which the host
 // runs here without a terminal (AgentSignIn) and Claude Code keeps in the
 // config dir of the active space's sessions. The setup-token is for runtimes without a
 // browser; it goes to the host once (PUT /api/agents/login) and is never read
@@ -13,8 +12,6 @@ import { cn } from '@/lib/utils';
 import { Button, Chip, FOCUS, Input, LABEL, Switch } from '@/shared/view/ui';
 import { api } from '@/utils/api';
 import AgentSignIn from '@/components/sign-in/AgentSignIn';
-import { getActivePane, isEmptyPane } from '@/stores/usePaneStore';
-import { setHostChatView } from '../../utils/settingsStorage';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
 import SettingsSection from '../SettingsSection';
@@ -22,16 +19,12 @@ import RuntimeRows from './RuntimeRows';
 
 type LoginMode = 'login' | 'token';
 type PermissionMode = 'auto' | 'bypassPermissions';
-type Renderer = 'default' | 'fullscreen';
 type Account = { loggedIn: boolean; authMethod: string | null; subscriptionType: string | null; email: string | null };
 type LoginStatus = {
   mode: LoginMode;
   /** The active space's own agent keeps its own login; the setup-token does not apply to it. Missing from an older host. */
   ownLogin?: boolean;
   permissionMode: PermissionMode;
-  renderer: Renderer;
-  remoteControl: boolean;
-  chatView: boolean;
   token: { set: boolean; prefix: string | null };
   account: Account | null;
 };
@@ -46,22 +39,7 @@ function accountLabel(status: LoginStatus | null): string {
   return [account.email, plan, via ? `via ${via}` : null].filter(Boolean).join(' · ') || 'Signed in.';
 }
 
-// The way through a terminal, kept for when the sign-in here does not work: the
-// host opens a session that starts with Claude Code's /login — in the active
-// pane's project, else the Getting started project — and the settings close so
-// the user lands in it.
-async function openSignInSession(): Promise<boolean> {
-  const active = getActivePane();
-  const projectId = active && !isEmptyPane(active) ? active.projectId : null;
-  const response = await fetch('/api/agents/login/session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId }),
-  });
-  return response.ok;
-}
-
-export default function ClaudeSettings({ claude, onCloseSettings }: { claude: AgentProviderInfo; onCloseSettings?: () => void }) {
+export default function ClaudeSettings({ claude }: { claude: AgentProviderInfo }) {
   const [status, setStatus] = useState<LoginStatus | null>(null);
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -104,12 +82,6 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
   const setMode = (mode: LoginMode) => run(() => api.setLoginMode(mode));
   const setPermissionMode = (mode: PermissionMode) => run(() => api.setPermissionMode(mode));
   const bypass = status?.permissionMode === 'bypassPermissions';
-  const setRenderer = (renderer: Renderer) => run(() => api.setRenderer(renderer));
-  const pinnedInput = status?.renderer === 'fullscreen';
-  const setRemoteControl = (on: boolean) => run(() => api.setRemoteControl(on));
-  const remoteControl = status?.remoteControl === true;
-  const setChatView = (on: boolean) => run(() => api.setChatView(on), () => setHostChatView(on));
-  const chatView = status?.chatView !== false;
 
   // The setup-token signs in the shared config's sessions only, never a space's own agent.
   const tokenMode = status?.mode === 'token' && status.ownLogin !== true;
@@ -144,18 +116,6 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
                   : 'Claude Code is not set up yet — see Version below.'}
               </p>
               <AgentSignIn provider="claude" label="Sign in to Claude" disabled={busy || !claude.version} onDone={() => void load(true)} />
-              <button
-                type="button"
-                className={cn('text-ui text-muted-foreground underline underline-offset-2 hover:text-foreground', FOCUS)}
-                disabled={!claude.version}
-                onClick={() => {
-                  void openSignInSession()
-                    .then((ok) => { if (ok) onCloseSettings?.(); else setError('Could not open the sign-in session.'); })
-                    .catch(() => setError('The cockpit host is not reachable.'));
-                }}
-              >
-                Sign in in a terminal instead
-              </button>
             </div>
           )}
           {error && !showAdvanced && <p className="px-4 pb-4 text-body text-stopped-ink">{error}</p>}
@@ -194,59 +154,6 @@ export default function ClaudeSettings({ claude, onCloseSettings }: { claude: Ag
       >
         <SettingsCard divided>
           <RuntimeRows provider={claude} />
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Display"
-        description="How Claude Code draws a session in its pane. Applies to sessions started from now on."
-      >
-        <SettingsCard divided>
-          <SettingsRow
-            label="Keep the input at the bottom"
-            description={
-              pinnedInput
-                ? 'On — Claude Code draws the whole pane itself: the input stays in place and the mouse wheel scrolls the conversation above it.'
-                : 'Off — the input is the last line of the terminal output and scrolls away with it.'
-            }
-          >
-            <Switch
-              checked={pinnedInput}
-              onChange={(checked: boolean) => void setRenderer(checked ? 'fullscreen' : 'default')}
-              ariaLabel="Keep the input at the bottom"
-              disabled={busy || status === null}
-            />
-          </SettingsRow>
-          <SettingsRow
-            label="Chat view"
-            description={
-              chatView
-                ? 'On: Claude sessions open in the chat view, and workers other sessions start run there; they cannot be followed in the Claude app. A browser can choose otherwise in Preferences.'
-                : 'Off: sessions and workers start in a terminal. A browser can choose otherwise in Preferences.'
-            }
-          >
-            <Switch
-              checked={chatView}
-              onChange={(checked: boolean) => void setChatView(checked)}
-              ariaLabel="Chat view"
-              disabled={busy || status === null}
-            />
-          </SettingsRow>
-          <SettingsRow
-            label="Reachable from the Claude app"
-            description={
-              remoteControl
-                ? 'On — new sessions start with Remote Control: they show up in the Claude app and on claude.ai/code and can be driven from there, through Anthropic\'s servers. They keep running without an open cockpit and come back after a restart; closing their pane (×) ends them after 30 minutes, like any other session. A running session joins with /remote-control.'
-                : 'Off — sessions are reachable only through this cockpit.'
-            }
-          >
-            <Switch
-              checked={remoteControl}
-              onChange={(checked: boolean) => void setRemoteControl(checked)}
-              ariaLabel="Reachable from the Claude app"
-              disabled={busy || status === null}
-            />
-          </SettingsRow>
         </SettingsCard>
       </SettingsSection>
 

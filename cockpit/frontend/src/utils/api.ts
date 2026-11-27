@@ -55,12 +55,6 @@ export const api = {
   setLoginMode: (mode: 'login' | 'token') => fetch('/api/agents/login', jsonInit('PATCH', { mode })),
   setPermissionMode: (permissionMode: 'auto' | 'bypassPermissions') =>
     fetch('/api/agents/login', jsonInit('PATCH', { permissionMode })),
-  setRenderer: (renderer: 'default' | 'fullscreen') =>
-    fetch('/api/agents/login', jsonInit('PATCH', { renderer })),
-  setChatView: (chatView: boolean) =>
-    fetch('/api/agents/login', jsonInit('PATCH', { chatView })),
-  setRemoteControl: (remoteControl: boolean) =>
-    fetch('/api/agents/login', jsonInit('PATCH', { remoteControl })),
   setClaudeLogin: (token: string) => fetch('/api/agents/login', jsonInit('PUT', { token })),
   clearClaudeLogin: () => fetch('/api/agents/login', jsonInit('DELETE')),
 
