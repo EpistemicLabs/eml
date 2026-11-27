@@ -452,11 +452,11 @@ async function main() {
   // A working run of a session this cockpit does not have holds it too: someone works on it elsewhere (domain/runs.ts).
   // A request still queued for the task holds it too (domain/task-lease.ts): the runner never queues a second one.
   const runnerBusy = (taskId: string, runs: readonly RunFacts[] = []) => {
-    if (spawns.pendingFor(taskId)) return true
     const own = ledger.list().filter((e) => e.taskId === taskId)
     return sessionsBlockRunner(
       own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
       taskCommands?.delegatedAt(taskId) ?? null,
+      spawns.pendingFor(taskId) !== null,
     ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)), Date.now())
   }
   // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.

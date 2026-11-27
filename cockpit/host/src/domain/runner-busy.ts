@@ -15,8 +15,13 @@ export interface SessionOnTask {
   working: boolean
 }
 
-/** `delegatedAt`: when the task's latest Delegate now was chosen; null when there was none on this cockpit. */
-export function sessionsBlockRunner(sessions: SessionOnTask[], delegatedAt: string | null): boolean {
+/**
+ * `delegatedAt`: when the task's latest Delegate now was chosen; null when there was none on this cockpit.
+ * `pending`: a request for the task still waits in the spawn queue (spawn-queue.ts pendingFor). It holds the task's
+ * lease (domain/task-lease.ts) before it has a session, so the runner never queues a second one beside it.
+ */
+export function sessionsBlockRunner(sessions: SessionOnTask[], delegatedAt: string | null, pending: boolean): boolean {
+  if (pending) return true
   const since = delegatedAt ? Date.parse(delegatedAt) : NaN
   return sessions.some((s) => {
     if (s.archived) return false

@@ -438,11 +438,17 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
 
   it('an idle session from before Delegate now does not block; a later, a working or an un-delegated one does', () => {
     const delegated = '2026-11-23T10:00:00.000Z'
-    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], delegated)).toBe(false)
-    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z', { working: true })], delegated)).toBe(true)
-    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z')], delegated)).toBe(true)
-    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], null)).toBe(true)
-    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z', { archived: true })], null)).toBe(false)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], delegated, false)).toBe(false)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z', { working: true })], delegated, false)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z')], delegated, false)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], null, false)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T10:05:00.000Z', { archived: true })], null, false)).toBe(false)
+  })
+
+  it('a request still queued for the task blocks it, with no session on it yet', () => {
+    expect(busy.sessionsBlockRunner([], null, true)).toBe(true)
+    expect(busy.sessionsBlockRunner([at('2026-11-23T09:00:00.000Z')], '2026-11-23T10:00:00.000Z', true)).toBe(true)
+    expect(busy.sessionsBlockRunner([], null, false)).toBe(false)
   })
 
   it('reproduced: Delegate now on an active task while the owner\'s idle session on it is open starts the delegate', async () => {
@@ -475,7 +481,7 @@ describe('the owner\'s own session and Delegate now (B3)', () => {
     const runner = createTaskRunner({
       spaces: { list: () => [{ shared: false, name: 'Main' } as never] }, brain: () => brain, me: 'lasse', log: () => {},
       // As index.ts wires it.
-      busy: (id) => busy.sessionsBlockRunner(ledger.list().filter((e) => e.taskId === id).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: false })), commands.delegatedAt(id)),
+      busy: (id) => busy.sessionsBlockRunner(ledger.list().filter((e) => e.taskId === id).map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: false })), commands.delegatedAt(id), false),
       held: (id) => commands.held(id) || commands.together(id),
       start: (_space, step) => { started.push(step.id); return null },
     })
