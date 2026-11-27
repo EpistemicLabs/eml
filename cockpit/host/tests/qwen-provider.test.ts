@@ -95,14 +95,6 @@ describe('what Qwen Code can do', () => {
     expect(provider.messagingOf?.({ runtime: 'sdk' })).toEqual({ supported: true })
     expect(provider.messagingOf?.({ runtime: 'terminal' })).toMatchObject({ supported: false })
   })
-
-  it('reads the last reply from a Stop hook\'s own field only', () => {
-    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
-    const file = join(home, 'qwen-transcript.jsonl')
-    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'not read' }] } }))
-    expect(provider.lastReply({ transcript_path: file })).toBe('')
-    expect(provider.lastReply({})).toBe('')
-  })
 })
 
 // Where the registry offers Qwen Code (registry.ts): not on Windows, whose paths and hook quoting differ.

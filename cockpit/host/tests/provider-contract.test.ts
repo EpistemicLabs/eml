@@ -261,10 +261,6 @@ describe.each(ADAPTERS)('provider contract: $id', (adapter) => {
     expect(started.map(([, payload]) => [payload.hook_event_name, payload.prompt])).toEqual([['UserPromptSubmit', 'go on']])
   })
 
-  it('reads the last reply from the Stop hook\'s payload', () => {
-    expect(provider.lastReply(event('Stop', { last_assistant_message: 'Done.' }))).toBe('Done.')
-  })
-
   it('has capabilities that agree with each other, each missing one with its reason', () => {
     const { capabilities } = provider
     expect(Object.keys(capabilities).sort()).toEqual([...CAPABILITY_IDS].sort())

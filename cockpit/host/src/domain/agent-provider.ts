@@ -328,8 +328,6 @@ export interface AgentProvider {
   resumeNotFound(earlyOutput: string): boolean
   /** Read a hook payload the provider's sessions posted; null when it means nothing to the host. */
   turnSignal(payload: Record<string, unknown>): TurnSignal | null
-  /** The last assistant reply of a turn, from the provider's Stop hook payload; empty when it has none. */
-  lastReply(payload: Record<string, unknown>): string
   summary(session: SessionRef): SessionSummary
   /** Delete the stored conversation (best-effort). */
   deleteTranscript(session: SessionRef): void

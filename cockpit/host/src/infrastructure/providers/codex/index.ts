@@ -370,10 +370,6 @@ class CodexProvider implements AgentProvider {
     }
   }
 
-  lastReply(payload: Record<string, unknown>): string {
-    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
-  }
-
   summary(session: SessionRef): SessionSummary {
     return readRolloutSummary(session.providerSessionId ? findRollout(session.providerSessionId) : null, session.greeted)
   }

@@ -297,10 +297,6 @@ class QwenProvider implements AgentProvider {
     }
   }
 
-  lastReply(payload: Record<string, unknown>): string {
-    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
-  }
-
   summary(session: SessionRef): SessionSummary {
     return readChatSummary(session.providerSessionId ? findChat(session.providerSessionId) : null, session.greeted)
   }

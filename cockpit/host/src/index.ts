@@ -49,7 +49,6 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { COCKPIT_MCP_PATH, COCKPIT_MCP_SERVER, createCockpitMcpHandler, notServed } from './cockpit-mcp.js'
 import type { RecordEndTurnDeps } from './application/record-end-turn.js'
-import { TerminalTurns, terminalTurnEnded } from './application/terminal-turns.js'
 import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
@@ -563,7 +562,7 @@ async function main() {
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
-  // `turn`: the end_turn call a chat session made and whether it was sent back already; a terminal's turn has neither.
+  // `turn`: the end_turn call a chat session made and whether it was sent back already.
   const turnEnded = (sessionId: string, text: string, turn?: TurnEndFacts) => {
     const endedAt = new Date().toISOString()
     // The run keeps the result of the session's last call or handoff (application/run-records.ts).
@@ -575,13 +574,9 @@ async function main() {
       .then(() => nextStep.turnEnded(sessionId, { endedAt, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
-  // What a terminal session said with end_turn, until its Stop hook ends the turn with it (application/terminal-turns.ts).
-  const terminalTurns = new TerminalTurns()
-  const terminalTurnDone = (sessionId: string, text: string) => terminalTurnEnded({ turns: terminalTurns, ledger, turnEnded }, sessionId, text)
-  // A session's terminal process ended, or the session was stopped, archived or deleted: what it said in a turn
-  // that never ended goes, and so do the MCP sessions its process held on the cockpit endpoint.
+  // A session's terminal process ended, or the session was stopped, archived or deleted: the MCP sessions its
+  // process held on the cockpit endpoint go.
   const sessionGone = (sessionId: string) => {
-    terminalTurns.forget(sessionId)
     void cockpitMcp.close(sessionId)
   }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -1235,7 +1230,7 @@ async function main() {
   // The cockpit's own session tools for terminal sessions (cockpit-mcp.ts). Which providers' terminal sessions it
   // serves is theirs to say (capability terminalTools): the others are refused with the provider's reason.
   const cockpitMcp = createCockpitMcpHandler({
-    spaces, ledger, terminalTurns,
+    spaces, ledger,
     chatTurns: { said: (sessionId, turn) => chat.said(sessionId, turn) },
     served: (sessionId) => notServed(ledger.get(sessionId), providers.forSession(sessionId)),
     turnOf: (sessionId) => turnContexts.of(sessionId),
@@ -1254,7 +1249,7 @@ async function main() {
   })
 
   const hostDeps: HostDeps =
-    { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
       taskLease: taskLease.spawn, spawnOperations, runOperations, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),

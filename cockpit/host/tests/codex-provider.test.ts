@@ -315,14 +315,6 @@ describe('Codex provider', () => {
     // An old terminal session in a mixed ledger keeps the terminal's refusal.
     expect(sessionMessaging(provider, { runtime: 'terminal' })).toEqual(off)
   })
-
-  it('reads the last reply from a Stop hook\'s own field only', () => {
-    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
-    const file = join(home, 'codex-transcript.jsonl')
-    writeFileSync(file, JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'not read' }] } }))
-    expect(provider.lastReply({ transcript_path: file })).toBe('')
-    expect(provider.lastReply({})).toBe('')
-  })
 })
 
 describe('Codex rollout summary', () => {

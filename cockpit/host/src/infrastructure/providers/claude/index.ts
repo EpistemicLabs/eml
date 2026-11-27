@@ -8,7 +8,6 @@ import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type 
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
-import { lastReplyInTranscript } from './last-reply.js'
 import { createClaudeSdkRuntimes } from './sdk-runtime.js'
 import { ClaudeSignIn } from './sign-in.js'
 
@@ -57,7 +56,7 @@ class ClaudeProvider implements AgentProvider {
     chat: { supported: true },
     endTurnTool: { supported: true },
     messaging: { supported: true },
-    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in in the chat; in the terminal fallback they have none.' },
     // Its launch writes the profile's denied tools and MCP servers, which the Agent SDK takes as they are.
     toolLimits: { supported: true },
   }
@@ -216,12 +215,6 @@ class ClaudeProvider implements AgentProvider {
       }
       default: return null
     }
-  }
-
-  /** The Stop hook's last_assistant_message, else the last assistant text in the transcript it names. */
-  lastReply(payload: Record<string, unknown>): string {
-    if (typeof payload.last_assistant_message === 'string') return payload.last_assistant_message
-    return lastReplyInTranscript(payload.transcript_path)
   }
 
   summary(session: SessionRef): SessionSummary {

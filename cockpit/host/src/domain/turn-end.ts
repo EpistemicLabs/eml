@@ -318,14 +318,14 @@ function missingText(missing: readonly Missing[]): string {
 }
 
 /**
- * The one reminder a stop can get: it names exactly what is missing. With
- * `tool: false` (a session that cannot call) it adds the way without the tool,
- * with a tool from an MCP server the name it goes by there.
+ * The one reminder a stop can get: it names exactly what is missing. With a
+ * tool from an MCP server it adds the name the tool goes by there. Only a chat
+ * session gets one (a terminal fallback session has no turn routing).
  */
 export function reminder(missing: readonly Missing[], opts: { tool?: EndTurnAccess } = {}): string {
   const named = missingText(missing)
-  if (opts.tool === undefined || opts.tool === true || !missing.some((m) => m !== 'reply' && m !== 'questions')) return named
-  return opts.tool === false ? `${named} ${NO_TOOL}` : `${named} The tool is ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}.`
+  if (typeof opts.tool !== 'object' || !missing.some((m) => m !== 'reply' && m !== 'questions')) return named
+  return `${named} The tool is ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}.`
 }
 
 /** The time a check was saved for: the zone its when was read in and the instant. */
@@ -385,40 +385,18 @@ export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missi
 /** The older tool's answer: what was recorded, then the reply that is still to come. */
 export const statusAnswer = (status: WorkerStatus) => `Recorded: ${status}. ${NOW_REPLY}`
 
-/** The block's template, for a session without the tool. */
-function blockTemplate(owner: string, zone?: string | null): string[] {
-  const L = HANDOFF_LABELS
-  return [
-    '```',
-    `### ${L.heading}`,
-    `${L.result}: <${FIELD.result}>`,
-    `${L.failed}: <only when you could not do it: ${FIELD.failed}>`,
-    `${L.checked}: <${FIELD.checked}> · ${L.claimed}: <${FIELD.claimed}>`,
-    `${L.decided}: <${FIELD.decided}>`,
-    `${L.next}: [<who>] <${FIELD.what}> @ <when>`,
-    `${L.questions}:`,
-    `- [${owner}] <${FIELD.questions}>`,
-    '```',
-    `who: ${FIELD.who}. when: ${whenField(zone)}; ${WHEN_REQUIRED}. ${nextRequired(L.next, L.questions, L.failed)}.`,
-  ]
-}
-
 /** The line of a start context that names the user's time zone (domain/schedule.ts zoneLabel). */
 export const userZoneLine = (zone: string) => `Times: the user's time zone is ${zone}. Read every time the user names, and write every time you give them or the cockpit, in it, unless the time names another zone.`
 
 /**
- * The section of a session's start context about ending a turn. `tool` says
- * whether the session has end_turn: one that has it reads the tool's
- * description, one without it (a terminal, another provider's chat) the block,
- * one that gets it from an MCP server the tool's name and its rule in full (see EndTurnAccess).
- * `zone`: the user's time zone as the session is told it ("Asia/Bangkok (UTC+7)").
+ * The section of a session's start context about ending a turn, for a session that has end_turn: built in, it reads
+ * the tool's description; from an MCP server, the tool's name and its rule in full (see EndTurnAccess). A session
+ * without it (a Claude Code session in the terminal fallback) has no turn routing and gets no section
+ * (application/session-task.ts). `zone`: the user's time zone as the session is told it ("Asia/Bangkok (UTC+7)").
  */
-export function turnEndRules(opts: { owner: string; agent?: string | null; tool: EndTurnAccess; zone?: string | null }): string {
+export function turnEndRules(opts: { owner: string; agent?: string | null; tool: true | { mcpServer: string }; zone?: string | null }): string {
   const rule = `The ${END_TURN_TOOL} tool's description is the whole rule for ending a turn.`
-  const onStop = `${STOP}. Write no block ${PLAIN}. Leave out lines that are empty:`
-  const template = blockTemplate(opts.owner, opts.zone)
   const lines = opts.tool === true ? [rule]
-    : opts.tool === false ? [`End your reply with this block ${onStop}`, ...template]
       : [
         `End a turn with the ${END_TURN_TOOL} tool: ${mcpTool(opts.tool.mcpServer)}, from the MCP server ${opts.tool.mcpServer}. This is its whole rule:`,
         endTurnDescription(opts.zone),

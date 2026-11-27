@@ -4,7 +4,6 @@ import { McpHttpEndpoint } from '@engramprotocol/mcp-server'
 import type { MessageRequest } from './application/deliver-message.js'
 import { recordEndTurn, type RecordEndTurnDeps, type SaidTurn } from './application/record-end-turn.js'
 import { endTurn, listSessions, schedule, sendMessage, type ToolAnswer } from './application/session-tools.js'
-import type { TerminalTurns } from './application/terminal-turns.js'
 import { header, mcpStatus, refuse, sessionCaller } from './brain-mcp.js'
 import type { BrainSpaces } from './brain-space.js'
 import type { AgentProvider } from './domain/agent-provider.js'
@@ -36,11 +35,9 @@ import type { SessionLedger } from './session-ledger.js'
  * act for.
  *
  * end_turn only keeps the call and sets the check its next.when asks for. A
- * terminal session's is kept until its Stop hook ends the turn with it
- * (application/terminal-turns.ts, terminalTurnEnded): nothing goes into the
- * ledger at the call, the tools a turn still runs after it would clear it again
- * (application/apply-session-hook.ts). A chat session's is kept where the
- * chat keeps what a session said (chat-bridge.ts said).
+ * chat session's is kept where the chat keeps what a session said
+ * (chat-bridge.ts said). A session in the terminal fallback has no turn
+ * routing: its call is not kept.
  */
 
 export const COCKPIT_MCP_PATH = '/mcp/cockpit'
@@ -70,8 +67,6 @@ export interface CockpitMcpDeps {
    * Absent: every session that runs in a terminal is served, a chat session is not.
    */
   served?: (sessionId: string) => string | null
-  /** What a terminal session said until its Stop hook takes it. */
-  terminalTurns: Pick<TerminalTurns, 'said'>
   /** What a chat session said, where the chat keeps it (chat-bridge.ts said); absent: no chat session is served. */
   chatTurns?: { said(sessionId: string, turn: SaidTurn): unknown }
   /** Whom a call is read against, when it is read and the wake-up its next.when sets on the task: as a chat session's (chat-bridge.ts). */
@@ -112,7 +107,7 @@ export function createCockpitMcpHandler(deps: CockpitMcpDeps) {
     const recording: RecordEndTurnDeps = {
       turnOf: deps.turnOf,
       ...(deps.callTime ? { callTime: deps.callTime } : {}),
-      keep: (id, said) => { if (inChat(id) && deps.chatTurns) deps.chatTurns.said(id, said); else deps.terminalTurns.said(id, said) },
+      keep: (id, said) => { if (inChat(id)) deps.chatTurns?.said(id, said) },
       ...(deps.turnWake ? { turnWake: deps.turnWake } : {}),
     }
     server.registerTool(T.endTurn.name, { description: T.endTurn.description(zone), inputSchema: T.endTurn.input },

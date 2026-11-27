@@ -28,7 +28,7 @@ describe('what a session reads about its task', () => {
     expect(text).toContain('Hand the result over for review (next names the owner); its owner closes it')
   })
 
-  it('names the user\'s time zone and its offset, in a chat and in a terminal', async () => {
+  it('names the user\'s time zone and its offset, in a chat and in the terminal fallback', async () => {
     const { taskContext } = await import('../src/application/session-task.js')
     const task = { id: 't1', title: 'acme-rescue', content: 'Keep Acme.', status: 'active', properties: {} } as never
     for (const tool of [true, false]) {
@@ -44,16 +44,16 @@ describe('what a session reads about its task', () => {
     expect(chat.endsWith(turnEndRules({ owner: 'kim', agent: 'atlas', tool: true }))).toBe(true)
     expect(chat).toContain('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are atlas.')
     expect(chat).not.toContain('### Handoff')
+    // A session without the tool (Claude Code in the terminal fallback) has no turn routing: no section at all.
     const terminal = taskContext(task, false, { owner: 'kim', agent: 'atlas', tool: false })
-    expect(terminal).toContain('### Handoff')
-    expect(terminal).toContain('- [kim]')
-    expect(terminal).not.toContain('tool\'s description')
+    expect(terminal).not.toContain('## Ending a turn')
+    expect(terminal).not.toContain('### Handoff')
     // A terminal session that gets the tool from the cockpit's MCP server: the tool by its name there, with its rule.
     const served = taskContext(task, false, { owner: 'kim', agent: 'atlas', tool: { mcpServer: 'cockpit' } })
     expect(served.endsWith(turnEndRules({ owner: 'kim', agent: 'atlas', tool: { mcpServer: 'cockpit' } }))).toBe(true)
     expect(served).toContain('End a turn with the end_turn tool: mcp__cockpit__end_turn, from the MCP server cockpit.')
     expect(served).not.toContain('### Handoff')
-    for (const text of [chat, terminal]) {
+    for (const text of [chat, served]) {
       expect(text.match(/## Ending a turn/g)).toHaveLength(1)
       expect(text).not.toContain('session_status')
       expect(text).not.toMatch(/^## Handoff/m)

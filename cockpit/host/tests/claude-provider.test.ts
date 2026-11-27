@@ -140,22 +140,8 @@ describe('Claude Code provider', () => {
   it('has the chat, the end_turn tool and messaging; its terminal sessions get no tools from the host', () => {
     expect(provider.capabilities).toEqual({
       chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true },
-      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in in the chat; in the terminal fallback they have none.' },
       toolLimits: { supported: true },
     })
-  })
-
-  it('reads the last reply from a Stop hook: its field, else the transcript', () => {
-    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
-    const file = join(home, 'transcript.jsonl')
-    writeFileSync(file, [
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } }),
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the last reply' }, { type: 'tool_use' }] } }),
-      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
-    ].join('\n'))
-    expect(provider.lastReply({ transcript_path: file })).toBe('the last reply')
-    expect(provider.lastReply({ last_assistant_message: 'hello', transcript_path: file })).toBe('hello')
-    expect(provider.lastReply({ transcript_path: join(home, 'missing.jsonl') })).toBe('')
-    expect(provider.lastReply({})).toBe('')
   })
 })

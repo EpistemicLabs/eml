@@ -8,7 +8,7 @@ import { parentOf } from '../domain/task-relations.js'
 import { workerDelegation, type WorkerTaskHolds } from './worker-task.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 import { DISPLAY_TITLE_MAX, displayTitleOf, kebabTitle, PLACEHOLDER_TITLE } from '../domain/task-title.js'
-import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules, type EndTurnAccess } from '../domain/turn-end.js'
+import { BEFORE_IDLE_STOP, COCKPIT_ROUTES, END_SCHEDULE_FIRST, FOR_REVIEW, NEW_WORK_AT_STOP, turnEndRules, untilDoneRules, userZoneLine, type EndTurnAccess } from '../domain/turn-end.js'
 
 /**
  * Task system, phase 1 (note task-system-phase-1-build-plan): every session
@@ -141,8 +141,8 @@ export function taskContext(task: Task, placeholder: boolean, turn: TurnParty, u
     '',
     ...SPLIT_RULES,
     ...(task.properties?.delegate ? ['', untilDoneRules(task.properties.checkpoint)] : []),
-    '',
-    turnEndRules(turn),
+    // A session without end_turn (Claude Code in the terminal fallback) has no turn routing: only the time zone.
+    ...(turn.tool !== false ? ['', turnEndRules({ ...turn, tool: turn.tool })] : turn.zone ? ['', userZoneLine(turn.zone)] : []),
   ].join('\n')
 }
 
