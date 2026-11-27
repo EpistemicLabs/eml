@@ -117,7 +117,7 @@ describe('a task run without a desk', () => {
     staleRequests.set(request.id, 'the owner works on the task now')
     const res = await fetch(`${base}/api/spawns/${request.id}/claim`, { method: 'POST', headers: { origin: ORIGIN } })
     expect(res.status).toBe(409)
-    expect((await res.json() as { error: unknown }).error).toMatchObject({ code: 'REVOKED' })
+    expect((await res.json() as { error: unknown }).error).toMatchObject({ code: 'REVOKED', retry: false })
     expect(spawns.list().some((r) => r.id === request.id)).toBe(false)
   })
 })

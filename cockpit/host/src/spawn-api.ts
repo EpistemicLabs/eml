@@ -290,7 +290,7 @@ export async function handleSpawnApi(
     const stale = waiting ? deps.stale?.(waiting) ?? null : null
     if (waiting && stale) {
       deps.spawns.revoke(waiting.id, stale)
-      json(res, 409, { error: { code: 'REVOKED', message: `No longer needed: ${stale}` } })
+      json(res, 409, { error: { code: 'REVOKED', message: `No longer needed: ${stale}`, retry: false } })
       return true
     }
     if (waiting && unattended(waiting) && !deps.workers.hasRoom()) {
