@@ -73,6 +73,41 @@ export function createTaskLease(deps: TaskLeaseDeps): TaskLease {
   }
 }
 
+/** What the host's entry points take of the lease, beside the lease's own deps. */
+export interface TaskLeaseHookupDeps extends TaskLeaseDeps {
+  /** Revoke the task's pending runner requests (spawn-queue.ts revokeRunnerFor). */
+  revokeRunnerFor(taskId: string, why: string): void
+  /** The message endpoint's use case (application/deliver-message.ts). */
+  deliver(request: MessageRequest): Promise<DeliveryOutcome>
+  /** How full a session's context is; null when unknown. */
+  contextTokensOf(sessionId: string): number | null
+}
+
+/**
+ * The lease as each entry point of the host takes it (index.ts wires them):
+ *   spawn            POST /api/spawn, POST /api/tasks/run and the claim (spawn-api.ts, http.ts), the spawn inbox
+ *                    (spawn-inbox.ts) and the worker starter (worker-start.ts, stale only);
+ *   split            a split onto an existing task (application/split-session.ts holderOf, deliver);
+ *   supersedeRunner  the owner works on a task now: its queued runner requests go (application/task-commands.ts).
+ */
+export interface TaskLeaseHookups {
+  spawn: { stale: TaskLease['stale']; putAway: TaskLease['putAway']; contextTokensOf(sessionId: string): number | null }
+  split: { holderOf: TaskLease['splitHolder']; deliver(sessionId: string, text: string): Promise<DeliveryOutcome> }
+  supersedeRunner(taskId: string): void
+}
+
+export function taskLeaseHookups(deps: TaskLeaseHookupDeps): TaskLeaseHookups {
+  const lease = createTaskLease(deps)
+  return {
+    spawn: { stale: lease.stale, putAway: lease.putAway, contextTokensOf: deps.contextTokensOf },
+    split: {
+      holderOf: lease.splitHolder,
+      deliver: (sessionId, text) => deps.deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    },
+    supersedeRunner: (taskId) => { deps.revokeRunnerFor(taskId, 'the owner works on the task now') },
+  }
+}
+
 /** What routing a start on a task to its holder needs. */
 export interface RouteDeps {
   pending(): readonly SpawnRequest[]

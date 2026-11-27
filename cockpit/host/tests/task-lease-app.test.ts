@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { createTaskLease, routeToTaskHolder, takenSince, type LeaseCommands, type RouteDeps } from '../src/application/task-lease.js'
+import { createTaskLease, routeToTaskHolder, takenSince, taskLeaseHookups, type LeaseCommands, type RouteDeps } from '../src/application/task-lease.js'
+import type { MessageRequest } from '../src/application/deliver-message.js'
 import type { LeaseEntry } from '../src/domain/task-lease.js'
 import type { SpawnRequest } from '../src/domain/spawn-request.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
@@ -134,5 +135,48 @@ describe('the lease once more right before the add', () => {
   it('after a holder was put away, an older session on the task does not count, a pending request still does', () => {
     expect(takenSince({ pending: () => [], sessions: () => [entry('older')] }, 't1', 'newest')).toBeNull()
     expect(takenSince({ pending: () => [request('r1')], sessions: () => [] }, 't1', 'newest')).toMatchObject({ code: 'TASK_STARTING' })
+  })
+})
+
+describe('the lease as the host hands it to its entry points', () => {
+  function hookups(opts: { pending?: SpawnRequest[]; sessions?: LeaseEntry[]; together?: boolean } = {}) {
+    const ended: Array<[string, string]> = []
+    const answered: string[] = []
+    const revoked: Array<[string, string]> = []
+    const delivered: MessageRequest[] = []
+    const wired = taskLeaseHookups({
+      pending: () => opts.pending ?? [],
+      sessions: () => opts.sessions ?? [],
+      commands: () => ({ together: () => opts.together ?? false, held: () => false, undoneSince: () => false }),
+      working: () => false,
+      end: async (id, reason) => { ended.push([id, reason]) },
+      answered: (id) => answered.push(id),
+      revokeRunnerFor: (taskId, why) => revoked.push([taskId, why]),
+      deliver: async (request) => { delivered.push(request); return 'delivered' },
+      contextTokensOf: (id) => (id === 's1' ? 42 : null),
+    })
+    return { wired, ended, answered, revoked, delivered }
+  }
+
+  it('the spawn entry points get the fencing check, put-away and the context read', async () => {
+    const { wired, ended, answered } = hookups({ together: true })
+    expect(wired.spawn.stale(request('r1', { origin: 'runner' }))).toMatch(/works on the task/)
+    expect(wired.spawn.contextTokensOf('s1')).toBe(42)
+    expect(await wired.spawn.putAway('s1')).toBeNull()
+    expect(ended.map(([id]) => id)).toEqual(['s1'])
+    expect(answered).toEqual(['s1'])
+  })
+
+  it('a split onto a held task finds the holder and hands it the brief as a session message', async () => {
+    const { wired, delivered } = hookups({ sessions: [entry('s1', { title: 'Mail job' })] })
+    expect(wired.split.holderOf('t1')).toEqual({ sessionId: 's1', title: 'Mail job' })
+    expect(await wired.split.deliver('s1', 'The brief')).toBe('delivered')
+    expect(delivered).toEqual([{ target: 's1', text: 'The brief', from: null, caller: 'session' }])
+  })
+
+  it('the owner working on a task now revokes its queued runner requests', () => {
+    const { wired, revoked } = hookups()
+    wired.supersedeRunner('t1')
+    expect(revoked).toEqual([['t1', 'the owner works on the task now']])
   })
 })

@@ -27,7 +27,7 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
-import { createTaskLease } from './application/task-lease.js'
+import { taskLeaseHookups } from './application/task-lease.js'
 import { StartWorker, workerInChat } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -485,13 +485,16 @@ async function main() {
     now: () => Date.now(),
   })
   // One live session per task (application/task-lease.ts): the fencing of queued requests, a split's holder, put-away.
-  const taskLease = createTaskLease({
+  const taskLease = taskLeaseHookups({
     pending: () => spawns.list(),
     sessions: () => ledger.list(),
     commands: () => taskCommands,
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     end: (sessionId, reason) => endAndPutAway(sessionId, reason),
     answered: (sessionId) => { void taskRouter.answered(sessionId) },
+    revokeRunnerFor: (taskId, why) => { spawns.revokeRunnerFor(taskId, why) },
+    deliver,
+    contextTokensOf,
   })
   spawns.on('revoked', (id: string, why: string) => log(`[spawn] revoked ${id}: ${why}`))
   // Stop a session and put it away (a split undone, a task's session replaced by a new one).
@@ -597,7 +600,7 @@ async function main() {
     if (!brain) return { error: `space ${space.name} has no agent` }
     return createWorkerTask({ brain, owner, agent: space.agent ?? null, holds: workerHolds }, input)
   }
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, stale: taskLease.stale, putAway: taskLease.putAway, contextTokensOf, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, ...taskLease.spawn, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -1067,7 +1070,7 @@ async function main() {
     newestSessionOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId)
       .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null,
     deliver: (sessionId, text) => delivered(sessionId, text),
-    supersedeRunner: (taskId) => { spawns.revokeRunnerFor(taskId, 'the owner works on the task now') },
+    supersedeRunner: taskLease.supersedeRunner,
     startOnTask: async (spaceId, taskId, prompt) => {
       const started = await startOnTask({ spaceId, taskId, prompt })
       return started.ok ? started.sessionId : null
@@ -1215,8 +1218,7 @@ async function main() {
     }).id,
     endSession: (sessionId) => endAndPutAway(sessionId, 'split undone'),
     // Onto a task that has its session: the brief goes there (application/task-lease.ts).
-    holderOf: (taskId) => taskLease.splitHolder(taskId),
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
+    ...taskLease.split,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
@@ -1247,7 +1249,7 @@ async function main() {
 
   const hostDeps: HostDeps =
     { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
-      taskLease: { stale: taskLease.stale, putAway: taskLease.putAway, contextTokensOf }, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
+      taskLease: taskLease.spawn, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {
@@ -1286,7 +1288,7 @@ async function main() {
   }).then((recovered) => { if (recovered > 0) log(`[worker] ${recovered} worker(s) continue after the restart`) })
   // A worker no tab takes starts without a pane (worker-start.ts).
   const workers = new WorkerStarter({
-    spawns, log, stale: taskLease.stale,
+    spawns, log, stale: taskLease.spawn.stale,
     bridge: {
       startWorker: (request) => startWorker.withoutPane(request),
       hasRoom: () => startWorker.hasRoom(),
