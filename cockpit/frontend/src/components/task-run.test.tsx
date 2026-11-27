@@ -38,6 +38,15 @@ describe('the task run card', () => {
     expect(panes.addWorkerPane).not.toHaveBeenCalled();
   });
 
+  it('says why the host refused a run without a desk, in the host\'s words', async () => {
+    const message = 'Task t1 already has a session starting (r0); a task has one session at a time.';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'TASK_STARTING', message, retry: true } }), { status: 409 })));
+    render(<TaskRunCard engram={engram} projects={projects} background />);
+    fireEvent.click(screen.getByText('Advance task'));
+    fireEvent.click(screen.getByText('Start run'));
+    await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+  });
+
   it('opens on the current desk by default elsewhere: the host starts it with the task bound', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ sessionId: 's1' }), { status: 202 }));
     vi.stubGlobal('fetch', fetch);

@@ -14,6 +14,8 @@ export interface SplitMark {
   /** The message it was split from; null: the end of the chat at the time. */
   afterItemId: string | null;
   sessionId?: string;
+  /** The session is the one the existing task already had (the brief went there): Undo leaves its pane open. */
+  routed?: boolean;
   parked: boolean;
   undoUntil: string;
   undone?: boolean;

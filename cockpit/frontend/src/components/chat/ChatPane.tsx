@@ -661,7 +661,8 @@ export function ChatPane({
       onUndo={() => {
         void undoSplit(mark.opId).then((answer) => {
           if (!answer.ok) return;
-          const pane = mark.sessionId ? paneHoldingSession(mark.sessionId) : undefined;
+          // A session the existing task already had keeps running after Undo, and so does its pane.
+          const pane = mark.sessionId && !mark.routed ? paneHoldingSession(mark.sessionId) : undefined;
           if (pane) removePane(pane.id);
           setMarks((prev) => prev.map((m) => (m.opId === mark.opId ? { ...m, undone: true } : m)));
         });
@@ -766,10 +767,12 @@ export function ChatPane({
               if (offerId) setOffers((prev) => ({ ...prev, [offerId]: 'split' }));
               setMarks((prev) => [...prev, {
                 opId: result.opId, title: result.title, afterItemId: splitFrom.upTo ?? latestItemId(chat.items),
-                ...(result.sessionId ? { sessionId: result.sessionId } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,
+                ...(result.sessionId ? { sessionId: result.sessionId } : {}), ...(result.routed ? { routed: true } : {}), parked: result.when === 'park', undoUntil: result.undoUntil,
               }]);
               setSplitFrom(null);
-              setAnnounced(`Split off ${result.title}${result.when === 'park' ? ', parked in Plan' : ', opened in a new pane'}.`);
+              // A task has one session at a time: onto a task that had its session, the brief went there and it opens.
+              if (result.routed && result.sessionId) openSplitSession(result.sessionId);
+              setAnnounced(`Split off ${result.title}${result.when === 'park' ? ', parked in Plan' : result.routed ? ', sent to the session the task already had' : ', opened in a new pane'}.`);
               // The new task and session show in the tasks card now, not at the next poll.
               window.dispatchEvent(new Event('cockpit:tasks'));
             }}

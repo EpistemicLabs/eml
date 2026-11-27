@@ -115,8 +115,13 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, prompt: runPrompt(engram, extra), title, taskId: engram.id }),
-      }).then((res) => {
-        if (!res.ok) { setError(`The run could not start (HTTP ${res.status}).`); return; }
+      }).then(async (res) => {
+        // A task with a session starting, or one whose session cannot take the run, is refused with the host's reason.
+        if (!res.ok) {
+          const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+          setError(body?.error?.message ?? `The run could not start (HTTP ${res.status}).`);
+          return;
+        }
         setOpen(false);
         setExtra("");
         if (!background) onStarted?.();
