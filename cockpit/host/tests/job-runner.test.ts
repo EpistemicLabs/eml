@@ -1052,6 +1052,8 @@ describe('the four-line order', () => {
     await firstSeenThen('2026-11-09T02:00:10Z')
     expect(statuses('once')).toEqual(['failed'])
     expect(world.scheduleOf('once')).toBeNull()
+    // the journal says the wake-up fired and why its run failed
+    expect(world.edits.find((e) => e.taskId === 'once')?.text).toBe('Wake-up fired: its run failed (the worker could not start: the task has no project to run in).')
     world.startProblem = null
     world.now += MIN
     await runner.tick()

@@ -254,6 +254,18 @@ describe('create: the wake-up', () => {
     }
   })
 
+  it('in a space without an agent a wake-up without by is the user\'s reminder when the user sets it, and names nobody when a session does', async () => {
+    world.agent = null
+    const fromPage = world.main.add('From the page')
+    expect((await create({ task_id: fromPage.id, at: '2026-11-13T10:00', prompt: 'Call the bank.' }, { ...caller, sessionId: null })).status).toBe(201)
+    expect(world.main.schedule(fromPage.id)).toMatchObject({ by: 'kim' })
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z (a reminder for kim).')
+    const fromSession = world.main.add('From a session')
+    expect((await create({ task_id: fromSession.id, at: '2026-11-13T10:00', prompt: 'Look again.' })).status).toBe(201)
+    expect(world.main.schedule(fromSession.id)).not.toHaveProperty('by')
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z.')
+  })
+
   it('by the user\'s handle (or "user", "owner") is a reminder for the user: no session continues it, and the journal names it a reminder', async () => {
     const task = world.main.add('Refund')
     const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'Call the bank.', by: 'kim' }, onTask(task))

@@ -677,6 +677,27 @@ describe('the Unread fold', () => {
       expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
     });
 
+    it('Remove and Reschedule of the wake-up post to their routes and apply at once, without Undo', async () => {
+      const at = new Date(Date.now() + 2 * 24 * 3600_000).toISOString();
+      serve(withRoutine({ schedule: { crons: ['0 8 * * 1-5'], at, by: 'atlas' } }));
+      mount();
+      fireEvent.click(await screen.findByText('Daily brief'));
+      const section = within(await screen.findByRole('region', { name: 'Schedule' }));
+      fireEvent.click(section.getByRole('button', { name: 'Remove the wake-up' }));
+      await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/daily/remove-wake', body: { opId: expect.any(String), spaceId: 'main' } }));
+      const status = await screen.findByRole('status');
+      await waitFor(() => expect(status.textContent).toContain('Wake-up removed.'));
+      expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
+      await waitFor(() => expect((section.getByRole('button', { name: 'Reschedule the wake-up' }) as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(section.getByRole('button', { name: 'Reschedule the wake-up' }));
+      const form = within(section.getByRole('group', { name: 'Reschedule the wake-up' }));
+      fireEvent.click(form.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(posts[1]).toEqual({ url: '/api/v1/tasks/daily/reschedule-wake', body: { opId: expect.any(String), spaceId: 'main', at: expect.any(String) } }));
+      // the form starts at the wake-up's own time, to the minute
+      expect(Math.abs(Date.parse(posts[1].body.at as string) - Date.parse(at))).toBeLessThan(60_000);
+      await waitFor(() => expect(status.textContent).toContain('Wake-up moved to'));
+    });
+
     it('a paused schedule resumes from the same place', async () => {
       serve(withRoutine({ nextRunAt: null, schedule: { crons: ['0 8 * * 1-5'], paused: true } }));
       mount();

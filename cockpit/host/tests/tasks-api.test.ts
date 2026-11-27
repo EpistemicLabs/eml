@@ -26,6 +26,7 @@ const deps = {
       if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
       if (input.taskId === 'plain' && (input.kind === 'remove_wake' || input.kind === 'reschedule_wake')) return { ok: false, refusal: 'not_scheduled', message: 'It has no wake-up.' }
       if (input.kind === 'done' && input.waitId === 'w-gone') return { ok: false, refusal: 'unknown_wait' }
+      if (input.kind === 'done' && input.waitId === 'w-woke') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z', continued: { sessionId: 's-ask', how: 'delivered' } } }
       // Done and the wake-up's controls act at once: applied, with no undo window
       if (input.kind === 'done' || input.kind === 'remove_wake' || input.kind === 'reschedule_wake') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z' } }
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
@@ -174,6 +175,9 @@ describe('task board routes', () => {
     expect(await post('/api/v1/tasks/contract/done', { opId: 'op-done', spaceId: 'main', waitId: 'w-do' }))
       .toEqual({ status: 202, body: { opId: 'op-done', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z' } })
     expect(submitted.at(-1)).toEqual({ opId: 'op-done', spaceId: 'main', kind: 'done', taskId: 'contract', waitId: 'w-do' })
+    // where the agent's wake went comes with the answer when someone was woken, and is absent when nobody was
+    expect(await post('/api/v1/tasks/contract/done', { opId: 'op-woke', spaceId: 'main', waitId: 'w-woke' }))
+      .toEqual({ status: 202, body: { opId: 'op-woke', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', continued: { sessionId: 's-ask', how: 'delivered' } } })
     expect(await post('/api/v1/tasks/contract/done', { opId: 'op-gone', spaceId: 'main', waitId: 'w-gone' }))
       .toEqual({ status: 409, body: { error: { code: 'unknown_wait', message: 'That step is not open on the task any more.', retry: false } } })
     const before = submitted.length
