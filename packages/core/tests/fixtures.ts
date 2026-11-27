@@ -211,19 +211,25 @@ export function writeEverything(eml: EML): void {
   // v0.23: the hand-over as one value and the flat fields that mirror it, the waits and waiting_on, a run on the task
   writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'after', requested_at: '2026-11-19T09:00:00Z' }, text: 'handed over' }, ada)
   writes(eml).trackTask(successor.id, { checkpoint: 'before' }, ada)
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', requested_at: '2026-11-19T09:00:00.000Z', schedule: { crons: ['0 8 * * 1-5', ' 0 18,22 * * 1-5 '], time_zone: 'Europe/Berlin' } } }, ada)
   // v0.24: the schedule holds the repeating times and the one wake-up; why and by_session go with the wake-up
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { ends_at: '2026-12-31', paused: true, by_session: 's1', why: 'check whether the vendor answered', at: '2026-11-20', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } }, text: 'checks again on Friday' }, juno)
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin', why: 'no wake-up to go with', by_session: 's1' } }, text: 'the wake-up fired' }, juno)
-  writes(eml).trackTask(successor.id, { delegation: { agent: 'juno', checkpoint: 'before', schedule: { at: '2026-11-21T08:00:00Z', why: 'look again', by_session: 's1', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } } }, juno)
+  // v0.25: the schedule is the task's own field, and the wake-up names who it is for (by)
+  writes(eml).trackTask(successor.id, { schedule: { crons: ['0 8 * * 1-5', ' 0 18,22 * * 1-5 '], time_zone: 'Europe/Berlin' } }, ada)
+  writes(eml).trackTask(successor.id, { schedule: { ends_at: '2026-12-31', paused: true, by_session: 's1', by: 'juno', why: 'check whether the vendor answered', at: '2026-11-20', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' }, text: 'checks again on Friday' }, juno)
+  writes(eml).trackTask(successor.id, { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin', why: 'no wake-up to go with', by: 'juno', by_session: 's1' }, text: 'the wake-up fired' }, juno)
+  writes(eml).trackTask(successor.id, { schedule: { at: '2026-11-21T08:00:00Z', why: 'look again', by: 'juno', by_session: 's1', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } }, juno)
+  writes(eml).trackTask(successor.id, { schedule: { at: '2026-11-21T08:00:00Z', why: 'call the vendor', by: 'ada', crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } }, ada)
   writes(eml).trackTask(successor.id, { waits: [
     { id: 's1', who: 'ada', kind: 'question', why: 'which one?', since: '2026-11-19T09:05:00.000Z', session_id: 's1' },
     { id: 's2', who: 'ada', kind: 'review', why: 'please look', since: '2026-11-19T09:06:00Z', session_id: 's2', snoozed_until: '2026-11-22' },
     { id: 's4', who: 'ada', kind: 'outside', why: 'waiting for the vendor', since: '2026-11-19T09:06:30.000Z', snoozed_until: 'open' },
+    // v0.25: a do is the person's own step; due is a date, or a date and time
+    { id: 's5', who: 'ada', kind: 'do', why: 'call the vendor', since: '2026-11-19T09:06:40.000Z', due: '2026-11-21' },
+    { id: 's6', who: 'outside:vendor', kind: 'outside', why: 'send the quote', due: '2026-11-21T10:00:00+01:00' },
   ] }, juno)
   writes(eml).trackTask(successor.id, { waiting_on: { who: 'ada', kind: 'go', why: 'go ahead?', since: '2026-11-19T09:07:00.000Z', session_id: 's3' } }, juno)
   writes(eml).trackTask(successor.id, { waits: [] }, juno)
   writes(eml).trackTask(successor.id, { delegate: 'assistant' }, ada)
+  writes(eml).trackTask(successor.id, { delegation: null, text: 'taken back; the schedule stays' }, ada)
   writes(eml).trackTask(child.id, { delegation: null, text: 'taken back' }, ada)
   createObject(eml, 'run', { id: 'session-1', task_id: successor.id, member: 'juno', agent: 'juno', origin: 'runner', driver: 'agent' }, juno)
   updateObject(eml, 'run', 'session-1', { state: 'idle', result: 'Draft ready for review.' }, juno)

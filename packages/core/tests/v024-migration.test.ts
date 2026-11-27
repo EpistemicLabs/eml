@@ -15,6 +15,10 @@ import { createV20Brain, validNote, writes } from './fixtures'
 // session is dropped, at, time_zone and paused stay — without touching any
 // other field, rev or updated_at. Every device derives the same rows, and the
 // runner writes the checkpoint a rebuild at 24 starts from.
+//
+// Schema 25 moves the schedule out of the delegation (properties.schedule) and
+// adds by next to a wake-up (v025-migration.test.ts); these tests read the
+// schedule where it lives now and leave by out.
 
 const NOW = '2026-11-26T12:00:00.000Z'
 const AT = '2026-11-24T09:00:00.000Z'
@@ -85,7 +89,12 @@ describe('v0.24 migration — the stored schedules in the shape of schema 24', (
   })
 
   const props = (title: string): Props => JSON.parse(after[`task-${title}`].properties)
-  const schedule = (title: string): Props | undefined => props(title).delegation?.schedule
+  const schedule = (title: string): Props | undefined => {
+    const s = props(title).schedule
+    if (s === undefined) return undefined
+    const { by: _by, ...rest } = s
+    return rest
+  }
 
   it('brings the brain to the current schema', () => {
     expect((db.prepare('SELECT MAX(version) AS v FROM _eml_migrations').get() as { v: number }).v).toBe(CURRENT_BRAIN_SCHEMA_VERSION)
@@ -142,12 +151,11 @@ describe('v0.24 migration — the stored schedules in the shape of schema 24', (
       const { schedule: _s, ...delegation } = now.delegation ?? {}
       const { schedule: _old, ...delegationBefore } = tasks[title].delegation ?? {}
       expect(delegation, title).toEqual(delegationBefore)
-      expect(Object.keys(now), title).toEqual(Object.keys(tasks[title]))
-      expect({ ...now, delegation: undefined }, title).toEqual({ ...tasks[title], delegation: undefined })
+      expect(Object.keys(now).filter(k => k !== 'schedule'), title).toEqual(Object.keys(tasks[title]))
+      expect({ ...now, delegation: undefined, schedule: undefined }, title).toEqual({ ...tasks[title], delegation: undefined })
       expect([after[`task-${title}`].rev, after[`task-${title}`].updated_at], title).toEqual([3, AT])
     }
-    // the schedule stays the delegation's last key
-    expect(Object.keys(props('at-new').delegation)).toEqual(['agent', 'requested_at', 'schedule'])
+    expect(Object.keys(props('at-new').delegation)).toEqual(['agent', 'requested_at'])
   })
 
   it('no task holds a key of schema 23 any more', () => {
@@ -160,8 +168,8 @@ describe('v0.24 migration — the stored schedules in the shape of schema 24', (
     const juno = eml.env({ handle: 'juno' })
     for (const title of ['cron-only', 'at-only', 'cron-paused-resume', 'at-new', 'cron-not-paused', 'cron-with-space', 'at-paused']) {
       writes(eml).trackTask(`task-${title}`, { checkpoint: 'before' }, juno)
-      const stored = eml.engrams.getRaw(`task-${title}`)!.properties!.delegation as Props
-      expect(JSON.stringify(stored.schedule), title).toBe(JSON.stringify(schedule(title)))
+      const stored = eml.engrams.getRaw(`task-${title}`)!.properties!.schedule as Props
+      expect(JSON.stringify(stored), title).toBe(JSON.stringify(props(title).schedule))
       expect(eml.engrams.entries(`task-${title}`, ['change']).map(e => e.text).filter(t => t.startsWith('schedule')), title).toEqual([])
     }
   })
@@ -181,10 +189,12 @@ describe('v0.24 migration — the stored schedules in the shape of schema 24', (
   it('the checkpoint of schema 24 names the migrated state, another one than the checkpoint of 23; the log verifies and goes on', () => {
     const log = db.prepare('SELECT seq, payload FROM op_log ORDER BY seq').all() as Array<{ seq: number, payload: string }>
     const payloads = log.map(e => JSON.parse(e.payload))
-    const checkpoint = payloads[payloads.length - 1]
-    expect(checkpoint).toMatchObject({ schema: 24, call: 'brain.checkpoint', args: { state_hash: stateHash(stateDump(db)) } })
+    const checkpoint = payloads.find(p => p.schema === 24 && p.call === 'brain.checkpoint')
+    expect(checkpoint).toMatchObject({ schema: 24, call: 'brain.checkpoint' })
     const before = payloads.find(p => p.schema === 23 && p.call === 'brain.checkpoint')
     expect(before.args.state_hash).not.toBe(checkpoint.args.state_hash)
+    // (schema 25 moves the schedules again: the last checkpoint names the state now)
+    expect(payloads[payloads.length - 1]).toMatchObject({ schema: 25, call: 'brain.checkpoint', args: { state_hash: stateHash(stateDump(db)) } })
 
     writes(eml).store(validNote({ scope: 'project.p', title: 'after-24' }), eml.env({ handle: 'juno' }))
     expect(verify(db)).toMatchObject({ ok: true, entries: log.length + 1 })

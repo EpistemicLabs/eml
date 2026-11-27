@@ -1,0 +1,929 @@
+{
+  "schema": 25,
+  "contract": "cde5d77c41df09a85fd62c7d9d47e9ecd5d6113669a920d45a7c1571f26fe277",
+  "document": {
+    "calls": {
+      "engram.confirm_review": {
+        "id": "value",
+        "text": "value"
+      },
+      "engram.create": {
+        "app": "map",
+        "content": "value",
+        "from_learning": "value",
+        "origin": "value",
+        "parent_id": "value",
+        "properties": "type_fields",
+        "scope": "value",
+        "status": "value",
+        "subjects": "value",
+        "supersedes": "value",
+        "tags": "value",
+        "task_id": "value",
+        "title": "value",
+        "type": "value"
+      },
+      "engram.create (learning)": {
+        "content": "value",
+        "evidence": {
+          "happened": "value",
+          "quote": "value",
+          "rule_id": "value",
+          "source": "value",
+          "stance": "value"
+        },
+        "new_topic": "value",
+        "scope": "value",
+        "subjects": "value",
+        "tags": "value",
+        "title": "value",
+        "type": "value"
+      },
+      "engram.import": {
+        "rows": "moved_rows",
+        "set_hash": "value",
+        "source": {
+          "brain": "value",
+          "head_seq": "value"
+        }
+      },
+      "engram.move_out": {
+        "drop_relations": "value",
+        "ids": "value",
+        "set_hash": "value",
+        "target": {
+          "brain": "value",
+          "op_id": "value"
+        }
+      },
+      "engram.rescope": {
+        "ids": "value",
+        "scope": "value"
+      },
+      "engram.retag": {
+        "add": "value",
+        "ids": "value",
+        "remove": "value"
+      },
+      "engram.update": {
+        "base_rev": "value",
+        "id": "value",
+        "patch": {
+          "app": "map",
+          "content": "value",
+          "properties": "type_fields",
+          "review_note": "value",
+          "scope": "value",
+          "status": "value",
+          "subjects": "value",
+          "supersedes": "value",
+          "tags": "value",
+          "title": "value"
+        }
+      },
+      "learning.add_evidence": {
+        "content": "value",
+        "happened": "value",
+        "id": "value",
+        "quote": "value",
+        "rule_id": "value",
+        "source": "value",
+        "stance": "value"
+      },
+      "object.create": {
+        "fields": "object_fields",
+        "object": "value"
+      },
+      "object.update": {
+        "id": "value",
+        "object": "value",
+        "patch": "object_fields"
+      },
+      "provenance.restamp": {
+        "agent": "value",
+        "from_handle": "value",
+        "to_handle": "value"
+      },
+      "relation.create": {
+        "detection_method": "value",
+        "explanation": "value",
+        "metadata": "map",
+        "relation": "value",
+        "source_brain": "value",
+        "source_id": "value",
+        "strength": "value",
+        "target_brain": "value",
+        "target_id": "value"
+      },
+      "relation.move_end": {
+        "from_brain": "value",
+        "relations": "value",
+        "to_brain": "value"
+      },
+      "task.track": {
+        "assignee_ids": "value",
+        "base_rev": "value",
+        "blockers": "value",
+        "checkpoint": "value",
+        "content": "value",
+        "context": "value",
+        "delegate": "value",
+        "delegation": "value",
+        "depends_on": "value",
+        "display_title": "value",
+        "due_date": "value",
+        "goal": "value",
+        "id": "value",
+        "intent": "value",
+        "keep": "value",
+        "outcome": "value",
+        "parent_id": "value",
+        "priority": "value",
+        "schedule": "value",
+        "scope": "value",
+        "stage": "value",
+        "status": "value",
+        "subjects": "value",
+        "supersedes": "value",
+        "tags": "value",
+        "text": "value",
+        "title": "value",
+        "waiting_on": "value",
+        "waits": "value"
+      }
+    },
+    "enums": {
+      "detection_method": [
+        "manual",
+        "agent_declared",
+        "auto_temporal",
+        "auto_semantic"
+      ],
+      "engram_type": [
+        "decision",
+        "rule",
+        "profile",
+        "status",
+        "task",
+        "event",
+        "log",
+        "reference",
+        "note",
+        "learning"
+      ],
+      "evidence_source": [
+        "user",
+        "observed",
+        "self"
+      ],
+      "evidence_stance": [
+        "supports",
+        "contradicts",
+        "declined"
+      ],
+      "ingestion_method": [
+        "hook",
+        "direct",
+        "bulk",
+        "mcp",
+        "other"
+      ],
+      "object_kind": [
+        "project",
+        "entity",
+        "tag",
+        "subject",
+        "user",
+        "agent",
+        "run"
+      ],
+      "origin": [
+        "cockpit-notes",
+        "cockpit-review-triage",
+        "eml-default-brain"
+      ],
+      "relation": [
+        "supports",
+        "contradicts",
+        "supersedes",
+        "derived_from",
+        "refines",
+        "related_to",
+        "blocks",
+        "part_of"
+      ],
+      "task_create_status": [
+        "planned",
+        "active"
+      ],
+      "task_track_status": [
+        "planned",
+        "active",
+        "resolved",
+        "invalidated"
+      ],
+      "update_status": [
+        "invalidated",
+        "active"
+      ]
+    },
+    "frozen_log": {
+      "state_hash": "3facf66ef8593df8cd7ce7e4987c5432ae54a159e53ef4ad397e753922600542"
+    },
+    "limits": {
+      "learning_content_chars": 200,
+      "profile_content_chars": 400,
+      "rule_content_chars": 200,
+      "rule_trigger_chars": 80
+    },
+    "moved_rows": {
+      "agents": [
+        "id",
+        "name",
+        "parent_id",
+        "domains",
+        "description",
+        "metadata",
+        "created_at"
+      ],
+      "engram_subjects": [
+        "engram_id",
+        "subject_id",
+        "created_at"
+      ],
+      "engram_tags": [
+        "engram_id",
+        "tag_id",
+        "created_at"
+      ],
+      "engrams": [
+        "id",
+        "type",
+        "scope",
+        "title",
+        "content",
+        "status",
+        "significance",
+        "properties",
+        "origin",
+        "ingested_by",
+        "agent",
+        "ingestion_method",
+        "session_id",
+        "model",
+        "harness",
+        "created_at",
+        "updated_at",
+        "rev"
+      ],
+      "entities": [
+        "id",
+        "name",
+        "kind",
+        "status",
+        "description",
+        "metadata",
+        "status_tracks",
+        "created_at",
+        "updated_at"
+      ],
+      "entries": [
+        "id",
+        "engram_id",
+        "kind",
+        "at",
+        "author",
+        "agent",
+        "session_id",
+        "model",
+        "stage",
+        "text",
+        "source",
+        "stance",
+        "quote",
+        "rule_id"
+      ],
+      "projects": [
+        "id",
+        "name",
+        "status",
+        "goal",
+        "description",
+        "owner",
+        "parent_project",
+        "started_at",
+        "ended_at",
+        "metadata",
+        "status_tracks",
+        "created_at",
+        "updated_at"
+      ],
+      "relations": [
+        "id",
+        "source_id",
+        "target_id",
+        "relation",
+        "detection_method",
+        "strength",
+        "explanation",
+        "metadata",
+        "created_at",
+        "source_brain",
+        "target_brain"
+      ],
+      "subjects": [
+        "id",
+        "name",
+        "description",
+        "status",
+        "created_at",
+        "updated_at"
+      ],
+      "tags": [
+        "id",
+        "name",
+        "description",
+        "status",
+        "created_at"
+      ],
+      "users": [
+        "id",
+        "name",
+        "email",
+        "description",
+        "metadata",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "object_fields": {
+      "agent": {
+        "description": {
+          "kind": "text"
+        },
+        "domains": {
+          "kind": "text[]"
+        },
+        "id": {
+          "kind": "text"
+        },
+        "metadata": {
+          "kind": "map"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "parent_id": {
+          "kind": "text"
+        }
+      },
+      "entity": {
+        "description": {
+          "kind": "text"
+        },
+        "id": {
+          "kind": "text"
+        },
+        "kind": {
+          "kind": "enum",
+          "values": [
+            "person",
+            "org",
+            "asset"
+          ]
+        },
+        "metadata": {
+          "kind": "map"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "status": {
+          "kind": "enum",
+          "values": [
+            "active",
+            "archived"
+          ]
+        },
+        "status_tracks": {
+          "kind": "text"
+        }
+      },
+      "project": {
+        "description": {
+          "kind": "text"
+        },
+        "goal": {
+          "kind": "text"
+        },
+        "id": {
+          "kind": "text"
+        },
+        "metadata": {
+          "kind": "map"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "owner": {
+          "kind": "text"
+        },
+        "parent_project": {
+          "kind": "text"
+        },
+        "started_at": {
+          "kind": "date"
+        },
+        "status": {
+          "kind": "enum",
+          "values": [
+            "active",
+            "paused",
+            "archived"
+          ]
+        },
+        "status_tracks": {
+          "kind": "text"
+        }
+      },
+      "run": {
+        "agent": {
+          "kind": "text"
+        },
+        "driver": {
+          "kind": "enum",
+          "values": [
+            "human",
+            "agent"
+          ]
+        },
+        "end_reason": {
+          "kind": "enum",
+          "values": [
+            "finished",
+            "put_away",
+            "failed",
+            "crashed"
+          ]
+        },
+        "ended_at": {
+          "kind": "date"
+        },
+        "id": {
+          "kind": "text"
+        },
+        "last_activity_at": {
+          "kind": "date"
+        },
+        "member": {
+          "kind": "text"
+        },
+        "origin": {
+          "kind": "enum",
+          "values": [
+            "user",
+            "runner",
+            "job"
+          ]
+        },
+        "result": {
+          "kind": "text"
+        },
+        "started_at": {
+          "kind": "date"
+        },
+        "state": {
+          "kind": "enum",
+          "values": [
+            "running",
+            "idle",
+            "ended"
+          ]
+        },
+        "task_id": {
+          "kind": "text"
+        }
+      },
+      "subject": {
+        "description": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "status": {
+          "kind": "enum",
+          "values": [
+            "active",
+            "closed"
+          ]
+        }
+      },
+      "tag": {
+        "description": {
+          "kind": "text"
+        },
+        "name": {
+          "kind": "text"
+        },
+        "status": {
+          "kind": "enum",
+          "values": [
+            "active",
+            "archived"
+          ]
+        }
+      },
+      "user": {
+        "description": {
+          "kind": "text"
+        },
+        "email": {
+          "kind": "text"
+        },
+        "id": {
+          "kind": "text"
+        },
+        "metadata": {
+          "kind": "map"
+        },
+        "name": {
+          "kind": "text"
+        }
+      }
+    },
+    "object_fields_fixed_on_update": {
+      "agent": [
+        "id"
+      ],
+      "entity": [
+        "id"
+      ],
+      "project": [
+        "id"
+      ],
+      "run": [
+        "id",
+        "task_id",
+        "member",
+        "origin",
+        "started_at"
+      ],
+      "subject": [],
+      "tag": [],
+      "user": [
+        "id"
+      ]
+    },
+    "patterns": {
+      "brain_id": "/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/",
+      "date_field": "/^\\d{4}-\\d{2}-\\d{2}([T ][0-9:.]+(Z|[+-]\\d{2}:?\\d{2})?)?$/",
+      "handle": "/^[a-z0-9_-]{1,63}$/",
+      "learning_scope": "/^agent\\./",
+      "moved_date": "/^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,3})?)?(Z|[+-]\\d{2}:\\d{2})?)?$/",
+      "moved_time": "/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/",
+      "object_id": "/^[a-z0-9_-]+$/i",
+      "profile_scope": "/^(agent|user|entity)\\./",
+      "rule_scope": "/^(agent|project)\\./",
+      "scope": [
+        "/^global$/",
+        "/^project\\.[a-z0-9_-]+$/i",
+        "/^agent\\.[a-z0-9_-]+$/i",
+        "/^user\\.[a-z0-9_-]+$/i",
+        "/^entity\\.[a-z0-9_-]+$/i"
+      ],
+      "set_hash": "/^[0-9a-f]{64}$/"
+    },
+    "schema": 25,
+    "type_fields": {
+      "decision": {
+        "alternatives": {
+          "kind": "text[]",
+          "required": true
+        },
+        "binding": {
+          "kind": "enum",
+          "values": [
+            "task",
+            "standing"
+          ]
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "rationale": {
+          "kind": "text",
+          "required": true
+        },
+        "review_due_at": {
+          "kind": "date"
+        }
+      },
+      "event": {
+        "change_type": {
+          "kind": "enum",
+          "required": true,
+          "values": [
+            "created",
+            "started",
+            "completed",
+            "released",
+            "deployed",
+            "failed",
+            "incident",
+            "paused",
+            "resumed",
+            "deleted",
+            "other"
+          ]
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "occurred_at": {
+          "kind": "date",
+          "required": true
+        },
+        "source_url": {
+          "kind": "text"
+        }
+      },
+      "learning": {},
+      "log": {
+        "detail": {
+          "kind": "text"
+        },
+        "landed": {
+          "kind": "text",
+          "required": true
+        },
+        "next": {
+          "kind": "text",
+          "required": true
+        },
+        "open_threads": {
+          "kind": "text[]"
+        },
+        "what": {
+          "kind": "text",
+          "required": true
+        }
+      },
+      "note": {
+        "binding": {
+          "kind": "enum",
+          "values": [
+            "task",
+            "standing"
+          ]
+        },
+        "detail": {
+          "kind": "text"
+        }
+      },
+      "profile": {
+        "core": {
+          "kind": "bool"
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "review_due_at": {
+          "kind": "date"
+        }
+      },
+      "reference": {
+        "checked_at": {
+          "kind": "date"
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "source": {
+          "kind": "text",
+          "required": true
+        },
+        "source_name": {
+          "kind": "text"
+        }
+      },
+      "rule": {
+        "agreed": {
+          "kind": "text",
+          "required": true
+        },
+        "applies": {
+          "kind": "enum",
+          "required": true,
+          "values": [
+            "always",
+            "situational"
+          ]
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "review_due_at": {
+          "kind": "date"
+        },
+        "rule_type": {
+          "kind": "enum",
+          "values": [
+            "constraint",
+            "process",
+            "convention",
+            "behavior",
+            "security"
+          ]
+        },
+        "trigger": {
+          "kind": "text",
+          "max": 80
+        },
+        "why": {
+          "kind": "text",
+          "required": true
+        }
+      },
+      "status": {
+        "blockers": {
+          "kind": "text[]"
+        },
+        "detail": {
+          "kind": "text"
+        },
+        "next_step": {
+          "kind": "text"
+        },
+        "state": {
+          "kind": "text",
+          "required": true
+        }
+      },
+      "task": {
+        "assignee_ids": {
+          "kind": "text[]"
+        },
+        "blockers": {
+          "kind": "text[]"
+        },
+        "checkpoint": {
+          "kind": "enum",
+          "values": [
+            "before",
+            "after",
+            "none"
+          ]
+        },
+        "context": {
+          "kind": "text"
+        },
+        "delegate": {
+          "kind": "text"
+        },
+        "delegation": {
+          "keys": {
+            "agent": {
+              "kind": "text",
+              "notBlank": true,
+              "required": true
+            },
+            "checkpoint": {
+              "kind": "enum",
+              "values": [
+                "before",
+                "after",
+                "none"
+              ]
+            },
+            "requested_at": {
+              "kind": "date"
+            }
+          },
+          "kind": "map"
+        },
+        "depends_on": {
+          "kind": "text[]"
+        },
+        "display_title": {
+          "kind": "text",
+          "max": 80,
+          "notBlank": true
+        },
+        "due_date": {
+          "kind": "date"
+        },
+        "goal": {
+          "kind": "text"
+        },
+        "intent": {
+          "kind": "text",
+          "notBlank": true
+        },
+        "outcome": {
+          "kind": "text"
+        },
+        "priority": {
+          "kind": "enum",
+          "values": [
+            "urgent",
+            "high",
+            "normal",
+            "low"
+          ]
+        },
+        "schedule": {
+          "keys": {
+            "at": {
+              "kind": "date"
+            },
+            "by": {
+              "kind": "text",
+              "notBlank": true
+            },
+            "by_session": {
+              "kind": "text"
+            },
+            "crons": {
+              "entries": {
+                "max": 10,
+                "min": 1
+              },
+              "kind": "text[]"
+            },
+            "ends_at": {
+              "kind": "date"
+            },
+            "paused": {
+              "kind": "bool"
+            },
+            "time_zone": {
+              "kind": "text",
+              "notBlank": true
+            },
+            "why": {
+              "kind": "text",
+              "max": 2000
+            }
+          },
+          "kind": "map"
+        },
+        "stage": {
+          "kind": "enum",
+          "values": [
+            "ideation",
+            "planning",
+            "ready",
+            "implementation"
+          ]
+        },
+        "waiting_on": {
+          "kind": "map"
+        },
+        "waits": {
+          "keys": {
+            "due": {
+              "kind": "date"
+            },
+            "id": {
+              "kind": "text",
+              "notBlank": true,
+              "required": true
+            },
+            "kind": {
+              "kind": "enum",
+              "values": [
+                "question",
+                "go",
+                "stopped",
+                "do",
+                "review",
+                "outside"
+              ]
+            },
+            "session_id": {
+              "kind": "text"
+            },
+            "since": {
+              "kind": "date"
+            },
+            "snoozed_until": {
+              "kind": "text",
+              "notBlank": true
+            },
+            "who": {
+              "kind": "text",
+              "notBlank": true,
+              "required": true
+            },
+            "why": {
+              "kind": "text"
+            }
+          },
+          "kind": "map[]",
+          "uniqueBy": "id"
+        }
+      }
+    }
+  }
+}

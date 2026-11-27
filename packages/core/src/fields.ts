@@ -53,10 +53,11 @@ export const CHECKPOINTS = ['before', 'after', 'none'] as const
 /**
  * v0.23: what a wait is for, most urgent first — the order core picks waiting_on
  * from a task's waits by (task-state.ts). A question, a go or a failed run block
- * the agent and sort above a review, which does not; outside (someone outside
- * has the next move) comes last.
+ * the agent and sort above the rest. v0.25: do (a step the person does themself,
+ * "your move") sorts above a review, which does not block anything; outside
+ * (someone outside has the next move) comes last.
  */
-export const WAIT_KINDS = ['question', 'go', 'stopped', 'review', 'outside'] as const
+export const WAIT_KINDS = ['question', 'go', 'stopped', 'do', 'review', 'outside'] as const
 /** v0.24: the most repeating times (crons) one task's schedule holds. */
 export const SCHEDULE_CRONS_MAX = 10
 /** v0.24: the most characters the reason of a schedule's wake-up (why) has. */
@@ -121,8 +122,8 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     // has to act next ({ who, why, since, session_id }, written by the cockpit's router).
     depends_on: list(),
     checkpoint: oneOf(CHECKPOINTS),
-    // Who acts next, written by the cockpit: who, kind (question · go · review · stopped ·
-    // outside), why, since, session_id.
+    // Who acts next, written by the cockpit: who, kind (question · go · stopped · do ·
+    // review · outside), why, since, session_id, due.
     waiting_on: { kind: 'map' },
     // What has to be true for the task to be done; the agent proposes it and
     // checks it at every wake-up (decision agent-schedules-own-follow-ups).
@@ -137,30 +138,33 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
     // own. requested_at is the runner's trigger (a request is open while no run
     // started after it). delegate and checkpoint stay, and core keeps the three
     // mirrored on every write (task-state.ts).
-    // v0.24: schedule is the one place a task's schedule lives — its repeating
-    // times (crons, five-field, read in time_zone) and at most one wake-up (at,
-    // with why it was set and by_session, the session that set it); paused and
-    // ends_at hold for the whole schedule. The next run time is computed, not
-    // stored. task-state.ts checks that it has a time and brings it to its
-    // stored form.
     delegation: {
       kind: 'map',
       keys: {
         agent: text({ required: true, notBlank: true }),
         checkpoint: oneOf(CHECKPOINTS),
         requested_at: date(),
-        schedule: {
-          kind: 'map',
-          keys: {
-            crons: list({ entries: { min: 1, max: SCHEDULE_CRONS_MAX } }),
-            at: date(),
-            why: text({ max: SCHEDULE_WHY_MAX }),
-            by_session: text(),
-            time_zone: text({ notBlank: true }),
-            paused: bool(),
-            ends_at: date(),
-          },
-        },
+      },
+    },
+    // v0.24: the task's schedule — its repeating times (crons, five-field, read
+    // in time_zone) and at most one wake-up (at, with why it was set); paused and
+    // ends_at hold for the whole schedule. The next run time is computed, not
+    // stored. v0.25: the schedule is a field of the task, not of its delegation
+    // (who works on a task and when someone looks again are separate), and the
+    // wake-up names who it is for: by, a handle (an agent: a run on the task; a
+    // person: a reminder), and by_session, the session that set it.
+    // task-state.ts checks that it has a time and brings it to its stored form.
+    schedule: {
+      kind: 'map',
+      keys: {
+        crons: list({ entries: { min: 1, max: SCHEDULE_CRONS_MAX } }),
+        at: date(),
+        why: text({ max: SCHEDULE_WHY_MAX }),
+        by: text({ notBlank: true }),
+        by_session: text(),
+        time_zone: text({ notBlank: true }),
+        paused: bool(),
+        ends_at: date(),
       },
     },
     // v0.23: everyone the task waits on, one entry per wait; core keeps waiting_on
@@ -177,6 +181,8 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
         session_id: text(),
         // parked: an ISO date it comes back at, or "open" (task-state.ts checks it)
         snoozed_until: text({ notBlank: true }),
+        // v0.25: when the step this wait asks for is due (an ISO date, or a date and time)
+        due: date(),
       },
     },
   },

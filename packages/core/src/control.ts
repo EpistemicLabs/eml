@@ -52,9 +52,14 @@ export const CURRENT_CONTROL_SCHEMA_VERSION = 1
  *   at most one wake-up (task-state.ts). cron (one rule) and session (new ·
  *   resume) are gone; the migration rewrites the stored schedules. A new agent
  *   keeps the task's schedule. No state table changes.
+ * v0.25: asks and check-backs are separate — the schedule moves out of the
+ *   delegation into its own task field schedule, whose wake-up names who it is
+ *   for (by); a hand-over no longer touches it. A wait can be a do (the person's
+ *   own step) and carry a due date. The migration moves the stored schedules.
+ *   No state table changes.
  * The brain migration runner (Phase A.5) brings brain files up to it.
  */
-export const CURRENT_BRAIN_SCHEMA_VERSION = 24
+export const CURRENT_BRAIN_SCHEMA_VERSION = 25
 
 /**
  * The oldest brain schema this release can migrate forward: brains at 12 or
