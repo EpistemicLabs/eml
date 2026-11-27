@@ -401,6 +401,9 @@ async function main() {
     },
     deliver: (sessionId, text, opts) => chat.deliver(sessionId, text, opts),
   }, request)
+  // The host's own message for a session (no sender), and whether the session has it now.
+  const delivered = (sessionId: string, text: string, reminder = false) =>
+    deliver({ target: sessionId, text, from: null, caller: 'session', ...(reminder ? { reminder: true } : {}) }).then((outcome) => outcome === 'delivered' || outcome === 'resumed')
   // Task system: every session works on a brain task (application/session-task.ts).
   const taskBrain = (space: BrainSpace) => {
     const agent = boundAgent({ agents }, space)
@@ -465,18 +468,28 @@ async function main() {
     .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working', commands: turns.get(e.sessionId)?.commands ?? [] }))
   // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
   // from the provider's summary for that one session only.
+  const contextTokensOf = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
+    return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
+  }
   const continueSession = createContinueSession({
     ledger,
-    contextTokensOf: (sessionId) => {
-      const entry = ledger.get(sessionId)
-      const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
-      return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
-    },
+    contextTokensOf,
     startFresh: (taskId) => taskCommands?.startFresh(taskId) ?? false,
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     runStarted: () => runRecords.poke(),
     now: () => Date.now(),
   })
+  // Stop a session and put it away (a split undone, a task's session replaced by a new one).
+  const endAndPutAway = async (sessionId: string, reason: string) => {
+    bridge.killSession(sessionId)
+    await chat.end(sessionId, reason)
+    ledger.setTurnInFlight(sessionId, false)
+    turns.forget(sessionId)
+    sessionGone(sessionId)
+    ledger.archive(sessionId)
+  }
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
@@ -520,7 +533,7 @@ async function main() {
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
     seen: (sessionId, since) => (ledger.get(sessionId)?.readAt ?? '') >= since,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session', reminder: true }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => delivered(sessionId, text, true),
     waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
     quiet: (sessionId) => {
@@ -1040,7 +1053,7 @@ async function main() {
     // Send in a closed task's chat: the message goes to its newest session, or starts one when it has none.
     newestSessionOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId)
       .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => delivered(sessionId, text),
     startOnTask: async (spaceId, taskId, prompt) => {
       const started = await startOnTask({ spaceId, taskId, prompt })
       return started.ok ? started.sessionId : null
@@ -1186,14 +1199,7 @@ async function main() {
       ...(taskId ? { taskId } : {}),
       ...(space.main ? {} : { spaceId: space.id }),
     }).id,
-    endSession: async (sessionId) => {
-      bridge.killSession(sessionId)
-      await chat.end(sessionId, 'split undone')
-      ledger.setTurnInFlight(sessionId, false)
-      turns.forget(sessionId)
-      sessionGone(sessionId)
-      ledger.archive(sessionId)
-    },
+    endSession: (sessionId) => endAndPutAway(sessionId, 'split undone'),
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,

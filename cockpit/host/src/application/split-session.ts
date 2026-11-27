@@ -148,12 +148,14 @@ export function createSplitSession(deps: SplitSessionDeps) {
         record({ journaled: { ...command.split!.journaled, source: true } })
       }
       let spawnedSessionId = command.split!.spawnedSessionId
+      const promptFor = (taskId: string | null) => splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId, existing: Boolean(existingTask) })
+      const prompt = promptFor(createdTaskId ?? existingTask?.id ?? null)
       if (plan.spawn && !spawnedSessionId) {
         spawnedSessionId = deps.spawn({
           fromSessionId: input.sessionId,
           projectId: input.projectId,
           title: input.title.trim(),
-          prompt: splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId: createdTaskId ?? existingTask?.id ?? null, existing: Boolean(existingTask) }),
+          prompt,
           taskId: createdTaskId ?? existingTask?.id ?? null,
           space,
         })

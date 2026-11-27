@@ -647,16 +647,17 @@ export function ChatPane({
   const [marks, setMarks] = useState<SplitMark[]>([]);
   const [announced, setAnnounced] = useState('');
   const openSplit = useCallback((itemId: string) => setSplitFrom({ upTo: itemId }), []);
+  // The pane of a session a split started or went to: the one that shows it, else a new one.
+  const openSplitSession = useCallback((id: string) => {
+    const pane = paneHoldingSession(id);
+    if (pane) activatePane(pane.id);
+    else openInPane({ surface: 'terminal', projectId, sessionId: id });
+  }, [projectId]);
   const renderMark = useCallback((mark: SplitMark) => (
     <SplitMarker
       mark={mark}
       now={Date.now()}
-      onOpen={() => {
-        if (!mark.sessionId) return;
-        const pane = paneHoldingSession(mark.sessionId);
-        if (pane) activatePane(pane.id);
-        else openInPane({ surface: 'terminal', projectId, sessionId: mark.sessionId });
-      }}
+      onOpen={() => { if (mark.sessionId) openSplitSession(mark.sessionId); }}
       onUndo={() => {
         void undoSplit(mark.opId).then((answer) => {
           if (!answer.ok) return;
@@ -666,7 +667,7 @@ export function ChatPane({
         });
       }}
     />
-  ), [projectId]);
+  ), [openSplitSession]);
 
   // Keep it here: the agent hears it as the user's reply, so it carries on and does not offer the topic again.
   const keepOffer = useCallback((id: string, offer: SplitOffer) => {
