@@ -151,6 +151,22 @@ describe('the task panel', () => {
       expect(screen.getByText(/reopen the parent first/)).toBeTruthy();
     });
 
+    it('a replaced task links the task that replaced it and sends you there instead of offering a follow-up', () => {
+      const onOpenTask = vi.fn();
+      render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={closed({ blocked: 'superseded', status: 'superseded', replacedBy: 'parent' })} board={{ ...board(parent), viewer: 'lasse', closed: [] }} now={NOW} sessions={[]} spaces={[]}
+            onClose={() => {}} onOpenTask={onOpenTask} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      expect(screen.queryByRole('button', { name: /^Start follow-up/ })).toBeNull();
+      expect(screen.getByText(/write there, its sessions go on in it/)).toBeTruthy();
+      const links = screen.getAllByRole('button', { name: /claude mcp plugin marketing channel research/i });
+      expect(links).toHaveLength(2);
+      fireEvent.click(links[0]!);
+      expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'parent' }));
+    });
+
     it('under its session\'s chat: the input for the owner; for someone else\'s task or one being reopened, a note', () => {
       const withSession = (patch: Partial<BoardTask>, viewer = 'lasse') => render(
         <MemoryRouter><QueryClientProvider client={client}>
