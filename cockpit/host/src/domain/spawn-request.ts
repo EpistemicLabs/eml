@@ -11,6 +11,8 @@ export interface SpawnRequest {
   title: string | null
   /** The agent CLI the worker runs with (a provider id); unset → the user's default. */
   provider?: ProviderId
+  /** The model a session started by hand from the sidebar runs with (a model id its chat offers); unset → the provider's default. */
+  model?: string
   /** The requesting session — the worker opens on its desk, next to its pane. */
   fromSessionId: string | null
   /** The brain space the worker runs in (the requester's). Absent = main (the host's own spawns, onboarding.ts). */

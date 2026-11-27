@@ -22,7 +22,7 @@ import { sessionAddress } from './session-address.js'
 import type { SpawnQueue } from './spawn-queue.js'
 import { CONFIG_DIR, FRONTEND_DIST, HOST_ROOT, COCKPIT_FOLDERS_DIR } from './paths.js'
 import type { PtyBridge } from './pty-bridge.js'
-import type { ChatBridge } from './chat-bridge.js'
+import { SAFE_MODEL, type ChatBridge } from './chat-bridge.js'
 import { spaceView, openBrainSpace, type BrainSpace, type BrainSpaces, sessionSpaceOf } from './brain-space.js'
 import { isSpaceColor } from './domain/space-color.js'
 import { homeHuman, provisionSpace, type AgentNames, type Human } from './provision.js'
@@ -41,6 +41,8 @@ import { brainProjectOf, moveProject, planProjectMove } from './project-move.js'
 import { BrainRenameError, type BrainProject } from './brain-projects.js'
 import { HOOK_SESSION_HEADER, HOOK_TOKEN_HEADER, sessionMessaging, type AgentProvider, type SessionSpace } from './domain/agent-provider.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
+import type { ReportedModels } from './reported-models.js'
+import { chatModels } from './application/chat-models.js'
 import { applySessionHook } from './application/apply-session-hook.js'
 import { directoryQueryOf } from './application/session-tools.js'
 import { isProviderId, writeDefaultProvider } from './provider-settings.js'
@@ -117,6 +119,8 @@ export interface HostDeps {
   memoryUnavailable?: string | null
   /** The agent CLIs sessions run with. */
   providers: ProviderRegistry
+  /** The models each agent's last chat offered (reported-models.ts); absent: none known. */
+  reportedModels?: Pick<ReportedModels, 'read'>
   /** Per-boot secret the session hooks send (HOOK_TOKEN_HEADER) — POST /api/hook requires it. */
   hookToken: string
   /** The turn-state hook's config of this boot — a new space's session files name it. */
@@ -290,9 +294,16 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
     const projectId = typeof body.projectId === 'string' ? body.projectId : ''
     if (!prompt || !projectId) { json(res, 400, { error: { code: 'INVALID', message: 'A project and a prompt are required' } }); return true }
+    // The agent picker's choice; without one the user's default.
+    const provider = body.provider === undefined || body.provider === null ? null : deps.providers.get(typeof body.provider === 'string' ? body.provider : '')
+    if (provider === undefined) { json(res, 400, { error: { code: 'INVALID', message: 'This cockpit has no such agent' } }); return true }
+    if (provider && !provider.capabilities.chat.supported) { json(res, 409, { error: { code: 'NOT_STARTED', message: provider.capabilities.chat.reason } }); return true }
+    const model = typeof body.model === 'string' && SAFE_MODEL.test(body.model) ? body.model : null
     const sessionId = randomUUID()
     const problem = deps.chat.startWorker({
       id: sessionId, projectId, prompt, fromSessionId: null, createdAt: new Date().toISOString(),
+      ...(provider ? { provider: provider.id } : {}),
+      ...(model ? { model } : {}),
       // It names itself; until then the list shows its first prompt.
       title: null,
       ...(typeof body.spaceId === 'string' && body.spaceId ? { spaceId: body.spaceId } : {}),
@@ -1208,6 +1219,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     // Settings › Models: the agent CLIs sessions can run with — which one new
     // sessions start with, each one's cockpit-owned runtime (version, background
     // updates, check now, roll back) and its own settings.
+    // The launchers' agent picker: the models each chat-capable agent offers a new chat (application/chat-models.ts).
+    if (resource === 'providers' && id === 'models' && !parts[3] && method === 'GET') {
+      json(res, 200, { providers: await chatModels({ providers: deps.providers.all(), reported: (provider) => deps.reportedModels?.read(provider) ?? [] }) })
+      return true
+    }
+
     if (resource === 'providers') {
       const provider = id ? deps.providers.get(id) : undefined
       if (id && !provider) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Unknown provider' } }); return true }

@@ -85,7 +85,7 @@ class FakeSocket extends EventEmitter {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve))
 
-function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRuntimeFactory; reportsTurns?: boolean; endTurnTool?: ChatContext['endTurnTool']; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string } = {}) {
+function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRuntimeFactory; reportsTurns?: boolean; endTurnTool?: ChatContext['endTurnTool']; transcript?: boolean; history?: RuntimeEvent[]; runtimeOf?: string; terminalRunning?: boolean; busy?: () => 'working' | 'waiting' | null; handoffBeforeStop?: (id: string) => string | null; turnDone?: ChatContext['turnDone']; worksAlone?: ChatContext['worksAlone']; turnContext?: ChatContext['turnContext']; turnWake?: ChatContext['turnWake']; agent?: string | null; tracker?: TurnTracker; zone?: string; modelsOffered?: ChatContext['modelsOffered'] } = {}) {
   const runtimes: FakeRuntime[] = []
   const factory: SessionRuntimeFactory = {
     workerMode: 'auto',
@@ -158,6 +158,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
     turnContext: opts.turnContext,
     turnWake: opts.turnWake,
     endTurnTool: opts.endTurnTool,
+    modelsOffered: opts.modelsOffered,
     // A fixed moment, so the times in these calls stay ahead of it.
     callTime: () => ({ now: Date.parse('2026-11-25T08:00:00Z'), zone: opts.zone ?? 'UTC' }),
   } as unknown as ChatContext
@@ -241,6 +242,22 @@ describe('ChatBridge', () => {
     expect(ledgerEntries.get('s1')?.runtime).toBe('sdk')
     expect(turns).toContainEqual(['s1', 'working'])
     expect(bridge.sessionState('s1')).toBe('detached')
+  })
+
+  it('starts a session from the sidebar with the model the picker chose', () => {
+    const { bridge, runtimes, ledgerEntries } = setup()
+    bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'do it', title: null, fromSessionId: null, createdAt: '', model: 'opus[1m]' })
+    expect(runtimes[0].start.model).toBe('opus[1m]')
+    expect(ledgerEntries.get('s1')?.chatModel).toBe('opus[1m]')
+  })
+
+  it('passes on the models a chat offers, under its provider, for the launchers\' picker', async () => {
+    const offered: Array<[string, string[]]> = []
+    const { bridge, runtimes } = setup({ modelsOffered: (provider, models) => { offered.push([provider, models.map((one) => one.id)]) } })
+    connect(bridge, { readOnly: true, prompt: 'hi' })
+    await flush()
+    runtimes[0].emit({ kind: 'capabilities', modes: [], models: [{ id: 'opus', label: 'Opus', description: '', resolved: null }] })
+    expect(offered).toEqual([['claude', ['opus']]])
   })
 
   it('a pane joins a running worker and sees its first message, without a second process', async () => {
