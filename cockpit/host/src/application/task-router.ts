@@ -10,6 +10,7 @@ import { mostUrgent, sameWaits, waitsBody, waitsOf, withoutSession, withSessionW
 import type { SessionLedger } from '../session-ledger.js'
 import { COCKPIT_HOME } from '../paths.js'
 import { trackWaits } from './task-waits.js'
+import type { FollowReplacement } from './follow-replacement.js'
 import { turnContextOf } from './turn-context.js'
 
 /**
@@ -48,6 +49,11 @@ import { turnContextOf } from './turn-context.js'
  *     answered on another member's machine.
  *   - A session that closed its task and asks nothing is finished: its
  *     handoff and outcome are in the task, so it leaves the lists (finished).
+ *   - A session whose task another task replaced (superseded) goes on there
+ *     (application/follow-replacement.ts): it moves onto the replacement and
+ *     its turn is routed there; when another session holds the replacement,
+ *     the hand-over goes to the replacing task and to that session, and this
+ *     one is finished. Its hand-over never lands on the replaced task.
  *
  * The session never sets its waits itself (they are not among its tools); a
  * job's session is routed like any other, so a job needs no notify setting of
@@ -67,6 +73,8 @@ export interface TaskRouterDeps {
   finished?(sessionId: string): void
   /** What the session said up to `at` is in its task now (session-ledger.ts clearUnrouted). */
   routed?(sessionId: string, at: string): void
+  /** Where a session on a replaced task goes on (application/follow-replacement.ts); without it a replaced task is routed as closed. */
+  follow?: Pick<FollowReplacement, 'follow' | 'handOver'>
   log(line: string): void
   now?: () => Date
 }
@@ -172,7 +180,7 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     return !entry || !entry.archivedAt
   }
 
-  const route = async (sessionId: string, message: string, call: EndTurn | null, unsaid: boolean, callCtx: TurnContext | null, saidAt: string | null) => {
+  const route = async (sessionId: string, message: string, call: EndTurn | null, unsaid: boolean, callCtx: TurnContext | null, saidAt: string | null, followed = false): Promise<void> => {
     const entry = deps.ledger.get(sessionId)
     if (!entry?.taskId) return
     const space = deps.spaces.resolve(entry.spaceId)
@@ -190,17 +198,23 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
     // The call, the handoff, or without either the status: not the question the router itself put on the session.
     const key = call ? `call:${JSON.stringify(call)}` : handoff ? handoff.text : `${attention!.kind}:${attention!.reason ?? ''}`
     if (call && attention) fromCall.set(sessionId, attention.at)
-    if (lastRouted.get(sessionId) === key) return
+    if (lastRouted.get(sessionId) === key && !followed) return
 
     // A call is read against what its answer was read against; a block, against the space as it is now.
     const who = (call && callCtx) || turnContextOf({ owner: deps.owner, agent: space.agent, members: (await deps.handles?.(space).catch(() => [])) ?? [] })
     const written = handoff && fromHandoff(handoff, who)
     let waiting: WaitingOn | null = null
     let closed = false
+    let replaced = false
     let after: Wait[] = []
     const { task, patch } = await serial(entry.taskId, () => trackWaits(brain, entry.taskId!, (task) => {
       const waits = waitsOf(task.properties)
       closed = task.status !== 'planned' && task.status !== 'active'
+      // A replaced task's sessions go on at its replacement: nothing is written to it here.
+      if (task.status === 'superseded' && deps.follow && !followed) {
+        replaced = true
+        return null
+      }
       // A closed task waits on nobody.
       if (closed) return waits.length > 0 ? waitsBody([]) : null
       // A status the session gave before the task was reopened belongs to the closed task: it must not
@@ -223,6 +237,22 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
       if (!sameWaits(after, waits)) Object.assign(body, waitsBody(after))
       return Object.keys(body).length > 0 ? body : null
     }))
+
+    if (replaced) {
+      const outcome = await deps.follow!.follow(sessionId)
+      if (outcome.kind === 'moved') return route(sessionId, message, call, unsaid, callCtx, saidAt, true)
+      if (outcome.kind === 'held') {
+        const block = call ? handoffBlock(call, who) : handoff?.text
+        const handed = block ? await deps.follow!.handOver(sessionId, outcome, block) : 'journaled'
+        if (handed === 'moved') return route(sessionId, message, call, unsaid, callCtx, saidAt, true)
+        lastRouted.set(sessionId, key)
+        deps.finished?.(sessionId)
+        deps.log(`[router] ${sessionId.slice(0, 8)} task=${task.id.slice(0, 8)} replaced by ${outcome.to.slice(0, 8)}, held by ${outcome.holder.slice(0, 8)}: hand-over ${handed}, finished`)
+        return
+      }
+      // No one place to go on: the replaced task is routed as any closed one.
+      return route(sessionId, message, call, unsaid, callCtx, saidAt, true)
+    }
     lastRouted.set(sessionId, key)
 
     if (closed) {
