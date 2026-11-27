@@ -335,7 +335,7 @@ export interface SessionRuntimeFactory {
   /**
    * Its turns are the session's turn state: the bridge says working when one starts and done when it ends, and the
    * host leaves the agent CLI's turn hooks out for it. For a runtime whose hooks may not run at all (Codex's
-   * app-server runs them only once the user trusted them). Absent: the hooks say it (Claude Code).
+   * app-server runs them only once they are trusted). Absent: the hooks say it (Claude Code).
    */
   readonly reportsTurns?: boolean
   start(request: SessionRuntimeStart): SessionRuntime

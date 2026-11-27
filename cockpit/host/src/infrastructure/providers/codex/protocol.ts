@@ -614,13 +614,14 @@ export interface ClientRequests {
   'config/mcpServer/reload': { params: undefined; result: Record<string, never> }
   /** Only for a server over streamable HTTP. */
   'mcpServer/oauth/login': { params: McpServerOauthLoginParams; result: McpServerOauthLoginResponse }
-  /** The hooks a loaded thread runs, each with whether the user trusted it. */
+  /** The hooks a loaded thread runs, each with whether it is trusted. */
   'hooks/list': { params: HooksListParams; result: HooksListResponse }
 }
 
 /**
  * Whether a hook runs: app-server runs a hook of the user's own files only once its current text was trusted
- * (`hooks.state."<key>".trusted_hash` in config.toml, which Codex's terminal writes on "Trust all"); it never asks.
+ * (`hooks.state."<key>".trusted_hash` in config.toml, which Codex's terminal writes on "Trust all" and the cockpit for
+ * its own hooks, hook-trust.ts); it never asks.
  */
 export type HookTrustStatus = 'managed' | 'untrusted' | 'trusted' | 'modified'
 

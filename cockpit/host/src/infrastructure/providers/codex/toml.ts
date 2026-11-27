@@ -123,3 +123,27 @@ export function setTopLevelKey(text: string, key: string, value: string): string
   while (top.length > 0 && top[top.length - 1].trim() === '') top.pop()
   return [...top, ...(rest.length ? ['', ...rest] : [''])].join('\n')
 }
+
+/** The names of the document's tables, as written between the brackets, in order. */
+export function tableHeaders(text: string): string[] {
+  return text.split('\n').flatMap((line) => {
+    const header = HEADER.exec(line)?.[1]
+    return header !== undefined ? [header] : []
+  })
+}
+
+/** The lines of a table (however it is quoted there), without its header; null when it is absent. */
+export function tableLines(text: string, header: string): string[] | null {
+  let lines: string[] | null = null
+  let inside = false
+  for (const line of text.split('\n')) {
+    const found = HEADER.exec(line)?.[1]
+    if (found !== undefined) {
+      inside = sameKey(found, header)
+      if (inside) lines ??= []
+      continue
+    }
+    if (inside) lines?.push(line)
+  }
+  return lines
+}
