@@ -614,7 +614,7 @@ export interface ClientRequests {
   'config/mcpServer/reload': { params: undefined; result: Record<string, never> }
   /** Only for a server over streamable HTTP. */
   'mcpServer/oauth/login': { params: McpServerOauthLoginParams; result: McpServerOauthLoginResponse }
-  /** The hooks a loaded thread runs, each with whether the user trusted it. */
+  /** The hooks a loaded thread runs, each with whether it is trusted. */
   'hooks/list': { params: HooksListParams; result: HooksListResponse }
 }
 
