@@ -1,8 +1,12 @@
-// Inbox: only what is the viewer's turn — questions, results to review and agents that stopped.
-// An item clears itself when its session is answered, the result reviewed or the task closed.
+// Inbox: only what is the viewer's turn — questions, results to review, steps that are theirs to take
+// ("Your move") and agents that stopped. An item clears itself when its session is answered, the result
+// reviewed, the step marked done or the task closed. Under an item, the task's wake-up: the owner's move
+// and the agent's check-back stand side by side.
+import { Clock } from 'lucide-react';
+
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
-import { type Board, type BoardTask, fyi, type InboxItem, isScheduled, originName, readable, taskName, when } from '@/lib/task-board';
+import { askDueLabel, type Board, type BoardTask, checkBackText, fyi, type InboxItem, looksGoodLabel, originName, repeats, readable, taskName, when } from '@/lib/task-board';
 import { dayNumber, formatInZone, userTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
@@ -25,7 +29,9 @@ export interface UnreadProps {
 export type InboxAction =
   /** Park the item's wait (on every device): until tomorrow or Monday 09:00, open-ended, or bring it back now. */
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' | 'open' | 'now' }
-  | { kind: 'review'; item: InboxItem };
+  | { kind: 'review'; item: InboxItem }
+  /** The viewer did the step a do item asks for: acts at once, the task's agent is woken. */
+  | { kind: 'done'; item: InboxItem };
 
 /** The day heading an item goes under: Today, Yesterday, else the date, on the user's calendar. */
 export const dayOf = (iso: string, now: number) => {
@@ -36,6 +42,7 @@ export const dayOf = (iso: string, now: number) => {
 
 const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' | 'stopped' }> = {
   question: { label: 'question', hue: 'you' },
+  do: { label: 'Your move', hue: 'you' },
   review: { label: 'review', hue: 'review' },
   stopped: { label: 'stopped', hue: 'stopped' },
 };
@@ -108,6 +115,7 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
   onOpen: (item: InboxItem) => void; onAction: (action: InboxAction) => void;
 }) {
   const kind = kindOf(item);
+  const due = item.due ? askDueLabel(item.due, now) : null;
   return (
     // Actions wrap under the text when the list sits next to an open task or is narrow (a phone, a small window).
     <div className={cn('grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border px-3 py-3 hover:bg-muted', !compact && '@3xl:grid-cols-[auto_minmax(0,1fr)_auto]', current && 'border-l-2 border-l-mark bg-mark/10')}>
@@ -119,16 +127,32 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
           <Chip hue={kind.hue}>{kind.label}</Chip>
           {project && <Chip>{project}</Chip>}
           {from && <FromOrigin name={from} />}
+          {due && <Chip hue={due.overdue ? 'stopped' : 'mark'}>{due.text}</Chip>}
           {task ? <Who task={task} viewer={viewer} /> : <span>no task</span>}
           <time className="tabular-nums text-caption">{when(item.since, now)}</time>
         </span>
+        {item.checkBack && (
+          <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
+            <Clock aria-hidden className="size-3.5 shrink-0" />
+            <span className="tabular-nums">{checkBackText(item.checkBack, viewer, now)}</span>
+          </span>
+        )}
       </button>
       <span className={cn('col-start-2 flex flex-wrap justify-start gap-1.5', !compact && '@3xl:col-start-auto @3xl:self-center @3xl:justify-end')}>
-        {item.kind === 'review' && <button type="button" className={MINI} title={task && isScheduled(task) ? 'Approves this run. The task stays open until its schedule ends.' : undefined} onClick={() => onAction({ kind: 'review', item })}>Looks good</button>}
+        {item.kind === 'do' && item.waitId && <button type="button" className={MINI} title="You did it: the agent is told and goes on." onClick={() => onAction({ kind: 'done', item })}>Done</button>}
+        {item.kind === 'do' && <button type="button" className={MINI} onClick={() => onOpen(item)}>Open chat</button>}
+        {item.kind === 'review' && <button type="button" className={MINI} title={reviewTitle(item, task)} onClick={() => onAction({ kind: 'review', item })}>{looksGoodLabel(item, viewer)}</button>}
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Park until tomorrow</button>
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Park until Monday</button>
         <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'open' })}>Park, no date</button>
       </span>
     </div>
   );
+}
+
+/** What Looks good does, as its tooltip: approve one run of a routine, else close the task. */
+function reviewTitle(item: InboxItem, task: BoardTask | undefined): string | undefined {
+  // An older host does not say whether the task repeats: its schedule on the board does.
+  const routine = item.repeating || (!item.checkBack && task !== undefined && repeats(task));
+  return routine ? 'Approves this run. The task stays open until its schedule ends.' : undefined;
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AllSession } from '@/components/sidebar/allSessions';
 import type { Board, BoardTask } from '@/lib/task-board';
 
-import { buildTaskTree, deskTaskProjects, moreOpenTasks, taskState, type TaskLike, type TreeInput, type TreeNode } from './taskTree';
+import { buildTaskTree, deskTaskProjects, moreOpenTasks, taskChips, taskState, type TaskLike, type TreeInput, type TreeNode } from './taskTree';
 
 const task = (id: string, patch: Partial<BoardTask> = {}): BoardTask => ({
   id, spaceId: 'main', spaceName: 'Main', project: 'ui', title: id, status: 'active', parentId: null, originId: null, rel: null,
@@ -263,5 +263,44 @@ describe('Show done in the tasks card tree', () => {
     const b = board([task('live', { project: 'code' })]);
     expect(deskTaskProjects({ board: b, sessions: s, desk: desk('a', 'b', 'c', 'd'), projects: input({}).projects }))
       .toEqual([{ spaceId: 'main', project: 'code' }, { spaceId: 'main', project: 'ui' }]);
+  });
+});
+
+describe('a task\'s chips: whose move it waits on, and its wake-up', () => {
+  const NOW = Date.parse('2026-11-19T10:35:00Z');
+  const at = (day: number, hour: number) => new Date(Date.UTC(2026, 10, day, hour)).toISOString();
+  const chips = (patch: Partial<BoardTask>) => taskChips(task('t', { owner: 'lasse', ...patch }), 'lasse', NOW).map((c) => [c.kind, c.label, c.hue ?? null]);
+
+  it('names the viewer\'s move by kind, in the Needs you hue', () => {
+    expect(chips({ waitingOn: { who: 'lasse', kind: 'do', why: 'Sign' } })).toEqual([['wait', 'Your move', 'you']]);
+    expect(chips({ turn: 'review', waitingOn: { who: 'lasse', kind: 'review' } })).toEqual([['wait', 'Review', 'you']]);
+    expect(chips({ waitingOn: { who: 'lasse', kind: 'question' } })).toEqual([['wait', 'Question', 'you']]);
+    expect(chips({ waitingOn: { who: 'lasse', kind: 'go' } })).toEqual([['wait', 'Your go', 'you']]);
+  });
+
+  it('names anyone else\'s move as a wait on them, in grey', () => {
+    expect(chips({ turn: 'waiting_on_others', waitingOn: { who: 'sam', kind: 'do' } })).toEqual([['wait', 'Waiting on Sam', null]]);
+    expect(chips({ turn: 'waiting_on_others', waitingOn: { who: 'Acme GmbH', kind: 'outside', why: 'Sign the offer' } })).toEqual([['wait', 'Waiting on Acme GmbH', null]]);
+    // An outside wait its owner keeps an eye on names no one: its why does.
+    expect(chips({ turn: 'waiting_on_others', waitingOn: { who: 'lasse', kind: 'outside', why: 'Waiting for the supplier' } })).toEqual([['wait', 'Waiting outside', null]]);
+  });
+
+  it('adds a clock for the wake-up beside the wait: who and when, a reminder when it is the viewer\'s', () => {
+    expect(chips({ waitingOn: { who: 'lasse', kind: 'do' }, schedule: { at: at(20, 9), by: 'nova' } })).toEqual([['wait', 'Your move', 'you'], ['clock', 'Nova · tomorrow 09:00', null]]);
+    expect(chips({ schedule: { at: at(19, 15), by: 'lasse' } })).toEqual([['clock', 'Reminder · 15:00', null]]);
+    expect(chips({ schedule: { at: at(19, 15) } })).toEqual([['clock', '15:00', null]]);
+    expect(taskChips(task('t', { schedule: { at: at(20, 9), by: 'nova' } }), 'lasse', NOW)[0].words).toBe('Nova checks back tomorrow 09:00');
+  });
+
+  it('shows nothing for a stop, a parked wait, repeating times alone or a closed task', () => {
+    expect(chips({ waitingOn: { who: 'lasse', kind: 'stopped' } })).toEqual([]);
+    expect(chips({ turn: 'parked', waitingOn: { who: 'lasse', kind: 'question' } })).toEqual([]);
+    expect(chips({ schedule: { crons: ['0 8 * * 1-5'] } })).toEqual([]);
+    expect(chips({ status: 'resolved', waitingOn: { who: 'lasse', kind: 'do' }, schedule: { at: at(20, 9), by: 'nova' } })).toEqual([]);
+  });
+
+  it('are on each task row of the tree, said at the input\'s time for its viewer', () => {
+    const [ui] = buildTaskTree(input({ board: board([task('offer', { sessionIds: ['s1'], waitingOn: { who: 'lasse', kind: 'do' }, schedule: { at: at(20, 9), by: 'nova' } })]), sessions: [session('s1', { taskId: 'offer' })], desk: desk('s1'), viewer: 'lasse', now: NOW }));
+    expect(ui.nodes[0].chips?.map((c) => c.label)).toEqual(['Your move', 'Nova · tomorrow 09:00']);
   });
 });

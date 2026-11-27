@@ -25,6 +25,7 @@ import { useCockpitShortcuts } from '@/components/top-bar/useCockpitShortcuts';
 import { TaskBoard } from './TaskBoard';
 
 const NOW = new Date();
+const DAY = 24 * 60 * 60_000;
 const iso = (minutesAgo: number) => new Date(NOW.getTime() - minutesAgo * 60_000).toISOString();
 const task = (patch: Partial<BoardTask>): BoardTask => ({
   id: 't', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'task', status: 'active', parentId: null, updatedAt: iso(30),
@@ -63,7 +64,7 @@ beforeEach(() => {
     return new Response('{}', { status: 404 });
   }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); document.documentElement.style.removeProperty('--duration-toast'); });
 
 // The board with the sidebar's task views and the app's shortcuts, as the cockpit mounts them.
 function WithBar() {
@@ -331,6 +332,27 @@ describe('the task board', () => {
     expect(posts[0].body.key).toBe('task:asked@x');
     fireEvent.click(await screen.findByRole('button', { name: 'Park, no date' }));
     await waitFor(() => expect(posts[1]?.body.until).toBe('open'));
+  });
+
+  it('marks a step that is the viewer\'s done at once from the Inbox: no Undo, the agent is told', async () => {
+    const step = { key: 'task:asked@do', kind: 'do' as const, space: 'main', title: 'acme-cancellation-rescue', text: 'Call Acme back', since: iso(4), taskId: 'asked', sessionId: 's1', waitId: 's1', checkBack: { at: new Date(NOW.getTime() + DAY).toISOString(), by: 'atlas' } };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/v1/tasks/board') return new Response(JSON.stringify({ ...board(), inbox: [step], counts: { needsYou: 2, inbox: 1 } }), { status: 200 });
+      if (init?.method === 'POST') { posts.push({ url, body: JSON.parse(String(init.body)) }); return new Response(JSON.stringify({ opId: 'op-1', state: 'applied', undoUntil: NOW.toISOString() }), { status: 200 }); }
+      return new Response('{}', { status: 404 });
+    }));
+    // A toast without an Undo stays for --duration-toast, which jsdom does not set.
+    document.documentElement.style.setProperty('--duration-toast', '5s');
+    setTaskView('inbox');
+    mount();
+    const row = (await screen.findByText('Call Acme back')).closest('button')!.parentElement!;
+    expect(within(row).getByText('Your move')).toBeTruthy();
+    expect(within(row).getByText(/^Atlas checks back /)).toBeTruthy();
+    fireEvent.click(within(row).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(posts[0]).toEqual({ url: '/api/v1/tasks/asked/done', body: { opId: expect.any(String), spaceId: 'main', waitId: 's1' } }));
+    const status = await screen.findByRole('status');
+    await waitFor(() => expect(status.textContent).toContain('Marked done: Atlas is told.'));
+    expect(within(status).queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
   it('lists a stopped agent in the Inbox as a kind of its own, counted and opened like a question', async () => {

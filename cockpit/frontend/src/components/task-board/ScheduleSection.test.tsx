@@ -21,7 +21,7 @@ const record = (patch: Partial<TaskRecord> = {}): TaskRecord => ({ id: 'daily', 
 const run = (patch: Partial<TaskRun>): TaskRun => ({ id: 'r1', number: 1, trigger: 'schedule', dueAt: at(19, 8), status: 'finished', sessionId: 's1', startedAt: at(19, 8, 1), finishedAt: at(19, 8, 9), outcome: 'done', note: null, session: null, ...patch });
 
 /** Renders the section; the record route answers `view` (none: this cockpit keeps nothing). */
-function show(t: BoardTask, view: Partial<TaskRecordView> = {}, ok = true) {
+function show(t: BoardTask, view: Partial<TaskRecordView> = {}, ok = true, viewer?: string) {
   const asked: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     asked.push(url);
@@ -31,7 +31,7 @@ function show(t: BoardTask, view: Partial<TaskRecordView> = {}, ok = true) {
   const onEndSchedule = vi.fn();
   const onAddTime = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><ScheduleSection task={t} now={NOW} onAct={onAct} onEndSchedule={onEndSchedule} onAddTime={onAddTime} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><ScheduleSection task={t} now={NOW} viewer={viewer} onAct={onAct} onEndSchedule={onEndSchedule} onAddTime={onAddTime} /></QueryClientProvider>);
   return { onAct, onEndSchedule, onAddTime, asked };
 }
 const section = () => within(screen.getByRole('region', { name: 'Schedule' }));
@@ -75,9 +75,50 @@ describe('the schedule section of a task', () => {
   it('shows the wake-up with its reason, and a run whose time has come as due', () => {
     setTimeZoneForTest('Asia/Bangkok');
     show(task({ group: 'mission', nextRunAt: at(19, 10, 27), schedule: { at: at(19, 10, 27), why: 'Check whether the supplier answered.', by_session: 's1' } }));
-    expect(section().getByLabelText('Wake-up').textContent).toBe('Wake-up 10:27Check whether the supplier answered.');
+    expect(section().getByLabelText('Wake-up').textContent).toBe('Wake-up 10:27RescheduleRemoveCheck whether the supplier answered.');
     expect(section().getByText('Run due since 10:27')).toBeTruthy();
     expect(section().queryByRole('list', { name: 'Repeating times' })).toBeNull();
+  });
+
+  it('says who the wake-up is for: the agent checks back, or a reminder for the viewer', () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Did Acme answer?', by: 'nova' } }), {}, true, 'lasse');
+    expect(section().getByLabelText('Wake-up').textContent).toBe('Nova checks back tomorrow 09:00RescheduleRemoveDid Acme answer?');
+    cleanup();
+    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Call the bank', by: 'lasse' } }), {}, true, 'lasse');
+    expect(section().getByLabelText('Wake-up').textContent).toBe('Reminder for you tomorrow 09:00RescheduleRemoveCall the bank');
+  });
+
+  it('removes the wake-up at once', async () => {
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    fireEvent.click(section().getByRole('button', { name: 'Remove the wake-up' }));
+    await waitFor(() => expect(onAct).toHaveBeenCalledWith(expect.objectContaining({ id: 'daily' }), { kind: 'remove_wake' }));
+  });
+
+  it('reschedules the wake-up to a date and time read in the user\'s zone, only to a time still to come', async () => {
+    setTimeZoneForTest('Asia/Bangkok');
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    fireEvent.click(section().getByRole('button', { name: 'Reschedule the wake-up' }));
+    const form = within(section().getByRole('group', { name: 'Reschedule the wake-up' }));
+    // It starts at the wake-up's own time, in the user's zone.
+    expect((form.getByLabelText('Date') as HTMLInputElement).value).toBe('2026-11-20');
+    expect((form.getByLabelText('Time') as HTMLInputElement).value).toBe('09:00');
+    expect(form.getByText('Asia/Bangkok')).toBeTruthy();
+    // A time that has passed cannot be saved.
+    fireEvent.change(form.getByLabelText('Date'), { target: { value: '2026-11-18' } });
+    expect((form.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(form.getByLabelText('Date'), { target: { value: '2026-11-23' } });
+    fireEvent.change(form.getByLabelText('Time'), { target: { value: '14:30' } });
+    fireEvent.click(form.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onAct).toHaveBeenCalledWith(expect.objectContaining({ id: 'daily' }), { kind: 'reschedule_wake', at: '2026-11-23T07:30:00.000Z' }));
+  });
+
+  it('Cancel leaves the wake-up as it is', () => {
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    fireEvent.click(section().getByRole('button', { name: 'Reschedule the wake-up' }));
+    fireEvent.click(within(section().getByRole('group', { name: 'Reschedule the wake-up' })).getByRole('button', { name: 'Cancel' }));
+    expect(section().queryByRole('group', { name: 'Reschedule the wake-up' })).toBeNull();
+    expect(onAct).not.toHaveBeenCalled();
   });
 
   it('removes one of several times at once', async () => {

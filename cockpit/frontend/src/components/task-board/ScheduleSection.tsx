@@ -1,4 +1,5 @@
-// A task's schedule in its panel: the repeating times, each with Remove, the wake-up with its reason, the next run,
+// A task's schedule in its panel: the repeating times, each with Remove, the wake-up with who it is for (an agent
+// checks back, or a reminder for the viewer), its reason, Reschedule and Remove, the next run,
 // and one Pause or Resume, Run now and End for the whole schedule. Below it, what only this cockpit keeps for the
 // task (its record): the last runs, and the settings of a task that messages wake or that runs limited. Those show
 // only when the record has something to show; addresses waiting for the user's OK show first.
@@ -6,10 +7,11 @@
 import { type ReactNode, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { activeGrants, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, NEEDS_OK, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
+import { activeGrants, agentName, type BoardTask, type GrantTool, GRANT_TOOLS, isDue, isLastTime, NEEDS_OK, nextRunText, RECORD_KEY, type RecordChange, recordShows, REPLY_CHANNELS, runLine, runsLeft, runsLeftText, type ScheduleAction, scheduleZone, timeText, useTaskRecord, when } from '@/lib/task-board';
 import type { RunTone } from '@/lib/job-run-label';
+import { inputStamp, useTimeZone, zonedTime } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
-import { Chip, FOCUS, HUE, LABEL, LINK, MINI, PRIMARY } from '@/shared/view/ui';
+import { Chip, FIELD, FOCUS, HUE, LABEL, LINK, MINI, PRIMARY } from '@/shared/view/ui';
 
 /** The second step of something that cannot be taken back: red. */
 const CONFIRM = cn(MINI, HUE.stopped.edge, HUE.stopped.ink, 'hover:text-stopped-ink');
@@ -30,9 +32,26 @@ function ConfirmRow({ text, action, busy, onConfirm, onCancel }: { text: string;
   );
 }
 
-export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: {
+/** Who the wake-up is for, before its time: the agent checks back, or a reminder for the viewer; an older one names nobody. */
+export function wakeLabel(by: string | undefined, viewer: string | undefined): string {
+  if (!by) return 'Wake-up';
+  return viewer && by === viewer ? 'Reminder for you' : `${agentName(by)} checks back`;
+}
+
+/** The instant a date and a time from the inputs name in the zone; null when they name none (or a skipped hour). */
+export function pickedInstant(date: string, time: string, zone: string): string | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  const t = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!d || !t) return null;
+  const at = zonedTime({ year: Number(d[1]), month: Number(d[2]), day: Number(d[3]), hour: Number(t[1]), minute: Number(t[2]) }, zone);
+  return at === null ? null : new Date(at).toISOString();
+}
+
+export function ScheduleSection({ task, now, viewer, onAct, onEndSchedule, onAddTime }: {
   task: BoardTask;
   now: number;
+  /** The board's viewer: a wake-up for them is a reminder. */
+  viewer?: string;
   /** Carries the action out and says how it went (or why it was refused). True once done. */
   onAct: (task: BoardTask, action: ScheduleAction) => Promise<boolean>;
   /** End the schedule and close the task (the one End; it has the board's undo window). */
@@ -45,6 +64,9 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
   const [busy, setBusy] = useState(false);
   /** The one step that waits for its second click: a time's rule, a channel, or the limits. */
   const [asking, setAsking] = useState<string | null>(null);
+  // Reschedule: the wake-up's new date and time, read in the user's zone (Settings), as the host reads a time.
+  const { zone: timeZone } = useTimeZone();
+  const [moving, setMoving] = useState<{ date: string; time: string } | null>(null);
 
   const schedule = task.schedule;
   const record = data?.record ?? null;
@@ -59,6 +81,7 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
     } finally {
       setBusy(false);
       setAsking(null);
+      setMoving(null);
     }
   };
   const change = (c: RecordChange) => act({ kind: 'record', change: c });
@@ -126,8 +149,29 @@ export function ScheduleSection({ task, now, onAct, onEndSchedule, onAddTime }: 
 
       {schedule?.at && (
         <div aria-label="Wake-up" className="flex flex-col gap-0.5">
-          <span><b className="font-semibold">Wake-up</b> <time className="tabular-nums">{when(schedule.at, now)}</time></span>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+            <span><b className="font-semibold">{wakeLabel(schedule.by, viewer)}</b> <time className="tabular-nums">{when(schedule.at, now)}</time></span>
+            {!moving && (
+              <span className="flex gap-3">
+                <button type="button" className={LINK} disabled={busy} aria-label="Reschedule the wake-up" onClick={() => setMoving(inputStamp(Date.parse(schedule.at!), timeZone))}>Reschedule</button>
+                <button type="button" className={LINK} disabled={busy} aria-label="Remove the wake-up" onClick={() => void act({ kind: 'remove_wake' })}>Remove</button>
+              </span>
+            )}
+          </div>
           {schedule.why && <span title={schedule.why} className="line-clamp-3 whitespace-pre-wrap text-ui text-muted-foreground">{schedule.why}</span>}
+          {moving && (() => {
+            const picked = pickedInstant(moving.date, moving.time, timeZone);
+            const ok = picked !== null && Date.parse(picked) > now;
+            return (
+              <div role="group" aria-label="Reschedule the wake-up" className="mt-1 flex flex-wrap items-center gap-2 text-ui">
+                <input type="date" aria-label="Date" value={moving.date} min={inputStamp(now, timeZone).date} onChange={(e) => setMoving({ ...moving, date: e.target.value })} className={cn(FIELD, 'w-auto')} />
+                <input type="time" aria-label="Time" value={moving.time} onChange={(e) => setMoving({ ...moving, time: e.target.value })} className={cn(FIELD, 'w-auto')} />
+                <span className="text-caption text-muted-foreground">{timeZone}</span>
+                <button type="button" className={MINI} disabled={busy || !ok} title={ok ? undefined : 'Pick a time that is still to come.'} onClick={() => picked && void act({ kind: 'reschedule_wake', at: picked })}>Save</button>
+                <button type="button" className={MINI} disabled={busy} onClick={() => setMoving(null)}>Cancel</button>
+              </div>
+            );
+          })()}
         </div>
       )}
 

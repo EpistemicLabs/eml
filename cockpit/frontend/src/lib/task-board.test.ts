@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { activeGrants, changeRecord, cronWords, fetchTaskRecord, isDue, isLastTime, nextRunText, pauseSchedule, recordShows, removeTime, resumeSchedule, runLine, runNow, scheduleDone, scheduleZone, timeText, type TaskRecord, type TaskRun, modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask } from './task-board';
+import { activeGrants, changeRecord, cronWords, fetchTaskRecord, isDue, isLastTime, nextRunText, pauseSchedule, recordShows, removeTime, resumeSchedule, runLine, runNow, scheduleDone, scheduleZone, timeText, type TaskRecord, type TaskRun, modeLabel, takeOver, taskMode, cardLine, cardTime, closeTask, earlierRunLine, endSchedule, isScheduled, panelActions, repeatsText, sessionState, waitingLine, columns, continueMode, coverageText, REOPEN_DAYS, statusOrTurn, dueLabel, fetchClosedTasks, focus, hueOf, inFilter, projectRows, quietProjects, readable, resolveFilter, snoozeTimes, startTaskSession, taskSessionsKey, visibleInPlan, when, type BoardTask, askDueLabel, checkBackOf, checkBackText, looksGoodLabel, markDone, removeWake, repeats, rescheduleWake } from './task-board';
 import { DAY_MS } from './time';
 import { setTimeZoneForTest } from './time-zone';
 
@@ -587,5 +587,81 @@ describe('a task holds its schedule', () => {
     expect(runLine(run({ trigger: 'mail', outcome: 'done' }), NOW)).toEqual({ text: '08:01 · on mail · done', tone: 'ok' });
     expect(runLine(run({ number: 0, status: 'skipped', startedAt: null, finishedAt: null, sessionId: null, session: null, outcome: null, note: 'a session of the task was working' }), NOW))
       .toEqual({ text: '08:00 · skipped · a session of the task was working', tone: 'muted' });
+  });
+});
+
+describe('asks and check-backs (decision asks-and-check-backs-are-separate)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends Done, Remove and Reschedule of the wake-up to their routes, with the op id and the space', async () => {
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ opId: 'op-1', state: 'applied', undoUntil: '2026-11-19T10:35:00.000Z' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetched);
+    const t = { id: 'offer 1', spaceId: 'main' };
+    expect(await markDone({ taskId: 'offer 1', space: 'main', waitId: 'w1' }, 'op-1')).toMatchObject({ ok: true, opId: 'op-1' });
+    await removeWake(t, 'op-2');
+    await rescheduleWake(t, '2026-11-23T07:30:00.000Z', 'op-3');
+    expect(fetched.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([
+      ['/api/v1/tasks/offer%201/done', { opId: 'op-1', spaceId: 'main', waitId: 'w1' }],
+      ['/api/v1/tasks/offer%201/remove-wake', { opId: 'op-2', spaceId: 'main' }],
+      ['/api/v1/tasks/offer%201/reschedule-wake', { opId: 'op-3', spaceId: 'main', at: '2026-11-23T07:30:00.000Z' }],
+    ]);
+  });
+
+  it('passes a refusal on in the host\'s words', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'unknown_wait', message: 'That step is not open any more.', retry: false } }), { status: 409 })));
+    expect(await markDone({ taskId: 't', space: 'main', waitId: 'gone' })).toEqual({ ok: false, code: 'unknown_wait', message: 'That step is not open any more.', retry: false });
+  });
+
+  it('says what Remove and Reschedule did', () => {
+    expect(scheduleDone(task(), { kind: 'remove_wake' })).toBe('Wake-up removed.');
+    // Said against the real clock: the day part depends on today.
+    expect(scheduleDone(task(), { kind: 'reschedule_wake', at: local(19, 15) })).toMatch(/^Wake-up moved to .*15:00\.$/);
+  });
+
+  it('a task repeats only with repeating times: a wake-up alone ends with it', () => {
+    expect(repeats(task({ hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'] } }))).toBe(true);
+    expect(repeats(task({ hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'], at: local(20, 9) } }))).toBe(true);
+    expect(repeats(task({ hasSchedule: true, schedule: { at: local(20, 9), by: 'atlas' } }))).toBe(false);
+    // A schedule the board does not spell out counts as repeating.
+    expect(repeats(task({ hasSchedule: true }))).toBe(true);
+    expect(repeats(task({ status: 'resolved', hasSchedule: true, schedule: { crons: ['0 8 * * 1-5'] } }))).toBe(false);
+  });
+
+  it('says when a step is due: today, overdue, tomorrow, or the date; an instant with its time', () => {
+    expect(askDueLabel('2026-11-19', NOW)).toEqual({ text: 'due today', overdue: false });
+    expect(askDueLabel('2026-11-18', NOW)).toEqual({ text: 'overdue', overdue: true });
+    expect(askDueLabel('2026-11-20', NOW)).toEqual({ text: 'due tomorrow', overdue: false });
+    expect(askDueLabel('2026-12-02', NOW)).toEqual({ text: 'due 2 Dec', overdue: false });
+    expect(askDueLabel(local(19, 17), NOW)).toEqual({ text: 'due today 17:00', overdue: false });
+    expect(askDueLabel(local(23, 9), NOW)).toEqual({ text: 'due Mon 09:00', overdue: false });
+    expect(askDueLabel(local(19, 9), NOW)).toEqual({ text: 'overdue', overdue: true });
+  });
+
+  it('says who checks back and when: an agent, a reminder for the viewer, or a wake-up that names nobody', () => {
+    expect(checkBackText({ at: local(20, 9), by: 'nova' }, 'lasse', NOW)).toBe('Nova checks back tomorrow 09:00');
+    expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW)).toBe('Reminder tomorrow 09:00');
+    expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW, 'Reminder for you')).toBe('Reminder for you tomorrow 09:00');
+    expect(checkBackText({ at: local(19, 15), by: null }, 'lasse', NOW)).toBe('Wake-up 15:00');
+    expect(checkBackOf(task({ schedule: { at: local(20, 9), by: 'nova' } }))).toEqual({ at: local(20, 9), by: 'nova' });
+    expect(checkBackOf(task({ schedule: { crons: ['0 8 * * *'] } }))).toBeNull();
+  });
+
+  it('Looks good says that it closes the task and ends the check, unless the task repeats', () => {
+    const check = { at: local(20, 9), by: 'nova' };
+    expect(looksGoodLabel({ checkBack: check }, 'lasse')).toBe('Looks good · closes the task, ends Nova\'s check');
+    expect(looksGoodLabel({ checkBack: { ...check, by: 'lasse' } }, 'lasse')).toBe('Looks good · closes the task, ends your reminder');
+    expect(looksGoodLabel({ checkBack: { ...check, by: null } }, 'lasse')).toBe('Looks good · closes the task, ends the check');
+    expect(looksGoodLabel({ checkBack: check, repeating: true }, 'lasse')).toBe('Looks good');
+    expect(looksGoodLabel({}, 'lasse')).toBe('Looks good');
+  });
+
+  it('a do wait is the viewer\'s move: on the card, in the panel and as a step another task waits for', () => {
+    const mine = task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'do', why: 'Send the signed offer' } });
+    expect(cardLine(mine, NOW)).toBe('Your move: Send the signed offer.');
+    expect(cardLine(task({ group: 'asked', waitingOn: { who: 'lasse', kind: 'do' } }), NOW)).toBe('Your move.');
+    expect(waitingLine(mine, 'lasse')).toBe('Your move · Send the signed offer');
+    expect(waitingLine(task({ waitingOn: { who: 'lasse', kind: 'do' } }), 'lasse')).toBe('Your move');
+    const after = task({ group: 'blocked', delegate: 'atlas', runner: { kind: 'depends', stepId: 's', title: 'sign-offer', status: 'active', more: 0, step: { turn: 'needs_you', group: 'asked', waitingOn: { who: 'lasse', kind: 'do' } } } });
+    expect(cardLine(after, NOW)).toBe('Waits for your move on “Sign offer”.');
   });
 });

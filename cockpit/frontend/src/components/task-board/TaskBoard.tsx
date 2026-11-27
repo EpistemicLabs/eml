@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, changeRecord, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, isScheduled, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, pauseSchedule, removeTime, resumeSchedule, reviewDone, runNow, type ScheduleAction, scheduleDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, changeRecord, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, markDone, removeWake, repeats, rescheduleWake, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, pauseSchedule, removeTime, resumeSchedule, reviewDone, runNow, type ScheduleAction, scheduleDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { useTimeZone } from '@/lib/time-zone';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
@@ -124,8 +124,8 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     }, answer.undoUntil);
   }, [refetch, say]);
 
-  /** Looks good: closes the task, or on a task whose schedule is on approves that run only. */
-  const review = useCallback(async (t: BoardTask, closed: string) => answered(await reviewDone(t), isScheduled(t) ? 'Run approved. The task stays open.' : closed), [answered]);
+  /** Looks good: closes the task (a wake-up ends with it), or on a task with repeating times approves that run only. */
+  const review = useCallback(async (t: BoardTask, closed: string) => answered(await reviewDone(t), repeats(t) ? 'Run approved. The task stays open.' : closed), [answered]);
   const endTaskSchedule = useCallback(async (t: BoardTask) => answered(await endSchedule(t), 'Schedule ended, task closed.'), [answered]);
 
   /**
@@ -137,7 +137,9 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       : action.kind === 'resume' ? await resumeSchedule(t)
         : action.kind === 'run_now' ? await runNow(t)
           : action.kind === 'remove_time' ? await removeTime(t, action.cron)
-            : await changeRecord(t, action.change);
+            : action.kind === 'remove_wake' ? await removeWake(t)
+              : action.kind === 'reschedule_wake' ? await rescheduleWake(t, action.at)
+                : await changeRecord(t, action.change);
     void refetch();
     say(answer.ok ? scheduleDone(t, action) : answer.message);
     return answer.ok;
@@ -207,10 +209,18 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
     if (a.kind === 'review') {
       const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
       if (t) await review(t, 'Closed as reviewed.');
+    } else if (a.kind === 'done') {
+      // Done acts at once, without an undo window: the agent is woken with it.
+      const answer = await markDone(a.item);
+      void refetch();
+      const t = a.item.taskId ? byId.get(a.item.taskId) : undefined;
+      const by = a.item.checkBack?.by && a.item.checkBack.by !== board?.viewer ? a.item.checkBack.by : undefined;
+      const agent = t?.delegate ?? by;
+      say(answer.ok ? `Marked done: ${agent ? agentName(agent) : 'the agent'} is told.` : answer.message);
     } else {
       await park(a.item, a.until);
     }
-  }, [review, park, byId]);
+  }, [review, park, byId, refetch, say, board?.viewer]);
 
   const unreadSessions = useMemo(
     () => (board && sessions ? unreadAnswers(sessions, board, turns, now).filter((s) => !readHere.has(readKey(s))) : []),

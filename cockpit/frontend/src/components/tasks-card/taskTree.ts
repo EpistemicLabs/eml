@@ -5,7 +5,7 @@
 // sessions, each under the session that started it. Pure, so the rules (where a
 // tree starts, what a filter hides, which rows stay because a desk session is in them) are tested
 // without a browser.
-import { hueOf, OPEN_STATUSES, taskName, TURN_META, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
+import { agentName, checkBackText, hueOf, OPEN_STATUSES, taskName, TURN_META, when, type Board, type BoardTask, type LineageTask } from '@/lib/task-board';
 import type { Hue } from '@/shared/view/ui/hue';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
@@ -28,6 +28,18 @@ export interface NodeState {
   hue: Hue;
   hollow: boolean;
   label: string;
+}
+
+/**
+ * A chip under a task's name: whose move it waits on ("Your move", "Review", "Waiting on Sam"), and a clock when the
+ * task has a wake-up (who and when). The owner's move and the agent's check-back stand side by side. `words`: what a
+ * screen reader says for it.
+ */
+export interface NodeChip {
+  kind: 'wait' | 'clock';
+  label: string;
+  hue?: Hue;
+  words: string;
 }
 
 export interface SessionLeaf {
@@ -54,6 +66,8 @@ export interface TreeNode {
   otherProject: string | null;
   sessions: SessionLeaf[];
   children: TreeNode[];
+  /** A task's wait and wake-up chips; none on a session or a closed task. */
+  chips?: NodeChip[];
 }
 
 export interface TreeSection {
@@ -89,10 +103,13 @@ export interface TreeInput {
   allTasks: boolean;
   /** A session's own state, for trees without tasks. */
   stateOfSession(session: AllSession): NodeState;
+  /** The board's viewer, whose move a wait can be, and the time the chips are said at. */
+  viewer?: string;
+  now?: number;
 }
 
 export type TaskLike = Pick<BoardTask, 'id' | 'spaceId' | 'project' | 'title' | 'status' | 'parentId'> &
-  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId' | 'displayTitle'>>;
+  Partial<Pick<BoardTask, 'turn' | 'group' | 'sessionIds' | 'originId' | 'displayTitle' | 'waitingOn' | 'schedule' | 'owner'>>;
 
 /** A tree deeper than this is a loop in the data, not a real tree. */
 const MAX_DEPTH = 32;
@@ -107,6 +124,31 @@ export function taskState(task: TaskLike): NodeState {
   if (!task.turn) return task.status === 'planned' ? { hue: 'waiting', hollow: true, label: 'Parked' } : { hue, hollow: false, label: 'Active' };
   const hollow = task.turn === 'agent_scheduled' || task.turn === 'waiting_on_others';
   return { hue, hollow, label: TURN_META[task.turn].name };
+}
+
+/**
+ * A task's chips: what it waits on, then its wake-up. The viewer's move is named by kind (a step to take, a result to
+ * review, a question); anyone else's as "Waiting on <who>". A stop shows in the dot, a parked wait not at all.
+ */
+export function taskChips(task: TaskLike, viewer: string | undefined, now: number): NodeChip[] {
+  if (!OPEN_STATUSES.has(task.status)) return [];
+  const chips: NodeChip[] = [];
+  const w = task.waitingOn;
+  if (w && task.turn !== 'parked' && w.kind !== 'stopped') {
+    const mine = Boolean(viewer) && w.who === viewer;
+    let label: string | null;
+    if (w.kind === 'outside') label = w.who === task.owner || mine ? 'Waiting outside' : `Waiting on ${w.who}`;
+    else if (!mine) label = `Waiting on ${agentName(w.who)}`;
+    else label = w.kind === 'do' ? 'Your move' : w.kind === 'review' ? 'Review' : w.kind === 'go' ? 'Your go' : 'Question';
+    if (label) chips.push({ kind: 'wait', label, words: label, ...(mine && w.kind !== 'outside' ? { hue: 'you' as const } : {}) });
+  }
+  const at = task.schedule?.at;
+  if (at) {
+    const by = task.schedule?.by;
+    const who = !by ? '' : viewer && by === viewer ? 'Reminder' : agentName(by);
+    chips.push({ kind: 'clock', label: [who, when(at, now)].filter(Boolean).join(' · '), words: checkBackText({ at, by: by ?? null }, viewer, now) });
+  }
+  return chips;
 }
 
 const taskKey = (spaceId: string, id: string) => `${spaceId}/${id}`;
@@ -238,6 +280,7 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       rel: t.parentId ? 'sub' : t.originId ? 'spun' : null,
       otherProject: t.project !== project ? brainProjectName(t.spaceId, t.project) : null,
       sessions,
+      chips: taskChips(t, input.viewer, input.now ?? Date.now()),
       // A closed branch Show done keeps is shown whole, like a closed tree of its own.
       children: kids.map((k) => taskNode(k, section, project, nextPath, whole || isClosedShown(k))),
     };

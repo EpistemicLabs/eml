@@ -126,6 +126,22 @@ describe('the tasks card', () => {
     expect(dot?.className).not.toContain('animate-live');
   });
 
+  it('shows a task\'s wait and its wake-up as chips under its name, and says them in the row\'s name', async () => {
+    const soon = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      if (url === '/api/v1/tasks/board') {
+        const b = board();
+        return new Response(JSON.stringify({ ...b, tasks: b.tasks.map((t) => (t.id === 'session-review-ui' ? { ...t, group: 'asked', waitingOn: { who: 'me', kind: 'do', why: 'Sign' }, schedule: { at: soon, by: 'atlas' } } : t)) }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    renderCard();
+    await screen.findByRole('tree', { name: 'EML UI/UX' });
+    const r = await waitFor(() => { const found = row(/^Session review ui, Needs you, Your move, Atlas checks back /); expect(found).toBeTruthy(); return found; });
+    expect(r.textContent).toContain('Your move');
+    expect(r.textContent).toMatch(/Atlas · (tomorrow )?\d\d:\d\d/);
+  });
+
   it('shows the desk\'s project with its task tree, the active pane\'s row marked', async () => {
     await renderAll();
     expect(row(/^Session review ui, Needs you/).getAttribute('aria-selected')).toBe('true');

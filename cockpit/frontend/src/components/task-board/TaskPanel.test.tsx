@@ -233,6 +233,11 @@ describe('the task panel', () => {
       show(task({ id: 'sl', delegate: 'atlas', nextRunAt: next }));
       fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
       expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Done', 'Not needed']);
+      cleanup();
+      // A wake-up alone does not hold the task open: it ends with the task.
+      show(task({ id: 'sw', delegate: 'atlas', nextRunAt: next, hasSchedule: true, schedule: { at: next, by: 'atlas' } }));
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Done', 'Not needed']);
     });
   });
 
@@ -358,7 +363,7 @@ describe('the task panel on the task state model (v0.23)', () => {
       waitingOn: { who: 'lasse', kind: 'question', why: 'Which warehouse?', since: new Date(NOW - 60_000).toISOString() } }), { onHandOver, onPark });
     expect(screen.getByText('until the goal is reached')).toBeTruthy();
     const section = within(screen.getByRole('region', { name: 'Schedule' }));
-    expect(section.getByLabelText('Wake-up').textContent).toMatch(/^Wake-up tomorrow \d\d:\d\dCheck whether the supplier answered\.$/);
+    expect(section.getByLabelText('Wake-up').textContent).toMatch(/^Wake-up tomorrow \d\d:\d\dRescheduleRemoveCheck whether the supplier answered\.$/);
     expect(section.getByText(/^Next run tomorrow /)).toBeTruthy();
     expect(section.queryByRole('list', { name: 'Repeating times' })).toBeNull();
     // the goal sits under the title

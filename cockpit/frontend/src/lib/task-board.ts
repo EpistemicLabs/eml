@@ -17,7 +17,11 @@ export type Coverage =
   | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
 
-export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string }
+/**
+ * Whose move a task waits on (host domain/task-turn.ts WaitingOn). Kinds: question, go, review, stopped, do (a step the
+ * person takes themselves, "Your move") and outside. `due`: when the step is due, a date (YYYY-MM-DD) or an instant.
+ */
+export interface WaitingOn { who: string; kind?: string; why?: string; since?: string; session_id?: string; due?: string }
 
 /**
  * Someone else has the next move (kind outside), but the wait names the person keeping an eye on it: the owner (the
@@ -158,6 +162,15 @@ export const CLOSED_STATUSES: ReadonlySet<string> = new Set(['resolved', 'invali
 export const isScheduled = (task: Pick<BoardTask, 'status' | 'hasSchedule'>): boolean =>
   task.hasSchedule && !CLOSED_STATUSES.has(task.status);
 
+/**
+ * An open task with repeating times (a routine): Looks good approves one run and it closes only by ending its
+ * schedule. A wake-up alone does not hold a task open: Looks good and Close end it with the task (decision
+ * asks-and-check-backs-are-separate). A schedule the board does not spell out (another member's cockpit fires it)
+ * counts as repeating, the careful reading.
+ */
+export const repeats = (task: Pick<BoardTask, 'status' | 'hasSchedule' | 'schedule'>): boolean =>
+  isScheduled(task) && (!task.schedule || (task.schedule.crons?.length ?? 0) > 0);
+
 /** A closed task in the shape the panel takes: no turn, nothing covering it. */
 export function closedAsTask(c: ClosedTask): BoardTask {
   return {
@@ -174,17 +187,31 @@ export function closedAsTask(c: ClosedTask): BoardTask {
   };
 }
 
+/** A task's wake-up as an Inbox item carries it: when, and who it is for (an agent checks back; the viewer: a reminder). */
+export interface CheckBack { at: string; by: string | null }
+
 export interface InboxItem {
   key: string;
-  /** `stopped`: an agent failed or went silent, and only the viewer can get it going again. */
-  kind: 'question' | 'review' | 'stopped';
+  /**
+   * `stopped`: an agent failed or went silent, and only the viewer can get it going again. `do`: a step the viewer
+   * takes themselves ("Your move"): an agent asked for it, or a reminder they set fired.
+   */
+  kind: 'question' | 'review' | 'stopped' | 'do';
   space: string;
   title: string;
   text: string;
   since: string;
   taskId?: string;
   sessionId?: string;
+  /** The wait's id: what Done names. Missing from an older host. */
+  waitId?: string;
   until?: string;
+  /** When the step is due: a date (YYYY-MM-DD) or an instant. */
+  due?: string;
+  /** The task's wake-up: who checks back, and when. The owner's move and the agent's check-back stand side by side. */
+  checkBack?: CheckBack;
+  /** The task has repeating times: Looks good approves one run instead of closing the task. */
+  repeating?: true;
 }
 
 /** A closed ancestor of a task with a session, which the board's lists leave out (host Board.lineage). */
@@ -359,6 +386,8 @@ export interface TaskSchedule {
   crons?: string[];
   at?: string;
   why?: string;
+  /** Who the wake-up is for: an agent's handle (it checks back), or the user's own (a reminder). */
+  by?: string;
   by_session?: string;
   time_zone?: string;
   paused?: boolean;
@@ -442,6 +471,17 @@ export const runNow = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()
 /** Removes one repeating time, named as the schedule lists it. Removing the only time of a task without a wake-up ends its schedule; the task stays open. */
 export const removeTime = (task: Pick<BoardTask, 'id' | 'spaceId'>, cron: string, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(task.id)}/remove-time`, { opId, spaceId: task.spaceId, cron });
+/**
+ * The wake-up's controls and Done on a step that is the owner's to take: they act at once, no undo window.
+ * Remove takes the wake-up off the task; Reschedule moves it to `at` (an instant), keeping who it is for and why.
+ */
+export const removeWake = (task: Pick<BoardTask, 'id' | 'spaceId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/remove-wake`, { opId, spaceId: task.spaceId });
+export const rescheduleWake = (task: Pick<BoardTask, 'id' | 'spaceId'>, at: string, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(task.id)}/reschedule-wake`, { opId, spaceId: task.spaceId, at });
+/** The owner did the step a do wait asks for: the wait goes and the task's agent is woken; its check-back stays. */
+export const markDone = (item: Pick<InboxItem, 'taskId' | 'space' | 'waitId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? '')}/done`, { opId, spaceId: item.space, waitId: item.waitId ?? '' });
 /** Removing this repeating time would end the task's schedule: it is the only one and no wake-up is set. */
 export const isLastTime = (schedule: TaskSchedule | undefined, cron: string): boolean =>
   !schedule?.at && (schedule?.crons ?? []).every((c) => c === cron);
@@ -586,6 +626,8 @@ export type ScheduleAction =
   | { kind: 'resume' }
   | { kind: 'run_now' }
   | { kind: 'remove_time'; cron: string }
+  | { kind: 'remove_wake' }
+  | { kind: 'reschedule_wake'; at: string }
   | { kind: 'record'; change: RecordChange };
 
 /** What the page says once a schedule control or a setting of the task's record went through. */
@@ -594,6 +636,8 @@ export function scheduleDone(task: Pick<BoardTask, 'schedule'>, action: Schedule
   if (action.kind === 'resume') return 'Schedule resumed.';
   if (action.kind === 'run_now') return 'Run started: how it goes shows under its last runs.';
   if (action.kind === 'remove_time') return isLastTime(task.schedule, action.cron) ? 'Time removed and schedule ended. The task stays open.' : 'Time removed.';
+  if (action.kind === 'remove_wake') return 'Wake-up removed.';
+  if (action.kind === 'reschedule_wake') return `Wake-up moved to ${when(action.at, Date.now())}.`;
   const c = action.change;
   if (c.kind === 'approve') return 'Approved: its messages wake the task from now.';
   if (c.kind === 'reply') return c.mode === 'send' ? `Its ${c.channel} replies are sent without asking.` : `Its ${c.channel} replies are drafts you approve.`;
@@ -719,6 +763,52 @@ export function dueLabel(due: string, now: number, zone: string = userTimeZone()
   return formatInZone(date, { day: 'numeric', month: 'short' }, 'UTC');
 }
 
+/**
+ * When a step the owner takes is due, for its Inbox item: "due today", "overdue", "due tomorrow", else "due" and the
+ * date (a date has no zone of its own; today is the user's). An instant says its time too: "due today 17:00".
+ */
+export function askDueLabel(due: string, now: number, zone: string = userTimeZone()): { text: string; overdue: boolean } {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) {
+    const days = Math.round(Date.parse(`${due}T00:00:00Z`) / DAY_MS) - dayNumber(now, zone);
+    if (days < 0) return { text: 'overdue', overdue: true };
+    if (days === 0) return { text: 'due today', overdue: false };
+    if (days === 1) return { text: 'due tomorrow', overdue: false };
+    return { text: `due ${formatInZone(Date.parse(`${due}T00:00:00Z`), { day: 'numeric', month: 'short' }, 'UTC')}`, overdue: false };
+  }
+  const at = Date.parse(due);
+  if (!Number.isFinite(at)) return { text: `due ${due}`, overdue: false };
+  if (at <= now) return { text: 'overdue', overdue: true };
+  const days = dayNumber(at, zone) - dayNumber(now, zone);
+  return { text: days === 0 ? `due today ${clock(at, zone)}` : `due ${when(due, now, zone)}`, overdue: false };
+}
+
+/**
+ * Who a wake-up is for and when, in words: "Nova checks back tomorrow 09:00", or "Reminder 09:00" when it is the
+ * viewer's own. `own`: the words for the viewer's own ("Reminder for you" in the panel). A wake-up from an older host
+ * names nobody: "Wake-up 09:00".
+ */
+export function checkBackText(check: CheckBack, viewer: string | undefined, now: number, own = 'Reminder'): string {
+  const time = when(check.at, now);
+  if (!check.by) return `Wake-up ${time}`;
+  if (viewer && check.by === viewer) return `${own} ${time}`;
+  return `${agentName(check.by)} checks back ${time}`;
+}
+
+/** A task's wake-up as an Inbox item and a card carry it, or null when it has none. */
+export const checkBackOf = (task: Pick<BoardTask, 'schedule'> | undefined): CheckBack | null =>
+  task?.schedule?.at ? { at: task.schedule.at, by: task.schedule.by ?? null } : null;
+
+/**
+ * The approve button of a review in the Inbox: on a task without repeating times Looks good closes it, and a
+ * wake-up it has ends with it, which the button says. With repeating times it approves one run.
+ */
+export function looksGoodLabel(item: Pick<InboxItem, 'checkBack' | 'repeating'>, viewer: string | undefined): string {
+  const check = item.checkBack;
+  if (!check || item.repeating) return 'Looks good';
+  const whose = !check.by ? 'the check' : viewer && check.by === viewer ? 'your reminder' : `${agentName(check.by)}'s check`;
+  return `Looks good · closes the task, ends ${whose}`;
+}
+
 /** A next run whose time has come: the host holds it as due until it starts (a run waiting for room, a time not fired yet). */
 export const isDue = (iso: string | null | undefined, now: number): boolean => {
   const at = iso ? Date.parse(iso) : NaN;
@@ -757,7 +847,7 @@ function stepLine(block: Extract<RunnerBlock, { kind: 'depends' }>): string {
     const pr = /\bPR #\d+/.exec(step.waitingOn?.why ?? '')?.[0];
     return `your review of ${pr ?? name}`;
   }
-  if (step.group === 'asked') return `your ${step.waitingOn?.kind === 'go' ? 'go' : 'answer'} on ${name}`;
+  if (step.group === 'asked') return `your ${step.waitingOn?.kind === 'go' ? 'go' : step.waitingOn?.kind === 'do' ? 'move' : 'answer'} on ${name}`;
   if (step.group === 'own') return `your task ${name}`;
   if (step.group === 'parent') return `${name}, which waits for its parent`;
   if (step.group === 'nobody') return `${name}, which nobody is on`;
@@ -798,6 +888,7 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.turn === 'review') return task.waitingOn?.why?.replace(/^Review:\s*/, '') || 'The result is ready for your review.';
   if (task.reason === 'step_dropped' || task.reason === 'no_project') return runnerLine(task) ?? NOBODY[task.reason];
   if (task.reason) return NOBODY[task.reason];
+  if (task.group === 'asked' && task.waitingOn?.kind === 'do') return task.waitingOn.why ? `Your move: ${task.waitingOn.why.replace(/\.$/, '')}.` : 'Your move.';
   if (task.group === 'asked') return task.waitingOn?.why || `${agent} asked you something.`;
   if (task.group === 'parent') return runnerLine(task) ?? 'Starts when its parent task is active.';
   if (task.group === 'blocked') return runnerLine(task) ?? `${agent} waits before it starts.`;
@@ -1147,6 +1238,7 @@ export function waitingLine(task: BoardTask, viewer: string): string {
   const parts = (w.why ?? '').split(' · ').filter(Boolean);
   if (w.who === viewer && w.kind === 'question' && parts.length > 1) return `${who} · ${parts.length} questions from ${agentName(task.delegate)}`;
   if (w.who === viewer && w.kind === 'review') return `${who} · a result to review`;
+  if (w.who === viewer && w.kind === 'do') return w.why ? `Your move · ${w.why}` : 'Your move';
   return w.why ? `${who} · ${w.why}` : who;
 }
 

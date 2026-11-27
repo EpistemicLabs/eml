@@ -9,9 +9,9 @@ import { projectsOfSpace, type ProjectsBySpace } from '@/hooks/useProjectsState'
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { closedAsTask, startTaskSession, taskName, useClosedTasks, useTaskBoard } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
+import { Chip, Empty, FOCUS, LABEL, Switch, Tree, TreeItem } from '@/shared/view/ui';
 import { lineOf, TaskNodeContent } from '@/components/task-tree/TaskNodeContent';
-import { Search } from 'lucide-react';
+import { Clock, Search } from 'lucide-react';
 import { openTaskSearch, tellOnDesk, tellStartProblem } from '@/components/command-palette/openTask';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { addWorkerPane, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
@@ -142,6 +142,9 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     doneLimit,
     allTasks,
     stateOfSession,
+    ...(board ? { viewer: board.viewer } : {}),
+    // Said at the board's refresh: the tree is built again with each one.
+    now: Date.now(),
   }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, closed, doneLimit, allTasks, stateOfSession]);
 
   const spaceKeyOf = (spaceId: string) => {
@@ -186,17 +189,24 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     const hasChildren = leaves.length > 0 || node.children.length > 0;
     const title = node.title;
     const onDesk = node.sessions.some((s) => s.open);
+    const chips = node.chips?.length ? (
+      <span className="flex flex-wrap gap-1" aria-hidden>
+        {node.chips.map((c) => (
+          <Chip key={c.kind} hue={c.hue}>{c.kind === 'clock' && <Clock aria-hidden className="size-3 shrink-0" />}<span className="tabular-nums">{c.label}</span></Chip>
+        ))}
+      </span>
+    ) : undefined;
     return (
       <TreeItem
         key={node.key}
         line={lineOf(node.rel)}
-        label={`${title}, ${node.state.label}${node.otherProject ? `, in ${node.otherProject}` : ''}${one ? `, ${sessionWords(one)}` : ''}`}
+        label={`${title}, ${node.state.label}${node.chips?.length ? `, ${node.chips.map((c) => c.words).join(', ')}` : ''}${node.otherProject ? `, in ${node.otherProject}` : ''}${one ? `, ${sessionWords(one)}` : ''}`}
         selected={Boolean(one?.current)}
         expanded={hasChildren ? !folded.includes(node.key) : undefined}
         onToggle={() => toggleFold(node.key)}
         onSelect={() => selectNode(node)}
         // On the desk: the text colour; not on the desk: muted (the row's name says it too).
-        content={<TaskNodeContent state={node.state} title={title} muted={!onDesk} aside={node.otherProject} titleData={{ 'data-on-desk': onDesk }} wrap />}
+        content={<TaskNodeContent state={node.state} title={title} muted={!onDesk} aside={node.otherProject} titleData={{ 'data-on-desk': onDesk }} wrap below={chips} />}
       >
         {leaves.map((leaf) => (
           <TreeItem
