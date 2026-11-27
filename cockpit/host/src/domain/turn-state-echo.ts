@@ -1,9 +1,9 @@
 import type { ScheduleFields } from './delegation.js'
 import { cronInWords } from './run-text.js'
-import { formatInZone } from './schedule.js'
+import { localTime } from './schedule.js'
 import { isReminder, nextRunOfSchedule, wakeOwnerText, type WakePeople } from './task-schedule.js'
 import { waitKind, type WaitingOn } from './task-turn.js'
-import { withoutOutside } from './turn-end.js'
+import { DATE_ONLY, withoutOutside } from './turn-end.js'
 
 /**
  * What the task holds after an end_turn call, as the tool's answer ends with it (decision
@@ -15,7 +15,7 @@ import { withoutOutside } from './turn-end.js'
  * Times are the user's local time, with the zone they were read in.
  */
 
-/** What the call did to the wake-up (application/turn-wake.ts WakeOutcome). */
+/** What the call did to the wake-up: set it, kept the one there was, removed it, or there is none and was none. */
 export type CheckOutcome = 'set' | 'kept' | 'removed' | 'none'
 
 export interface TaskStateFacts {
@@ -43,11 +43,8 @@ const LIFECYCLE: Record<string, string> = {
 
 const end = (text: string) => text.replace(/[.\s]+$/, '')
 
-/** A time as the user reads it, with the zone it is in. */
-export const localTime = (at: string, zone: string): string => `${formatInZone(Date.parse(at), zone)} (${zone})`
-
 /** A due as people read it: a date as written, an instant in the user's zone. */
-const dueText = (due: string, zone: string): string => (/^\d{4}-\d{2}-\d{2}$/.test(due) ? due : localTime(due, zone))
+const dueText = (due: string, zone: string): string => (DATE_ONLY.test(due) ? due : localTime(due, zone))
 
 /** One wait as a short phrase: "lasse's move: sign the form (due 2026-11-28)". */
 export function askPhrase(w: WaitingOn, zone: string): string {

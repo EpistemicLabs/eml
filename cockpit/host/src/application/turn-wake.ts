@@ -4,7 +4,8 @@ import { JOB_LIMITS } from '../domain/job.js'
 import { parseAt } from '../domain/schedule.js'
 import { isOpenTask } from '../domain/schedule-tool.js'
 import { clearWake, nextRunOfSchedule, setWake, whileHeldForOk, type ScheduleFacts } from '../domain/task-schedule.js'
-import { formatInZone } from '../domain/schedule.js'
+import { localTime } from '../domain/schedule.js'
+import type { CheckOutcome } from '../domain/turn-state-echo.js'
 import { waitsOf, type Wait } from '../domain/task-waits.js'
 import type { ToolProfile } from '../domain/tool-profile.js'
 import type { CheckFix, CheckTime, WakeEdit } from '../domain/turn-end.js'
@@ -58,9 +59,6 @@ export interface TurnWakeDeps {
   log(line: string): void
 }
 
-/** What the call did to the wake-up: set it, kept the one there was, removed it, or there is none and was none. */
-export type WakeOutcome = 'set' | 'kept' | 'removed' | 'none'
-
 export interface WakeSettled {
   /** Why the wake-up could not be set or removed, or null; the rest of the call is recorded. */
   problem: string | null
@@ -71,7 +69,7 @@ export interface WakeSettled {
   /** The task has a next run from its schedule now. */
   nextRun: boolean
   /** What the call did to the wake-up; absent when the task could not be read. */
-  outcome?: WakeOutcome
+  outcome?: CheckOutcome
   /** The task's schedule before and after the call; absent when the task could not be read. */
   before?: ScheduleFields | null
   after?: ScheduleFields | null
@@ -104,7 +102,7 @@ export function scheduleAfterTurn(
 /** The journal line of a wake-up a turn's end set or removed: its cause, who, and the time as the user reads it. */
 export function turnWakeNote(before: ScheduleFields | null, after: ScheduleFields | null, agent: string | null | undefined, zone: string): string | null {
   const who = agent ?? 'The agent'
-  const local = (at: string) => `${formatInZone(Date.parse(at), zone)} (${zone})`
+  const local = (at: string) => localTime(at, zone)
   if (after?.at && after.at !== before?.at) return `Turn end: ${who} set the wake-up for ${local(after.at)}${after.why ? `: ${after.why.replace(/[.\s]+$/, '')}` : ''}${before?.at ? ` (it replaces ${local(before.at)})` : ''}.`
   if (after?.at && after.why !== before?.why) return `Turn end: ${who} kept the wake-up at ${local(after.at)} with a new reason: ${(after.why ?? 'none').replace(/[.\s]+$/, '')}.`
   if (before?.at && !after?.at) return `Turn end: ${who} removed the wake-up (it was for ${local(before.at)}).`
@@ -158,7 +156,7 @@ export function createTurnWake(deps: TurnWakeDeps): TurnWake {
     }
     const before = written.before
     const after = written.schedule
-    const outcome: WakeOutcome = edit.kind === 'set' && after?.at ? 'set'
+    const outcome: CheckOutcome = edit.kind === 'set' && after?.at ? 'set'
       : before?.at && !after?.at ? 'removed'
         : after?.at ? 'kept' : 'none'
     const saved = edit.kind === 'set' && after?.at ? { at: Date.parse(after.at), zone } : null

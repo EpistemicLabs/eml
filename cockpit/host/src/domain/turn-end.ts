@@ -153,7 +153,8 @@ function writtenWho(who: string, ctx: Pick<TurnContext, 'owner' | 'agent' | 'mem
 const WHEN_FORMAT = 'YYYY-MM-DDTHH:MM'
 /** How a due is written: a date, or a date and time. */
 const DUE_FORMAT = 'YYYY-MM-DD or YYYY-MM-DDTHH:MM'
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+/** A date without a time (YYYY-MM-DD). */
+export const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
 /** The tool's input as the model sends it. Loose on purpose: readEndTurn refuses with words the agent can act on. */
 export const END_TURN_INPUT = {

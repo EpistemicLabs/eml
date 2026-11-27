@@ -1,5 +1,5 @@
 import type { EmlApi } from '@engramprotocol/mcp-server'
-import { formatInZone } from '../domain/schedule.js'
+import { localTime } from '../domain/schedule.js'
 import { clearWake, sameInstant } from '../domain/task-schedule.js'
 import { sameWaits, waitsBody, waitsOf, type Wait } from '../domain/task-waits.js'
 import { editTaskSchedule } from './task-schedule-write.js'
@@ -45,6 +45,6 @@ export async function fireReminder(brain: Pick<EmlApi, 'get' | 'post'>, taskId: 
       const after = waits.some((w) => w.id === wait.id) ? waits : [...waits, wait]
       return sameWaits(after, waits) ? {} : waitsBody(after)
     },
-    text: (_before, _after, changed) => (changed ? `Reminder fired for ${r.who} (${formatInZone(Date.parse(r.at), r.zone)}, ${r.zone}): ${r.why?.trim().replace(/[.\s]+$/, '') || 'no reason given'}. It is in their Inbox as their move.` : null),
+    text: (_before, _after, changed) => (changed ? `Reminder fired for ${r.who} at ${localTime(r.at, r.zone)}: ${r.why?.trim().replace(/[.\s]+$/, '') || 'no reason given'}. It is in their Inbox as their move.` : null),
   })
 }

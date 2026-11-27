@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { askPhrase, checkPhrase, localTime, stateEcho, type TaskStateFacts } from '../src/domain/turn-state-echo.js'
+import { askPhrase, checkPhrase, stateEcho, type TaskStateFacts } from '../src/domain/turn-state-echo.js'
+import { localTime } from '../src/domain/schedule.js'
 
 const ZONE = 'Asia/Bangkok'
 const NOW = Date.parse('2026-11-25T08:00:00Z')

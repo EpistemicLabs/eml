@@ -28,7 +28,7 @@ describe('fireReminder', () => {
       { id: 's1', who: 'kim', kind: 'review' },
       { id: `reminder:${AT}`, who: 'kim', kind: 'do', why: 'Call the vendor.', since: R.now },
     ])
-    expect(b.posts[0].text).toMatch(/^Reminder fired for kim \(.+, Europe\/Berlin\): Call the vendor\. It is in their Inbox as their move\.$/)
+    expect(b.posts[0].text).toMatch(/^Reminder fired for kim at .+ \(Europe\/Berlin\): Call the vendor\. It is in their Inbox as their move\.$/)
   })
 
   it('writes nothing when the task\'s wake-up is another one by now', async () => {
