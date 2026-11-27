@@ -729,8 +729,6 @@ export class ChatBridge {
     // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
     const stored = this.ctx.ledger.get(sessionId)
     if (stored?.worker && !stored.chatMode) this.ctx.ledger.setChatSettings(sessionId, { mode: this.runtimeOf(provider).workerMode })
-    // A terminal session kept for Remote Control is not one any more.
-    this.ctx.ledger.setKeepRunning(sessionId, false)
     this.startRuntime(entry, provider, space, resume)
     this.log(`${resume ? 'resuming' : 'starting'} chat session ${sessionId} in ${projectPath}`)
   }

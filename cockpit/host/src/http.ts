@@ -1303,7 +1303,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         return true
       }
       if (method === 'PUT' || method === 'PATCH') {
-        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown }
+        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown }
         const error = method === 'PUT' ? writeClaudeLogin(body?.token) : writeAgentPatch(body)
         if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
         invalidateAccountCache()
@@ -1520,15 +1520,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       // The session's own space, not the shown one: the All view acts on any space's sessions.
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       json(res, 200, { success: true, session: sessionView(deps, project, { sessionId: id, ...entry }) })
-      return true
-    }
-    // The user closed a pane (×): a session kept running for Remote Control is
-    // no longer kept; like any detached session it ends after the timeout.
-    if (resource === 'sessions' && id && parts[3] === 'release' && method === 'POST') {
-      if (!deps.bridge.ledger.get(id)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-      const body = await readJson(req)
-      const paneId = typeof body.paneId === 'string' && body.paneId ? body.paneId : null
-      json(res, 200, { success: true, released: deps.bridge.releasePane(id, paneId) })
       return true
     }
     if (resource === 'sessions' && id && method === 'DELETE') {

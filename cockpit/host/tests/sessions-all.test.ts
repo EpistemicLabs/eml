@@ -80,7 +80,7 @@ describe('sessions across spaces', () => {
     const post = (path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-cockpit-token': 'wrong' }, body: '{}' })
     const message = await (await post('/api/sessions/in-main/message')).json() as { error: { message: string } }
     expect(message.error.message).not.toContain('Cross-origin')
-    const other = await (await post('/api/sessions/in-main/release')).json() as { error: { message: string } }
+    const other = await (await post('/api/sessions/in-main/read')).json() as { error: { message: string } }
     expect(other.error.message).toContain('Cross-origin')
   })
 

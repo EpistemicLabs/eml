@@ -93,8 +93,8 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
     start: (request) => { const runtime = new FakeRuntime(request); runtimes.push(runtime); return runtime },
     history: async () => opts.history ?? [{ kind: 'history_end' }],
   }
-  const ledgerEntries = new Map<string, { runtime: string; keepRunning: boolean; chatMode?: string; chatModel?: string; chatEffort?: string; conversation?: string }>()
-  if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf, keepRunning: true })
+  const ledgerEntries = new Map<string, { runtime: string; chatMode?: string; chatModel?: string; chatEffort?: string; conversation?: string }>()
+  if (opts.runtimeOf) ledgerEntries.set('s1', { runtime: opts.runtimeOf })
   const provider = {
     id: opts.provider ?? 'claude',
     chatRuntime: opts.chatRuntime ?? factory,
@@ -105,7 +105,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
     runtime: { problem: () => null, problemHint: '' },
     canResume: () => opts.transcript === true,
     trustProject: () => {},
-    launch: () => ({ bin: 'x', args: [], keepRunning: false, env: { PROVIDER_VAR: '1', CLAUDE_CODE_OAUTH_TOKEN: 'fake-setup-token' } }),
+    launch: () => ({ bin: 'x', args: [], env: { PROVIDER_VAR: '1', CLAUDE_CODE_OAUTH_TOKEN: 'fake-setup-token' } }),
   }
   const space = {
     id: 'main', url: 'u', token: 't', ledgerKey: null, agent: opts.agent ?? null,
@@ -130,9 +130,8 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
         if (patch.effort) entry.chatEffort = patch.effort
       },
       bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
-      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, _task?: unknown, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', keepRunning: false, ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
+      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, _task?: unknown, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
-      setKeepRunning: (id: string, keep: boolean) => { (ledgerEntries.get(id) as { keepRunning: boolean }).keepRunning = keep },
       touch: () => {},
       setAgentTitle: () => {},
       setTurnInFlight: (id: string, inFlight: boolean) => { const entry = ledgerEntries.get(id) as unknown as { inFlight?: boolean } | undefined; if (entry) entry.inFlight = inFlight },
@@ -1371,7 +1370,6 @@ describe('ChatBridge', () => {
     expect(runtimes[0].start.resume).toBe(true)
     const kinds = ws.events().map((e) => e.kind)
     expect(kinds).toEqual(['user_message', 'history_end', 'notice', 'process'])
-    expect(ledgerEntries.get('s1')?.keepRunning).toBe(false)
   })
 
   it('sends to the runtime and marks a message sent during a turn as queued', async () => {
@@ -1872,7 +1870,7 @@ describe('ChatBridge', () => {
 
   it('refuses a session the ledger keeps in another space, and starts nothing', async () => {
     const { bridge, runtimes, ledgerEntries } = setup({ transcript: true })
-    ledgerEntries.set('s1', { runtime: 'terminal', keepRunning: false, spaceId: 'team' } as never)
+    ledgerEntries.set('s1', { runtime: 'terminal', spaceId: 'team' } as never)
     const ws = connect(bridge)
     await flush()
     expect(ws.frames[0]).toEqual({ type: 'error', message: 'This session moved to team. Open it there.' })

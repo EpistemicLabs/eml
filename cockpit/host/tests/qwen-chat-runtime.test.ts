@@ -21,7 +21,7 @@ function started(over: Partial<SessionRuntimeStart> = {}) {
   const sessionId = randomUUID()
   const runtime = createQwenChatRuntimes(spawn, { configuredModel: () => 'qwen/qwen3.8-27b' }).start({
     sessionId, resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: { QWEN_HOME: '/qwen', PATH: '/usr/bin' }, address: 'a',
-    launch: { bin: 'node', args: [], env: {}, keepRunning: false },
+    launch: { bin: 'node', args: [], env: {} },
     space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m.json', settings: '/s.json', emlConfig: '/e/config' } },
     onEvent: (event) => events.push(event),
     ...over,
@@ -204,7 +204,7 @@ describe('the Qwen Code chat runtime', () => {
     const events: RuntimeEvent[] = []
     const runtime = createQwenChatRuntimes(spawn, { sandboxArgs: (mode) => (mode === 'yolo' ? [] : ['--sandbox', 'sandbox-exec']) }).start({
       sessionId: randomUUID(), resume: false, conversationId: null, mode: 'yolo', model: null, cwd: '/work', env: {}, address: 'a',
-      launch: { bin: 'node', args: [], env: {}, keepRunning: false },
+      launch: { bin: 'node', args: [], env: {} },
       space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m.json', settings: '/s.json', emlConfig: '/e/config' } },
       onEvent: (event) => events.push(event),
     })

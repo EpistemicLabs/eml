@@ -60,12 +60,6 @@ export interface LedgerEntry {
   leadOf?: ProjectLead
   /** The brain space the session runs in (brain-space.ts); null = the main space (pre-spaces entries). */
   spaceId: string | null
-  /**
-   * The session is reachable outside the cockpit (Remote Control): it keeps
-   * running without a browser attached, and the host starts it again after
-   * a restart, until the user closes it (pty-bridge.ts).
-   */
-  keepRunning: boolean
   /** How the session last ran: in a terminal, or through the chat view. The conversation is the same either way. */
   runtime: SessionRuntimeKind
   /** The permission mode and model chosen in the chat view; a resume starts with them. */
@@ -152,7 +146,7 @@ function load(): LedgerFile {
           ...(entry.taskAuto === true ? { taskAuto: true as const } : {}),
           ...(entry.leadOf && typeof entry.leadOf.projectId === 'string' && typeof entry.leadOf.day === 'string' ? { leadOf: { projectId: entry.leadOf.projectId, day: entry.leadOf.day } } : {}),
           spaceId: typeof entry.spaceId === 'string' && entry.spaceId ? entry.spaceId : null,
-          keepRunning: entry.keepRunning === true,
+          // keepRunning (Remote Control, gone) is dropped from older entries.
           runtime: entry.runtime === 'sdk' ? 'sdk' : 'terminal',
           chatMode: typeof entry.chatMode === 'string' && entry.chatMode ? entry.chatMode : null,
           chatModel: typeof entry.chatModel === 'string' && entry.chatModel ? entry.chatModel : null,
@@ -245,7 +239,6 @@ export class SessionLedger {
       ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
       ...(prev?.snoozedUntil ? { snoozedUntil: prev.snoozedUntil } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
-      keepRunning: prev?.keepRunning ?? false,
       runtime: prev?.runtime ?? 'terminal',
       chatMode: prev?.chatMode ?? null,
       chatModel: prev?.chatModel ?? null,
@@ -265,14 +258,6 @@ export class SessionLedger {
       runStartedAt: prev?.runStartedAt ?? null,
       ...(prev?.unrouted ? { unrouted: prev.unrouted } : {}),
     }
-    this.persist()
-  }
-
-  /** Mark a session as kept running (or not); see LedgerEntry.keepRunning. */
-  setKeepRunning(sessionId: string, keepRunning: boolean): void {
-    const entry = this.data.sessions[sessionId]
-    if (!entry || entry.keepRunning === keepRunning) return
-    entry.keepRunning = keepRunning
     this.persist()
   }
 

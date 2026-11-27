@@ -10,7 +10,7 @@ function fakeProvider() {
     describe: () => 'claude provider',
     launch(req: LaunchRequest): LaunchSpec {
       launches.push(req)
-      return { bin: 'claude', args: [this.describe()], env: {}, keepRunning: false }
+      return { bin: 'claude', args: [this.describe()], env: {} }
     },
   } as unknown as AgentProvider
   return { provider, launches }

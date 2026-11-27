@@ -62,7 +62,7 @@ function start(): { runtime: SessionRuntime; events: RuntimeEvent[] } {
   const events: RuntimeEvent[] = []
   const runtime = createClaudeSdkRuntimes().start({
     sessionId: 's1', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: {}, address: 'test',
-    launch: { bin: 'claude', args: [], env: {}, keepRunning: false },
+    launch: { bin: 'claude', args: [], env: {} },
     space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m', settings: '/s', emlConfig: '/e' } },
     onEvent: (event) => events.push(event),
   })

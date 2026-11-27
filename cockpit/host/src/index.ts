@@ -1272,10 +1272,6 @@ async function main() {
   log(`cockpit: ${url}`)
   // The week's cycle in each space; checked hourly, the week turns at the user's midnight.
   cycles.every(60 * 60_000)
-  // Sessions kept running for Remote Control come back without a browser,
-  // once the host answers their hooks.
-  const kept = bridge.resumeKeptSessions()
-  if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
   // Workers a restart cut off mid-turn carry on, once the host answers their hooks.
   void recoverWorkers({
     interrupted: () => interruptedWorkers(ledger.list()),

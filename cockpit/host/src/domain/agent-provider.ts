@@ -101,12 +101,6 @@ export interface LaunchRequest {
   initialPrompt: string | null
   /** Nobody is watching this session (a worker): it must not stop to ask for permission. */
   unattended: boolean
-  /**
-   * An unattended worker the host started without a pane (worker-start.ts): reachable
-   * from outside the cockpit (Claude Code: Remote Control) like an attended session,
-   * since that is the only way to follow it without a cockpit tab.
-   */
-  reachable?: boolean
   /** What the session may use. */
   toolProfile?: ToolProfile | null
   /** Browser control lent for now (a limited job's Chrome grant), whatever its space or limits say; a provider without it ignores it. */
@@ -120,12 +114,6 @@ export interface LaunchSpec {
   bin: string
   args: string[]
   env: Record<string, string>
-  /**
-   * The session is reachable outside the cockpit (Claude Code's Remote
-   * Control): it must keep running without a browser attached, and come back
-   * after a host restart, until the user closes it.
-   */
-  keepRunning: boolean
   /** It gets browser control (Claude in Chrome), for a runtime that doesn't use `args`. */
   chrome?: boolean
   /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */

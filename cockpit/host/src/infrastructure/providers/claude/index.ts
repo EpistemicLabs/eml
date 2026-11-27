@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, ProviderCapabilities, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, sessionToken } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -115,10 +115,6 @@ class ClaudeProvider implements AgentProvider {
     if (problem) throw new Error(problem)
     const configDir = this.configDirFor(runtime)
     if (!configDir) throw new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`)
-    // Settings › Models: reachable from the Claude app. Not for unattended
-    // sessions (workers, task runs), which nobody drives from a phone — except
-    // a worker the host started without a pane, which the app is the way to follow.
-    const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const profile = req.toolProfile ?? null
     // A session's own mcp.json: when its profile limits the servers, or it is given extra ones.
     const extra = req.extraMcpServers && Object.keys(req.extraMcpServers).length > 0 ? req.extraMcpServers : null
@@ -142,9 +138,6 @@ class ClaudeProvider implements AgentProvider {
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
       '--permission-mode', req.unattended ? 'auto' : readPermissionMode(),
-      // The flag takes an optional name, so it must not be the last argument
-      // before the initial prompt: the next one here is always an option.
-      ...(remoteControl ? ['--remote-control'] : []),
       // The address other sessions reach this one by (ListAgents / SendMessage) — not the sidebar title.
       '--name', req.address,
       // Claude Code adopts the cockpit's id (--session-id), so both ids are the same.
@@ -159,8 +152,6 @@ class ClaudeProvider implements AgentProvider {
     return {
       bin: CLAUDE_BIN,
       args,
-      // Driven from the Claude app too: it outlives the browser tab.
-      keepRunning: remoteControl,
       ...(chrome ? { chrome } : {}),
       ...(profile || limitedMcp ? { limits: { mcpConfig: limitedMcp, deniedTools: profile?.deniedTools ?? [] } } : {}),
       env: {
@@ -168,10 +159,9 @@ class ClaudeProvider implements AgentProvider {
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own
         // updater would install a native copy into the user's ~/.local.
         DISABLE_AUTOUPDATER: '1',
-        // Settings › Models › Terminal: Claude Code's fullscreen renderer keeps
-        // the input pinned at the bottom of the pane. /tui cannot switch it
-        // inside a cockpit session (launch flags), so it is set at spawn.
-        ...(readRenderer() === 'fullscreen' ? { CLAUDE_CODE_NO_FLICKER: '1' } : {}),
+        // The terminal fallback: Claude Code's fullscreen renderer keeps the input
+        // pinned at the bottom of the pane (a launch setting, /tui cannot switch it).
+        CLAUDE_CODE_NO_FLICKER: '1',
         // `claude` typed inside a session is the cockpit's as well.
         PATH: [CLAUDE_BIN_DIR, process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),

@@ -243,8 +243,6 @@ class QwenProvider implements AgentProvider {
     return {
       // The host's node: the bundle needs node 22, and a session's PATH may have none.
       bin: process.execPath,
-      // Qwen Code has no remote control: a session lives with its pane.
-      keepRunning: false,
       args,
       env: {
         QWEN_HOME: QWEN_CONFIG_DIR,

@@ -80,30 +80,13 @@ describe('Claude Code provider', () => {
     expect(mode(true)).toBe('auto')
   })
 
-  it('leaves the renderer to Claude Code once the pinned input is switched off', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({ renderer: 'default' }))
-    const launch = provider.launch({ sessionId: 'abc-5', address: 'eml-abc5', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
-    expect(launch.env).not.toHaveProperty('CLAUDE_CODE_NO_FLICKER')
-  })
-
-  it('starts attended sessions with Remote Control once it is switched on, never unattended ones', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({ remoteControl: true }))
-    const args = (unattended: boolean) =>
-      provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended }).args
-    const attended = args(false)
-    expect(attended).toContain('--remote-control')
-    // Driven from the Claude app too, so the session outlives the browser tab.
-    const keep = (unattended: boolean) =>
-      provider.launch({ sessionId: 'abc-7', address: 'eml-abc7', space, providerSessionId: null, resume: false, initialPrompt: null, unattended }).keepRunning
-    expect(keep(false)).toBe(true)
-    expect(keep(true)).toBe(false)
-    // An option follows it, so the flag never takes the initial prompt as its name.
-    expect(attended[attended.indexOf('--remote-control') + 1]).toMatch(/^--/)
-    expect(attended.at(-1)).toBe('hello')
-    expect(args(true)).not.toContain('--remote-control')
+  it('has no Remote Control and no renderer setting any more: stored keys change nothing', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ remoteControl: true, renderer: 'default' }))
+    const launch = provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
+    expect(launch.args).not.toContain('--remote-control')
+    expect(launch).not.toHaveProperty('keepRunning')
+    expect(launch.env.CLAUDE_CODE_NO_FLICKER).toBe('1')
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
-    expect(args(false)).not.toContain('--remote-control')
-    expect(keep(false)).toBe(false)
   })
 
   it('in token mode runs workers in chat too, and the chat session\'s CLI gets the setup-token', async () => {
