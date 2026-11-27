@@ -164,9 +164,9 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
     // The wake-up as the schedule tool writes it: for atlas, set by no end_turn of this session.
     const scheduled: ScheduleFields = { at: '2026-11-26T03:00:00.000Z', why: 'Check whether the NRW form came back.', by: 'atlas', time_zone: ZONE }
     const w = world({ schedule: scheduled })
-    const ctx = { owner: 'lasse', agent: 'atlas', members: ['lasse', 'atlas'] }
-    const derived = deriveTurn({ result: 'The form is ready to sign.', ask: { who: 'lasse', what: 'sign and send the form', kind: 'do' } }, ctx)
-    expect(derived).toMatchObject({ status: 'review', wait: { who: 'lasse', kind: 'do' }, wake: { kind: 'keep' } })
+    const ctx = { owner: 'dev-user', agent: 'atlas', members: ['dev-user', 'atlas'] }
+    const derived = deriveTurn({ result: 'The form is ready to sign.', ask: { who: 'dev-user', what: 'sign and send the form', kind: 'do' } }, ctx)
+    expect(derived).toMatchObject({ status: 'review', wait: { who: 'dev-user', kind: 'do' }, wake: { kind: 'keep' } })
     const settled = await w.wake.settle('s1', { edit: derived.wake, by: 'atlas' })
     expect(settled).toMatchObject({ outcome: 'kept', nextRun: true, after: scheduled })
     expect(w.schedule()).toEqual(scheduled)
@@ -198,9 +198,9 @@ describe('a turn\'s end and the wake-up of the session\'s task', () => {
   })
 
   it('answers with the task\'s status and waits as read', async () => {
-    const waits = [{ id: 'w1', who: 'lasse', kind: 'do', why: 'sign it', session_id: 's0' }]
+    const waits = [{ id: 'w1', who: 'dev-user', kind: 'do', why: 'sign it', session_id: 's0' }]
     const settled = await world({ waits }).wake.settle('s1', keep)
-    expect(settled.task).toEqual({ status: 'active', waits: [expect.objectContaining({ id: 'w1', who: 'lasse', kind: 'do', why: 'sign it' })] })
+    expect(settled.task).toEqual({ status: 'active', waits: [expect.objectContaining({ id: 'w1', who: 'dev-user', kind: 'do', why: 'sign it' })] })
   })
 
   it('sets a wake-up on a task without a delegation without giving it one: scheduling hands nothing to an agent', async () => {

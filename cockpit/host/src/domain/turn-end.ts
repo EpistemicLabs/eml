@@ -9,13 +9,13 @@ import type { WaitKind } from './task-turn.js'
  * again (a check), and the cockpit derives the rest: the session's status, the task's wait, the task's wake-up. Every
  * text an agent reads about ending a turn is built here, from shared fragments, so no rule is worded twice.
  *
- * Asks and check-backs are separate (decision asks-and-check-backs-are-separate): an ask is a wait on the task, the
+ * Asks and check-backs are separate: an ask is a wait on the task, the
  * check is the task's wake-up, and neither changes the other. A call that leaves check out keeps the wake-up the task
  * has; only check "none" removes it.
  *
  * A session without the tool (a terminal, an older session) writes the same fields as a "### Handoff" block;
- * handoffBlock and fromHandoff are the two directions between the call and that block. A session started before
- * 0.25 still sends next ({ who, what, when }): it is read as the ask and the check it stands for (askAndCheckOf).
+ * handoffBlock and fromHandoff are the two directions between the call and that block. A session started on an
+ * older version sends next ({ who, what, when }) instead: it is read as the ask and the check it stands for (askAndCheckOf).
  */
 
 /** What an ask for the owner is: a step they do themselves (do), or a result to look at (review). */
@@ -52,7 +52,7 @@ export interface EndTurn {
   checked?: string
   claimed?: string
   decided?: string
-  /** The older form (sessions started before 0.25): whose move, and the time to look again. Read by askAndCheckOf. */
+  /** The older form (sessions started on an older version): whose move, and the time to look again. Read by askAndCheckOf. */
   next?: { who: string; what: string; when?: string }
 }
 
@@ -161,7 +161,7 @@ export const END_TURN_INPUT = {
   result: z.string(),
   ask: z.object({ who: z.string().optional(), what: z.string().optional(), kind: z.string().optional(), due: z.string().optional() }).optional(),
   check: z.union([z.literal('none'), z.object({ when: z.string().optional(), why: z.string().optional() })]).optional(),
-  // The older form, still sent by sessions started before 0.25 (askAndCheckOf reads it); not in the description.
+  // The older form, still sent by sessions started on an older version (askAndCheckOf reads it); not in the description.
   next: z.object({ who: z.string().optional(), what: z.string().optional(), when: z.string().optional() }).optional(),
   questions: z.array(z.string()).optional(),
   failed: z.string().optional(),
@@ -183,8 +183,8 @@ const isDue = (due: string) => (DATE_ONLY.test(due) && !Number.isNaN(Date.parse(
 /**
  * A call as the cockpit keeps it: trimmed, empty fields dropped. Refused with the reason when it cannot be recorded:
  * no result, an ask without a who or for yourself, a kind that is neither do nor review, a due or a check.when that
- * is no time, a check without a when. Whether the time is still to come is passedWhen's. A session started before
- * 0.25 sends next instead: it is kept as written, and read as an ask and a check (askAndCheckOf).
+ * is no time, a check without a when. Whether the time is still to come is passedWhen's. A session started on an
+ * older version sends next instead: it is kept as written, and read as an ask and a check (askAndCheckOf).
  */
 export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: false; error: string } {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -215,7 +215,7 @@ export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: f
     call.check = { when, why }
   }
 
-  // The older form, from a session started before 0.25: kept as written when the call has neither ask nor check.
+  // The older form, from a session started on an older version: kept as written when the call has neither ask nor check.
   const next = (input.next && typeof input.next === 'object' ? input.next : {}) as Record<string, unknown>
   const [nextWho, nextWhat, nextWhen] = [text(next.who), text(next.what), text(next.when)]
   if (!call.ask && !call.check && nextWho) {
@@ -234,7 +234,7 @@ export function readEndTurn(raw: unknown): { ok: true; call: EndTurn } | { ok: f
 }
 
 /**
- * The ask and the check a call stands for. A call of 0.25 says them itself; the older next is read as:
+ * The ask and the check a call stands for. A call says them itself; the older next is read as:
  *   - yourself with a when → a check;
  *   - the owner with a when → a do ask and a check (the owner's step, and the agent looks again);
  *   - the owner without one → a review ask;
@@ -656,7 +656,7 @@ export function handoffBlock(call: EndTurn, ctx: Pick<TurnContext, 'owner' | 'ag
 
 /**
  * A block a session wrote, as the call it stands for; null when it says nothing a call could hold. An Ask without a
- * [who] names nobody: no ask. A block of a session started before 0.25 has a Next line: it is kept as the call's
+ * [who] names nobody: no ask. A block of a session started on an older version has a Next line: it is kept as the call's
  * next, and read as the ask and the check it stands for (askAndCheckOf).
  */
 export function fromHandoff(handoff: Handoff, ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'>): EndTurn | null {

@@ -40,7 +40,7 @@ import { stepPrompt } from './task-runner.js'
  * record stops listening first, and a record that was just made or changed is left as it is (domain/job.ts
  * RECORD_GRACE_MS).
  *
- * A wake-up names who it is for (schedule.by, brain schema 25). An agent's is a run on the task, as below; a person's
+ * A wake-up names who it is for (schedule.by). An agent's is a run on the task, as below; a person's
  * is a reminder: a do wait for them with the wake-up's reason (their Inbox shows it as their move), and the wake-up is
  * used up. Every firing is recorded on the record and in the task's journal, never a silent no-op.
  *

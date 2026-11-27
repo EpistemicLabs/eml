@@ -29,8 +29,8 @@ type TaskRow = { id: string; status: string; title: string | null; content: stri
 function taskOfRow(row: TaskRow): JobMigrationTask {
   let properties: JobMigrationTask['properties'] = null
   try { properties = row.properties ? JSON.parse(row.properties) as JobMigrationTask['properties'] : null } catch { /* a task without readable properties has none */ }
-  // The schedule as the task's own field (brain schema 25), also from a brain file still at 23 or 24, where it lived
-  // in the delegation (in the shape of 23 there: scheduleAtSchema24 reads both).
+  // The schedule as the task's own field, also from a brain file of an older schema, where it lived
+  // in the delegation (scheduleAtSchema24 reads both of its shapes).
   const delegation = properties?.delegation as (Record<string, unknown> & { schedule?: unknown }) | null | undefined
   if (properties && delegation && typeof delegation === 'object' && 'schedule' in delegation) {
     const { schedule: stored, ...rest } = delegation
@@ -113,7 +113,7 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
       })
       // A space that has no job and nothing left over has nothing to report, as in the host's pass.
       if (mine.length > 0 || (plan.leftovers?.length ?? 0) > 0) {
-        // The host waits for a brain that is not at schema 24 yet; the dry run shows what it does once it is.
+        // The host waits for a brain that is not at SCHEDULES_ON_TASKS_SCHEMA yet; the dry run shows what it does once it is.
         if (info.schemaVersion !== null && info.schemaVersion < SCHEDULES_ON_TASKS_SCHEMA) out(`${space.name}: its brain is at schema ${info.schemaVersion}: the host moves it at its first start on the new version; planned here as it will be then.\n\n`)
         out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
       }

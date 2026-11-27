@@ -5,10 +5,10 @@ import { sameSchedule, scheduleOf, storedSchedule } from '../domain/task-schedul
 /**
  * The one way the host writes a task's schedule (domain/task-schedule.ts) to the brain.
  *
- * The schedule is a task field of its own (brain schema 25): this reads the task, applies an edit to its schedule,
+ * The schedule is a task field of its own: this reads the task, applies an edit to its schedule,
  * and posts /task/<id>/track with the new schedule, or null when the edit left none. Nothing is written when the
  * edit changes nothing. A schedule write never touches the task's delegation: scheduling a task does not hand it to
- * an agent (decision asks-and-check-backs-are-separate).
+ * an agent.
  *
  * The write is a read-modify-write of the whole schedule, and several parts of the host make it for the same task:
  * the engine (a fired wake-up cleared, a pause after failures), a session ending its turn, the schedule tool, the

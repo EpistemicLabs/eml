@@ -8,20 +8,20 @@ import { resetTaskBoardPage } from '@/stores/useTaskBoardPageStore';
 
 import { InboxView, type InboxAction, type UnreadProps } from './InboxView';
 
-// The owner's move and the agent's check-back stand side by side (decision asks-and-check-backs-are-separate).
+// The owner's move and the agent's check-back stand side by side.
 
 const NOW = Date.parse('2026-11-19T10:35:00Z'); // Thu 19 Nov 2026, 10:35 UTC
 const at = (day: number, hour: number, minute = 0) => new Date(Date.UTC(2026, 10, day, hour, minute)).toISOString();
 const task = (patch: Partial<BoardTask> = {}): BoardTask => ({
   id: 'offer', spaceId: 'main', spaceName: 'Main', project: 'acme', title: 'acme-offer', status: 'active', parentId: null, updatedAt: at(19, 9),
   turn: 'needs_you', group: 'asked', coverage: { ok: false, group: 'ask' }, urgency: 0, important: false, sessionIds: ['s1'], working: false, nextRunAt: null, hasSchedule: false,
-  owner: 'lasse', delegate: 'nova', ...patch,
+  owner: 'dev-user', delegate: 'nova', ...patch,
 });
 const item = (patch: Partial<InboxItem> = {}): InboxItem => ({
   key: 'task:offer@x', kind: 'do', space: 'main', title: 'acme-offer', text: 'Send the signed offer to Acme', since: at(19, 9), taskId: 'offer', sessionId: 's1', waitId: 's1', ...patch,
 });
 const board = (items: InboxItem[], tasks: BoardTask[] = [task()]): Board => ({
-  at: new Date(NOW).toISOString(), viewer: 'lasse', spaces: [{ id: 'main', name: 'Main', agents: ['nova'] }], projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
+  at: new Date(NOW).toISOString(), viewer: 'dev-user', spaces: [{ id: 'main', name: 'Main', agents: ['nova'] }], projects: [{ spaceId: 'main', id: 'acme', name: 'Acme', goal: null }],
   tasks, inbox: items, snoozed: [], events: [], counts: { needsYou: items.length, inbox: items.length },
 });
 const unread: UnreadProps = { sessions: [], spaces: [], open: false, onToggle: () => {}, onOpen: () => {}, onMarkAllRead: () => {} };
@@ -82,7 +82,7 @@ describe('the check-back under an item', () => {
   });
 
   it('reads Reminder when the wake-up is the viewer\'s own', () => {
-    show(board([item({ checkBack: { at: at(20, 9), by: 'lasse' } })]));
+    show(board([item({ checkBack: { at: at(20, 9), by: 'dev-user' } })]));
     expect(within(row('Send the signed offer to Acme')).getByText('Reminder tomorrow 09:00')).toBeTruthy();
   });
 

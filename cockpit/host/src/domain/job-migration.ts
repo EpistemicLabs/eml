@@ -76,10 +76,7 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  * or record that is already there is not written twice.
  */
 
-/**
- * The brain schema whose task schedule this cockpit reads and writes (a task field of its own since 25; inside the
- * delegation at 24): a space's jobs are planned against a brain at it, never an older one.
- */
+/** The brain schema whose task schedule this cockpit reads and writes: a space's jobs are planned against a brain at it, never an older one. */
 export const SCHEDULES_ON_TASKS_SCHEMA = 25
 
 /**

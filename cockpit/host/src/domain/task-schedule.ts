@@ -2,9 +2,9 @@ import { nextCronTime, parseCron, shortestGap } from './schedule.js'
 import type { ScheduleFields } from './delegation.js'
 
 /**
- * A task's schedule (decision task-schedules-live-in-the-brain; brain schema 24): the task's schedule field is the only
- * place a schedule lives (inside its delegation until schema 25; decision asks-and-check-backs-are-separate). It holds
- * repeating times (crons, read in time_zone) and at most one wake-up (at, with its reason why, who it is for, by, and
+ * A task's schedule (decision task-schedules-live-in-the-brain): the task's schedule field is the only place a schedule
+ * lives, apart from its delegation: who works on a task and when someone looks again are separate. It holds repeating
+ * times (crons, read in time_zone) and at most one wake-up (at, with its reason why, who it is for, by, and
  * the session that set it, by_session). paused holds for the whole schedule; ends_at ends the repeating times and
  * leaves the wake-up alone, which fires at its own time. The next run is computed from it, never stored, and the
  * task's text says what each time is for.

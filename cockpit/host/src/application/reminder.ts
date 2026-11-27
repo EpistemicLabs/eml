@@ -5,7 +5,7 @@ import { sameWaits, waitsBody, waitsOf, type Wait } from '../domain/task-waits.j
 import { editTaskSchedule } from './task-schedule-write.js'
 
 /**
- * A person's wake-up fired (schedule.by names a person, decision asks-and-check-backs-are-separate): a reminder. In
+ * A person's wake-up fired (schedule.by names a person): a reminder. In
  * one write to the task it
  *   - adds a do wait for them ({ who: by, kind: do, why: the wake-up's reason }): their Inbox shows it as their move;
  *   - takes the wake-up off the task (it is used up);

@@ -590,7 +590,7 @@ describe('a task holds its schedule', () => {
   });
 });
 
-describe('asks and check-backs (decision asks-and-check-backs-are-separate)', () => {
+describe('asks and check-backs', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('sends Done, Remove and Reschedule of the wake-up to their routes, with the op id and the space', async () => {
@@ -638,10 +638,10 @@ describe('asks and check-backs (decision asks-and-check-backs-are-separate)', ()
   });
 
   it('says who checks back and when: an agent, a reminder for the viewer, or a wake-up that names nobody', () => {
-    expect(checkBackText({ at: local(20, 9), by: 'nova' }, 'lasse', NOW)).toBe('Nova checks back tomorrow 09:00');
-    expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW)).toBe('Reminder tomorrow 09:00');
-    expect(checkBackText({ at: local(20, 9), by: 'lasse' }, 'lasse', NOW, 'Reminder for you')).toBe('Reminder for you tomorrow 09:00');
-    expect(checkBackText({ at: local(19, 15), by: null }, 'lasse', NOW)).toBe('Wake-up 15:00');
+    expect(checkBackText({ at: local(20, 9), by: 'nova' }, 'dev-user', NOW)).toBe('Nova checks back tomorrow 09:00');
+    expect(checkBackText({ at: local(20, 9), by: 'dev-user' }, 'dev-user', NOW)).toBe('Reminder tomorrow 09:00');
+    expect(checkBackText({ at: local(20, 9), by: 'dev-user' }, 'dev-user', NOW, 'Reminder for you')).toBe('Reminder for you tomorrow 09:00');
+    expect(checkBackText({ at: local(19, 15), by: null }, 'dev-user', NOW)).toBe('Wake-up 15:00');
     expect(checkBackWho('nova', 'dev-user')).toBe('Nova checks back');
     expect(checkBackWho('nova', 'dev-user', { short: true })).toBe('Nova');
     expect(checkBackWho('dev-user', 'dev-user', { own: 'Reminder for you' })).toBe('Reminder for you');
@@ -650,20 +650,20 @@ describe('asks and check-backs (decision asks-and-check-backs-are-separate)', ()
 
   it('Looks good says that it closes the task and ends the check, unless the task repeats', () => {
     const check = { at: local(20, 9), by: 'nova' };
-    expect(looksGoodLabel({ checkBack: check }, 'lasse')).toBe('Looks good · closes the task, ends Nova\'s check');
-    expect(looksGoodLabel({ checkBack: { ...check, by: 'lasse' } }, 'lasse')).toBe('Looks good · closes the task, ends your reminder');
-    expect(looksGoodLabel({ checkBack: { ...check, by: null } }, 'lasse')).toBe('Looks good · closes the task, ends the check');
-    expect(looksGoodLabel({ checkBack: check, repeating: true }, 'lasse')).toBe('Looks good');
-    expect(looksGoodLabel({}, 'lasse')).toBe('Looks good');
+    expect(looksGoodLabel({ checkBack: check }, 'dev-user')).toBe('Looks good · closes the task, ends Nova\'s check');
+    expect(looksGoodLabel({ checkBack: { ...check, by: 'dev-user' } }, 'dev-user')).toBe('Looks good · closes the task, ends your reminder');
+    expect(looksGoodLabel({ checkBack: { ...check, by: null } }, 'dev-user')).toBe('Looks good · closes the task, ends the check');
+    expect(looksGoodLabel({ checkBack: check, repeating: true }, 'dev-user')).toBe('Looks good');
+    expect(looksGoodLabel({}, 'dev-user')).toBe('Looks good');
   });
 
   it('a do wait is the viewer\'s move: on the card, in the panel and as a step another task waits for', () => {
-    const mine = task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'lasse', kind: 'do', why: 'Send the signed offer' } });
+    const mine = task({ group: 'asked', delegate: 'atlas', waitingOn: { who: 'dev-user', kind: 'do', why: 'Send the signed offer' } });
     expect(cardLine(mine, NOW)).toBe('Your move: Send the signed offer.');
-    expect(cardLine(task({ group: 'asked', waitingOn: { who: 'lasse', kind: 'do' } }), NOW)).toBe('Your move.');
-    expect(waitingLine(mine, 'lasse')).toBe('Your move · Send the signed offer');
-    expect(waitingLine(task({ waitingOn: { who: 'lasse', kind: 'do' } }), 'lasse')).toBe('Your move');
-    const after = task({ group: 'blocked', delegate: 'atlas', runner: { kind: 'depends', stepId: 's', title: 'sign-offer', status: 'active', more: 0, step: { turn: 'needs_you', group: 'asked', waitingOn: { who: 'lasse', kind: 'do' } } } });
+    expect(cardLine(task({ group: 'asked', waitingOn: { who: 'dev-user', kind: 'do' } }), NOW)).toBe('Your move.');
+    expect(waitingLine(mine, 'dev-user')).toBe('Your move · Send the signed offer');
+    expect(waitingLine(task({ waitingOn: { who: 'dev-user', kind: 'do' } }), 'dev-user')).toBe('Your move');
+    const after = task({ group: 'blocked', delegate: 'atlas', runner: { kind: 'depends', stepId: 's', title: 'sign-offer', status: 'active', more: 0, step: { turn: 'needs_you', group: 'asked', waitingOn: { who: 'dev-user', kind: 'do' } } } });
     expect(cardLine(after, NOW)).toBe('Waits for your move on “Sign offer”.');
   });
 });

@@ -19,7 +19,7 @@ import { PLACEHOLDER_TITLE } from './task-title.js'
  * back to planned. Work on it now writes no delegation; a task delegated before loses it (with a journal line), so
  * the runner does not start the agent on its own meanwhile, and the status moves to active.
  *
- * Brain schema 25: the task's schedule is its own field, and no delegation written here touches it: Delegate now and
+ * The task's schedule is its own field, and no delegation written here touches it: Delegate now and
  * Work on it now leave it as it is, and Schedule adds to it (one time: the task's wake-up for the delegate, which
  * replaces the one it had; repeat: one more repeating time).
  *

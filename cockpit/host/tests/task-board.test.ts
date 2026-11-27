@@ -43,7 +43,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }> } ) {
+function setup(opts: { viewer?: string; main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }> } ) {
   const main = { id: 'main', name: 'Main', shared: false, main: true }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -58,7 +58,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
     const schedule = opts.schedules?.[r.id] ?? (opts.jobs?.[r.id] ? { at: opts.jobs[r.id] } : (opts.openJobs ?? []).includes(r.id) ? { crons: ['0 8 * * *'], time_zone: 'UTC', paused: true } : null)
     if (!schedule) return r
     const p = r.properties ?? {}
-    // brain schema 25: the schedule is the task's own field, beside its delegation
+    // the schedule is the task's own field, beside its delegation
     return { ...r, properties: { ...p, delegation: { agent: p.delegate ?? 'atlas', ...(p.checkpoint ? { checkpoint: p.checkpoint } : {}), ...(p.delegation as Record<string, unknown> | undefined) }, schedule } } as Row
   })
   const brains = new Map<string, ReturnType<typeof brainOf>>([['main', brainOf(requested(scheduled(opts.main)), undefined, undefined, opts.unlisted, !opts.oldBrain, opts.runs)], ['ebisu', brainOf(requested(opts.other ?? []), [])]])
@@ -69,7 +69,7 @@ function setup(opts: { main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: 
   const deps: TaskBoardDeps = {
     spaces: () => [main as never, ebisu as never],
     brain: (space) => brains.get(space.id) ?? null,
-    viewer: 'lasse',
+    viewer: opts.viewer ?? 'lasse',
     sessionsOn: (taskId) => sessions.filter((s) => s.taskId === taskId),
     snoozes: () => [],
     pendingCommands: opts.pending ?? (() => []),
@@ -645,9 +645,10 @@ describe('the task board', () => {
   })
 
   it('puts a do wait in the Inbox as the viewer\'s move, with its due date and the task\'s check-back beside it; a routine says it repeats', async () => {
-    const ask = { id: 'w-do', who: 'lasse', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00.000Z', due: '2026-11-20', session_id: 's1' }
-    const review = { id: 's2', who: 'lasse', kind: 'review', why: 'Review: brief written', since: '2026-11-19T08:00:00.000Z', session_id: 's2' }
+    const ask = { id: 'w-do', who: 'dev-user', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00.000Z', due: '2026-11-20', session_id: 's1' }
+    const review = { id: 's2', who: 'dev-user', kind: 'review', why: 'Review: brief written', since: '2026-11-19T08:00:00.000Z', session_id: 's2' }
     const { board } = setup({
+      viewer: 'dev-user',
       main: [
         mine('contract', { delegate: 'atlas', checkpoint: 'after', waits: [ask], waiting_on: ask }),
         mine('daily', { delegate: 'atlas', checkpoint: 'after', waits: [review], waiting_on: review }),

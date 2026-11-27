@@ -73,10 +73,10 @@ describe('the Inbox', () => {
 describe('a step that is the viewer\'s to take (do, "Your move")', () => {
   const withWake = (task: InboxTask, extra: Partial<InboxTask>): InboxTask => ({ ...task, ...extra })
   it('is an item of kind do with the wait\'s id for Done, its due date, the task\'s check-back and whether it repeats', () => {
-    const asked = withWake(t('contract', { who: 'lasse', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00Z', session_id: 's1', due: '2026-11-20' }),
+    const asked = withWake(t('contract', { who: 'dev-user', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00Z', session_id: 's1', due: '2026-11-20' }),
       { wake: { at: '2026-11-21T09:00:00.000Z', by: 'atlas' } })
-    const reminder = withWake(t('bank', { who: 'lasse', kind: 'do', why: 'Call the bank', since: '2026-11-19T08:00:00Z' }), { repeating: true })
-    const { live } = inboxItems([asked, reminder], 'lasse', [], NOW)
+    const reminder = withWake(t('bank', { who: 'dev-user', kind: 'do', why: 'Call the bank', since: '2026-11-19T08:00:00Z' }), { repeating: true })
+    const { live } = inboxItems([asked, reminder], 'dev-user', [], NOW)
     expect(live).toEqual([
       { key: 'task:contract@2026-11-19T09:00:00Z', kind: 'do', space: 'main', title: 'contract', text: 'Sign the contract', since: '2026-11-19T09:00:00Z', taskId: 'contract', sessionId: 's1', waitId: 's1', due: '2026-11-20', checkBack: { at: '2026-11-21T09:00:00.000Z', by: 'atlas' } },
       { key: 'task:bank@2026-11-19T08:00:00Z', kind: 'do', space: 'main', title: 'bank', text: 'Call the bank', since: '2026-11-19T08:00:00Z', taskId: 'bank', waitId: 'w0', repeating: true },
@@ -85,9 +85,9 @@ describe('a step that is the viewer\'s to take (do, "Your move")', () => {
 
   it('a do wait for someone else is not the viewer\'s item; every item names its wait', () => {
     const theirs = t('theirs', { who: 'kim', kind: 'do', why: 'Send the invoice', since: '2026-11-19T09:00:00Z' })
-    expect(inboxItems([theirs], 'lasse', [], NOW).live).toEqual([])
-    const review = t('rev', { who: 'lasse', kind: 'review', why: 'Review: done', since: '2026-11-19T09:00:00Z', session_id: 'b' })
-    expect(inboxItems([review], 'lasse', [], NOW).live[0]).toMatchObject({ kind: 'review', waitId: 'b' })
-    expect(inboxItems([review], 'lasse', [], NOW).live[0]).not.toHaveProperty('checkBack')
+    expect(inboxItems([theirs], 'dev-user', [], NOW).live).toEqual([])
+    const review = t('rev', { who: 'dev-user', kind: 'review', why: 'Review: done', since: '2026-11-19T09:00:00Z', session_id: 'b' })
+    expect(inboxItems([review], 'dev-user', [], NOW).live[0]).toMatchObject({ kind: 'review', waitId: 'b' })
+    expect(inboxItems([review], 'dev-user', [], NOW).live[0]).not.toHaveProperty('checkBack')
   })
 })

@@ -7,8 +7,8 @@ import { WAIT_KINDS, CHECKPOINTS, ISO_DATE_FIELD, SNOOZED_OPEN, isoTimestamp } f
 //
 //   delegation — { agent, checkpoint?, requested_at? }, the hand-over to an agent
 //                that works on its own; mirrors delegate and checkpoint.
-//   schedule   — (v0.25; inside delegation at 24) { crons?, at?, why?, by?,
-//                by_session?, time_zone?, paused?, ends_at? }: the task's
+//   schedule   — { crons?, at?, why?, by?, by_session?, time_zone?, paused?,
+//                ends_at? }: the task's
 //                repeating times and its one wake-up, owned by `by` (a handle:
 //                an agent's wake-up is a run, a person's a reminder) and set in
 //                by_session. It stands on its own: who works on a task and when

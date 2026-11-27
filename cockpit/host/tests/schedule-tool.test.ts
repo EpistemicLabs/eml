@@ -176,8 +176,8 @@ describe('a task\'s schedule as the agent reads it', () => {
   })
 
   it('names who the wake-up is for', () => {
-    const text = describeTask(task('aaaaaaaa-1111', 'Refund', { at: '2026-11-13T02:00:00.000Z', by: 'lasse' }), undefined, [], NOW, ZONE)
-    expect(text.split('\n')).toContain('  the wake-up is for lasse')
+    const text = describeTask(task('aaaaaaaa-1111', 'Refund', { at: '2026-11-13T02:00:00.000Z', by: 'dev-user' }), undefined, [], NOW, ZONE)
+    expect(text.split('\n')).toContain('  the wake-up is for dev-user')
     expect(describeTask(task('aaaaaaaa-1111', 'Refund', WEEKDAYS), undefined, [], NOW, ZONE)).not.toContain('the wake-up is for')
   })
 

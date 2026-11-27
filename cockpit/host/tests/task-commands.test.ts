@@ -9,6 +9,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 type Task = { id: string; status: string; scope?: string; title?: string; properties: Record<string, unknown>; relations?: Array<{ source_id: string; target_id: string; relation: string }> }
 
+const baseWorld = world
 function world(tasks: Task[], opts: { bound?: string[]; candidates?: Array<{ id: string; type: string; title: string | null; status: string }> } = {}) {
   const byId = new Map(tasks.map((t) => [t.id, t]))
   const posts: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -1104,14 +1105,20 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
   })
 })
 
-// Brain schema 25 (decision asks-and-check-backs-are-separate): a wake-up alone (an agent's check-back, a person's
-// reminder) is no routine. Looks good and Close close the task and end the wake-up with it; only repeating times
-// keep a task open.
+// A wake-up alone (an agent's check-back, a person's reminder) is no routine. Looks good and Close close the task and
+// end the wake-up with it; only repeating times keep a task open.
 describe('a task with a wake-up alone', () => {
+  // A task of the viewer of these tests, and the world they see it from.
+  const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['dev-user'], goal: 'Done', ...props } })
+  const world = (tasks: Task[], opts: Parameters<typeof baseWorld>[1] = {}) => {
+    const w = baseWorld(tasks, opts)
+    w.deps.viewer = 'dev-user'
+    return w
+  }
   const WAKE = { at: '2026-11-21T09:00:00.000Z', why: 'Check the reply', by: 'atlas', by_session: 's1', time_zone: 'UTC' }
   const ROUTINE = { crons: ['0 8 * * *'], at: '2026-11-21T09:00:00.000Z', by: 'atlas', time_zone: 'UTC' }
-  const review = { id: 's1', who: 'lasse', kind: 'review', why: 'Review: reply drafted', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
-  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const review = { id: 's1', who: 'dev-user', kind: 'review', why: 'Review: reply drafted', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
+  const question = { id: 's2', who: 'dev-user', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
   const ending = (tasks: Task[], opts: Parameters<typeof world>[1] = {}) => {
     const w = world(tasks, opts)
     const ended: string[] = []
@@ -1184,12 +1191,19 @@ describe('a task with a wake-up alone', () => {
 
 // Done on a do wait ("Your move"): the owner did their step; the agent is woken at once, and there is no undo.
 describe('done on a do wait', () => {
+  // A task of the viewer of these tests, and the world they see it from.
+  const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['dev-user'], goal: 'Done', ...props } })
+  const world = (tasks: Task[], opts: Parameters<typeof baseWorld>[1] = {}) => {
+    const w = baseWorld(tasks, opts)
+    w.deps.viewer = 'dev-user'
+    return w
+  }
   const CHECK_BACK = { at: '2026-11-21T09:00:00.000Z', why: 'See whether it was signed', by: 'atlas', by_session: 's-ask', time_zone: 'UTC' }
-  const ask = { id: 'w-do', who: 'lasse', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00.000Z', due: '2026-11-20T17:00:00.000Z', session_id: 's-ask' }
-  const reminder = { id: 'w-rem', who: 'lasse', kind: 'do', why: 'Call the bank', since: '2026-11-19T09:00:00.000Z' }
-  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const ask = { id: 'w-do', who: 'dev-user', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00.000Z', due: '2026-11-20T17:00:00.000Z', session_id: 's-ask' }
+  const reminder = { id: 'w-rem', who: 'dev-user', kind: 'do', why: 'Call the bank', since: '2026-11-19T09:00:00.000Z' }
+  const question = { id: 's2', who: 'dev-user', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
   const theirs = { id: 'w-kim', who: 'kim', kind: 'do', why: 'Send the invoice', since: '2026-11-19T09:00:00.000Z', session_id: 's-ask' }
-  const MESSAGE = 'lasse marked done: Sign the contract. See where the task stands and go on.'
+  const MESSAGE = 'dev-user marked done: Sign the contract. See where the task stands and go on.'
   const doneWorld = (tasks: Task[], opts: { takes?: string[]; newest?: string | null; starts?: string | null } = {}) => {
     const w = world(tasks)
     const tried: Array<{ sessionId: string; text: string }> = []
@@ -1208,7 +1222,7 @@ describe('done on a do wait', () => {
     expect(r).toMatchObject({ ok: true, command: { kind: 'done', state: 'applied', continued: { sessionId: 's-ask', how: 'delivered' } } })
     if (!r.ok) throw new Error('refused')
     expect(r.command.undoUntil).toBe(r.command.createdAt)
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: [question], text: 'lasse marked done: Sign the contract.' } }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: [question], text: 'dev-user marked done: Sign the contract.' } }])
     expect(w.byId.get('t1')!.properties.waits).toEqual([question])
     // the task's check-back is not touched
     expect(w.byId.get('t1')!.properties.schedule).toEqual(CHECK_BACK)
@@ -1261,7 +1275,7 @@ describe('done on a do wait', () => {
     expect(await done(w, 't1', 'w-do', 'op-fail')).toEqual({ ok: false, refusal: 'no_brain', message: 'The task could not be written (the brain does not answer); try again.' })
     expect(w.byId.get('t1')!.properties.waits).toEqual([ask])
     expect(w.tried).toEqual([])
-    expect(w.store.get('op-fail')).toMatchObject({ kind: 'done', state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } } })
+    expect(w.store.get('op-fail')).toMatchObject({ kind: 'done', state: 'pending', done: { wait: { who: 'dev-user', why: 'Sign the contract', session_id: 's-ask', delegated: true } } })
     brain.post = post
     expect(await done(w, 't1', 'w-do', 'op-fail')).toMatchObject({ ok: true, command: { state: 'applied', continued: { how: 'delivered' } } })
     expect(w.byId.get('t1')!.properties.waits).toBeUndefined()
@@ -1273,11 +1287,11 @@ describe('done on a do wait', () => {
     // what the first call left: its pending command, and the wait gone from the task with its journal line
     w.store.put({
       opId: 'op-crash', kind: 'done', spaceId: 'main', taskId: 't1', waitId: 'w-do', createdAt: new Date(w.clock.now).toISOString(), undoUntil: new Date(w.clock.now).toISOString(),
-      state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
+      state: 'pending', done: { wait: { who: 'dev-user', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
     }, w.clock.now)
     const t = w.byId.get('t1')!
     delete t.properties.waits
-    ;(t as { entries?: unknown[] }).entries = [{ kind: 'note', at: new Date(w.clock.now + 5).toISOString(), text: 'lasse marked done: Sign the contract.' }]
+    ;(t as { entries?: unknown[] }).entries = [{ kind: 'note', at: new Date(w.clock.now + 5).toISOString(), text: 'dev-user marked done: Sign the contract.' }]
     w.later(10)
     expect(await done(w, 't1', 'w-do', 'op-crash')).toMatchObject({ ok: true, command: { state: 'applied', continued: { sessionId: 's-ask', how: 'delivered' } } })
     expect(w.posts).toEqual([])
@@ -1290,7 +1304,7 @@ describe('done on a do wait', () => {
     const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')])
     w.store.put({
       opId: 'op-left', kind: 'done', spaceId: 'main', taskId: 't1', waitId: 'w-do', createdAt: new Date(w.clock.now).toISOString(), undoUntil: new Date(w.clock.now).toISOString(),
-      state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
+      state: 'pending', done: { wait: { who: 'dev-user', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
     }, w.clock.now)
     w.later(1)
     await w.commands.tick()
@@ -1309,7 +1323,7 @@ describe('done on a do wait', () => {
     const fresh = doneWorld([owned('t1', { delegate: 'atlas', waits: [reminder] }, 'active')], { newest: null })
     expect(await done(fresh, 't1', 'w-rem')).toMatchObject({ ok: true, command: { continued: { sessionId: 's-started', how: 'started' } } })
     expect(fresh.tried).toEqual([])
-    expect(fresh.started).toEqual([{ taskId: 't1', prompt: 'lasse marked done: Call the bank. See where the task stands and go on.' }])
+    expect(fresh.started).toEqual([{ taskId: 't1', prompt: 'dev-user marked done: Call the bank. See where the task stands and go on.' }])
 
     // nobody could be woken: the wait is gone all the same, and the command says so
     const none = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')], { takes: [], starts: null })
@@ -1323,7 +1337,7 @@ describe('done on a do wait', () => {
     expect(r).toMatchObject({ ok: true, command: { state: 'applied' } })
     if (!r.ok) throw new Error('refused')
     expect(r.command.continued).toBeUndefined()
-    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: null, text: 'lasse marked done: Call the bank.' } }])
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: null, text: 'dev-user marked done: Call the bank.' } }])
     expect(w.tried).toEqual([])
     expect(w.started).toEqual([])
   })
@@ -1347,6 +1361,13 @@ describe('done on a do wait', () => {
 })
 
 describe('the wake-up\'s controls on the task: remove and move it', () => {
+  // A task of the viewer of these tests, and the world they see it from.
+  const owned = (id: string, props: Record<string, unknown> = {}, status = 'planned'): Task => ({ id, status, properties: { assignee_ids: ['dev-user'], goal: 'Done', ...props } })
+  const world = (tasks: Task[], opts: Parameters<typeof baseWorld>[1] = {}) => {
+    const w = baseWorld(tasks, opts)
+    w.deps.viewer = 'dev-user'
+    return w
+  }
   const ROUTINE = { crons: ['0 8 * * *'], at: '2026-11-21T09:00:00.000Z', why: 'Check the reply', by: 'atlas', by_session: 's1', time_zone: 'UTC' }
   const LONE = { at: '2026-11-21T09:00:00.000Z', time_zone: 'UTC' }
   const control = (w: ReturnType<typeof world>, kind: 'remove_wake' | 'reschedule_wake', taskId: string, at?: string) =>

@@ -18,7 +18,7 @@ import { editTaskSchedule } from './task-schedule-write.js'
  * schedule holds at most one wake-up. A check sets it — the time, the reason the session reads when it fires, this
  * agent as the one it is for (by) and this session as the one that set it, so the cockpit continues it then. It
  * replaces a wake-up the task had and never touches a repeating time. Check "none" removes it. A call without a check
- * keeps it, whoever set it: an ask, a review, a hand-over never clears it (decision asks-and-check-backs-are-separate).
+ * keeps it, whoever set it: an ask, a review, a hand-over never clears it.
  *
  * A session without a task has nothing to set a wake-up on, and nothing fires on a closed task: there a check is
  * refused, the rest of the call stands. Every change is written to the task's journal with its cause.

@@ -15,7 +15,7 @@ import { isParked, type Wait } from './task-waits.js'
  * asked on one task are two items, each opening its session.
  *
  * An item carries the task's wake-up (who checks back, and when): the owner's move and the agent's
- * check-back stand side by side (decision asks-and-check-backs-are-separate). `repeating` says the
+ * check-back stand side by side. `repeating` says the
  * task has repeating times: then Looks good approves one run, without them it closes the task and
  * ends the wake-up.
  */

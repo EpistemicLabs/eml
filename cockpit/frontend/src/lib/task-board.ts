@@ -164,8 +164,7 @@ export const isScheduled = (task: Pick<BoardTask, 'status' | 'hasSchedule'>): bo
 
 /**
  * An open task with repeating times (a routine): Looks good approves one run and it closes only by ending its
- * schedule. A wake-up alone does not hold a task open: Looks good and Close end it with the task (decision
- * asks-and-check-backs-are-separate). A schedule the board does not spell out (another member's cockpit fires it)
+ * schedule. A wake-up alone does not hold a task open: Looks good and Close end it with the task. A schedule the board does not spell out (another member's cockpit fires it)
  * counts as repeating, the careful reading.
  */
 export const repeats = (task: Pick<BoardTask, 'status' | 'hasSchedule' | 'schedule'>): boolean =>
@@ -377,7 +376,7 @@ async function post(path: string, body: unknown): Promise<CommandAnswer> {
 
 export type HandOverMode = 'now' | 'schedule' | 'together';
 /**
- * A task's schedule (host delegation.schedule, brain schema 24): repeating times (crons, read in time_zone) and at
+ * A task's schedule (the host's task schedule field): repeating times (crons, read in time_zone) and at
  * most one wake-up (at) with its reason (why) and the session that set it (by_session). paused holds for the whole
  * schedule; ends_at ends the repeating times only, a wake-up still fires at its time. The next run is worked out by the host (BoardTask.nextRunAt), never stored. A repeating time
  * starts a new session; a wake-up continues the session that set it.

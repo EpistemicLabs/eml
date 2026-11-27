@@ -20,7 +20,7 @@ import { HANDOFF_LABELS as L, readAskLine, readCheckLine, readNextLine, type Ask
  * Read leniently: any heading level, the block inside a code fence or not,
  * labels in any case, lines left out. A question without a tag is the user's;
  * one tagged [task] is from before end_turn and stays in the journal only. A block
- * of a session started before 0.25 has "Next: [who] … @ when" instead of Ask and
+ * of a session started on an older version has "Next: [who] … @ when" instead of Ask and
  * Check; it is still read (domain/turn-end.ts askAndCheckOf).
  * The labels and the shape of the Next line are turn-end.ts's.
  */

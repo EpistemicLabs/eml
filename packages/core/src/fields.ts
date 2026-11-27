@@ -146,13 +146,13 @@ export const TYPE_FIELDS: Record<EngramType, Record<string, FieldSpec>> = {
         requested_at: date(),
       },
     },
-    // v0.24: the task's schedule — its repeating times (crons, five-field, read
-    // in time_zone) and at most one wake-up (at, with why it was set); paused and
+    // The task's schedule — its repeating times (crons, five-field, read in
+    // time_zone) and at most one wake-up (at, with why it was set); paused and
     // ends_at hold for the whole schedule. The next run time is computed, not
-    // stored. v0.25: the schedule is a field of the task, not of its delegation
-    // (who works on a task and when someone looks again are separate), and the
-    // wake-up names who it is for: by, a handle (an agent: a run on the task; a
-    // person: a reminder), and by_session, the session that set it.
+    // stored. It is a field of the task, not of its delegation (who works on a
+    // task and when someone looks again are separate), and the wake-up names who
+    // it is for: by, a handle (an agent: a run on the task; a person: a
+    // reminder), and by_session, the session that set it.
     // task-state.ts checks that it has a time and brings it to its stored form.
     schedule: {
       kind: 'map',

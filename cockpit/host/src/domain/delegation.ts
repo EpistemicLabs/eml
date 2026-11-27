@@ -3,8 +3,8 @@
  *
  *   delegation { agent, checkpoint, requested_at? }
  *
- * The task's schedule is not part of it (brain schema 25, decision asks-and-check-backs-are-separate): who works on a
- * task and when someone looks again are separate, and taking a task back from its agent leaves its schedule alone.
+ * The task's schedule is not part of it: who works on a task and when someone looks again are separate, and taking a
+ * task back from its agent leaves its schedule alone.
  *
  * requested_at is the runner's trigger. A request is open while no run on the task started at or after it, so the
  * status never has to go back to planned to start a task again: it moves forward only (planned → active → closed).
@@ -15,8 +15,8 @@
  */
 
 /**
- * The task's schedule (brain schema 24; its own task field since 25, domain/task-schedule.ts): repeating times and at
- * most one wake-up, which names who it is for. The keys in the order the brain stores them; at least one of crons
+ * The task's schedule (a task field of its own, domain/task-schedule.ts): repeating times and at most one wake-up,
+ * which names who it is for. The keys in the order the brain stores them; at least one of crons
  * and at.
  */
 export interface ScheduleFields {

@@ -82,22 +82,22 @@ describe('the schedule section of a task', () => {
 
   it('says who the wake-up is for: the agent checks back, or a reminder for the viewer', () => {
     setTimeZoneForTest('Asia/Bangkok');
-    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Did Acme answer?', by: 'nova' } }), {}, true, 'lasse');
+    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Did Acme answer?', by: 'nova' } }), {}, true, 'dev-user');
     expect(section().getByLabelText('Wake-up').textContent).toBe('Nova checks back tomorrow 09:00RescheduleRemoveDid Acme answer?');
     cleanup();
-    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Call the bank', by: 'lasse' } }), {}, true, 'lasse');
+    show(task({ group: 'mission', schedule: { at: at(20, 9), why: 'Call the bank', by: 'dev-user' } }), {}, true, 'dev-user');
     expect(section().getByLabelText('Wake-up').textContent).toBe('Reminder for you tomorrow 09:00RescheduleRemoveCall the bank');
   });
 
   it('removes the wake-up at once', async () => {
-    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'dev-user');
     fireEvent.click(section().getByRole('button', { name: 'Remove the wake-up' }));
     await waitFor(() => expect(onAct).toHaveBeenCalledWith(expect.objectContaining({ id: 'daily' }), { kind: 'remove_wake' }));
   });
 
   it('reschedules the wake-up to a date and time read in the user\'s zone, only to a time still to come', async () => {
     setTimeZoneForTest('Asia/Bangkok');
-    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'dev-user');
     fireEvent.click(section().getByRole('button', { name: 'Reschedule the wake-up' }));
     const form = within(section().getByRole('group', { name: 'Reschedule the wake-up' }));
     // It starts at the wake-up's own time, in the user's zone.
@@ -114,7 +114,7 @@ describe('the schedule section of a task', () => {
   });
 
   it('Cancel leaves the wake-up as it is', () => {
-    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'lasse');
+    const { onAct } = show(task({ schedule: { at: at(20, 9), by: 'nova' } }), {}, true, 'dev-user');
     fireEvent.click(section().getByRole('button', { name: 'Reschedule the wake-up' }));
     fireEvent.click(within(section().getByRole('group', { name: 'Reschedule the wake-up' })).getByRole('button', { name: 'Cancel' }));
     expect(section().queryByRole('group', { name: 'Reschedule the wake-up' })).toBeNull();

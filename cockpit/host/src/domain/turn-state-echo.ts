@@ -9,7 +9,7 @@ import { DATE_ONLY, withoutOutside } from './turn-end.js'
  * What the task holds after an end_turn call, as the tool's answer ends with it (decision
  * asks-and-check-backs-are-separate: a tool returns the resulting state). In words an agent reads, without ids:
  *
- *   The task now — Lifecycle: open. Asks: lasse's move: sign the form (due 2026-11-28). Check: kept, atlas checks
+ *   The task now — Lifecycle: open. Asks: dev-user's move: sign the form (due 2026-11-28). Check: kept, atlas checks
  *   back Fri 27 Nov 10:00 (Asia/Bangkok). Repeating: none. Next run: Fri 27 Nov 10:00 (Asia/Bangkok).
  *
  * Times are the user's local time, with the zone they were read in.
@@ -46,7 +46,7 @@ const end = (text: string) => text.replace(/[.\s]+$/, '')
 /** A due as people read it: a date as written, an instant in the user's zone. */
 const dueText = (due: string, zone: string): string => (DATE_ONLY.test(due) ? due : localTime(due, zone))
 
-/** One wait as a short phrase: "lasse's move: sign the form (due 2026-11-28)". */
+/** One wait as a short phrase: "dev-user's move: sign the form (due 2026-11-28)". */
 export function askPhrase(w: WaitingOn, zone: string): string {
   const who = withoutOutside(w.who)
   const why = w.why ? `: ${end(w.why)}` : ''

@@ -124,7 +124,7 @@ function askAndCheck(call: EndTurnCall, ctx: TurnEndContext): { ask: TurnAsk | n
 
 /**
  * What the line says. The first match wins: failed, questions, the ask, the agent's own check, done. The ask and the
- * check are separate (decision asks-and-check-backs-are-separate): the owner's move ("Your move" for a step they do,
+ * check are separate: the owner's move ("Your move" for a step they do,
  * "Review" for a result) or a wait on someone else, with "checks <time>" after it when the agent also looks again.
  * A who is read as the host reads it (whoOf): someone outside by the prefix, then the owner (their handle, or user /
  * owner), then the agent itself (its handle, or me / self / agent / myself), then anyone else. Without the owner's

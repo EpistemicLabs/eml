@@ -35,7 +35,7 @@ import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '
  * refused, and End schedule clears its schedule and closes it. A task with a wake-up alone (an agent's check-back, a
  * reminder) closes like any other: Looks good and Close close it and end the wake-up with it, and the journal says so.
  *
- * Done on a do wait ("Your move", decision asks-and-check-backs-are-separate): the owner did their step. The wait
+ * Done on a do wait ("Your move"): the owner did their step. The wait
  * goes, the journal says "<owner> marked done: <what>", and the task's agent is woken now with that text (the session
  * that asked, else the task's newest, else a new one). The task's check-back stays. It acts at once, like the
  * schedule's controls, and has no undo window.
@@ -242,7 +242,7 @@ interface BrainTask {
 
 /**
  * v0.23: a reopened task starts nothing on its own: a delegation keeps its agent and checkpoint but loses a request
- * that never ran, so only a new Delegate now starts it. Its schedule stays (brain schema 25: a field of its own). The fields a reopen writes besides its status.
+ * that never ran, so only a new Delegate now starts it. Its schedule stays: it is a field of its own. The fields a reopen writes besides its status.
  */
 const reopenPatch = (task: BrainTask): Record<string, unknown> => {
   const d = task.properties?.delegation

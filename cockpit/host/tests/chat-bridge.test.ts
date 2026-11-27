@@ -480,8 +480,8 @@ describe('ChatBridge', () => {
     it.each<[string, EndTurn, { kind: string; reason: string }]>([
       ['failed', { result: 'Stuck at the login', failed: 'No access to the shop' }, { kind: 'failed', reason: 'No access to the shop' }],
       ['questions', { result: 'Draft ready', questions: ['Send it today?', 'To whom?'], check: { when: '2026-11-27T10:00', why: 'send' } }, { kind: 'question', reason: 'Send it today?' }],
-      ['an ask for the owner', { result: 'Draft ready', ask: { who: 'lasse', what: 'read the draft' } }, { kind: 'review', reason: 'Draft ready' }],
-      ['a do ask for the owner', { result: 'Form ready', ask: { who: 'lasse', what: 'sign the form', kind: 'do' } }, { kind: 'review', reason: 'Form ready' }],
+      ['an ask for the owner', { result: 'Draft ready', ask: { who: 'user', what: 'read the draft' } }, { kind: 'review', reason: 'Draft ready' }],
+      ['a do ask for the owner', { result: 'Form ready', ask: { who: 'user', what: 'sign the form', kind: 'do' } }, { kind: 'review', reason: 'Form ready' }],
       ['an ask for another member', { result: 'Draft ready', ask: { who: 'dominik', what: 'sign it' } }, { kind: 'done', reason: 'Draft ready' }],
       ['an ask for someone outside', { result: 'Mail sent', ask: { who: 'outside:Acme', what: 'answer the mail' } }, { kind: 'done', reason: 'Mail sent' }],
       ['a check alone', { result: 'Mail sent', check: { when: '2026-11-27T10:00', why: 'look for the answer' } }, { kind: 'done', reason: 'Mail sent' }],
@@ -507,7 +507,7 @@ describe('ChatBridge', () => {
       // An ask for anyone but the owner needs a check.
       for (const who of ['dominik', 'outside:Acme']) expect(await worker.endTurn({ result: 'Half way', ask: { who, what: 'go on' } }), who).toMatchObject({ missing: ['when'] })
       expect(await worker.endTurn({ result: 'Half way', ask: { who: 'dominik', what: 'go on' }, check: { when: '2026-11-27T10:00', why: 'see' } })).toMatchObject({ missing: [] })
-      expect(await worker.endTurn({ result: 'Half way', ask: { who: 'lasse', what: 'decide' } })).toMatchObject({ missing: [] })
+      expect(await worker.endTurn({ result: 'Half way', ask: { who: 'user', what: 'decide' } })).toMatchObject({ missing: [] })
       expect(await worker.endTurn({ result: 'Half way', check: { when: '2026-11-27T10:00', why: 'see' } })).toMatchObject({ missing: [] })
       // The older next for itself without a time names nothing: the open task lacks who moves next.
       expect(await worker.endTurn({ result: 'Half way', next: { who: 'me', what: 'go on' } })).toMatchObject({ missing: ['next'] })
@@ -522,13 +522,13 @@ describe('ChatBridge', () => {
       await expect(worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T07:59' } }))
         .rejects.toThrow('next.when "2026-11-25T07:59" has passed (read in UTC); name a time that is still to come')
       // The older next for the owner with a time stands for an ask and a check: a passed time refuses it too.
-      await expect(worker.endTurn({ result: 'Sent', next: { who: 'lasse', what: 'sign it', when: '2026-11-25T07:59' } })).rejects.toThrow('has passed')
+      await expect(worker.endTurn({ result: 'Sent', next: { who: 'user', what: 'sign it', when: '2026-11-25T07:59' } })).rejects.toThrow('has passed')
       expect(attention() ?? null).toBeNull()
       expect(checks).toEqual([])
       // The turn then counts as one without a call.
       expect(await worker.onTurnEnding()).toBe(reminder(['call']))
       // A hand-over to the user without a check refuses nothing, and keeps the task's wake-up, whoever set it.
-      expect(await worker.endTurn({ result: 'Sent', ask: { who: 'lasse', what: 'read it' } })).toMatchObject({ derived: { status: 'review', wake: { kind: 'keep' } }, missing: [] })
+      expect(await worker.endTurn({ result: 'Sent', ask: { who: 'user', what: 'read it' } })).toMatchObject({ derived: { status: 'review', wake: { kind: 'keep' } }, missing: [] })
       expect(checks).toEqual([{ kind: 'keep' }])
     })
 

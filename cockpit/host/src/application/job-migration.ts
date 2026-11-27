@@ -12,7 +12,7 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
 
 /**
  * The migration of jobs.json version 1 to version 2, written (domain/job-migration.ts plans it): one pass at the
- * host's start, once the brains are at schema 24. Per space it reads the tasks of the version 1 jobs, plans, and
+ * host's start, once the brains are at SCHEDULES_ON_TASKS_SCHEMA. Per space it reads the tasks of the version 1 jobs, plans, and
  * writes task by task: the brain first (the schedule, the text, the journal, in one call through
  * application/task-schedule-write.ts), then the store (the record in, the jobs out of the version 1 data), then the
  * sessions of those jobs move to the record in the ledger, and the channel bridge is told the jobs' new id, since
@@ -30,7 +30,7 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  * at, so a task that changed in between is not written in this pass and is planned again in the next one; a
  * left-over schedule is removed only while the task still has that schedule and no record.
  *
- * A space whose brain is not at schema 24 yet (the brain server's control data says which it is at) is neither
+ * A space whose brain is not at SCHEDULES_ON_TASKS_SCHEMA yet (the brain server's control data says which it is at) is neither
  * planned nor looked through: its jobs wait. So does a space the brain server has not said the kind of (shared or
  * local).
  *
@@ -38,7 +38,7 @@ import { editTaskSchedule, ScheduleChangedError } from './task-schedule-write.js
  * looked through once for schedules the old mirror left on tasks without a job (domain/job-migration.ts), before any
  * job of it moves, and also when it has no job: nothing ran such a schedule, and it must not start to fire. Each such
  * space has its own look, made whenever it can first be looked through (an agent bound to it, its kind known, its
- * brain at schema 24), also once an agent is bound to it later. Until a space was looked through the engine takes up
+ * brain at SCHEDULES_ON_TASKS_SCHEMA), also once an agent is bound to it later. Until a space was looked through the engine takes up
  * no schedule there by seeing it (application/job-runner.ts holdsFirstSight). A space added after the conversion is
  * never held nor looked through: a schedule on a task there is real. A home that never had a version 1 file is not
  * looked through: nothing there can be a leftover.
@@ -55,7 +55,7 @@ export interface JobMigrationDeps {
   spaceKind?(space: BrainSpace): Promise<boolean | null>
   /**
    * The schema version of the space's brain, as the brain server's control data has it (update-status.ts
-   * brainSchemaVersion); null: it could not be read. A space whose brain is not at schema 24 is not planned.
+   * brainSchemaVersion); null: it could not be read. A space whose brain is not at SCHEDULES_ON_TASKS_SCHEMA is not planned.
    */
   brainSchema(space: BrainSpace): number | null
   /** This cockpit's member. */
@@ -164,7 +164,7 @@ export function createJobMigration(deps: JobMigrationDeps) {
    * schedules left without a job:
    *
    *   - `later`: it waits, and a later pass asks again — it has an agent and no brain to ask now; its kind is not
-   *     known (whose cockpit fires a task depends on it); its brain is not at schema 24 yet, or its schema could not
+   *     known (whose cockpit fires a task depends on it); its brain is not at SCHEDULES_ON_TASKS_SCHEMA yet, or its schema could not
    *     be read (a schedule of schema 23 reads as none, domain/task-schedule.ts scheduleOf: a look would find nothing
    *     left over and call it done). A brain that does not answer the plan's reads waits the same way (runOnce).
    *   - `none`: no agent is bound to the space, so the host has no task brain for it and the engine fires nothing

@@ -51,17 +51,17 @@ describe('recording an end_turn call', () => {
     await expect(recordEndTurn(deps, 's1', { result: 'Sent', check: { when: '2020-01-01T10:00', why: 'look' } })).rejects.toThrow('check.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come')
     await expect(recordEndTurn(deps, 's1', { result: 'Sent', next: { who: 'me', what: 'look', when: '2020-01-01T10:00' } })).rejects.toThrow('next.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come')
     // An ask for the owner with a passed check is refused too: the check is the agent's, whatever the ask.
-    await expect(recordEndTurn(deps, 's1', { result: 'Sent', ask: { who: 'lasse', what: 'sign', kind: 'do' }, check: { when: '2020-01-01T10:00', why: 'look' } })).rejects.toThrow('has passed')
+    await expect(recordEndTurn(deps, 's1', { result: 'Sent', ask: { who: 'user', what: 'sign', kind: 'do' }, check: { when: '2020-01-01T10:00', why: 'look' } })).rejects.toThrow('has passed')
     expect(kept).toEqual([])
     expect(checks).toEqual([])
   })
 
   it('an ask for the owner without a check keeps the task\'s wake-up, whoever set it; check "none" removes it', async () => {
     const { deps, kept, checks } = setup()
-    const recorded = await recordEndTurn(deps, 's1', { result: 'Done', ask: { who: 'lasse', what: 'review' } })
+    const recorded = await recordEndTurn(deps, 's1', { result: 'Done', ask: { who: 'user', what: 'review' } })
     expect(recorded.derived).toMatchObject({ status: 'review', wake: { kind: 'keep' } })
-    await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'lasse', what: 'sign it', kind: 'do' } })
-    await recordEndTurn(deps, 's1', { result: 'Done', ask: { who: 'lasse', what: 'review' }, check: 'none' })
+    await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'user', what: 'sign it', kind: 'do' } })
+    await recordEndTurn(deps, 's1', { result: 'Done', ask: { who: 'user', what: 'review' }, check: 'none' })
     expect(kept).toHaveLength(3)
     expect(checks.map((c) => c.edit)).toEqual([{ kind: 'keep' }, { kind: 'keep' }, { kind: 'remove' }])
   })
@@ -100,12 +100,12 @@ describe('recording an end_turn call', () => {
   it('keeps a due as the task keeps it: a date as written, a date and time as the instant in the user\'s zone', async () => {
     const asked = async (due: string) => {
       const { deps, kept } = setup({ callTime: () => ({ now: NOW, zone: 'Asia/Bangkok' }) })
-      const recorded = await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'lasse', what: 'sign it', kind: 'do', due } })
+      const recorded = await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'user', what: 'sign it', kind: 'do', due } })
       return { recorded, call: kept[0].said.call }
     }
     const date = await asked('2026-11-28')
     expect(date.call.ask?.due).toBe('2026-11-28')
-    expect(date.recorded.derived.wait).toEqual({ who: 'lasse', kind: 'do', why: 'sign it', due: '2026-11-28' })
+    expect(date.recorded.derived.wait).toEqual({ who: ctx.owner, kind: 'do', why: 'sign it', due: '2026-11-28' })
     // 17:00 in Bangkok is 10:00 UTC.
     const time = await asked('2026-11-28T17:00')
     expect(time.call.ask?.due).toBe('2026-11-28T10:00:00.000Z')
@@ -126,10 +126,10 @@ describe('what the task holds after the call', () => {
 
   it('ends the answer with the state: a do ask for the owner without a check keeps the agent\'s wake-up and says so', async () => {
     const { deps } = setup({ turnWake: async () => settled() })
-    const recorded = await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'lasse', what: 'sign the form', kind: 'do', due: '2026-11-28' } })
+    const recorded = await recordEndTurn(deps, 's1', { result: 'Form ready', ask: { who: 'user', what: 'sign the form', kind: 'do', due: '2026-11-28' } })
     expect(recorded.state).toBe([
       'The task now — Lifecycle: open.',
-      'Asks: lasse\'s move: sign the form (due 2026-11-28).',
+      `Asks: ${ctx.owner}'s move: sign the form (due 2026-11-28).`,
       `Check: kept, atlas checks back ${local(AT)}.`,
       'Repeating: none.',
       `Next run: ${local(AT)}.`,
@@ -140,12 +140,12 @@ describe('what the task holds after the call', () => {
 
   it('lists the task\'s other waits, and replaces this session\'s own with the call\'s', async () => {
     const waits = [
-      { id: 'w1', who: 'lasse', kind: 'review', why: 'Review: the other draft', session_id: 's9' },
-      { id: 'w2', who: 'lasse', kind: 'question', why: 'Old question?', session_id: 's1' },
+      { id: 'w1', who: ctx.owner, kind: 'review', why: 'Review: the other draft', session_id: 's9' },
+      { id: 'w2', who: ctx.owner, kind: 'question', why: 'Old question?', session_id: 's1' },
     ]
     const { deps } = setup({ turnWake: async () => settled({ outcome: 'removed', after: null, nextRun: false, task: { status: 'active', waits } }) })
-    const recorded = await recordEndTurn(deps, 's1', { result: 'Sent', ask: { who: 'lasse', what: 'read it' }, check: 'none' })
-    expect(recorded.state).toBe('The task now — Lifecycle: open. Asks: review for lasse: Review: the other draft; review for lasse: read it. Check: removed, no wake-up. Repeating: none. Next run: none.')
+    const recorded = await recordEndTurn(deps, 's1', { result: 'Sent', ask: { who: 'user', what: 'read it' }, check: 'none' })
+    expect(recorded.state).toBe(`The task now — Lifecycle: open. Asks: review for ${ctx.owner}: Review: the other draft; review for ${ctx.owner}: read it. Check: removed, no wake-up. Repeating: none. Next run: none.`)
   })
 
   it('has no state when the task could not be read', async () => {
