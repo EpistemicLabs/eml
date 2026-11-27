@@ -129,18 +129,19 @@ describe('hand over', () => {
     expect(w.commands.questionOf('t1')).toBe('Count it?')
   })
 
-  it('schedule writes the task\'s schedule with the delegation when the window is over: one write, no job', async () => {
-    const w = world([owned('t1'), owned('t2', { delegation: { agent: 'motti', checkpoint: 'none', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } }, 'active')])
+  it('schedule writes the task\'s schedule and the delegation in one write when the window is over: no job', async () => {
+    const w = world([owned('t1'), owned('t2', { delegation: { agent: 'motti', checkpoint: 'none' }, schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } }, 'active')])
     await w.commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', timeZone: 'Asia/Singapore' } } })
     await w.commands.submit({ opId: 'op-c', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'UTC' } } })
     expect(w.posts).toEqual([])
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
     expect(w.posts).toEqual([
-      // one time: the task's wake-up; no request for the runner
-      { path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', time_zone: 'Asia/Singapore' } }, text: expect.stringMatching(/^Scheduled atlas for Fri 20 Nov( 2026)? 09:00 \(Asia\/Singapore\) with checkpoint after; the owner stays\.$/) } },
+      // one time: the task's wake-up, for the delegate (a run of it); no request for the runner. The schedule is the
+      // task's own field, never part of the delegation (brain schema 25).
+      { path: '/task/t1/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { at: '2026-11-20T01:00:00.000Z', by: 'atlas', time_zone: 'Asia/Singapore' }, text: expect.stringMatching(/^Scheduled atlas for Fri 20 Nov( 2026)? 09:00 \(Asia\/Singapore\) with checkpoint after; the owner stays\.$/) } },
       // a repeat rule joins the repeating times the task has
-      { path: '/task/t2/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' } }, text: 'Scheduled atlas every day at 18:00 (UTC) with checkpoint after; the owner stays.' } },
+      { path: '/task/t2/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 8 * * *', '0 18 * * *'], time_zone: 'UTC' }, text: 'Scheduled atlas every day at 18:00 (UTC) with checkpoint after; the owner stays.' } },
     ])
     expect(w.store.get('op-s')).toMatchObject({ state: 'applied' })
     expect(w.store.get('op-s')!.effects).toBeUndefined()
@@ -150,7 +151,7 @@ describe('hand over', () => {
     const w = world([owned('t1'), owned('t2')])
     const kept: string[] = []
     // the record is kept once the schedule is on the task, never before
-    w.deps.keepRecord = (spaceId, taskId) => { kept.push(`${spaceId}:${taskId}`); scheduledAtKeep.push(w.byId.get(taskId)!.properties.delegation?.schedule ?? null) }
+    w.deps.keepRecord = (spaceId, taskId) => { kept.push(`${spaceId}:${taskId}`); scheduledAtKeep.push(w.byId.get(taskId)!.properties.schedule ?? null) }
     const scheduledAtKeep: unknown[] = []
     const commands = createTaskCommands(w.deps)
     await commands.submit({ opId: 'op-s', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { at: '2026-11-20T01:00:00.000Z', timeZone: 'Asia/Singapore' } } })
@@ -159,11 +160,11 @@ describe('hand over', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await commands.tick()
     expect(kept).toEqual(['main:t1'])
-    expect(scheduledAtKeep).toEqual([{ at: '2026-11-20T01:00:00.000Z', time_zone: 'Asia/Singapore' }])
+    expect(scheduledAtKeep).toEqual([{ at: '2026-11-20T01:00:00.000Z', by: 'atlas', time_zone: 'Asia/Singapore' }])
   })
 
   it('refuses a repeating time given in another zone than the task\'s repeating times, and says theirs', async () => {
-    const w = world([owned('t2', { delegation: { agent: 'motti', checkpoint: 'none', schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } } }, 'active')])
+    const w = world([owned('t2', { delegation: { agent: 'motti', checkpoint: 'none' }, schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } }, 'active')])
     const r = await w.commands.submit({ opId: 'op-z', kind: 'hand_over', spaceId: 'main', taskId: 't2', handOver: { mode: 'schedule', delegate: 'atlas', checkpoint: 'after', schedule: { cron: '0 18 * * *', timeZone: 'Asia/Singapore' } } })
     expect(r).toEqual({ ok: false, refusal: 'schedule_zone', message: 'Times of this task are in UTC, and this one was given in Asia/Singapore: give it in UTC.' })
     expect(w.store.get('op-z')).toBeUndefined()
@@ -172,13 +173,26 @@ describe('hand over', () => {
     expect(w.posts).toEqual([])
   })
 
-  it('delegate now on a task with a schedule carries the schedule in the delegation it writes', async () => {
+  it('delegate now on a task with a schedule writes only the delegation: the schedule is the task\'s and stays', async () => {
     const schedule = { crons: ['0 8 * * *'], time_zone: 'UTC' }
-    const w = world([owned('t1', { delegate: 'motti', checkpoint: 'none', delegation: { agent: 'motti', checkpoint: 'none', schedule } }, 'active')])
+    const w = world([owned('t1', { delegate: 'motti', checkpoint: 'none', delegation: { agent: 'motti', checkpoint: 'none' }, schedule }, 'active')])
     await w.commands.submit({ opId: 'op-n', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    expect(w.posts[0].body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: new Date(w.clock.now).toISOString(), schedule })
+    expect(w.posts[0].body.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: new Date(w.clock.now).toISOString() })
+    expect(w.posts[0].body).not.toHaveProperty('schedule')
+    expect(w.byId.get('t1')!.properties.schedule).toEqual(schedule)
+  })
+
+  it('work on it now on a task with a schedule takes the delegation off and leaves the schedule; undo puts both back as they were', async () => {
+    const schedule = { crons: ['0 8 * * *'], time_zone: 'UTC' }
+    const w = world([owned('t1', { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after' }, schedule }, 'active')])
+    await w.commands.submit({ opId: 'op-t', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'together', delegate: 'atlas', checkpoint: 'after', desk: 'Main' } })
+    expect(w.posts[0].body).toMatchObject({ delegation: null })
+    expect(w.posts[0].body).not.toHaveProperty('schedule')
+    expect(w.byId.get('t1')!.properties.schedule).toEqual(schedule)
+    expect(await w.commands.undo('op-t')).toEqual({ ok: true })
+    expect(w.posts[1].body).toMatchObject({ delegation: { agent: 'atlas', checkpoint: 'after' }, schedule })
   })
 
   it('work on it now happens at once, writes no delegation, with the brief for the session the page opens; undo puts the task back', async () => {
@@ -189,7 +203,7 @@ describe('hand over', () => {
     expect(w.posts[0].body).not.toHaveProperty('delegation')
     expect(w.posts[0].body.text).toMatch(/^Working on it with atlas in desk Customers; the owner stays\./)
     expect(await w.commands.undo('op-t')).toEqual({ ok: true })
-    expect(w.posts[1].body).toEqual({ delegation: null, waits: [{ id: 'waiting_on', who: 'lasse', kind: 'question', why: 'Which list?' }], status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
+    expect(w.posts[1].body).toEqual({ delegation: null, schedule: null, waits: [{ id: 'waiting_on', who: 'lasse', kind: 'question', why: 'Which list?' }], status: 'planned', text: 'Hand-over undone; the task is back as it was.' })
   })
 
   it('refuses what cannot be handed over, with a reason', async () => {
@@ -636,15 +650,15 @@ describe('writing in a closed task\'s session', () => {
 describe('a task whose schedule is still on', () => {
   type TestJob = { id: string; name: string }
   const REPEATS = { crons: ['0 8 * * *'], time_zone: 'UTC' }
-  /** The world with a schedule on each task named in `scheduledTasks`: the task holds it, in its delegation. */
+  /** The world with repeating times on each task named in `scheduledTasks`: the task holds them, in its own schedule field. */
   const scheduledWorld = (tasks: Task[], scheduledTasks: Record<string, TestJob[]> = {}, opts: Parameters<typeof world>[1] = {}) => {
     const w = world(tasks, opts)
     const ended: string[] = []
     const set = (taskId: string, on: boolean) => {
       const t = w.byId.get(taskId)
       if (!t) return
-      const { schedule, ...rest } = (t.properties.delegation as Record<string, unknown> | undefined) ?? { agent: 'atlas' }
-      t.properties.delegation = on ? { ...rest, schedule: schedule ?? REPEATS } : rest
+      if (on) t.properties.schedule ??= REPEATS
+      else delete t.properties.schedule
     }
     for (const id of Object.keys(scheduledTasks)) set(id, true)
     w.deps.endRecord = (_spaceId, taskId) => { ended.push(taskId) }
@@ -745,7 +759,7 @@ describe('a task whose schedule is still on', () => {
 
   it('refuses Close while its schedule is on, and does not close one that got a schedule inside the undo window', async () => {
     const w = scheduledWorld([owned('daily', {}, 'active'), owned('once', {}, 'active')], { daily: job() })
-    expect(SCHEDULE_ON).toBe('Its schedule is still on: use End schedule and close.')
+    expect(SCHEDULE_ON).toBe('Its repeating times are still on: use End schedule and close.')
     expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'daily' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
     expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: true })
     w.schedule('once')
@@ -756,7 +770,7 @@ describe('a task whose schedule is still on', () => {
     expect(w.store.get('op-2')).toMatchObject({ state: 'failed', error: SCHEDULE_ON })
   })
 
-  it('a task with a wake-up ahead is scheduled; once it fired and left the task, the task closes like any other', async () => {
+  it('a task with repeating times is a routine; once they left the task, the task closes like any other', async () => {
     const w = scheduledWorld([owned('once', { waits: [review] }, 'active'), owned('twice', {}, 'active')], { once: job('j1', 'Check reply'), twice: job('j2', 'Check again') })
     expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: false, refusal: 'scheduled' })
     w.unschedule('once')
@@ -771,8 +785,9 @@ describe('a task whose schedule is still on', () => {
   })
 
   it('End schedule clears the task\'s schedule and closes it as done in one write after the window, then ends what this cockpit kept for it', async () => {
-    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z', schedule: { crons: ['0 8 * * *', '0 18 * * *'], at: '2026-11-20T02:00:00.000Z', why: 'Check the reply', time_zone: 'UTC' } }
-    const w = scheduledWorld([owned('daily', { delegation, waits: [review] }, 'active'), owned('other', {}, 'active')], { other: job('j9') })
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z' }
+    const schedule = { crons: ['0 8 * * *', '0 18 * * *'], at: '2026-11-20T02:00:00.000Z', why: 'Check the reply', time_zone: 'UTC' }
+    const w = scheduledWorld([owned('daily', { delegation, schedule, waits: [review] }, 'active'), owned('other', {}, 'active')], { other: job('j9') })
     expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'daily' }))
       .toMatchObject({ ok: true, command: { state: 'pending', undoUntil: new Date(w.clock.now + UNDO_WINDOW_MS).toISOString() } })
     await w.commands.tick()
@@ -782,14 +797,16 @@ describe('a task whose schedule is still on', () => {
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
     await w.commands.tick()
-    // The delegation is written without its schedule, which ends it; agent, checkpoint and request stay.
+    // The schedule is cleared on its own; the delegation is not written: agent, checkpoint and request stay.
     expect(w.posts).toEqual([{ path: '/task/daily/track', body: {
-      status: 'resolved', outcome: 'Schedule ended and task closed by the owner', waits: null, delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z' },
+      status: 'resolved', outcome: 'Schedule ended and task closed by the owner', waits: null, schedule: null,
       text: 'The owner ended its schedule (0 8 * * *; 0 18 * * * (UTC), wake-up 2026-11-20T02:00:00.000Z) and closed the task.',
     } }])
     expect(w.ended).toEqual(['daily'])
     expect(w.byId.get('daily')!.status).toBe('resolved')
-    expect(w.byId.get('other')!.properties.delegation).toMatchObject({ schedule: REPEATS })
+    expect(w.byId.get('daily')!.properties.schedule).toBeUndefined()
+    expect(w.byId.get('daily')!.properties.delegation).toEqual(delegation)
+    expect(w.byId.get('other')!.properties.schedule).toEqual(REPEATS)
     expect(w.store.get('op-e')).toMatchObject({ state: 'applied' })
     expect(await w.commands.undo('op-e')).toEqual({ ok: false, refusal: 'undo_expired' })
   })
@@ -826,7 +843,7 @@ describe('a task whose schedule is still on', () => {
   })
 
   it('End schedule takes a task whose schedule is paused: no run is coming up, but it could be resumed', async () => {
-    const w = scheduledWorld([owned('paused', { delegation: { agent: 'atlas', schedule: { ...REPEATS, paused: true } } }, 'active')])
+    const w = scheduledWorld([owned('paused', { delegation: { agent: 'atlas' }, schedule: { ...REPEATS, paused: true } }, 'active')])
     // It has a schedule, so it is not closed any other way.
     expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'paused' })).toMatchObject({ ok: false, refusal: 'scheduled' })
     expect(await w.commands.submit({ opId: 'op-p', kind: 'end_schedule', spaceId: 'main', taskId: 'paused' })).toMatchObject({ ok: true })
@@ -834,6 +851,7 @@ describe('a task whose schedule is still on', () => {
     await w.commands.tick()
     expect(w.ended).toEqual(['paused'])
     expect(w.byId.get('paused')!.status).toBe('resolved')
+    expect(w.byId.get('paused')!.properties.schedule).toBeUndefined()
     expect(w.byId.get('paused')!.properties.delegation).toEqual({ agent: 'atlas' })
   })
 
@@ -857,8 +875,8 @@ describe('a task whose schedule is still on', () => {
   })
 
   it('the task is the truth: a schedule on the owner\'s own task holds it whatever this cockpit knows of it', async () => {
-    const has = { agent: 'atlas', schedule: mirrored }
-    const w = scheduledWorld([owned('review', { delegation: has, waits: [review] }, 'active'), owned('close', { delegation: has }, 'active'), owned('end', { delegation: has }, 'active')])
+    const has = { delegation: { agent: 'atlas' }, schedule: mirrored }
+    const w = scheduledWorld([owned('review', { ...has, waits: [review] }, 'active'), owned('close', has, 'active'), owned('end', has, 'active')])
     expect(await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'review' })).toMatchObject({ ok: true, command: { runOnly: true } })
     expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'close' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
     expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'end' })).toMatchObject({ ok: true })
@@ -869,21 +887,22 @@ describe('a task whose schedule is still on', () => {
   })
 
   it('a schedule on another member\'s task holds it here too: Close is refused, and End schedule is its owner\'s', async () => {
-    const theirs: Task = { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'atlas', schedule: mirrored } } }
+    const theirs: Task = { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], delegation: { agent: 'atlas' }, schedule: mirrored } }
     const w = scheduledWorld([theirs])
     expect(await w.commands.submit({ opId: 'op-c', kind: 'close', spaceId: 'main', taskId: 'theirs' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
     expect(await w.commands.submit({ opId: 'op-e', kind: 'end_schedule', spaceId: 'main', taskId: 'theirs' })).toMatchObject({ ok: false, refusal: 'not_owner' })
   })
 
   it('a reopened task keeps its schedule: the delegation loses only a request that never ran', async () => {
-    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z', schedule: mirrored }
-    const w = scheduledWorld([owned('board', { delegation }, 'resolved'), owned('run', { delegation }, 'resolved'), owned('written', { delegation: { agent: 'atlas', schedule: mirrored } }, 'resolved')])
+    const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-18T09:00:00.000Z' }
+    const w = scheduledWorld([owned('board', { delegation, schedule: mirrored }, 'resolved'), owned('run', { delegation, schedule: mirrored }, 'resolved'), owned('written', { delegation: { agent: 'atlas' }, schedule: mirrored }, 'resolved')])
     await w.commands.submit({ opId: 'op-1', kind: 'reopen', spaceId: 'main', taskId: 'board' })
     w.later(UNDO_WINDOW_MS + 1)
     await w.commands.tick()
-    // The whole delegation is written, so its schedule goes along: without it the brain would end the schedule.
-    expect(w.posts[0].body).toMatchObject({ status: 'active', delegation: { agent: 'atlas', checkpoint: 'after', schedule: mirrored } })
-    expect(w.byId.get('board')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after', schedule: mirrored })
+    // The schedule is the task's own field: a reopen writes the delegation without its request and leaves the schedule.
+    expect(w.posts[0].body).toEqual({ status: 'active', waits: null, delegation: { agent: 'atlas', checkpoint: 'after' }, text: 'Reopened on the task board by the owner.' })
+    expect(w.byId.get('board')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
+    expect(w.byId.get('board')!.properties.schedule).toEqual(mirrored)
     // Open again with its schedule, it is not closed: End schedule and close is the way.
     expect(await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'board' })).toMatchObject({ ok: false, refusal: 'scheduled' })
 
@@ -891,7 +910,8 @@ describe('a task whose schedule is still on', () => {
     const before = w.posts.length
     expect(await w.commands.reopenByWriting('main', 'written')).toBe('reopened')
     expect(w.posts[before].body).not.toHaveProperty('delegation')
-    expect(w.byId.get('written')!.properties.delegation).toEqual({ agent: 'atlas', schedule: mirrored })
+    expect(w.byId.get('written')!.properties.delegation).toEqual({ agent: 'atlas' })
+    expect(w.byId.get('written')!.properties.schedule).toEqual(mirrored)
   })
 
   it('writing in the chat of a closed task reopens it, with what a reopen takes off a delegation', async () => {
@@ -948,8 +968,8 @@ describe('a task whose schedule is still on', () => {
 describe('the schedule\'s controls on the task: pause, resume, run now, remove one repeating time', () => {
   const DAILY = { crons: ['0 8 * * 1-5', '0 18 * * 1-5'], time_zone: 'Europe/Berlin' }
   const scheduled = (id: string, schedule: Record<string, unknown> = DAILY, props: Record<string, unknown> = {}, status = 'active') =>
-    owned(id, { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', schedule }, ...props }, status)
-  const scheduleOf = (w: ReturnType<typeof world>, id: string) => (w.byId.get(id)!.properties.delegation as { schedule?: Record<string, unknown> }).schedule
+    owned(id, { delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after' }, schedule, ...props }, status)
+  const scheduleOf = (w: ReturnType<typeof world>, id: string) => w.byId.get(id)!.properties.schedule as Record<string, unknown> | undefined
   /** A world whose engine records what the commands tell it. */
   const withEngine = (tasks: Task[], engine: { runNow?: 'started' | 'run_open' | 'task_working' | 'needs_approval' | 'no_project' | 'unknown_space'; listens?: string[]; held?: string[] } = {}) => {
     const w = world(tasks)
@@ -965,11 +985,12 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     return { ...w, commands: createTaskCommands(w.deps), told }
   }
 
-  it('pauses the whole schedule at once, with no undo window, and tells the engine; the delegation is carried whole', async () => {
+  it('pauses the whole schedule at once, with no undo window, and tells the engine; the delegation is not written', async () => {
     const w = withEngine([scheduled('daily')])
     const r = await w.commands.submit({ opId: 'op-p', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })
     expect(r).toMatchObject({ ok: true, command: { state: 'applied', undoUntil: new Date(w.clock.now).toISOString() } })
-    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { ...DAILY, paused: true } }, text: 'The owner paused its schedule.' } }])
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { schedule: { ...DAILY, paused: true }, text: 'The owner paused its schedule.' } }])
+    expect(w.byId.get('daily')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
     expect(w.told).toEqual(['paused:daily'])
     expect(w.byId.get('daily')!.status).toBe('active')
     // it happened: nothing to undo, and the same opId again does nothing more
@@ -1012,6 +1033,8 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
   it('removing the only time ends the schedule and leaves the task open; with a wake-up left the schedule stays', async () => {
     const w = withEngine([scheduled('one', { crons: ['0 8 * * *'], time_zone: 'UTC' }), scheduled('wake', { crons: ['0 8 * * *'], at: '2026-11-20T08:00:00.000Z' })])
     await w.commands.submit({ opId: 'op-1', kind: 'remove_time', spaceId: 'main', taskId: 'one', cron: '0 8 * * *' })
+    expect(scheduleOf(w, 'one')).toBeUndefined()
+    expect(w.posts[0].body).toMatchObject({ schedule: null })
     expect(w.byId.get('one')!.properties.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
     expect(w.byId.get('one')!.status).toBe('active')
     expect(w.posts[0].body.text).toBe('The owner removed the repeating time "0 8 * * *". It was its only time: the task has no schedule any more and stays open.')
@@ -1078,5 +1101,222 @@ describe('the schedule\'s controls on the task: pause, resume, run now, remove o
     const commands = createTaskCommands(failing.deps)
     expect(await commands.submit({ opId: 'op-3', kind: 'pause_schedule', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: false, refusal: 'no_brain', message: expect.stringContaining('brain is down') })
     expect(failing.store.get('op-3')).toBeUndefined()
+  })
+})
+
+// Brain schema 25 (decision asks-and-check-backs-are-separate): a wake-up alone (an agent's check-back, a person's
+// reminder) is no routine. Looks good and Close close the task and end the wake-up with it; only repeating times
+// keep a task open.
+describe('a task with a wake-up alone', () => {
+  const WAKE = { at: '2026-11-21T09:00:00.000Z', why: 'Check the reply', by: 'atlas', by_session: 's1', time_zone: 'UTC' }
+  const ROUTINE = { crons: ['0 8 * * *'], at: '2026-11-21T09:00:00.000Z', by: 'atlas', time_zone: 'UTC' }
+  const review = { id: 's1', who: 'lasse', kind: 'review', why: 'Review: reply drafted', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
+  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const ending = (tasks: Task[], opts: Parameters<typeof world>[1] = {}) => {
+    const w = world(tasks, opts)
+    const ended: string[] = []
+    w.deps.endRecord = (_spaceId, taskId) => { ended.push(taskId) }
+    return { ...w, ended }
+  }
+
+  it('Looks good closes it and ends the wake-up: the schedule goes in the same write, the journal says whose check-back ended, and this cockpit\'s record ends', async () => {
+    const w = ending([owned('t1', { delegate: 'atlas', waits: [review], schedule: WAKE }, 'active'), owned('anon', { waits: [review], schedule: { at: WAKE.at } }, 'active'), owned('plain', { waits: [review] }, 'active')])
+    const r = await w.commands.submit({ opId: 'op-1', kind: 'review', spaceId: 'main', taskId: 't1' })
+    expect(r).toMatchObject({ ok: true, command: { state: 'pending' } })
+    expect(w.store.get('op-1')!.runOnly).toBeUndefined()
+    await w.commands.submit({ opId: 'op-2', kind: 'review', spaceId: 'main', taskId: 'anon' })
+    await w.commands.submit({ opId: 'op-3', kind: 'review', spaceId: 'main', taskId: 'plain' })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([
+      { path: '/task/t1/track', body: { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, schedule: null, text: 'Looks good: the owner reviewed the result and closed the task. The wake-up for 2026-11-21T09:00:00.000Z (atlas checks back) ends with it.' } },
+      // a wake-up nobody is named for
+      { path: '/task/anon/track', body: { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, schedule: null, text: 'Looks good: the owner reviewed the result and closed the task. The wake-up for 2026-11-21T09:00:00.000Z ends with it.' } },
+      // nothing scheduled: nothing ends with it
+      { path: '/task/plain/track', body: { status: 'resolved', outcome: 'Reviewed and closed by the owner', waits: null, text: 'Looks good: the owner reviewed the result and closed the task.' } },
+    ])
+    expect(w.byId.get('t1')!.status).toBe('resolved')
+    expect(w.byId.get('t1')!.properties.schedule).toBeUndefined()
+    expect(w.ended).toEqual(['t1', 'anon'])
+  })
+
+  it('Looks good on a routine approves that one run: the task, its repeating times and its wake-up stay, nothing ends', async () => {
+    const w = ending([owned('daily', { delegate: 'atlas', waits: [review, question], schedule: ROUTINE }, 'active')])
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'daily' })).toMatchObject({ ok: true, command: { runOnly: true } })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: { waits: [question], text: 'Run reviewed by the owner: looks good.' } }])
+    expect(w.byId.get('daily')!.status).toBe('active')
+    expect(w.byId.get('daily')!.properties.schedule).toEqual(ROUTINE)
+    expect(w.ended).toEqual([])
+  })
+
+  it('Close takes a task with a wake-up alone and ends the wake-up with it; with repeating times it is refused', async () => {
+    const w = ending([owned('once', { delegate: 'atlas', schedule: WAKE }, 'active'), owned('daily', { schedule: ROUTINE }, 'active'), owned('kept', { schedule: WAKE }, 'active')])
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'close', spaceId: 'main', taskId: 'daily' })).toEqual({ ok: false, refusal: 'scheduled', message: SCHEDULE_ON })
+    expect(await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'once' })).toMatchObject({ ok: true, command: { state: 'pending' } })
+    // undone inside the window: the wake-up stays and nothing ends
+    await w.commands.submit({ opId: 'op-2', kind: 'close', spaceId: 'main', taskId: 'kept' })
+    expect(await w.commands.undo('op-2')).toEqual({ ok: true })
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([{ path: '/task/once/track', body: {
+      status: 'invalidated', outcome: 'Closed by the owner on the task board', waits: null, schedule: null,
+      text: 'Closed on the task board by the owner: not needed. The wake-up for 2026-11-21T09:00:00.000Z (atlas checks back) ends with it.',
+    } }])
+    expect(w.byId.get('once')!.status).toBe('invalidated')
+    expect(w.byId.get('kept')!.properties.schedule).toEqual(WAKE)
+    expect(w.byId.get('daily')!.status).toBe('active')
+    expect(w.ended).toEqual(['once'])
+  })
+
+  it('a Close chosen on a lone wake-up fails when the task got repeating times inside the undo window', async () => {
+    const w = ending([owned('once', { schedule: WAKE }, 'active')])
+    await w.commands.submit({ opId: 'op-1', kind: 'close', spaceId: 'main', taskId: 'once' })
+    w.byId.get('once')!.properties.schedule = ROUTINE
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toEqual([])
+    expect(w.store.get('op-1')).toMatchObject({ state: 'failed', error: SCHEDULE_ON })
+    expect(w.ended).toEqual([])
+  })
+})
+
+// Done on a do wait ("Your move"): the owner did their step; the agent is woken at once, and there is no undo.
+describe('done on a do wait', () => {
+  const CHECK_BACK = { at: '2026-11-21T09:00:00.000Z', why: 'See whether it was signed', by: 'atlas', by_session: 's-ask', time_zone: 'UTC' }
+  const ask = { id: 'w-do', who: 'lasse', kind: 'do', why: 'Sign the contract', since: '2026-11-19T09:00:00.000Z', due: '2026-11-20T17:00:00.000Z', session_id: 's-ask' }
+  const reminder = { id: 'w-rem', who: 'lasse', kind: 'do', why: 'Call the bank', since: '2026-11-19T09:00:00.000Z' }
+  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const theirs = { id: 'w-kim', who: 'kim', kind: 'do', why: 'Send the invoice', since: '2026-11-19T09:00:00.000Z', session_id: 's-ask' }
+  const MESSAGE = 'lasse marked done: Sign the contract. See where the task stands and go on.'
+  const doneWorld = (tasks: Task[], opts: { takes?: string[]; newest?: string | null; starts?: string | null } = {}) => {
+    const w = world(tasks)
+    const tried: Array<{ sessionId: string; text: string }> = []
+    const started: Array<{ taskId: string; prompt: string }> = []
+    w.deps.newestSessionOn = () => opts.newest === undefined ? 's-newest' : opts.newest
+    w.deps.deliver = async (sessionId, text) => { tried.push({ sessionId, text }); return (opts.takes ?? ['s-ask', 's-newest']).includes(sessionId) }
+    w.deps.startOnTask = async (_space, taskId, prompt) => { started.push({ taskId, prompt }); return opts.starts === undefined ? 's-started' : opts.starts }
+    return { ...w, commands: createTaskCommands(w.deps), tried, started }
+  }
+  const done = (w: { commands: ReturnType<typeof createTaskCommands> }, taskId: string, waitId?: string, opId = `op-${taskId}-${waitId}`) =>
+    w.commands.submit({ opId, kind: 'done', spaceId: 'main', taskId, waitId })
+
+  it('takes off that do wait at once with "<who> marked done: <what>" and wakes the session that asked; the check-back and other waits stay, and there is no undo', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [question, ask], schedule: CHECK_BACK }, 'active')])
+    const r = await done(w, 't1', 'w-do', 'op-d')
+    expect(r).toMatchObject({ ok: true, command: { kind: 'done', state: 'applied', continued: { sessionId: 's-ask', how: 'delivered' } } })
+    if (!r.ok) throw new Error('refused')
+    expect(r.command.undoUntil).toBe(r.command.createdAt)
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: [question], text: 'lasse marked done: Sign the contract.' } }])
+    expect(w.byId.get('t1')!.properties.waits).toEqual([question])
+    // the task's check-back is not touched
+    expect(w.byId.get('t1')!.properties.schedule).toEqual(CHECK_BACK)
+    expect(w.byId.get('t1')!.status).toBe('active')
+    expect(w.tried).toEqual([{ sessionId: 's-ask', text: MESSAGE }])
+    expect(w.started).toEqual([])
+    expect(w.changed).toContain('main')
+    expect(await w.commands.undo('op-d')).toEqual({ ok: false, refusal: 'undo_expired' })
+    // the same opId again does nothing more, and nothing waits for the tick
+    expect(await done(w, 't1', 'w-do', 'op-d')).toEqual(r)
+    w.later(UNDO_WINDOW_MS + 1)
+    await w.commands.tick()
+    expect(w.posts).toHaveLength(1)
+    expect(w.tried).toHaveLength(1)
+    expect(w.commands.pending()).toEqual([])
+  })
+
+  it('falls back to the task\'s newest session when the asking one cannot take it, else starts one on the task', async () => {
+    const newest = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')], { takes: ['s-newest'] })
+    expect(await done(newest, 't1', 'w-do')).toMatchObject({ ok: true, command: { continued: { sessionId: 's-newest', how: 'delivered' } } })
+    expect(newest.tried.map((t) => t.sessionId)).toEqual(['s-ask', 's-newest'])
+    expect(newest.started).toEqual([])
+
+    // a do wait no session asked for, on a delegated task without a session: a new one starts with the text
+    const fresh = doneWorld([owned('t1', { delegate: 'atlas', waits: [reminder] }, 'active')], { newest: null })
+    expect(await done(fresh, 't1', 'w-rem')).toMatchObject({ ok: true, command: { continued: { sessionId: 's-started', how: 'started' } } })
+    expect(fresh.tried).toEqual([])
+    expect(fresh.started).toEqual([{ taskId: 't1', prompt: 'lasse marked done: Call the bank. See where the task stands and go on.' }])
+
+    // nobody could be woken: the wait is gone all the same, and the command says so
+    const none = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')], { takes: [], starts: null })
+    expect(await done(none, 't1', 'w-do')).toMatchObject({ ok: true, command: { state: 'applied', continued: { how: 'failed' } } })
+    expect(none.byId.get('t1')!.properties.waits).toBeUndefined()
+  })
+
+  it('a person\'s own reminder (no asking session) on a task nobody is delegated wakes nobody', async () => {
+    const w = doneWorld([owned('t1', { waits: [reminder] }, 'active')])
+    const r = await done(w, 't1', 'w-rem')
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied' } })
+    if (!r.ok) throw new Error('refused')
+    expect(r.command.continued).toBeUndefined()
+    expect(w.posts).toEqual([{ path: '/task/t1/track', body: { waits: null, text: 'lasse marked done: Call the bank.' } }])
+    expect(w.tried).toEqual([])
+    expect(w.started).toEqual([])
+  })
+
+  it('refuses a wait that is not open, not a do wait, someone else\'s, none named, and a closed or unknown task', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [question, theirs, ask] }, 'active'), owned('closed', { waits: [ask] }, 'resolved')])
+    const gone = { ok: false, refusal: 'unknown_wait', message: 'That step is not open on the task any more.' }
+    expect(await done(w, 't1', 'w-nope')).toEqual(gone)
+    expect(await done(w, 't1', 's2')).toEqual(gone)
+    expect(await done(w, 't1', 'w-kim')).toEqual(gone)
+    expect(await done(w, 't1')).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await done(w, 'closed', 'w-do')).toEqual({ ok: false, refusal: 'task_closed' })
+    expect(await done(w, 'nope', 'w-do')).toEqual({ ok: false, refusal: 'unknown_task' })
+    expect(w.posts).toEqual([])
+    expect(w.tried).toEqual([])
+    expect(w.store.commands()).toEqual([])
+    // done once, the same step again is refused: it is not open any more
+    expect(await done(w, 't1', 'w-do', 'op-first')).toMatchObject({ ok: true })
+    expect(await done(w, 't1', 'w-do', 'op-second')).toEqual(gone)
+  })
+})
+
+describe('the wake-up\'s controls on the task: remove and move it', () => {
+  const ROUTINE = { crons: ['0 8 * * *'], at: '2026-11-21T09:00:00.000Z', why: 'Check the reply', by: 'atlas', by_session: 's1', time_zone: 'UTC' }
+  const LONE = { at: '2026-11-21T09:00:00.000Z', time_zone: 'UTC' }
+  const control = (w: ReturnType<typeof world>, kind: 'remove_wake' | 'reschedule_wake', taskId: string, at?: string) =>
+    w.commands.submit({ opId: `op-${kind}-${taskId}-${at ?? ''}`, kind, spaceId: 'main', taskId, ...(at !== undefined ? { at } : {}) })
+
+  it('Remove takes off the wake-up at once and keeps the repeating times; a lone one leaves no schedule; no undo', async () => {
+    const w = world([owned('daily', { schedule: ROUTINE }, 'active'), owned('once', { schedule: LONE }, 'active')])
+    const r = await control(w, 'remove_wake', 'daily')
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied', undoUntil: new Date(w.clock.now).toISOString() } })
+    expect(w.posts[0]).toEqual({ path: '/task/daily/track', body: { schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' }, text: 'The owner removed the wake-up (atlas\'s check-back) for 2026-11-21T09:00:00.000Z.' } })
+    expect(w.byId.get('daily')!.status).toBe('active')
+    expect(await w.commands.undo('op-remove_wake-daily-')).toEqual({ ok: false, refusal: 'undo_expired' })
+    await control(w, 'remove_wake', 'once')
+    expect(w.posts[1]).toEqual({ path: '/task/once/track', body: { schedule: null, text: 'The owner removed the wake-up for 2026-11-21T09:00:00.000Z.' } })
+    expect(w.byId.get('once')!.properties.schedule).toBeUndefined()
+    expect(w.byId.get('once')!.status).toBe('active')
+  })
+
+  it('Move gives the wake-up a new time and keeps who it is for, its reason and its session', async () => {
+    const w = world([owned('daily', { schedule: ROUTINE }, 'active')])
+    expect(await control(w, 'reschedule_wake', 'daily', '2026-11-22T10:00:00Z')).toMatchObject({ ok: true, command: { state: 'applied' } })
+    expect(w.posts).toEqual([{ path: '/task/daily/track', body: {
+      schedule: { ...ROUTINE, at: '2026-11-22T10:00:00.000Z' },
+      text: 'The owner moved the wake-up (atlas\'s check-back) from 2026-11-21T09:00:00.000Z to 2026-11-22T10:00:00.000Z.',
+    } }])
+  })
+
+  it('refuses both without a wake-up, Move without a time or with one that has passed, and on another owner\'s or a closed task', async () => {
+    const w = world([
+      owned('crons', { schedule: { crons: ['0 8 * * *'], time_zone: 'UTC' } }, 'active'), owned('plain', {}, 'active'), owned('once', { schedule: LONE }, 'active'),
+      { id: 'theirs', status: 'active', properties: { assignee_ids: ['dominik'], schedule: LONE } }, owned('closed', { schedule: LONE }, 'resolved'),
+    ])
+    expect(await control(w, 'remove_wake', 'crons')).toEqual({ ok: false, refusal: 'not_scheduled', message: 'It has no wake-up.' })
+    expect(await control(w, 'remove_wake', 'plain')).toEqual({ ok: false, refusal: 'not_scheduled', message: 'It has no wake-up.' })
+    expect(await control(w, 'reschedule_wake', 'crons', '2026-11-22T10:00:00Z')).toEqual({ ok: false, refusal: 'not_scheduled', message: 'It has no wake-up to move.' })
+    expect(await control(w, 'reschedule_wake', 'once')).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await control(w, 'reschedule_wake', 'once', 'soon')).toMatchObject({ ok: false, refusal: 'invalid' })
+    expect(await control(w, 'reschedule_wake', 'once', '2026-11-19T09:00:00Z')).toEqual({ ok: false, refusal: 'invalid', message: 'That time has passed: pick one still to come.' })
+    for (const kind of ['remove_wake', 'reschedule_wake'] as const) {
+      expect(await control(w, kind, 'theirs', '2026-11-22T10:00:00Z')).toMatchObject({ ok: false, refusal: 'not_owner' })
+      expect(await control(w, kind, 'closed', '2026-11-22T10:00:00Z')).toMatchObject({ ok: false, refusal: 'task_closed' })
+    }
+    expect(w.posts).toEqual([])
+    expect(w.store.commands()).toEqual([])
   })
 })
