@@ -32,11 +32,11 @@ afterEach(() => {
 });
 
 describe('openLinkedSession', () => {
-  it('opens the session in its own space, with its project and view', async () => {
+  it('opens the session in its own space, with its project', async () => {
     await openLinkedSession('chat-in-other');
-    expect(openSession).toHaveBeenCalledWith('other-id', 'chat-in-other', { projectId: 'p1', chat: true });
+    expect(openSession).toHaveBeenCalledWith('other-id', 'chat-in-other', { projectId: 'p1' });
     await openLinkedSession('terminal-in-main');
-    expect(openSession).toHaveBeenLastCalledWith(null, 'terminal-in-main', { projectId: 'p2', chat: false });
+    expect(openSession).toHaveBeenLastCalledWith(null, 'terminal-in-main', { projectId: 'p2' });
   });
 
   it('opens nothing for a session the host no longer knows', async () => {
@@ -49,7 +49,7 @@ describe('usePushLinks', () => {
   it('opens the session the address names and takes it out of the address', async () => {
     window.history.replaceState(null, '', '/?session=chat-in-other&keep=1');
     renderHook(() => usePushLinks());
-    await waitFor(() => expect(openSession).toHaveBeenCalledWith('other-id', 'chat-in-other', { projectId: 'p1', chat: true }));
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith('other-id', 'chat-in-other', { projectId: 'p1' }));
     expect(window.location.search).toBe('?keep=1');
   });
 
@@ -58,6 +58,6 @@ describe('usePushLinks', () => {
     vi.stubGlobal('navigator', { ...navigator, serviceWorker: worker });
     renderHook(() => usePushLinks());
     worker.dispatchEvent(new MessageEvent('message', { data: { type: 'open-session', sessionId: 'terminal-in-main' } }));
-    await waitFor(() => expect(openSession).toHaveBeenCalledWith(null, 'terminal-in-main', { projectId: 'p2', chat: false }));
+    await waitFor(() => expect(openSession).toHaveBeenCalledWith(null, 'terminal-in-main', { projectId: 'p2' }));
   });
 });

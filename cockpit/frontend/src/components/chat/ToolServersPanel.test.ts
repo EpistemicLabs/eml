@@ -16,9 +16,9 @@ describe('shouldPoll', () => {
 
 describe('signInHint', () => {
   const all = { toggle: true, reconnect: true, signIn: true };
-  it('says where to sign in: here where the runtime can, else in the terminal; nothing when no server asks', () => {
+  it('says where to sign in: here where the runtime can, else that the chat cannot yet; nothing when no server asks', () => {
     expect(signInHint([server('connected')], all)).toBeNull();
     expect(signInHint([server('needs-auth')], all)).toMatch(/Sign in opens the server's own page/);
-    expect(signInHint([server('needs-auth')], { ...all, signIn: false })).toMatch(/run \/mcp/);
+    expect(signInHint([server('needs-auth')], { ...all, signIn: false })).toMatch(/cannot sign in to a server from the chat/);
   });
 });

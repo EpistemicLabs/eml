@@ -45,7 +45,6 @@ function SourceChatPanel({ chat }: { chat: SourceChat }) {
           sessionId={session.id}
           session={session}
           spaceId={space ? paneSpaceKey(space) : null}
-          borrowed
         />
       ) : (
         <p className="m-auto p-6 text-center text-body text-muted-foreground">{sessions ? 'This chat is no longer in the list.' : 'Loading the chat…'}</p>

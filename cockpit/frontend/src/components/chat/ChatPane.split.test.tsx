@@ -20,7 +20,7 @@ vi.mock('@/stores/useSpaceStore', () => ({ useSpaces: () => [] }));
 vi.mock('@/lib/task-board', () => ({ useTaskBoard: () => ({ data: undefined }), closeTask: vi.fn() }));
 vi.mock('@/lib/split', async (importActual) => ({ ...(await importActual<typeof import('@/lib/split')>()), undoSplit: split.undoSplit }));
 vi.mock('@/hooks/useCompactLayout', () => ({ useCompactLayout: () => false }));
-vi.mock('@/components/main-content/view/subcomponents/TerminalStatusBar', () => ({ default: () => null }));
+vi.mock('@/components/main-content/view/subcomponents/SessionStatusBar', () => ({ default: () => null }));
 vi.mock('./useChatSocket', () => {
   const noop = () => {};
   return { useChatSocket: () => ({ start: noop, send: () => true, interrupt: noop, answer: noop, setMode: () => true, setModel: () => true, setEffort: noop, stopAgent: noop, reconnect: noop, takeOver: noop, restart: noop, askToolServers: noop, changeToolServer: noop, finishToolServerSignIn: noop }) };
@@ -65,7 +65,7 @@ describe('a split in the chat pane', () => {
   it('routed to a session no pane shows: opens it in a new pane', async () => {
     panes.paneHoldingSession.mockReturnValue(undefined);
     splitOff({ sessionId: 's-holder', routed: true });
-    expect(panes.openInPane).toHaveBeenCalledWith({ surface: 'terminal', projectId: 'proj', sessionId: 's-holder' });
+    expect(panes.openInPane).toHaveBeenCalledWith({ surface: 'session', projectId: 'proj', sessionId: 's-holder' });
   });
 
   it('a split that started a session opens nothing itself (the queue opens it)', async () => {

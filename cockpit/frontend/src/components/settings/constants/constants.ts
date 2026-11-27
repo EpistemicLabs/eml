@@ -10,6 +10,7 @@ import {
   Puzzle,
   SlidersHorizontal,
   UserRound,
+  Wrench,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -82,6 +83,13 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
     keywords: 'data import export migrate settings sessions home folder config directory backups paths',
     icon: Database,
     blurb: 'Import & export: bring settings and sessions over from an existing setup, export them again.',
+  },
+  {
+    id: 'advanced',
+    label: 'Advanced',
+    keywords: 'advanced debug debugging terminal fallback pty console',
+    icon: Wrench,
+    blurb: 'Switches for debugging the cockpit, off by default.',
   },
   {
     id: 'about',

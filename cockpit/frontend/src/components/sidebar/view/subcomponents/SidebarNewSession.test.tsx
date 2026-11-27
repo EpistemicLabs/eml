@@ -52,7 +52,7 @@ describe('the sidebar\'s New session', () => {
     expect(picker.selectedOptions[0].textContent).toBe('Codex · default model');
     fireEvent.change(picker, { target: { value: (within(picker).getByRole('option', { name: 'Claude Code · Opus 5.5' }) as HTMLOptionElement).value } });
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    expect(fx.opened).toEqual([[null, expect.objectContaining({ surface: 'terminal', projectId: 'bp-cs', provider: 'claude', chat: true })]]);
+    expect(fx.opened).toEqual([[null, expect.objectContaining({ surface: 'session', projectId: 'bp-cs', provider: 'claude' })]]);
     expect(peekChatStart(fx.opened[0][1].sessionId as string)).toEqual({ provider: 'claude', prompt: null, model: 'opus' });
   });
 

@@ -1,6 +1,6 @@
 // The session's MCP servers: what is there, on/off, reconnect, sign in. Which of
 // these a session offers is its runtime's (capabilities.features): a control it
-// lacks is not shown. Without a sign-in here it stays in the terminal's /mcp.
+// lacks is not shown. Without a sign-in here the panel says so.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertTriangle, Check, CircleOff, ExternalLink, KeyRound, Loader2, Power, RefreshCw, RotateCcw, X } from 'lucide-react';
 
@@ -35,7 +35,7 @@ export function signInHint(servers: ToolServer[] | null, can: ToolServerControls
   if (!servers?.some((server) => server.status === 'needs-auth')) return null;
   return can.signIn
     ? 'Sign in opens the server\'s own page. The list updates once you are done there.'
-    : 'To sign in, switch this pane to the terminal and run /mcp.';
+    : 'This agent cannot sign in to a server from the chat yet.';
 }
 
 function statusOf(server: ToolServer): { label: string; icon: ReactNode } {

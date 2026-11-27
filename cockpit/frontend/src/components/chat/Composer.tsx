@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowUp, Brain, Check, ChevronDown, Cpu, Gauge, Loader2, Paperclip, Shield, Square, Terminal, Users, Workflow, X } from 'lucide-react';
 
-import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import { contextWindow, formatAge, formatTokens, modelLabel } from '@/components/main-content/view/subcomponents/SessionStatusBar';
 import { uploadPastedImage } from '@/components/shell/utils/hostChannel';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';

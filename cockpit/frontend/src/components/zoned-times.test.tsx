@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { setTimeZoneForTest } from '@/lib/time-zone';
 import { entryDate } from './engram-detail';
 import { formatWhen } from '@/lib/time-zone';
-import { formatClock } from './main-content/view/subcomponents/TerminalStatusBar';
+import { formatClock } from './main-content/view/subcomponents/SessionStatusBar';
 import { dayOf } from './task-board/InboxView';
 import { formatAt, shortAt } from './task-sections';
 

@@ -4,7 +4,7 @@
 // own (made once, reused), and the lead's pane is put there or found again.
 import { SPACE_HEADER } from '@/lib/space-header';
 import {
-  activateDesk, activatePane, addWorkerPane, ensureDeskBySlug, getActiveSpaceId, getDesks, newSessionView, removePane,
+  activateDesk, activatePane, addWorkerPane, ensureDeskBySlug, getActiveSpaceId, getDesks, removePane,
 } from '@/stores/usePaneStore';
 import { paneSpaceKey, switchSpace, type SpaceInfo } from '@/stores/useSpaceStore';
 import { setTopView } from '@/stores/useTopViewStore';
@@ -25,12 +25,11 @@ export function openCyclePlanner(space: SpaceInfo): Promise<string | null> {
 
 async function openLead(space: SpaceInfo, endpoint: string, askedProject: string | null, deskSlug: string, deskName: string): Promise<string | null> {
   if (paneSpaceKey(space) !== getActiveSpaceId()) switchSpace(space);
-  // A new lead opens where the user's new sessions open: in chat the host starts it, the pane only joins.
-  const chat = newSessionView() === 'chat';
+  // A new lead runs in the chat: the host starts it, the pane only joins. When it cannot start, the host says why.
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', [SPACE_HEADER]: space.id },
-    body: JSON.stringify({ ...(askedProject ? { projectId: askedProject } : {}), chat }),
+    body: JSON.stringify({ ...(askedProject ? { projectId: askedProject } : {}), chat: true }),
   }).catch(() => null);
   if (!res) return 'The cockpit did not answer.';
   const body = await res.json().catch(() => ({})) as Lead & { error?: { message?: string } };
@@ -50,11 +49,10 @@ async function openLead(space: SpaceInfo, endpoint: string, askedProject: string
   }
   // A desk made just now comes with a starter pane: the lead takes its place.
   const starter = !before.has(deskId) && desk?.panes.length === 1 ? desk.panes[0].id : null;
-  const inChat = body.runtime === 'sdk';
   addWorkerPane({
-    fromSessionId: null, projectId, title: body.title, deskId, sessionId: body.sessionId, inChat,
-    // In a terminal a new lead starts with its brief; one running already, or one in chat, only joins.
-    prompt: body.existing || inChat ? '' : body.prompt ?? '',
+    fromSessionId: null, projectId, title: body.title, deskId, sessionId: body.sessionId,
+    // One the host started or one running already only joins; one it left to the pane starts with its brief.
+    prompt: body.existing || body.runtime === 'sdk' ? '' : body.prompt ?? '',
   });
   if (starter) removePane(starter);
   activateDesk(deskId);

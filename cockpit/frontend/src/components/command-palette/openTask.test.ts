@@ -63,7 +63,7 @@ describe('opening a task from the desk', () => {
   it('opens a session that is not open in a new pane here; Undo closes the pane', async () => {
     const { result } = renderHook(() => useOpenTaskToast());
     await act(() => openTask(task, { kind: 'closed', sessionId: 's-old', projectId: 'p-ui', since: null }, { newDesk: false }));
-    expect(calls.log[0]).toEqual(['openInPane', { surface: 'terminal', projectId: 'p-ui', sessionId: 's-old' }]);
+    expect(calls.log[0]).toEqual(['openInPane', { surface: 'session', projectId: 'p-ui', sessionId: 's-old' }]);
     act(() => result.current[0]!.action!.run());
     expect(names()).toContain('removePane');
     expect(names()).not.toContain('removeDesk');

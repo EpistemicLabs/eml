@@ -9,13 +9,10 @@ import { hueOf, OPEN_STATUSES, taskName, TURN_META, type Board, type BoardTask, 
 import type { Hue } from '@/shared/view/ui/hue';
 import type { AllSession } from '@/components/sidebar/allSessions';
 
-export type SessionView = 'chat' | 'terminal';
-
 /** A pane of the desk that shows a session, in the desk's order. */
 export interface DeskSession {
   sessionId: string;
   paneId: string;
-  view: SessionView;
 }
 
 /** A cockpit project, to name a section and a task of another project. */
@@ -38,7 +35,6 @@ export interface SessionLeaf {
   spaceId: string;
   projectId: string | null;
   title: string;
-  view: SessionView;
   /** In a pane of this desk. */
   open: boolean;
   /** In the desk's active pane. */
@@ -91,8 +87,6 @@ export interface TreeInput {
   doneLimit?(sectionKey: string): number;
   /** Every open task of the desk's projects, with all their sessions; off, only what leads to a desk session. */
   allTasks: boolean;
-  /** The view a session not on the desk opens in. */
-  viewOf(sessionId: string): SessionView;
   /** A session's own state, for trees without tasks. */
   stateOfSession(session: AllSession): NodeState;
 }
@@ -175,7 +169,6 @@ export function buildTaskTree(input: TreeInput): TreeSection[] {
       spaceId: s.spaceId,
       projectId: s.projectId ?? null,
       title: s.summary || 'Untitled session',
-      view: onDesk?.view ?? input.viewOf(s.id),
       open: Boolean(onDesk),
       current: s.id === input.activeSessionId,
     };

@@ -1,10 +1,7 @@
 // Settings › Preferences: the user's personal setup, one section per area
 // (Appearance, Time, Sidebar, Sessions, Notifications).
-import { useSyncExternalStore } from 'react';
-
 import { Select, Switch, ThemeModeSelector } from '@/shared/view/ui';
 import { setTasksCardPlace, setTasksCardShown, useTasksCard } from '@/stores/useTasksCardStore';
-import { readSettings, subscribeSettings, writeSettings } from '../../utils/settingsStorage';
 import type { ProjectSortOrder } from '../../types/types';
 import SettingsCard from '../SettingsCard';
 import SettingsRow from '../SettingsRow';
@@ -28,7 +25,6 @@ export default function PreferencesTab({
   greetOnStart,
   onGreetOnStartChange,
 }: PreferencesTabProps) {
-  const chatOverride = useSyncExternalStore(subscribeSettings, () => readSettings().chatOverride);
   const tasksCard = useTasksCard();
   return (
     <div className="space-y-8">
@@ -93,21 +89,6 @@ export default function PreferencesTab({
               onChange={onGreetOnStartChange}
               ariaLabel="Greeting at session start"
             />
-          </SettingsRow>
-          <SettingsRow
-            label="Open sessions in"
-            description='Where Claude sessions open in this browser, unless you picked the view for that session. "As the cockpit" follows Settings › Models › Chat view. A turn running in the terminal is not interrupted.'
-          >
-            <Select
-              value={chatOverride === undefined ? 'cockpit' : chatOverride ? 'chat' : 'terminal'}
-              onChange={(event) => writeSettings({ chatOverride: event.target.value === 'cockpit' ? null : event.target.value === 'chat' })}
-              className="w-36"
-              aria-label="Open sessions in"
-            >
-              <option value="cockpit">As the cockpit</option>
-              <option value="chat">Chat</option>
-              <option value="terminal">Terminal</option>
-            </Select>
           </SettingsRow>
           <SessionLimitsRows />
         </SettingsCard>

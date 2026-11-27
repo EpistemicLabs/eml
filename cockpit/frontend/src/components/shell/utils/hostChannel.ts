@@ -36,7 +36,7 @@ export type ClientFrame =
 
 export type HostMessage =
   | { kind: 'output'; data: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
   | { kind: 'ignored' };
 
 /** Sends a frame if the socket is open; otherwise drops it. Returns whether it went out. */
@@ -84,10 +84,14 @@ export function decodeBinaryFrame(buffer: ArrayBuffer): string | null {
 export function parseTextFrame(raw: string): HostMessage {
   const msg: unknown = JSON.parse(raw);
   if (!msg || typeof msg !== 'object') return { kind: 'ignored' };
-  const { type, data, message } = msg as { type?: unknown; data?: unknown; message?: unknown };
+  const { type, data, message, code } = msg as { type?: unknown; data?: unknown; message?: unknown; code?: unknown };
   if (type === 'output') return { kind: 'output', data: typeof data === 'string' ? data : '' };
   if (type === 'error') {
-    return { kind: 'error', message: typeof message === 'string' && message ? message : 'Shell error' };
+    return {
+      kind: 'error',
+      message: typeof message === 'string' && message ? message : 'Shell error',
+      ...(typeof code === 'string' && code ? { code } : {}),
+    };
   }
   return { kind: 'ignored' };
 }

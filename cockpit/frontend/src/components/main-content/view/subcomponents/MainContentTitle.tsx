@@ -32,7 +32,7 @@ type MainContentTitleProps = {
   /** The pane's session record from the host (null until it is listed). */
   selectedSession: ProjectSession | null;
   /**
-   * Pane-local fallback label (e.g. "Terminal 2") shown when the user hasn't
+   * Pane-local fallback label (e.g. "Chat 2") shown when the user hasn't
    * chosen a title. Distinguishes parallel panes.
    */
   paneLabel?: string | null;
@@ -115,7 +115,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
   // a listed session (the terminal ran and the host indexed it), push the
   // name to the session record so it also shows in the sidebar.
   useEffect(() => {
-    if ((pane?.paneView !== 'terminal' && pane?.paneView !== 'chat') || !selectedSession || !overrideTitle || selectedSession.taskId) return;
+    if (pane?.paneView !== 'chat' || !selectedSession || !overrideTitle || selectedSession.taskId) return;
     if (getStoredSessionName(selectedSession) === overrideTitle) return;
     const key = `${selectedSession.id}:${overrideTitle}`;
     if (promotedRef.current === key) return;
@@ -148,9 +148,10 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
     : selectedProject?.displayName ?? '';
 
   // Which agent CLI the pane's session runs with: what the host recorded, else
-  // what the pane will start with. Shown once there is more than one to tell apart.
+  // what the pane will start with. Shown in the terminal fallback (the chat names its
+  // model below), once there is more than one to tell apart.
   const providers = useProviders().data ?? [];
-  const provider = pane?.paneView === 'terminal'
+  const provider = pane?.paneView === 'chat' && pane.terminalFallback
     ? selectedSession?.__provider ?? pane.provider ?? providers.find((p) => p.isDefault)?.id
     : undefined;
   const showProvider = Boolean(provider) && providers.filter((p) => p.version !== null).length > 1;
@@ -188,7 +189,7 @@ export default function MainContentTitle({ paneId, selectedProject, selectedSess
     // 2. Best-effort host rename when a session record may exist. A 404
     //    (session not spawned yet) is expected and swallowed — the promotion
     //    effect retries once the record appears.
-    if ((pane?.paneView === 'terminal' || pane?.paneView === 'chat') && sessionId) {
+    if (pane?.paneView === 'chat' && sessionId) {
       try {
         const response = await api.renameSession(sessionId, trimmed);
         if (response.ok) await refreshProjects();

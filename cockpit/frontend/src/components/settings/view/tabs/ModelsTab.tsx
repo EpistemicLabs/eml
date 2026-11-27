@@ -65,8 +65,8 @@ export default function ModelsTab({ onCloseSettings }: { onCloseSettings?: () =>
             ariaLabel="Provider settings"
           />
           <div className="space-y-8 rounded-xl rounded-tl-none border border-border bg-card p-4">
-            {claude && <ClaudeSettings claude={claude} onCloseSettings={onCloseSettings} />}
-            {codex && <CodexSettings codex={codex} onCloseSettings={onCloseSettings} />}
+            {claude && <ClaudeSettings claude={claude} />}
+            {codex && <CodexSettings codex={codex} />}
             {qwen && <QwenSettings qwen={qwen} />}
           </div>
         </div>

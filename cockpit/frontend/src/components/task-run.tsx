@@ -4,7 +4,7 @@
 // picks; its first message names the task. The host ledger records the task id,
 // so a running run shows here and a task has at most one run.
 import { useMemo, useRef, useState } from "react";
-import { Play, SquareTerminal } from "lucide-react";
+import { MessageSquare, Play } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
 import { useActiveSpace } from "@/stores/useSpaceStore";
 import { newOpId, startTaskSession } from "@/lib/task-board";
@@ -95,12 +95,12 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
           <button
             type="button"
             onClick={() => {
-              openInPane({ surface: "terminal", projectId: run.project.projectId, sessionId: run.session.id });
+              openInPane({ surface: "session", projectId: run.project.projectId, sessionId: run.session.id });
               onStarted?.();
             }}
             className={cn(BUTTON, "shrink-0 gap-1.5 px-3 text-ui")}
           >
-            <SquareTerminal aria-hidden className="size-3.5" />
+            <MessageSquare aria-hidden className="size-3.5" />
             Open run
           </button>
         </div>
@@ -142,8 +142,8 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
       const desk = getDesks().find((s) => s.id === target);
       if (desk && desk.panes.length === 1 && isEmptyPane(desk.panes[0])) emptyPaneId = desk.panes[0].id;
     }
-    // The host starts it with the task bound (in chat when that is the user's view); an older host can't, so
-    // then the pane starts it in the terminal.
+    // The host starts it with the task bound, in the chat; an older host can't, so then the pane starts the chat
+    // with the prompt.
     const prompt = runPrompt(engram, extra);
     // In a new desk the starter pane makes way only for a pane opened here; the host's pane arrives a moment later
     // next to it, and removing the desk's only pane first would leave no desk to open it on.

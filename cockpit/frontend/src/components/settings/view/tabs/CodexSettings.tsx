@@ -50,13 +50,12 @@ const EFFORTS: ReadonlyArray<{ value: string; label: string; description: string
   { value: 'xhigh', label: 'Extra high', description: 'Extra high — the most depth most models offer; slowest, and uses the most of your limits.' },
 ];
 
-export default function CodexSettings({ codex }: { codex: AgentProviderInfo; onCloseSettings?: () => void }) {
+export default function CodexSettings({ codex }: { codex: AgentProviderInfo }) {
   const setSettings = useSetProviderSettings('codex');
   const mode: CodexPermissionMode =
     PERMISSION_MODES.find((option) => option.value === codex.settings?.permissionMode)?.value ?? 'auto';
   const sandboxed = mode !== 'off';
   const network = codex.settings?.sandboxNetwork === true;
-  const chatView = codex.settings?.chatView === true;
   const effort = EFFORTS.find((option) => option.value === codex.settings?.reasoningEffort) ?? EFFORTS[0];
 
   if (!codex.version) {
@@ -129,23 +128,8 @@ export default function CodexSettings({ codex }: { codex: AgentProviderInfo; onC
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Chat view (beta)" description="Run Codex sessions in the chat view, next to the terminal. Applies to sessions opened from now on.">
+      <SettingsSection title="Chat" description="How a Codex session thinks in the chat. Applies to sessions opened from now on.">
         <SettingsCard divided>
-          <SettingsRow
-            label="Codex in the chat view"
-            description={
-              chatView
-                ? 'On — a Codex session can open in the chat view, workers run there, and other sessions can send it messages.'
-                : 'Off — Codex sessions run in the terminal only.'
-            }
-          >
-            <Switch
-              checked={chatView}
-              onChange={(checked: boolean) => setSettings.mutate({ chatView: checked })}
-              ariaLabel="Codex in the chat view"
-              disabled={setSettings.isPending}
-            />
-          </SettingsRow>
           <SettingsRow
             label="Reasoning effort"
             description={`${effort.description} What a chat session starts with; it can choose its own next to the model.`}
@@ -155,7 +139,7 @@ export default function CodexSettings({ codex }: { codex: AgentProviderInfo; onC
               options={EFFORTS}
               onChange={(value) => setSettings.mutate({ reasoningEffort: value })}
               ariaLabel="Codex reasoning effort"
-              disabled={setSettings.isPending || !chatView}
+              disabled={setSettings.isPending}
             />
           </SettingsRow>
         </SettingsCard>

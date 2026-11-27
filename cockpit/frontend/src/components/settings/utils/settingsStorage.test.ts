@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Where a new Claude session opens: this browser's own choice, else the
-// cockpit's chat view switch (Settings › Models).
+// Sessions open in the chat only: a view choice an earlier version stored goes.
 
 const storage = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -11,40 +10,27 @@ vi.stubGlobal('localStorage', {
 });
 vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true });
 
-describe('the chat view setting', () => {
-  let settings: typeof import('./settingsStorage');
-
-  beforeEach(async () => {
-    vi.resetModules();
-    storage.clear();
-    settings = await import('./settingsStorage');
-  });
-
+describe('cockpit settings', () => {
   const stored = () => JSON.parse(storage.get('cockpit-settings') ?? '{}') as Record<string, unknown>;
 
-  it('follows the cockpit while the browser has no choice of its own', () => {
-    expect(settings.readSettings().chatDefault).toBe(true);
-    settings.setHostChatView(false);
-    expect(settings.readSettings()).toMatchObject({ chatDefault: false, chatOverride: undefined });
+  beforeEach(() => {
+    vi.resetModules();
+    storage.clear();
   });
 
-  it("keeps the browser's choice over the cockpit's, until it goes back to the cockpit", () => {
-    settings.writeSettings({ chatOverride: true });
-    settings.setHostChatView(false);
-    expect(settings.readSettings()).toMatchObject({ chatDefault: true, chatOverride: true });
-    settings.writeSettings({ chatOverride: null });
-    expect(settings.readSettings()).toMatchObject({ chatDefault: false, chatOverride: undefined });
-    expect(stored()).not.toHaveProperty('chatDefault');
+  it('drops the view choice an earlier version stored, and keeps the rest', async () => {
+    storage.set('cockpit-settings', JSON.stringify({ chatDefault: false, greetOnStart: false }));
+    const settings = await import('./settingsStorage');
+    expect(stored()).toEqual({ greetOnStart: false });
+    expect(settings.readSettings()).toMatchObject({ greetOnStart: false });
+    expect(settings.readSettings()).not.toHaveProperty('chatDefault');
   });
 
-  it('stores no choice of view when another setting changes', () => {
+  it('writes a change next to what is stored', async () => {
+    const settings = await import('./settingsStorage');
     settings.writeSettings({ greetOnStart: false });
     expect(stored()).toMatchObject({ greetOnStart: false });
-    expect(stored()).not.toHaveProperty('chatDefault');
-  });
-
-  it('reads a choice stored by an earlier version as the browser\'s own', () => {
-    storage.set('cockpit-settings', JSON.stringify({ chatDefault: false }));
-    expect(settings.readSettings()).toMatchObject({ chatDefault: false, chatOverride: false });
+    settings.writeSettings({ projectSortOrder: 'date' });
+    expect(settings.readSettings()).toMatchObject({ greetOnStart: false, projectSortOrder: 'date' });
   });
 });

@@ -17,6 +17,8 @@ interface TerminalPaneProps {
   spaceId?: string | null;
   /** 'shell': the Shell plugin's terminal (sessionId is its shell id). */
   kind?: 'session' | 'shell';
+  /** An agent session's terminal (the terminal fallback): the host refused it, since the fallback is off. */
+  onFallbackOff?: (message: string) => void;
 }
 
 export default function TerminalPane({ sessionTitle, ...runtimeOptions }: TerminalPaneProps) {

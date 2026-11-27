@@ -13,7 +13,7 @@ export async function openLinkedSession(sessionId: string): Promise<void> {
   if (!session) return;
   const spaces = getSpaces().length > 0 ? getSpaces() : await loadSpaces();
   const space = spaces.find((candidate) => candidate.id === session.spaceId);
-  openSession(space ? paneSpaceKey(space) : null, session.id, { projectId: typeof session.projectId === 'string' ? session.projectId : null, chat: session.runtime === 'sdk' });
+  openSession(space ? paneSpaceKey(space) : null, session.id, { projectId: typeof session.projectId === 'string' ? session.projectId : null });
 }
 
 /**

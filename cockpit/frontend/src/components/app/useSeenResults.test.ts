@@ -35,7 +35,7 @@ describe('sessionsToMarkSeen', () => {
 
 describe('sessionsInFront', () => {
   it('is the active pane\'s session, so a result in the pane beside it stays unseen', () => {
-    pane.active = { paneView: 'terminal', sessionId: 'a' };
+    pane.active = { paneView: 'chat', sessionId: 'a' };
     expect([...sessionsInFront()]).toEqual(['a']);
   });
 

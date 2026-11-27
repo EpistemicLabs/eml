@@ -27,8 +27,7 @@ async function setupNeeded(): Promise<boolean> {
 /**
  * Step 2 of the first run, in the real cockpit: right after the setup Claude
  * is not signed in yet (GET /api/setup → signIn). The card runs Claude Code's
- * own sign-in right here (AgentSignIn: a link, then the code the page shows);
- * a session with /login in a terminal is the way when that does not work. The
+ * own sign-in right here (AgentSignIn: a link, then the code the page shows). The
  * host opens the getting-started session once the sign-in is done
  * (onboarding.ts). The card
  * is the only way on: no shortcut past the onboarding (the setup-token stays
@@ -36,9 +35,6 @@ async function setupNeeded(): Promise<boolean> {
  */
 export function FirstRunSignIn() {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const { runtime, retry, failures } = useClaudeRuntime(open);
 
   useEffect(() => {
@@ -49,24 +45,6 @@ export function FirstRunSignIn() {
 
   if (!open) return null;
   const ready = runtime.version !== null;
-
-  // The way through a terminal: a session that starts with /login.
-  const signInInTerminal = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/agents/login/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: null }),
-      });
-      if (!response.ok) throw new Error();
-      setOpen(false);
-    } catch {
-      setError("Could not open the sign-in session. Try again.");
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="animate-fade-in fixed inset-0 z-(--z-modal) flex items-center justify-center bg-(--scrim) p-4">
@@ -90,7 +68,6 @@ export function FirstRunSignIn() {
               : "A one-time download of Claude Code into the cockpit, usually under a minute."}
           </p>
         )}
-        {error && <p className="text-ui text-stopped-ink">{error}</p>}
         {runtime.failed && failures >= 2 && (
           <div className="space-y-1.5 text-caption text-muted-foreground">
             <p>
@@ -117,17 +94,7 @@ export function FirstRunSignIn() {
             Try again
           </button>
         ) : ready ? (
-          <div className="space-y-3">
-            <AgentSignIn provider="claude" label="Sign in to Claude" wide onDone={() => setOpen(false)} />
-            <button
-              type="button"
-              onClick={() => void signInInTerminal()}
-              disabled={busy}
-              className="text-caption text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-(--focus-offset) focus-visible:outline-ring"
-            >
-              {busy ? "Opening…" : "Sign in in a terminal instead"}
-            </button>
-          </div>
+          <AgentSignIn provider="claude" label="Sign in to Claude" wide onDone={() => setOpen(false)} />
         ) : (
           <button type="button" disabled className={cn(PRIMARY, 'w-full')}>
             Downloading Claude Code to the cockpit…
@@ -270,7 +237,6 @@ function FirstRun() {
           Both names become fixed ids in your brains: yours marks what you wrote, your agent's names its own
           brain. How they're shown can be changed later.
         </p>
-        {error && <p className="text-ui text-stopped-ink">{error}</p>}
         <button
           type="submit"
           disabled={submitting || !userName.trim() || !agentName.trim()}

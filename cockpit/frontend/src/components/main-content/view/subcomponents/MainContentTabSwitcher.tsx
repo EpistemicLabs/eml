@@ -1,16 +1,18 @@
 // Adapted: the views come from lib/pane-views.ts, in two groups — the
-// session's (Terminal, Chat) and the plugins switched on; a group with none shows no pill.
+// session's (its chat) and the plugins switched on; a group with none shows no pill.
 // The "+" menu's sessions are the agent picker's (components/agent-picker): a new chat per agent and model.
+// The ··· menu holds the session's terminal fallback while it is on (lib/terminal-fallback.ts).
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
+import { PanelLeft, Plus, SquareTerminal, X, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { buttonVariants, LABEL, POPOVER, ROW, TAB, TRACK } from '@/shared/view/ui';
+import { buttonVariants, LABEL, Menu, POPOVER, ROW, TAB, TRACK } from '@/shared/view/ui';
 import Tooltip from '@/shared/view/ui/Tooltip';
 import { PANE_VIEW_DEFS, useViewEnabled, type PaneViewDef } from '@/lib/pane-views';
 import { useAgentChoice } from '@/components/agent-picker/AgentPicker';
-import { newSessionEntries, useProviders } from '@/lib/providers';
+import { newSessionLabel, useProviders } from '@/lib/providers';
+import { useTerminalFallback } from '@/lib/terminal-fallback';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { LLMProvider } from '@/types/app';
 
@@ -26,23 +28,24 @@ type MainContentTabSwitcherProps = {
   // because a session pane starts its agent the moment it mounts.
   // The sessions are a new chat per agent with a chat, and per model it offers;
   // `provider` and `model` are then the chosen ones (model null: the agent's default).
-  // Without any agent that has a chat, a session per ready agent CLI, as before.
-  onAddPane?: (view: PaneView, provider?: LLMProvider, model?: string | null) => void;
+  // An agent without a chat is offered only while the terminal fallback is on, and
+  // opens in it (`terminalFallback`).
+  onAddPane?: (view: PaneView, provider?: LLMProvider, model?: string | null, terminalFallback?: boolean) => void;
   // This pane is its desk's main pane; the toggle makes it one, or ends that.
   isMainPane?: boolean;
   onToggleMainPane?: () => void;
-  // A terminal/chat handoff is under way: why those two can't be switched now.
+  // A handoff of the session is under way: why its view can't be switched now.
   switchBlocked?: string | null;
-  // Which groups of views it offers: outside a pane only the session's own (terminal, chat).
+  // Which groups of views it offers: outside a pane none or only the session's own.
   groups?: ReadonlyArray<PaneViewDef['group']>;
+  // The session's terminal fallback, while it is on or the pane shows it: the ··· menu's one action.
+  fallback?: { label: string; run: () => void } | null;
 };
 
 const GROUPS = [
   { group: 'session', title: 'Sessions' },
   { group: 'plugin', title: 'Plugins' },
 ] as const;
-
-const TO_TERMINAL_HINT = 'Terminal: stops a running turn; background tasks and session grants do not carry over';
 
 /**
  * Apple-style toolbar: a Segmented Control for the pane's view mode
@@ -59,11 +62,13 @@ export default function MainContentTabSwitcher({
   onToggleMainPane,
   switchBlocked = null,
   groups = ['session', 'plugin'],
+  fallback = null,
 }: MainContentTabSwitcherProps) {
   const closeLabel = 'Close this pane';
   const addLabel = 'New pane next to this one';
   const [addOpen, setAddOpen] = useState(false);
-  const sessionEntries = newSessionEntries(useProviders().data ?? []);
+  const providers = useProviders().data ?? [];
+  const fallbackOn = useTerminalFallback();
   // A toolbar without "+" (a task's panel) offers no session: it asks for no model list.
   const agents = useAgentChoice({ models: !!onAddPane }).groups;
   const enabled = useViewEnabled();
@@ -71,10 +76,10 @@ export default function MainContentTabSwitcher({
   const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
   // The offered groups that still have a view switched on.
   const shown = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
-  type AddItem = { key: string; label: string; icon: LucideIcon | null; view: PaneView; provider?: LLMProvider; model?: string | null; note?: string | null };
+  type AddItem = { key: string; label: string; icon: LucideIcon | null; view: PaneView; provider?: LLMProvider; model?: string | null; note?: string | null; terminalFallback?: boolean };
   // Sessions: per agent with a chat a new chat with its default model, then one per model it
-  // offers, indented under it. Without such an agent, the entries from newSessionEntries, one per
-  // ready agent CLI, and the chat view's own.
+  // offers, indented under it. While the terminal fallback is on, an agent without a chat too,
+  // in the fallback terminal (none today).
   const chatIcon = PANE_VIEW_DEFS.find((mode) => mode.view === 'chat')?.icon ?? null;
   const agentItems: AddItem[] = agents.flatMap((agent) => agent.entries.map((entry, index): AddItem => ({
     key: `chat-${entry.value}`,
@@ -85,15 +90,17 @@ export default function MainContentTabSwitcher({
     model: entry.choice.model,
     note: index === 0 ? agent.note : null,
   })));
+  const fallbackItems: AddItem[] = fallbackOn
+    ? providers
+      .filter((provider) => provider.version !== null && provider.capabilities?.chat.supported === false)
+      .map((provider) => ({ key: `fallback-${provider.id}`, label: `${newSessionLabel(provider)} (terminal fallback)`, icon: SquareTerminal, view: 'chat', provider: provider.id, terminalFallback: true }))
+    : [];
   const addItems = (group: PaneViewDef['group']): AddItem[] =>
-    group === 'session' && agentItems.length > 0
-      ? agentItems
-      : modes.filter((mode) => mode.group === group).flatMap((mode): AddItem[] =>
-        mode.view === 'terminal'
-          ? sessionEntries.map(({ label, provider }) => ({
-              key: provider ? `terminal-${provider}` : 'terminal', label, icon: mode.icon, view: mode.view, provider,
-            }))
-          : [{ key: mode.view, label: mode.newLabel, icon: mode.icon, view: mode.view }]);
+    group === 'session'
+      ? [...agentItems, ...fallbackItems]
+      : modes.filter((mode) => mode.group === group).map((mode): AddItem => ({ key: mode.view, label: mode.newLabel, icon: mode.icon, view: mode.view }));
+  // The "+" menu leaves out a group with nothing to open (no agent with a chat set up).
+  const addGroups = shown.filter(({ group }) => addItems(group).length > 0);
   const addRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!addOpen) return;
@@ -119,7 +126,7 @@ export default function MainContentTabSwitcher({
               const isActive = paneView === mode.view;
               const blocked = !isActive && !!switchBlocked && mode.group === 'session';
               return (
-                <Tooltip key={mode.view} content={blocked ? switchBlocked : paneView === 'chat' && mode.view === 'terminal' ? TO_TERMINAL_HINT : mode.label} position="bottom">
+                <Tooltip key={mode.view} content={blocked ? switchBlocked : mode.label} position="bottom">
                   <button
                     type="button"
                     role="radio"
@@ -138,7 +145,15 @@ export default function MainContentTabSwitcher({
         ))}
       </div>}
 
-      {shown.length > 0 && (onAddPane || onClosePane || onToggleMainPane) && <div className="h-5 w-px bg-border" aria-hidden="true" />}
+      {shown.length > 0 && (onAddPane || onClosePane || onToggleMainPane || fallback) && <div className="h-5 w-px bg-border" aria-hidden="true" />}
+
+      {fallback && (
+        <Menu
+          label="More session actions"
+          className="size-(--size-tab) rounded-(--radius-tab)"
+          items={[{ label: fallback.label, icon: SquareTerminal, onSelect: fallback.run }]}
+        />
+      )}
 
       {onToggleMainPane && (
         <Tooltip content={isMainPane ? 'Main pane: back to the even grid (can then be closed)' : 'Make main pane'} position="bottom">
@@ -172,7 +187,7 @@ export default function MainContentTabSwitcher({
               role="menu"
               className={cn(POPOVER, 'absolute top-full right-0 mt-1 max-h-80 min-w-(--size-menu-min) overflow-y-auto')}
             >
-              {shown.map(({ group, title }, index) => (
+              {addGroups.map(({ group, title }, index) => (
                 <Fragment key={group}>
                   <div className={cn(LABEL, 'px-2 pb-0.5', index > 0 ? 'mt-1 border-t border-border pt-1.5' : 'pt-1')}>
                     {title}
@@ -182,7 +197,7 @@ export default function MainContentTabSwitcher({
                       key={item.key}
                       type="button"
                       role="menuitem"
-                      onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider, item.model); }}
+                      onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider, item.model, item.terminalFallback); }}
                       className={cn(ROW, 'py-1 whitespace-nowrap', !item.icon && 'pl-7.5 text-ui text-muted-foreground hover:text-foreground')}
                     >
                       {item.icon && <item.icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />}

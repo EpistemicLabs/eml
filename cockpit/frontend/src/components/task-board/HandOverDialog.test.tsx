@@ -38,7 +38,7 @@ describe('the hand-over dialog', () => {
     cleanup();
     open(task({ ownSession: { sessionId: 's1', continues: false, why: 'terminal' } }));
     expect(screen.queryByRole('button', { name: 'Start fresh' })).toBeNull();
-    expect(screen.getByText(/starts in a new session \(its session runs in a terminal\)/)).toBeTruthy();
+    expect(screen.getByText(/starts in a new session \(its session runs in the terminal fallback\)/)).toBeTruthy();
     cleanup();
     open(task({ ownSession: { sessionId: 's1', continues: false, why: 'long_context' } }));
     expect(screen.getByText(/starts in a new session \(its session is very long\)/)).toBeTruthy();

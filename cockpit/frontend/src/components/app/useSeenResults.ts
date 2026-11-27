@@ -49,7 +49,7 @@ export function shouldReport(facts: { lastInputAt: number; now: number }, report
 export function sessionsInFront(): Set<string> {
   if (getTopView() !== 'desks') return new Set();
   const pane = paneStore.getActivePane();
-  return new Set(pane && (pane.paneView === 'chat' || pane.paneView === 'terminal') && pane.sessionId ? [pane.sessionId] : []);
+  return new Set(pane && pane.paneView === 'chat' && pane.sessionId ? [pane.sessionId] : []);
 }
 
 export function useSeenResults(): void {

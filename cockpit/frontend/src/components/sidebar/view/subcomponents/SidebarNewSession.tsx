@@ -101,8 +101,8 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
         // A new chat of the chosen agent: its id minted here, so its model waits for the chat's socket.
         const sessionId = newCliSessionId();
         queueChatStart(sessionId, { provider: choice.provider, prompt: null, model: choice.model });
-        openSessionInSpace(key, { surface: 'terminal', projectId, sessionId, provider: choice.provider as LLMProvider, chat: true });
-      } else openSessionInSpace(key, { surface: 'terminal', projectId });
+        openSessionInSpace(key, { surface: 'session', projectId, sessionId, provider: choice.provider as LLMProvider });
+      } else openSessionInSpace(key, { surface: 'session', projectId });
       close();
       return;
     }
@@ -118,7 +118,7 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
         onError(body?.error?.message ?? 'The session could not start.');
         return;
       }
-      if (!background) openSessionInSpace(key, { surface: 'terminal', projectId, sessionId: body.id, chat: true });
+      if (!background) openSessionInSpace(key, { surface: 'session', projectId, sessionId: body.id });
       window.dispatchEvent(new CustomEvent(SESSIONS_CHANGED_EVENT));
       close();
     } catch {

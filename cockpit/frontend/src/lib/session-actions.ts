@@ -17,7 +17,7 @@ async function post(sessionId: string, action: string, body?: unknown): Promise<
     window.dispatchEvent(new CustomEvent(SESSIONS_CHANGED_EVENT));
     if (response.ok) return null;
     const answer = (await response.json().catch(() => null)) as { outcome?: string; error?: { message?: string } } | null;
-    if (answer?.outcome === 'busy') return 'That session runs in a terminal. Open it to answer there.';
+    if (answer?.outcome === 'busy') return 'That session is busy (it may be open in the terminal fallback). Open it to answer there.';
     if (answer?.outcome) return 'That session cannot take a message from here. Open it to answer there.';
     return answer?.error?.message ?? FALLBACK;
   } catch {
