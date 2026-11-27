@@ -27,6 +27,7 @@
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
+import { spawnAnswerLines, type SpawnAnswer } from './spawn-answer.js'
 
 const CLI = 'cockpit-spawn'
 
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
   }
   if (!prompt?.trim()) fail(CLI, '--prompt-file or --prompt is required')
 
-  const answer = await requestHost<{ id?: string; projectId?: string; address?: string; taskId?: string; routed?: boolean }>(CLI, { method: 'POST', path: '/api/spawn' }, {
+  const answer = await requestHost<SpawnAnswer>(CLI, { method: 'POST', path: '/api/spawn' }, {
     project,
     prompt,
     title: arg('title'),
@@ -63,16 +64,7 @@ async function main(): Promise<void> {
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
-  if (answer.body.routed) {
-    process.stdout.write(`No worker started: task ${answer.body.taskId} already has its session ${answer.body.id}, and a task has one session at a time. Your prompt went to that session as a message.\n`)
-    if (answer.body.address) process.stdout.write(`Its address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
-    return
-  }
-  process.stdout.write(process.argv.includes('--open')
-    ? `Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds and it shows in the sidebar.\n`
-    : `Worker requested in project ${answer.body.projectId} — it runs without a pane and shows in the sidebar under this session. It starts as soon as the machine has room.\n`)
-  if (answer.body.address) process.stdout.write(`Worker address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
-  if (answer.body.taskId) process.stdout.write(`Its task: ${answer.body.taskId}\n`)
+  for (const line of spawnAnswerLines(answer.body, { open: process.argv.includes('--open') })) process.stdout.write(`${line}\n`)
 }
 
 void main()
