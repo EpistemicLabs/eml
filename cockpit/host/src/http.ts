@@ -49,6 +49,7 @@ import { applySessionHook } from './application/apply-session-hook.js'
 import { directoryQueryOf } from './application/session-tools.js'
 import { isProviderId, writeDefaultProvider } from './provider-settings.js'
 import { readLimits, writeLimits } from './session-limits.js'
+import { readTerminalFallback, writeTerminalFallback } from './terminal-fallback.js'
 // Settings › Models › Claude sign-in and About still speak Claude Code's own
 // shapes (login modes, its version); everything else about an agent CLI goes
 // through /api/providers.
@@ -67,7 +68,6 @@ import { projectKey, type TimeTracker } from './time-tracking.js'
 import { handlePluginsApi, mcpRelay, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
 import { OutsideServers } from './infrastructure/plugins/outside-servers.js'
 import { CLAUDE_BIN } from './infrastructure/providers/claude/runtime.js'
-import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
@@ -163,14 +163,8 @@ export interface HostDeps {
   timeZone?: () => string
   /** Weekly cycles (application/cycles.ts). */
   cycles?: Cycles
-  /** Task system: a terminal session's turn ended with this reply — the router and the runner take it (application/task-router.ts). */
-  turnEnded?: (sessionId: string, text: string) => void
   /** Task system: the user answered a session, or it was archived — its wait on the task is over. */
   answered?: (sessionId: string) => void
-  /** Task system: the user typed a prompt into a session's terminal — a closed task it works on reopens first. */
-  userWrote?: (sessionId: string) => void
-  /** A terminal session's user sent a prompt: a new turn starts, and an end_turn call of a turn that never ended goes (application/terminal-turns.ts). */
-  turnStarted?: (sessionId: string) => void
   /** Jobs and their runs (jobs-api.ts); absent: no scheduler. */
   jobs?: JobsApiDeps
   /** The task board and its commands (tasks-api.ts); absent: no task system. */
@@ -386,22 +380,20 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
 }
 
 /**
- * A new lead or planner: started here in the chat runtime when the page asks for chat (the user's new
- * sessions open there), the pane then only joins; else the page starts it in a terminal with the prompt.
+ * A new lead or planner: started here in the chat runtime, the pane then only joins. There is no terminal fallback:
+ * a start that fails answers 409 with why, and the lead is no longer expected (the next ask starts a new one).
  */
-function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string; chat: boolean }) {
-  const answer = { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId }
-  if (lead.chat) {
-    const problem = deps.chat.startWorker({
-      id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
-      createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
-    })
-    if (!problem) {
-      deps.bridge.ledger.claimLead(lead.sessionId)
-      return { ...answer, runtime: 'sdk' }
-    }
+function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string }): { status: number; payload: unknown } {
+  const problem = deps.chat.startWorker({
+    id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
+    createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
+  })
+  if (problem) {
+    deps.bridge.ledger.dropExpectedLead(lead.sessionId)
+    return { status: 409, payload: { error: { code: 'NOT_STARTED', message: `${lead.title} could not start: ${problem}` } } }
   }
-  return { ...answer, runtime: 'terminal', prompt: lead.prompt }
+  deps.bridge.ledger.claimLead(lead.sessionId)
+  return { status: 200, payload: { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId, runtime: 'sdk' } }
 }
 
 type LedgerEntry = ReturnType<PtyBridge['ledger']['list']>[number]
@@ -1009,12 +1001,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const current = deps.cycles.current()
       const key = `cycle:${current.id}`
       const existing = ledger.leadFor(key, current.id, space.ledgerKey)
-      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'sdk' }); return true }
       const sessionId = randomUUID()
       ledger.expectLead(sessionId, { projectId: key, day: current.id })
-      const body = await readJson(req)
       const prompt = plannerPrompt(current, deps.cycles.next(), cycleOf(new Date(), deps.timeZone?.() ?? 'UTC', -1))
-      json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt, chat: body.chat === true }))
+      const started = startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt })
+      json(res, started.status, started.payload)
       return true
     }
   }
@@ -1031,10 +1023,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const day = leadDay(new Date(), deps.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
     const name = project.customName ?? project.displayName
     const existing = ledger.leadFor(projectId, day, space.ledgerKey)
-    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'sdk' }); return true }
     const sessionId = randomUUID()
     ledger.expectLead(sessionId, { projectId, day })
-    json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day), chat: body.chat === true }))
+    const started = startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day) })
+    json(res, started.status, started.payload)
     return true
   }
 
@@ -1160,6 +1153,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       return true
     }
 
+    // Settings › Advanced › Terminal fallback (terminal-fallback.ts): whether an agent session may open in a terminal.
+    if (resource === 'terminal-fallback' && !id && method === 'GET') {
+      json(res, 200, readTerminalFallback())
+      return true
+    }
+    if (resource === 'terminal-fallback' && !id && method === 'PATCH') {
+      const result = writeTerminalFallback(await readJson(req))
+      if (typeof result === 'string') json(res, 400, { error: { code: 'INVALID_INPUT', message: result } })
+      else json(res, 200, result)
+      return true
+    }
+
     // Update banner (v0.14 Cluster 0): per brain the newest migration report,
     // and the in-app update this host runs. The page shows the active space's
     // brain; dismissing and revealing act on the requesting space's brain.
@@ -1226,19 +1231,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         json(res, 200, method === 'PUT' ? await checkForUpdate() : readAppUpdateStatus())
         return true
       }
-    }
-
-    // Claude sign-in (Settings › Models): mode (Claude Code login | setup-token),
-    // the account Claude Code reports, the optional token. The token is
-    // write-only from the browser: GET returns set/prefix, never the value.
-    // Settings › Models › Sign in: a session that starts with /login, in the
-    // active pane's project or the Getting started project (onboarding.ts).
-    if (resource === 'agents' && id === 'login' && parts[3] === 'session' && method === 'POST') {
-      const body = await readJson(req)
-      const requested = typeof body.projectId === 'string' ? body.projectId : null
-      const known = requested && (space.registry.get(requested) || brainIdFromProjectId(requested)) ? requested : null
-      json(res, 202, { id: queueSignInSession(space.registry, deps.spawns, known) })
-      return true
     }
 
     // Settings › Models: the agent CLIs sessions can run with — which one new
@@ -1308,6 +1300,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
     }
 
+    // Claude sign-in (Settings › Models): mode (Claude Code login | setup-token),
+    // the account Claude Code reports, the optional token. The token is
+    // write-only from the browser: GET returns set/prefix, never the value.
     if (resource === 'agents' && id === 'login' && !parts[3]) {
       if (method === 'GET') {
         if (url.searchParams.has('refresh')) invalidateAccountCache()
@@ -1315,7 +1310,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
         return true
       }
       if (method === 'PUT' || method === 'PATCH') {
-        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown; chatView?: unknown }
+        const body = (await readJson(req)) as { token?: unknown; mode?: unknown; permissionMode?: unknown }
         const error = method === 'PUT' ? writeClaudeLogin(body?.token) : writeAgentPatch(body)
         if (error) { json(res, 400, { error: { code: 'INVALID_INPUT', message: error } }); return true }
         invalidateAccountCache()
@@ -1345,10 +1340,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
           providers: deps.providers, ledger: deps.bridge.ledger, turns: deps.turns,
           waitsOnHelpers: (sessionId: string) => deps.chat.holdTurnOpen(sessionId),
           reportsTurns: (sessionId: string) => deps.chat.reportsTurns(sessionId),
-          ...(deps.turnEnded ? { turnDone: (sessionId: string, payload: Record<string, unknown>) => deps.turnEnded!(sessionId, deps.providers.forSession(sessionId).lastReply(payload)) } : {}),
-          ...(deps.answered ? { answered: deps.answered } : {}),
-          ...(deps.userWrote ? { userWrote: deps.userWrote } : {}),
-          ...(deps.turnStarted ? { turnStarted: deps.turnStarted } : {}),
         },
         typeof named === 'string' && named ? named : null,
         await readJson(req),
@@ -1532,15 +1523,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       // The session's own space, not the shown one: the All view acts on any space's sessions.
       const project = entry.projectId ? deps.spaces.resolve(entry.spaceId).registry.get(entry.projectId) : undefined
       json(res, 200, { success: true, session: sessionView(deps, project, { sessionId: id, ...entry }) })
-      return true
-    }
-    // The user closed a pane (×): a session kept running for Remote Control is
-    // no longer kept; like any detached session it ends after the timeout.
-    if (resource === 'sessions' && id && parts[3] === 'release' && method === 'POST') {
-      if (!deps.bridge.ledger.get(id)) { json(res, 404, { error: { code: 'NOT_FOUND', message: 'Session not found' } }); return true }
-      const body = await readJson(req)
-      const paneId = typeof body.paneId === 'string' && body.paneId ? body.paneId : null
-      json(res, 200, { success: true, released: deps.bridge.releasePane(id, paneId) })
       return true
     }
     if (resource === 'sessions' && id && method === 'DELETE') {

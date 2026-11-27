@@ -7,9 +7,9 @@ description: Schedule work for later in the EML cockpit — a repeating time ("e
 # schedule
 
 A schedule belongs to a task: repeating times and at most one wake-up. At
-the time the cockpit runs the task. A session in the chat view has this as
-the tool `mcp__cockpit__schedule`; use the tool when you have it. Without it
-(a terminal session, Codex) the same actions run through:
+the time the cockpit runs the task. A session in the chat has this as the
+tool `mcp__cockpit__schedule`; use the tool when you have it. Without it (a
+session in the terminal fallback) the same actions run through:
 
 ```bash
 node "$COCKPIT_SCHEDULE_JS" <action> [--field value …]

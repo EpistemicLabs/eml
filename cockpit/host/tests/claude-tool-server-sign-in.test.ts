@@ -62,7 +62,7 @@ function start(): { runtime: SessionRuntime; events: RuntimeEvent[] } {
   const events: RuntimeEvent[] = []
   const runtime = createClaudeSdkRuntimes().start({
     sessionId: 's1', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: {}, address: 'test',
-    launch: { bin: 'claude', args: [], env: {}, keepRunning: false },
+    launch: { bin: 'claude', args: [], env: {} },
     space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m', settings: '/s', emlConfig: '/e' } },
     onEvent: (event) => events.push(event),
   })
@@ -181,10 +181,11 @@ describe('signing in to a tool server in a Claude chat session', () => {
     await expect(runtime.signInToolServer('linear')).rejects.toThrow('no page to sign in on')
   })
 
-  it('points to the terminal where the CLI has no sign-in calls', async () => {
+  it('asks for an update where the CLI has no sign-in calls, and never sends the user to a terminal', async () => {
     sdk.withoutSignIn = true
     const { runtime } = start()
-    await expect(runtime.signInToolServer('linear')).rejects.toThrow('run /mcp')
+    await expect(runtime.signInToolServer('linear')).rejects.toThrow('Update it (Settings › Models › Claude Code › Check now)')
+    await expect(runtime.signInToolServer('linear')).rejects.not.toThrow('terminal')
   })
 
   it('stops looking when the session closes', async () => {

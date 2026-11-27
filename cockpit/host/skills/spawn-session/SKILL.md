@@ -100,7 +100,7 @@ say so instead of trying another way.
 
 Tell the user what the worker was asked to do and that its pane opened next to
 this one. With no cockpit tab open, the host starts it without a pane: it shows
-in the sidebar (and in the Claude app with Remote Control), and opening it there
+in the sidebar, and opening it there
 attaches to the running session. It keeps running while it works and stops after
 24 hours idle; a new worker waits while the machine has little free memory.
 Then keep working; don't wait for it.
@@ -131,5 +131,5 @@ With a worker address:
 - Its summary tells you it is done: check the result where it says, then tell
   your user.
 
-Without one (a worker that cannot be messaged, such as a Codex worker in a
-terminal), its results arrive through its own pane and the brain.
+Without one (a worker that cannot be messaged), its results arrive through its
+own pane and the brain.

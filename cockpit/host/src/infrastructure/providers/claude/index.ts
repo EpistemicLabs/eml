@@ -3,12 +3,11 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, ProviderCapabilities, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readChatView, readPermissionMode, readRemoteControl, readRenderer, sessionToken, writeChatView } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
 import { deleteTranscript, readSessionSummary } from './session-summary.js'
-import { lastReplyInTranscript } from './last-reply.js'
 import { createClaudeSdkRuntimes } from './sdk-runtime.js'
 import { ClaudeSignIn } from './sign-in.js'
 
@@ -57,7 +56,7 @@ class ClaudeProvider implements AgentProvider {
     chat: { supported: true },
     endTurnTool: { supported: true },
     messaging: { supported: true },
-    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+    terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in in the chat; in the terminal fallback they have none.' },
     // Its launch writes the profile's denied tools and MCP servers, which the Agent SDK takes as they are.
     toolLimits: { supported: true },
   }
@@ -85,12 +84,6 @@ class ClaudeProvider implements AgentProvider {
     signedIn: () => invalidateAccountCache(),
   })
 
-  /** The chat view switch, read by the browser at start for the view a new session opens in. */
-  readonly settings = {
-    read: () => ({ chatView: readChatView() }),
-    write: (patch: Record<string, unknown>) => (patch.chatView === undefined ? 'Nothing to change.' : writeChatView(patch.chatView)),
-  }
-
   /** The shared files; a space's mcp.json and settings.json are written by brain-space.ts (writeSpaceFiles). */
   prepare(ctx: IsolationContext): void {
     this.isolation = writeIsolationFiles(ctx.hookUrl, ctx.hookToken)
@@ -115,21 +108,12 @@ class ClaudeProvider implements AgentProvider {
     if (configDir) ensureProjectTrusted(projectPath, configDir)
   }
 
-  /** The chat runtime gets the launch's environment, setup-token included: a worker runs in chat in either sign-in mode. */
-  workerRunsInChat(): boolean {
-    return readChatView()
-  }
-
   launch(req: LaunchRequest): LaunchSpec {
     const runtime = req.space.runtime ?? null
     const problem = runtime?.problem('claude')
     if (problem) throw new Error(problem)
     const configDir = this.configDirFor(runtime)
     if (!configDir) throw new Error(`Agent "${runtime?.id}" has no config folder for Claude Code.`)
-    // Settings › Models: reachable from the Claude app. Not for unattended
-    // sessions (workers, task runs), which nobody drives from a phone — except
-    // a worker the host started without a pane, which the app is the way to follow.
-    const remoteControl = readRemoteControl() && (!req.unattended || req.reachable === true)
     const profile = req.toolProfile ?? null
     // A session's own mcp.json: when its profile limits the servers, or it is given extra ones.
     const extra = req.extraMcpServers && Object.keys(req.extraMcpServers).length > 0 ? req.extraMcpServers : null
@@ -153,9 +137,6 @@ class ClaudeProvider implements AgentProvider {
       // Permission mode: the user's choice (Settings › Models, default auto);
       // unattended sessions always auto.
       '--permission-mode', req.unattended ? 'auto' : readPermissionMode(),
-      // The flag takes an optional name, so it must not be the last argument
-      // before the initial prompt: the next one here is always an option.
-      ...(remoteControl ? ['--remote-control'] : []),
       // The address other sessions reach this one by (ListAgents / SendMessage) — not the sidebar title.
       '--name', req.address,
       // Claude Code adopts the cockpit's id (--session-id), so both ids are the same.
@@ -170,8 +151,6 @@ class ClaudeProvider implements AgentProvider {
     return {
       bin: CLAUDE_BIN,
       args,
-      // Driven from the Claude app too: it outlives the browser tab.
-      keepRunning: remoteControl,
       ...(chrome ? { chrome } : {}),
       ...(profile || limitedMcp ? { limits: { mcpConfig: limitedMcp, deniedTools: profile?.deniedTools ?? [] } } : {}),
       env: {
@@ -179,10 +158,9 @@ class ClaudeProvider implements AgentProvider {
         // The cockpit updates its own Claude Code (runtime.ts). Claude's own
         // updater would install a native copy into the user's ~/.local.
         DISABLE_AUTOUPDATER: '1',
-        // Settings › Models › Terminal: Claude Code's fullscreen renderer keeps
-        // the input pinned at the bottom of the pane. /tui cannot switch it
-        // inside a cockpit session (launch flags), so it is set at spawn.
-        ...(readRenderer() === 'fullscreen' ? { CLAUDE_CODE_NO_FLICKER: '1' } : {}),
+        // The terminal fallback: Claude Code's fullscreen renderer keeps the input
+        // pinned at the bottom of the pane (a launch setting, /tui cannot switch it).
+        CLAUDE_CODE_NO_FLICKER: '1',
         // `claude` typed inside a session is the cockpit's as well.
         PATH: [CLAUDE_BIN_DIR, process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: oauthToken } : {}),
@@ -237,12 +215,6 @@ class ClaudeProvider implements AgentProvider {
       }
       default: return null
     }
-  }
-
-  /** The Stop hook's last_assistant_message, else the last assistant text in the transcript it names. */
-  lastReply(payload: Record<string, unknown>): string {
-    if (typeof payload.last_assistant_message === 'string') return payload.last_assistant_message
-    return lastReplyInTranscript(payload.transcript_path)
   }
 
   summary(session: SessionRef): SessionSummary {

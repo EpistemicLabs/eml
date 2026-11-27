@@ -181,7 +181,7 @@ function started(harness: Harness, over: Partial<SessionRuntimeStart> = {}): { r
   const events: RuntimeEvent[] = []
   const runtime = harness.factory.start({
     sessionId: randomUUID(), resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: {}, address: 'session-address',
-    launch: { bin: 'agent', args: [], env: {}, keepRunning: false },
+    launch: { bin: 'agent', args: [], env: {} },
     space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m.json', settings: '/s.json', emlConfig: '/e' } },
     onEvent: (event) => events.push(event),
     ...over,

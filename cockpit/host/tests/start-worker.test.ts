@@ -1,76 +1,55 @@
 import { describe, expect, it } from 'vitest'
-import { MIN_FREE_MEMORY, StartWorker } from '../src/application/start-worker.js'
+import { MIN_FREE_MEMORY, StartWorker, TOOL_PROFILE_NEEDS_CHAT } from '../src/application/start-worker.js'
 import type { SpawnRequest } from '../src/domain/spawn-request.js'
 
 const request: SpawnRequest = { id: 'w1', projectId: 'p', prompt: 'do it', title: null, fromSessionId: 'requester', createdAt: '' }
 
 function setup(opts: { inChat?: boolean; chatProblem?: string; free?: number | null } = {}) {
   const started: string[] = []
+  const logged: string[] = []
   const worker = new StartWorker({
     chat: { startWorker: () => { started.push('chat'); return opts.chatProblem ?? null } },
-    terminal: { startWorker: () => { started.push('terminal'); return null } },
     runsInChat: () => opts.inChat !== false,
     freeMemory: () => (opts.free === undefined ? MIN_FREE_MEMORY : opts.free),
-    log: () => {},
+    log: (line) => logged.push(line),
   })
-  return { worker, started }
+  return { worker, started, logged }
 }
 
 describe('StartWorker', () => {
-  it('starts a pane worker in chat on the host', () => {
+  it('starts a worker in chat on the host, with a tab or without', () => {
     const { worker, started } = setup()
-    expect(worker.forPane(request)).toBe('sdk')
+    expect(worker.start(request)).toBeNull()
     expect(started).toEqual(['chat'])
   })
 
-  it('leaves a pane worker that cannot run in chat to the pane', () => {
-    const { worker, started } = setup({ inChat: false })
-    expect(worker.forPane(request)).toBe('terminal')
-    expect(started).toEqual([])
-  })
-
-  it('a chat start that fails leaves a pane worker to the pane', () => {
-    const { worker } = setup({ chatProblem: 'no' })
-    expect(worker.forPane(request)).toBe('terminal')
-  })
-
-  it('a session of the user\'s own on a task, or split off, opens in chat when chat is their view', () => {
+  it('starts every kind of request in chat: a session\'s worker, a job, a task run, a split, the host\'s own', () => {
     const { worker, started } = setup()
-    expect(worker.forPane({ ...request, fromSessionId: null, origin: 'task', taskId: 't1' })).toBe('sdk')
-    expect(worker.forPane({ ...request, origin: 'split' })).toBe('sdk')
-    expect(started).toEqual(['chat', 'chat'])
-    const terminal = setup({ inChat: false })
-    expect(terminal.worker.forPane({ ...request, fromSessionId: null, origin: 'task' })).toBe('terminal')
+    const kinds: SpawnRequest[] = [
+      request,
+      { ...request, fromSessionId: null, origin: 'job' },
+      { ...request, fromSessionId: null, origin: 'runner' },
+      { ...request, fromSessionId: null, origin: 'task', taskId: 't1' },
+      { ...request, origin: 'split' },
+      // Getting started, brain hygiene: no origin, no requester.
+      { ...request, fromSessionId: null },
+    ]
+    for (const kind of kinds) expect(worker.start(kind)).toBeNull()
+    expect(started).toEqual(kinds.map(() => 'chat'))
   })
 
-  it('the host\'s own requests stay in the terminal', () => {
-    const { worker, started } = setup()
-    expect(worker.forPane({ ...request, fromSessionId: null })).toBe('terminal')
-    expect(started).toEqual([])
+  it('a chat start that fails is refused with its reason and logged, never left to a terminal', () => {
+    const { worker, started, logged } = setup({ chatProblem: 'Claude Code is not signed in' })
+    expect(worker.start({ ...request, fromSessionId: null })).toBe('Claude Code is not signed in')
+    expect(started).toEqual(['chat'])
+    expect(logged).toEqual(['[worker] w1 could not start: Claude Code is not signed in'])
   })
 
-  it('runs a worker without a pane in chat, or else in the terminal', () => {
-    const chat = setup()
-    chat.worker.withoutPane(request)
-    expect(chat.started).toEqual(['chat'])
-    const terminal = setup({ inChat: false })
-    terminal.worker.withoutPane(request)
-    expect(terminal.started).toEqual(['terminal'])
-    const failed = setup({ chatProblem: 'no' })
-    failed.worker.withoutPane(request)
-    expect(failed.started).toEqual(['chat', 'terminal'])
-  })
-
-  it('a worker with a tool profile never falls back to the terminal', () => {
+  it('a worker with a tool profile its provider\'s chat cannot hold does not start', () => {
     const limited = { ...request, toolProfile: { deniedTools: ['Bash'], mcpServers: null } }
     const noChat = setup({ inChat: false })
-    expect(noChat.worker.forPane(limited)).toBeNull()
-    expect(noChat.worker.withoutPane(limited)).toBe('a tool profile needs the chat runtime')
+    expect(noChat.worker.start(limited)).toBe(TOOL_PROFILE_NEEDS_CHAT)
     expect(noChat.started).toEqual([])
-    const failed = setup({ chatProblem: 'no' })
-    expect(failed.worker.forPane(limited)).toBeNull()
-    expect(failed.worker.withoutPane(limited)).toBe('no')
-    expect(failed.started).toEqual(['chat', 'chat'])
   })
 
   it('has room above the memory floor, and where memory cannot be told', () => {
@@ -83,7 +62,7 @@ describe('StartWorker', () => {
     let quiet = false
     let stopped = 0
     const worker = new StartWorker({
-      chat: { startWorker: () => null }, terminal: { startWorker: () => null }, runsInChat: () => true,
+      chat: { startWorker: () => null }, runsInChat: () => true,
       freeMemory: () => null, log: () => {},
       atCap: () => true,
       makeRoom: () => { if (quiet) stopped += 1; return quiet },
@@ -97,7 +76,7 @@ describe('StartWorker', () => {
   it('makes no room while free memory is low: stopping a session would not be enough reason to start one', () => {
     let asked = 0
     const worker = new StartWorker({
-      chat: { startWorker: () => null }, terminal: { startWorker: () => null }, runsInChat: () => true,
+      chat: { startWorker: () => null }, runsInChat: () => true,
       freeMemory: () => MIN_FREE_MEMORY - 1, log: () => {},
       atCap: () => true, makeRoom: () => { asked += 1; return true },
     })

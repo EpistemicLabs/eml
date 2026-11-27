@@ -101,12 +101,6 @@ export interface LaunchRequest {
   initialPrompt: string | null
   /** Nobody is watching this session (a worker): it must not stop to ask for permission. */
   unattended: boolean
-  /**
-   * An unattended worker the host started without a pane (worker-start.ts): reachable
-   * from outside the cockpit (Claude Code: Remote Control) like an attended session,
-   * since that is the only way to follow it without a cockpit tab.
-   */
-  reachable?: boolean
   /** What the session may use. */
   toolProfile?: ToolProfile | null
   /** Browser control lent for now (a limited job's Chrome grant), whatever its space or limits say; a provider without it ignores it. */
@@ -120,12 +114,6 @@ export interface LaunchSpec {
   bin: string
   args: string[]
   env: Record<string, string>
-  /**
-   * The session is reachable outside the cockpit (Claude Code's Remote
-   * Control): it must keep running without a browser attached, and come back
-   * after a host restart, until the user closes it.
-   */
-  keepRunning: boolean
   /** It gets browser control (Claude in Chrome), for a runtime that doesn't use `args`. */
   chrome?: boolean
   /** The session's limits from its tool profile, for a runtime that doesn't use `args`. */
@@ -310,8 +298,8 @@ export interface AgentProvider {
   readonly adoptsSessionId: boolean
   /** What this provider's sessions can do; the host and the UI read it instead of asking which provider it is. */
   readonly capabilities: ProviderCapabilities
-  /** The provider's sessions in the chat view (`capabilities.chat`); absent for a provider without one. */
-  readonly chatRuntime?: SessionRuntimeFactory
+  /** The provider's sessions in the chat, where every session runs; a terminal is only the fallback (terminal-fallback.ts). */
+  readonly chatRuntime: SessionRuntimeFactory
   /**
    * The models a new chat of this provider can start with, asked without a session (the launchers' agent picker,
    * GET /api/providers/models). Resolves, never rejects: empty when it cannot say. Absent: the provider lists its
@@ -328,8 +316,6 @@ export interface AgentProvider {
   prepare(ctx: IsolationContext): void
   /** Let sessions open this folder without the provider's trust prompt. Idempotent. */
   trustProject(projectPath: string, space?: SessionSpace): void
-  /** Whether a worker of this space runs through the chat runtime rather than a terminal. */
-  workerRunsInChat(space: SessionSpace): boolean
   /**
    * Whether this one session can be handed a message, by where it ran last (the ledger's runtime; undefined: a
    * session not started yet). Absent: as `capabilities.messaging` says for every session of the provider.
@@ -342,8 +328,6 @@ export interface AgentProvider {
   resumeNotFound(earlyOutput: string): boolean
   /** Read a hook payload the provider's sessions posted; null when it means nothing to the host. */
   turnSignal(payload: Record<string, unknown>): TurnSignal | null
-  /** The last assistant reply of a turn, from the provider's Stop hook payload; empty when it has none. */
-  lastReply(payload: Record<string, unknown>): string
   summary(session: SessionRef): SessionSummary
   /** Delete the stored conversation (best-effort). */
   deleteTranscript(session: SessionRef): void

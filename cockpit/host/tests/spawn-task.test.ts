@@ -32,7 +32,7 @@ describe('spawning a worker with a task', () => {
     const spawns = new mods.SpawnQueue()
     const space = { main: true, id: 'main', registry: { get: (id: string) => (id.startsWith('bp-') || id === 'notes-folder' ? { projectId: id } : undefined), list: () => [] }, projects: { list: async () => [{ id: 'lohmann', name: 'Lohmann' }] } }
     const created: Array<{ title: string; content: string; scope: string }> = []
-    const provider = { id: 'claude', capabilities: { messaging: { supported: true } }, workerRunsInChat: () => true }
+    const provider = { id: 'claude', capabilities: { messaging: { supported: true } } }
     const deps = {
       ledger, spawns, spawnToken: 't', deliver: async () => 'delivered' as const,
       spaces: { resolve: () => space }, providers: { get: () => undefined, default: () => provider, all: () => [provider] },
@@ -92,7 +92,7 @@ describe('spawning a worker with a task', () => {
       const putAway: string[] = []
       let outcome = 'delivered'
       let tokens: number | null = 20_000
-      const provider = { id: 'claude', capabilities: { messaging: { supported: true } }, workerRunsInChat: () => true }
+      const provider = { id: 'claude', capabilities: { messaging: { supported: true } } }
       Object.assign(deps, {
         providers: { get: () => undefined, default: () => provider, all: () => [provider], forSession: () => provider },
         deliver: async (request: Record<string, unknown>) => { delivered.push(request); return outcome },
@@ -196,7 +196,7 @@ describe('spawning a worker with a task', () => {
       const started: string[] = []
       const handled = await mods.handleSpawnApi(
         { headers: {} } as never, {} as never,
-        { ...deps, stale: () => 'the owner works on the task now', outsideToken: 'o', workers: { hasRoom: () => true, forPane: (r: { id: string }) => { started.push(r.id); return 'sdk' } } } as never,
+        { ...deps, stale: () => 'the owner works on the task now', outsideToken: 'o', workers: { hasRoom: () => true, start: (r: { id: string }) => { started.push(r.id); return null } } } as never,
         `/api/spawns/${runner.id}/claim`, 'POST', (_res, status, payload) => answers.push([status, payload]), async () => ({}),
       )
       expect(handled).toBe(true)
@@ -204,6 +204,31 @@ describe('spawning a worker with a task', () => {
       expect((answers[0][1] as { error: { code: string } }).error.code).toBe('REVOKED')
       expect(started).toEqual([])
       expect(spawns.list()).toEqual([])
+    })
+
+    it('a tab\'s claim whose chat start fails answers with the reason, never a terminal', async () => {
+      const { spawns, deps } = held()
+      const request = spawns.add({ projectId: 'bp-eml', prompt: 'go', title: 'Getting started', fromSessionId: null })
+      const answers: Array<[number, unknown]> = []
+      await mods.handleSpawnApi(
+        { headers: {} } as never, {} as never,
+        { ...deps, outsideToken: 'o', workers: { hasRoom: () => true, start: () => 'Claude Code is not signed in' } } as never,
+        `/api/spawns/${request.id}/claim`, 'POST', (_res, status, payload) => answers.push([status, payload]), async () => ({}),
+      )
+      expect(answers).toEqual([[500, { error: { code: 'NOT_STARTED', message: 'Getting started could not start: Claude Code is not signed in' } }]])
+    })
+
+    it('a tab\'s claim that starts answers with the chat runtime', async () => {
+      const { spawns, deps } = held()
+      const request = spawns.add({ projectId: 'bp-eml', prompt: 'go', title: null, fromSessionId: null })
+      const answers: Array<[number, unknown]> = []
+      await mods.handleSpawnApi(
+        { headers: {} } as never, {} as never,
+        { ...deps, outsideToken: 'o', workers: { hasRoom: () => true, start: () => null } } as never,
+        `/api/spawns/${request.id}/claim`, 'POST', (_res, status, payload) => answers.push([status, payload]), async () => ({}),
+      )
+      expect(answers[0][0]).toBe(200)
+      expect(answers[0][1]).toMatchObject({ id: request.id, runtime: 'sdk' })
     })
   })
 })

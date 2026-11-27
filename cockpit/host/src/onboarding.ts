@@ -13,16 +13,16 @@ import type { SpawnQueue } from './spawn-queue.js'
  *
  * A fresh home is not signed in to Claude yet, and a first message would land
  * on "Not logged in". So the page first shows its sign-in card (GET
- * /api/setup → signIn; FirstRunSignIn), whose button opens a /login session
- * (queueSignInSession); the getting-started session is queued only once
- * Claude Code is installed and signed in. Onboarding counts as done once a tab
+ * /api/setup → signIn), which signs in without a session (the provider's
+ * signIn, Settings › Models); the getting-started session is queued only once
+ * Claude Code is installed and signed in. It runs in the chat like every
+ * session (application/start-worker.ts). Onboarding counts as done once a tab
  * has opened that session; until then (no tab yet, host restarted) it starts
  * over on the next start.
  */
 
 export const ONBOARDING_DIR = path.join(COCKPIT_HOME, 'getting-started')
 export const ONBOARDING_PROMPT = '/getting-started'
-export const LOGIN_PROMPT = '/login'
 const READY_POLL_MS = 3000
 
 export interface OnboardingDeps {
@@ -40,18 +40,8 @@ export function ensureOnboardingProject(projects: ProjectRegistry): string {
 }
 
 /**
- * A session that starts with Claude Code's own sign-in (/login) — Settings ›
- * Models › Sign in. Runs in `projectId` (the user's active project) or, without
- * one, in the Getting started project. It takes the place of an empty desk.
- */
-export function queueSignInSession(projects: ProjectRegistry, spawns: SpawnQueue, projectId: string | null): string {
-  const target = projectId ?? ensureOnboardingProject(projects)
-  return spawns.add({ projectId: target, prompt: LOGIN_PROMPT, title: 'Sign in to Claude', provider: 'claude', fromSessionId: null, placement: 'replace-empty-desk' }).id
-}
-
-/**
- * Queue the session once Claude is ready. The project is registered only then
- * (or by the sign-in session): until it exists the desk's first pane stays
+ * Queue the session once Claude is ready. The project is registered only then:
+ * until it exists the desk's first pane stays
  * empty, so the session can take its place. Returns a stop function.
  */
 export function startOnboarding(deps: OnboardingDeps): () => void {
@@ -64,11 +54,10 @@ export function startOnboarding(deps: OnboardingDeps): () => void {
       projectId: ensureOnboardingProject(deps.projects),
       prompt: ONBOARDING_PROMPT,
       title: 'Getting started',
-      // The first run is a Claude Code one: the sign-in step before it is
-      // Claude Code's /login, and its readiness check asks Claude Code.
+      // The first run is a Claude Code one: its readiness check asks Claude Code.
       provider: 'claude',
       fromSessionId: null,
-      // Instead of an empty desk; next to the sign-in session otherwise.
+      // Instead of an empty desk.
       placement: 'replace-empty-desk',
     })
     const onClaimed = (id: string) => {

@@ -31,8 +31,6 @@ export interface DeliverMessageDeps {
   canReceive(sessionId: string): boolean
   /** Its terminal process is alive: typing into a terminal mid-work isn't safe. */
   terminalRuns(sessionId: string): boolean
-  /** Stopped, it would resume in the chat: its provider's sessions run there now. */
-  runsInChat(sessionId: string): boolean
   chatRuns(sessionId: string): boolean
   /** Whether SendMessage gets from one to the other while both run: spaces with their own agent are apart. */
   sameReach(fromSessionId: string, sessionId: string): boolean
@@ -57,7 +55,6 @@ export async function deliverMessage(deps: DeliverMessageDeps, request: MessageR
   }
   if (!deps.canReceive(session.sessionId)) return 'refused'
   if (deps.terminalRuns(session.sessionId)) return 'busy'
-  if (!deps.chatRuns(session.sessionId) && !deps.runsInChat(session.sessionId)) return 'refused'
   const replyTool = deps.replyTool?.(session.sessionId) ?? 'SendMessage'
   return deps.deliver(session.sessionId, withSender(request, replyTool), request.reminder ? { reminder: true } : undefined)
 }

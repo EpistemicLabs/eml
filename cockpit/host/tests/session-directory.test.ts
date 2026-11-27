@@ -143,6 +143,7 @@ describe('the session directory endpoint', () => {
     ledger.recordSpawn('codex-chat', null, 'p1', 'codex')
     ledger.setRuntime('codex-chat', 'sdk')
     ledger.recordSpawn('codex-terminal', null, 'p1', 'codex')
+    ledger.setRuntime('codex-terminal', 'terminal')
     const space = (id: string, agentId: string | null) => ({
       id, name: id, main: id === 'main', agent: agentId ?? null, ledgerKey: id === 'main' ? null : id,
       url: 'http://127.0.0.1:1', token: 'secret',

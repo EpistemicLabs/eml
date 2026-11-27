@@ -79,7 +79,7 @@ function scriptedStream() {
 const flush = async () => { for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve)) }
 
 // A start request's launch and space, as the bridge passes them on. `limited`: the session has an MCP file of its own.
-const plainLaunch: LaunchSpec = { bin: 'claude', args: [], env: {}, keepRunning: false }
+const plainLaunch: LaunchSpec = { bin: 'claude', args: [], env: {} }
 const limitedLaunch: LaunchSpec = { ...plainLaunch, limits: { mcpConfig: '/m', deniedTools: [] } }
 const plainSpace: SessionSpace = { id: 'space', mcpToken: 't', files: { mcpConfig: '/m', settings: '/s', emlConfig: '/e' } }
 

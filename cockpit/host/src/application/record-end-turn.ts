@@ -6,9 +6,8 @@ import type { WakeSettled } from './turn-wake.js'
 /**
  * Records one end_turn call of a session (domain/turn-end.ts): reads it
  * against the session's turn context, refuses a time that has passed, keeps
- * it where the session's kind keeps what it said (a chat on its entry and in
- * the ledger, chat-bridge.ts; a terminal until its Stop hook,
- * terminal-turns.ts), brings the wake-up of the session's task in line with
+ * it where the chat keeps what a session said (on its entry and in the ledger,
+ * chat-bridge.ts; a terminal fallback session's is not kept), brings the wake-up of the session's task in line with
  * the call (application/turn-wake.ts) and says what the tool's answer has to name.
  */
 

@@ -10,7 +10,7 @@ process.env.EML_COCKPIT_HOME = home
 import { reminder } from '../src/domain/turn-end.js'
 
 type NextStep = typeof import('../src/application/next-step.js')
-const NEXT = reminder(['next'], { tool: false })
+const NEXT = reminder(['next'])
 type Ledger = typeof import('../src/session-ledger.js')['SessionLedger']
 
 const RUN = '2026-11-19T08:00:00.000Z'
@@ -349,7 +349,7 @@ describe('next-step check', () => {
     expect(brain.posts).toEqual([])
   })
 
-  it('tells a chat session to call and a terminal the way without the tool', async () => {
+  it('tells a chat session to call; an archived session gets nothing', async () => {
     const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } })
     ledger.recordSpawn('w1-20', null, 'bp-eml', 'claude', true, 't1')
     ledger.recordSpawn('w2-20', null, 'bp-eml', 'claude', true, 't1')
@@ -357,11 +357,9 @@ describe('next-step check', () => {
     ledger.archive('w2-20')
     await check.turnEnded('w1-20')
     expect(delivered).toEqual([`w1-20: ${reminder(['next'])}`])
-    expect(NEXT).not.toBe(reminder(['next']))
-    expect(NEXT).toContain('Handoff block')
   })
 
-  it('tells a chat session whose provider has no end_turn tool the way without it', async () => {
+  it('tells a chat session without the end_turn tool just what is missing: no Handoff block any more', async () => {
     const { ledger, check, delivered } = setup({ t1: { id: 't1', status: 'active', properties: { delegate: 'atlas' } } }, { tool: false })
     ledger.recordSpawn('w1-21', null, 'bp-eml', 'codex', true, 't1')
     ledger.setRuntime('w1-21', 'sdk')

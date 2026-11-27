@@ -16,6 +16,7 @@ import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry, defaultProviders } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
+import { readTerminalFallback } from './terminal-fallback.js'
 import { ReportedModels } from './reported-models.js'
 import { PtyBridge } from './pty-bridge.js'
 import { mcpRelay, onSignInRefused, pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
@@ -48,7 +49,6 @@ import { BrainSpaces, openBrainSpace, sessionSpaceOf, type BrainSpace } from './
 import { HOOKS_PATH, MCP_PATH, boundAgent, createBrainMcpHandler, sessionClient } from './brain-mcp.js'
 import { COCKPIT_MCP_PATH, COCKPIT_MCP_SERVER, createCockpitMcpHandler, notServed } from './cockpit-mcp.js'
 import type { RecordEndTurnDeps } from './application/record-end-turn.js'
-import { TerminalTurns, terminalTurnEnded } from './application/terminal-turns.js'
 import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
@@ -392,8 +392,6 @@ async function main() {
     },
     canReceive: (sessionId) => sessionMessaging(providers.forSession(sessionId), ledger.get(sessionId)).supported,
     terminalRuns: (sessionId) => bridge.isRunning(sessionId),
-    runsInChat: (sessionId) => providers.forSession(sessionId)
-      .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
     chatRuns: (sessionId) => chat.isRunning(sessionId),
     // A session that gets the cockpit's tools from its MCP server (Codex) answers with send_message from there.
     replyTool: (sessionId) => replyTool(providers.forSession(sessionId).capabilities.terminalTools.supported ? COCKPIT_MCP_SERVER : null),
@@ -564,7 +562,7 @@ async function main() {
   // Weekly cycles (application/cycles.ts): the week's subject, and what the last cycle left carried over.
   const cycles = createCycles({ spaces, log, me: owner, brain: (space) => taskBrain(space) as ReturnType<typeof sessionClient> | null, timeZone: () => userTimeZone() })
   // A turn ended: whose turn it is goes into the task, and a step it finished may let the next one start.
-  // `turn`: the end_turn call a chat session made and whether it was sent back already; a terminal's turn has neither.
+  // `turn`: the end_turn call a chat session made and whether it was sent back already.
   const turnEnded = (sessionId: string, text: string, turn?: TurnEndFacts) => {
     const endedAt = new Date().toISOString()
     // The run keeps the result of the session's last call or handoff (application/run-records.ts).
@@ -576,13 +574,9 @@ async function main() {
       .then(() => nextStep.turnEnded(sessionId, { endedAt, reminded: turn?.reminded ?? false })).then(() => taskRunner.tick())
       .then(() => taskBoard.refresh()).catch((err) => log(`[task] after turn: ${(err as Error).message}`))
   }
-  // What a terminal session said with end_turn, until its Stop hook ends the turn with it (application/terminal-turns.ts).
-  const terminalTurns = new TerminalTurns()
-  const terminalTurnDone = (sessionId: string, text: string) => terminalTurnEnded({ turns: terminalTurns, ledger, turnEnded }, sessionId, text)
-  // A session's terminal process ended, or the session was stopped, archived or deleted: what it said in a turn
-  // that never ended goes, and so do the MCP sessions its process held on the cockpit endpoint.
+  // A session's terminal process ended, or the session was stopped, archived or deleted: the MCP sessions its
+  // process held on the cockpit endpoint go.
   const sessionGone = (sessionId: string) => {
-    terminalTurns.forget(sessionId)
     void cockpitMcp.close(sessionId)
   }
   const sessionNamed = (sessionId: string, title: string) => {
@@ -612,6 +606,8 @@ async function main() {
     ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
     memory, sessionLimits: () => sessionLimits(readLimits()),
     onProcessEnd: (sessionId) => sessionGone(sessionId),
+    // An agent session opens in a terminal only while the user has the fallback on.
+    terminalFallback: () => readTerminalFallback().enabled,
     // The Shell plugin's terminal: while the plugin is on, on this machine, and remotely only after `eml-cockpit remote shell on`.
     shellRefusal: async (local) => {
       if (!(await pluginStates()).shell) return 'Shell is switched off (Settings › EML Plugins)'
@@ -696,8 +692,8 @@ async function main() {
     if (request.origin === 'split' || request.origin === 'task') ledger.expectOwn(request.id)
   })
   const startWorker = new StartWorker({
-    chat, terminal: bridge, log,
-    runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), sessionSpaceOf(spaces.resolve(request.spaceId ?? null)), request),
+    chat, log,
+    runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), request),
     freeMemory: () => platform.freeMemory(),
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),
@@ -1234,7 +1230,7 @@ async function main() {
   // The cockpit's own session tools for terminal sessions (cockpit-mcp.ts). Which providers' terminal sessions it
   // serves is theirs to say (capability terminalTools): the others are refused with the provider's reason.
   const cockpitMcp = createCockpitMcpHandler({
-    spaces, ledger, terminalTurns,
+    spaces, ledger,
     chatTurns: { said: (sessionId, turn) => chat.said(sessionId, turn) },
     served: (sessionId) => notServed(ledger.get(sessionId), providers.forSession(sessionId)),
     turnOf: (sessionId) => turnContexts.of(sessionId),
@@ -1253,7 +1249,7 @@ async function main() {
   })
 
   const hostDeps: HostDeps =
-    { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
+    { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, createTask, timeZone: () => userTimeZone(), cycles,
       taskLease: taskLease.spawn, spawnOperations, runOperations, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
@@ -1274,10 +1270,6 @@ async function main() {
   log(`cockpit: ${url}`)
   // The week's cycle in each space; checked hourly, the week turns at the user's midnight.
   cycles.every(60 * 60_000)
-  // Sessions kept running for Remote Control come back without a browser,
-  // once the host answers their hooks.
-  const kept = bridge.resumeKeptSessions()
-  if (kept > 0) log(`resumed ${kept} session(s) kept running for Remote Control`)
   // Workers a restart cut off mid-turn carry on, once the host answers their hooks.
   void recoverWorkers({
     interrupted: () => interruptedWorkers(ledger.list()),
@@ -1295,7 +1287,7 @@ async function main() {
   const workers = new WorkerStarter({
     spawns, log, stale: taskLease.spawn.stale,
     bridge: {
-      startWorker: (request) => startWorker.withoutPane(request),
+      startWorker: (request) => startWorker.start(request),
       hasRoom: () => startWorker.hasRoom(),
       sweepIdleWorkers: (quietMs, turnOf) => bridge.sweepIdleWorkers(quietMs, turnOf) + chat.sweepIdle(),
     },

@@ -27,7 +27,6 @@ export type LoginMode = 'login' | 'token'
  * by another session) always run in `auto`, whatever is set here.
  */
 export type PermissionMode = 'auto' | 'bypassPermissions'
-export type Renderer = 'default' | 'fullscreen'
 
 // setup-tokens are OAuth tokens (sk-ant-oat…). An API key (sk-ant-api…) would
 // bill the API instead of the subscription, so it is refused explicitly.
@@ -47,10 +46,6 @@ export interface ClaudeLoginStatus {
   /** The space's own agent keeps its own login: the setup-token mode does not reach its sessions. */
   ownLogin: boolean
   permissionMode: PermissionMode
-  renderer: Renderer
-  remoteControl: boolean
-  /** Claude sessions open in the chat view and workers run there; on unless turned off. */
-  chatView: boolean
   token: { set: boolean; prefix: string | null }
   account: ClaudeAccount | null
 }
@@ -122,35 +117,6 @@ export function markClaudeThemeMigrated(): void {
   writeAgentSettings({ claudeThemeAuto: true })
 }
 
-/**
- * Claude Code's renderer for cockpit sessions. `fullscreen` keeps the input
- * pinned at the bottom of the pane while the conversation scrolls above it,
- * and is what a cockpit starts with; `default` (switched off in Settings)
- * leaves the choice to Claude Code.
- */
-export function readRenderer(): Renderer {
-  return readAgentSettings().renderer === 'default' ? 'default' : 'fullscreen'
-}
-
-/**
- * The cockpit's chat view switch (Settings › Models): Claude sessions open in
- * the chat view, on every browser that has not chosen otherwise in
- * Preferences, and workers run in chat. On unless switched off.
- */
-export function readChatView(): boolean {
-  return readAgentSettings().chatView !== false
-}
-
-/**
- * Whether new cockpit sessions start with Claude Code's Remote Control, so
- * they show up in the Claude app (phone, claude.ai/code) and can be driven
- * from there. Off unless switched on in Settings › Models: the session is then
- * reachable through Anthropic's servers, not only through the cockpit.
- */
-export function readRemoteControl(): boolean {
-  return readAgentSettings().remoteControl === true
-}
-
 /** Returns an error message for the UI, or null on success. */
 export function writeLoginMode(raw: unknown): string | null {
   if (raw !== 'login' && raw !== 'token') return 'Unknown sign-in mode.'
@@ -166,51 +132,16 @@ export function writePermissionMode(raw: unknown): string | null {
   return null
 }
 
-/** Returns an error message for the UI, or null on success. */
-export function writeRenderer(raw: unknown): string | null {
-  if (raw !== 'default' && raw !== 'fullscreen') return 'Unknown renderer.'
-  writeAgentSettings({ renderer: raw })
-  return null
-}
+export interface AgentPatch { mode?: unknown; permissionMode?: unknown }
 
-/** Returns an error message for the UI, or null on success. */
-export function writeRemoteControl(raw: unknown): string | null {
-  if (typeof raw !== 'boolean') return 'Remote Control is on or off.'
-  writeAgentSettings({ remoteControl: raw })
-  return null
-}
-
-/** Returns an error message for the UI, or null on success. */
-export function writeChatView(raw: unknown): string | null {
-  if (typeof raw !== 'boolean') return 'The chat view is on or off.'
-  writeAgentSettings({ chatView: raw })
-  return null
-}
-
-export interface AgentPatch { mode?: unknown; permissionMode?: unknown; renderer?: unknown; remoteControl?: unknown; chatView?: unknown }
-
-/** PATCH body of /api/agents/login: { mode?, permissionMode?, renderer?, remoteControl?, chatView? }. */
+/** PATCH body of /api/agents/login: { mode?, permissionMode? }. Stored keys of settings that are gone (chatView, renderer, remoteControl) are ignored. */
 export function writeAgentPatch(body: AgentPatch | null): string | null {
-  if (body?.mode === undefined && body?.permissionMode === undefined && body?.renderer === undefined && body?.remoteControl === undefined && body?.chatView === undefined) {
-    return 'Nothing to change.'
-  }
+  if (body?.mode === undefined && body?.permissionMode === undefined) return 'Nothing to change.'
   if (body.mode !== undefined) {
     const error = writeLoginMode(body.mode)
     if (error) return error
   }
-  if (body.permissionMode !== undefined) {
-    const error = writePermissionMode(body.permissionMode)
-    if (error) return error
-  }
-  if (body.renderer !== undefined) {
-    const error = writeRenderer(body.renderer)
-    if (error) return error
-  }
-  if (body.remoteControl !== undefined) {
-    const error = writeRemoteControl(body.remoteControl)
-    if (error) return error
-  }
-  return body.chatView !== undefined ? writeChatView(body.chatView) : null
+  return body.permissionMode !== undefined ? writePermissionMode(body.permissionMode) : null
 }
 
 /** The token a session gets injected — only in token mode. */
@@ -271,9 +202,6 @@ export async function claudeLoginStatus(configDir: string | null = CONFIG_DIR): 
     mode,
     ownLogin: configDir !== CONFIG_DIR,
     permissionMode: readPermissionMode(),
-    renderer: readRenderer(),
-    remoteControl: readRemoteControl(),
-    chatView: readChatView(),
     token: { set: token !== null, prefix: token ? `${token.slice(0, 16)}…` : null },
     account: configDir ? await readAccount(mode, configDir) : null,
   }

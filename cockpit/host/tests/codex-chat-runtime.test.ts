@@ -33,7 +33,7 @@ function start(over: Partial<SessionRuntimeStart> = {}, configure: (server: Fake
   const { spawn, servers } = fakeSpawn(configure)
   const runtime = createCodexChatRuntimes(spawn, host).start({
     sessionId: 's1', resume: false, conversationId: null, mode: null, model: null, cwd: '/work', env: ENV, address: 'session-address',
-    launch: { bin: 'codex', args: [], env: {}, keepRunning: false },
+    launch: { bin: 'codex', args: [], env: {} },
     space: { id: 'space', mcpToken: 't', files: { mcpConfig: '/m.json', settings: '/s.json', emlConfig: '/e' } },
     onEvent: (event) => events.push(event),
     onSpawn: (pid) => spawned.push(pid),

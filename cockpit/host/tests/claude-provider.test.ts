@@ -80,30 +80,13 @@ describe('Claude Code provider', () => {
     expect(mode(true)).toBe('auto')
   })
 
-  it('leaves the renderer to Claude Code once the pinned input is switched off', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({ renderer: 'default' }))
-    const launch = provider.launch({ sessionId: 'abc-5', address: 'eml-abc5', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
-    expect(launch.env).not.toHaveProperty('CLAUDE_CODE_NO_FLICKER')
-  })
-
-  it('starts attended sessions with Remote Control once it is switched on, never unattended ones', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({ remoteControl: true }))
-    const args = (unattended: boolean) =>
-      provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended }).args
-    const attended = args(false)
-    expect(attended).toContain('--remote-control')
-    // Driven from the Claude app too, so the session outlives the browser tab.
-    const keep = (unattended: boolean) =>
-      provider.launch({ sessionId: 'abc-7', address: 'eml-abc7', space, providerSessionId: null, resume: false, initialPrompt: null, unattended }).keepRunning
-    expect(keep(false)).toBe(true)
-    expect(keep(true)).toBe(false)
-    // An option follows it, so the flag never takes the initial prompt as its name.
-    expect(attended[attended.indexOf('--remote-control') + 1]).toMatch(/^--/)
-    expect(attended.at(-1)).toBe('hello')
-    expect(args(true)).not.toContain('--remote-control')
+  it('has no Remote Control and no renderer setting any more: stored keys change nothing', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ remoteControl: true, renderer: 'default' }))
+    const launch = provider.launch({ sessionId: 'abc-6', address: 'eml-abc6', space, providerSessionId: null, resume: false, initialPrompt: 'hello', unattended: false })
+    expect(launch.args).not.toContain('--remote-control')
+    expect(launch).not.toHaveProperty('keepRunning')
+    expect(launch.env.CLAUDE_CODE_NO_FLICKER).toBe('1')
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
-    expect(args(false)).not.toContain('--remote-control')
-    expect(keep(false)).toBe(false)
   })
 
   it('in token mode runs workers in chat too, and the chat session\'s CLI gets the setup-token', async () => {
@@ -112,7 +95,6 @@ describe('Claude Code provider', () => {
     writeFileSync(join(home, 'claude-login'), `${fakeToken}\n`, { mode: 0o600 })
     writeFileSync(join(home, 'agents.json'), JSON.stringify({ loginMode: 'token' }))
     try {
-      expect(provider.workerRunsInChat(space)).toBe(true)
       const launch = provider.launch({ sessionId: 'tok-1', address: 'eml-tok1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
       expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
       expect(claudeStartOptions({ env: launch.env, launch, space }).env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
@@ -122,14 +104,11 @@ describe('Claude Code provider', () => {
     }
   })
 
-  it('runs workers in chat and tells the browser so, until the chat view is switched off', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
-    expect(provider.workerRunsInChat(space)).toBe(true)
-    expect(provider.settings?.read()).toEqual({ chatView: true })
-    expect(provider.settings?.write({ chatView: false })).toBeNull()
-    expect(provider.workerRunsInChat(space)).toBe(false)
-    expect(provider.settings?.read()).toEqual({ chatView: false })
-    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/on or off/)
+  it('runs in the chat whatever an old chat view switch says, and has no settings of its own', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ chatView: false }))
+    expect(provider.capabilities.chat).toEqual({ supported: true })
+    expect(provider.chatRuntime).toBeDefined()
+    expect(provider.settings).toBeUndefined()
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
   })
 
@@ -161,22 +140,8 @@ describe('Claude Code provider', () => {
   it('has the chat, the end_turn tool and messaging; its terminal sessions get no tools from the host', () => {
     expect(provider.capabilities).toEqual({
       chat: { supported: true }, endTurnTool: { supported: true }, messaging: { supported: true },
-      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in when they run in chat; in a terminal they say how a turn ends in the text of their reply.' },
+      terminalTools: { supported: false, reason: 'Claude Code sessions have the cockpit\'s tools built in in the chat; in the terminal fallback they have none.' },
       toolLimits: { supported: true },
     })
-  })
-
-  it('reads the last reply from a Stop hook: its field, else the transcript', () => {
-    expect(provider.lastReply({ last_assistant_message: 'hello' })).toBe('hello')
-    const file = join(home, 'transcript.jsonl')
-    writeFileSync(file, [
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } }),
-      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the last reply' }, { type: 'tool_use' }] } }),
-      JSON.stringify({ type: 'user', message: { content: 'tool result' } }),
-    ].join('\n'))
-    expect(provider.lastReply({ transcript_path: file })).toBe('the last reply')
-    expect(provider.lastReply({ last_assistant_message: 'hello', transcript_path: file })).toBe('hello')
-    expect(provider.lastReply({ transcript_path: join(home, 'missing.jsonl') })).toBe('')
-    expect(provider.lastReply({})).toBe('')
   })
 })

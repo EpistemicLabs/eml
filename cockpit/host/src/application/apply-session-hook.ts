@@ -6,17 +6,6 @@ export interface SessionHookDeps {
   providers: ProviderRegistry
   ledger: SessionLedger
   turns: TurnTracker
-  /** A turn finished: the task router reads its handoff (application/task-router.ts). */
-  turnDone?: (sessionId: string, payload: Record<string, unknown>) => void
-  /** The user typed into the session: whatever it waited for is answered (task router). */
-  answered?: (sessionId: string) => void
-  /** The user typed a prompt into the session's terminal: a closed task it works on reopens first. */
-  userWrote?: (sessionId: string) => void
-  /**
-   * The user sent a prompt into the session's terminal (TurnSignal.prompt): a new turn starts, and what the
-   * session said in a turn that never ended no longer stands (application/terminal-turns.ts).
-   */
-  turnStarted?: (sessionId: string) => void
   /**
    * A chat session's turn ended while subagents it started still run, and it asks nobody anything:
    * they wake it again, so its done is not applied and it stays working. Whoever answers true ends
@@ -63,25 +52,13 @@ export function applySessionHook(deps: SessionHookDeps, namedSessionId: string |
   // Claude Code and Codex send the folder the agent works in with every hook: the Worktrees plugin's session ↔ worktree.
   if (typeof payload.cwd === 'string' && payload.cwd) deps.ledger.setWorkdir(sessionId, payload.cwd)
   if (deps.reportsTurns?.(sessionId)) return
-  // A terminal process dies with the host without a word, so its hooks are all there is to go by.
+  // A process can die with the host without a word, so its hooks are all there is to go by.
   if (signal.state === 'working' || signal.state === 'done') deps.ledger.setTurnInFlight(sessionId, signal.state === 'working')
-  // A chat session's result comes from its own turn end (chat-bridge.ts); only a terminal has its hooks to go by.
-  const terminal = deps.ledger.get(sessionId)?.runtime === 'terminal'
+  // A session's result comes from its chat's turn end (chat-bridge.ts). A terminal fallback session has no turn
+  // routing: its hooks only move the turn state.
   if (signal.state === 'working') deps.ledger.setResult(sessionId, false)
-  else if (signal.state === 'done' && terminal) deps.ledger.setResult(sessionId, true)
-  // A prompt typed into a terminal is a new turn, as a chat message is (chat-bridge.ts sendMessage):
-  // whoever it waited for has answered, and an archived session is back in the lists.
-  if (signal.state === 'working' && terminal) {
-    const asked = deps.ledger.get(sessionId)
-    if (asked?.attention || asked?.taskId) deps.answered?.(sessionId)
-    deps.ledger.setAttention(sessionId, null)
-    deps.ledger.unarchive(sessionId)
-    deps.userWrote?.(sessionId)
-    if (signal.prompt) deps.turnStarted?.(sessionId)
-  }
   // A turn that ends with a question for the user ends as done: its flag keeps it in Your turn,
   // the desk dot clears once seen. Only a live prompt is waiting (decision desk-dot-until-seen).
   const held = signal.state === 'done' && deps.waitsOnHelpers?.(sessionId) === true
   if (!held) deps.turns.apply({ sessionId, state: signal.state, settleMs: signal.settleMs })
-  if (signal.state === 'done' && terminal) deps.turnDone?.(sessionId, payload)
 }

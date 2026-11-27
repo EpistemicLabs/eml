@@ -100,7 +100,7 @@ describe('session task', () => {
     expect(brain.posts.slice(before).filter((p) => p.path === '/engram/task').every((p) => !('delegation' in p.body))).toBe(true)
   })
 
-  it('gives a session without a task a placeholder task in its project, once, and tells it the handoff', async () => {
+  it('gives a session without a task a placeholder task in its project, once', async () => {
     const { ledger, brain, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(1), null, 'bp-eml', 'claude')
     const [first, second] = await Promise.all([tasks.context(id(1)), tasks.context(id(1))])
@@ -111,8 +111,6 @@ describe('session task', () => {
     expect(first).toContain('**session-2026-11-17-00000001** · t1 [active]')
     expect(first).toContain('give it its name as above')
     expect(first).toContain('calls this session by its task\'s name')
-    expect(first).toContain('### Handoff')
-    expect(first).toContain('- [lasse]')
   })
 
   it('gives a worker a task of its own that notes who started it, a step only when asked, and the requester\'s project and owners for a project the brain does not know', async () => {
@@ -186,7 +184,7 @@ describe('session task', () => {
   it('gives a session its task in a shared space too', async () => {
     const { ledger, brain, tasks } = setup({ shared: true })
     ledger.recordSpawn(id(5), null, 'bp-eml', 'claude')
-    expect(await tasks.context(id(5))).toContain('### Handoff')
+    expect(await tasks.context(id(5))).toContain('# Your task (cockpit task system)')
     expect(brain.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
     expect(ledger.get(id(5))!.taskId).not.toBeNull()
   })
@@ -247,14 +245,15 @@ describe('session task', () => {
   it('asks only an attended session where its task stands before an idle stop, and tells every session how a turn ends', async () => {
     const { ledger, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(9), null, 'bp-eml', 'claude')
+    ledger.setRuntime(id(9), 'terminal')
     ledger.recordSpawn('worker-1', null, 'bp-eml', 'claude', true)
     ledger.setRuntime('worker-1', 'sdk')
     const own = await tasks.context(id(9))
     const worker = await tasks.context('worker-1')
-    // A terminal has no end_turn tool: it reads the block. A chat session of Claude reads only where the rule is.
-    expect(own).toContain('## Ending a turn\nEnd your reply with this block when you stop and the stop changes who has to act or where the task stands.')
-    expect(own).toContain('Write no block for a turn that is plain conversation.')
-    expect(own).toContain('Handles for who: the user is lasse')
+    // A Claude Code session in the terminal fallback has no end_turn tool and no turn routing: nothing on ending a
+    // turn. A chat session of Claude reads only where the rule is.
+    expect(own).not.toContain('## Ending a turn')
+    expect(own).not.toContain('### Handoff')
     expect(worker).toContain('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.')
     expect(worker).not.toContain('### Handoff')
     for (const text of [own, worker]) expect(text).not.toContain('session_status')
@@ -264,15 +263,15 @@ describe('session task', () => {
     expect(tasks.handoffBeforeStop('no-task')).toBeNull()
   })
 
-  it('does not point a chat session at end_turn when its provider\'s chat has no such tool', async () => {
+  it('does not point a chat session at end_turn when its provider\'s chat has no such tool, nor at a block', async () => {
     const { ledger, tasks } = setup({ shared: false })
     ledger.recordSpawn('other-chat', null, 'bp-eml', 'codex', true)
     ledger.setRuntime('other-chat', 'sdk')
     tool.chat = false
     try {
       const text = await tasks.context('other-chat')
-      expect(text).toContain('## Ending a turn\nEnd your reply with this block when you stop')
-      expect(text).toContain('### Handoff')
+      expect(text).not.toContain('## Ending a turn')
+      expect(text).not.toContain('### Handoff')
       expect(text).not.toContain('end_turn')
     } finally {
       tool.chat = true

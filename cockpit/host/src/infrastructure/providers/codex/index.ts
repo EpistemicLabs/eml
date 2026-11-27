@@ -6,7 +6,7 @@ import type {
 import { COCKPIT_SKILLS_DIR, CODEX_CONFIG_DIR, MCP_SKILLS_DIR } from '../../../paths.js'
 import {
   COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, LEGACY_CURL_CONFIG, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS, codexHook,
-  emlHookCommand, ensureHookNode, installManagedSkills, noMessageInTerminal, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig,
+  emlHookCommand, ensureHookNode, chatCapabilities, installManagedSkills, noMessageInTerminal, taskHookCommand, turnHookCommand, writeTurnHookConfig,
   type HookCommand,
 } from '../shared.js'
 import type { Capability, ProviderCapabilities } from '../../../domain/agent-provider.js'
@@ -66,10 +66,10 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *     write to — the spawn inbox, the tasks folder — are extra writable roots
  *     of the sandbox (config.toml, sandbox_workspace_write).
  *
- * A session runs in a terminal, or, once the user switches the chat view on
- * (settings.ts chatView), in the chat through `codex app-server`
- * (chat-runtime.ts): the same home, hooks and MCP servers either way. With it on,
- * workers run in the chat too, and a session there can be sent a message.
+ * A session runs in the chat through `codex app-server`
+ * (chat-runtime.ts), workers too, and can be sent a message
+ * there. With Settings › Advanced › Terminal fallback on, the user can open one in a
+ * terminal instead (launch below): the same home, hooks and MCP servers either way.
  *
  * The binary is the cockpit's own (runtime.ts), installed when the user sets
  * Codex up; sign-in is Codex's own screen in the pane. What a session may do
@@ -154,7 +154,7 @@ class CodexProvider implements AgentProvider {
   readonly label = 'Codex'
   /** Codex assigns the session id itself and reports it with the first hook. */
   readonly adoptsSessionId = false
-  private terminal = terminalOnly(this.label)
+  readonly capabilities: ProviderCapabilities = chatCapabilities(this.label)
   private writableDirs: string[] = []
   /** Codex through its app-server (chat-runtime.ts). */
   private runtimes = createCodexChatRuntimes(undefined, {
@@ -162,14 +162,9 @@ class CodexProvider implements AgentProvider {
     writableDirs: () => this.writableDirs,
   })
 
-  /** The chat view is the user's switch (settings.ts chatView), read each time: it holds from the next session on. */
-  get capabilities(): ProviderCapabilities {
-    return readCodexSettings().chatView ? withChat(this.terminal) : this.terminal
-  }
-
-  /** There exactly while the chat view is on. */
-  get chatRuntime(): SessionRuntimeFactory | undefined {
-    return readCodexSettings().chatView ? this.runtimes : undefined
+  /** Every session runs in the chat; the terminal is only the hidden fallback (terminal-fallback.ts). */
+  get chatRuntime(): SessionRuntimeFactory {
+    return this.runtimes
   }
 
   readonly runtime = asAgentRuntime(codexRuntime, 'Settings › Models › Codex › "Set up now" installs it; then reopen this pane.')
@@ -314,8 +309,6 @@ class CodexProvider implements AgentProvider {
       : [...options, ...(req.initialPrompt ? [req.initialPrompt] : [])]
     return {
       bin: codexRuntime.bin,
-      // Codex has no remote control: a session lives with its pane.
-      keepRunning: false,
       args,
       env: {
         CODEX_HOME: CODEX_CONFIG_DIR,
@@ -331,13 +324,6 @@ class CodexProvider implements AgentProvider {
     }
   }
 
-  /**
-   * With the chat view on, a worker runs through app-server like a chat session the user opened (chat-runtime.ts),
-   * in the mode workers run in (workerMode); without it, in a terminal as before.
-   */
-  workerRunsInChat(): boolean {
-    return readCodexSettings().chatView
-  }
 
   /**
    * Only a session in the chat can be handed a message: the chat bridge sends it in, or resumes the thread for it.
@@ -382,10 +368,6 @@ class CodexProvider implements AgentProvider {
       case 'Stop': return { kind: 'turn', providerSessionId, state: 'done' }
       default: return null
     }
-  }
-
-  lastReply(payload: Record<string, unknown>): string {
-    return typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : ''
   }
 
   summary(session: SessionRef): SessionSummary {

@@ -46,8 +46,6 @@ describe('reading an end_turn call', () => {
     const zone = 'Asia/Bangkok (UTC+7)'
     expect(endTurnDescription(zone)).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7); required unless who is the user")
     expect(turnEndRules({ owner: 'kim', tool: true, zone })).toContain("Times: the user's time zone is Asia/Bangkok (UTC+7).")
-    // A session without the tool reads it in the block's rules as well.
-    expect(turnEndRules({ owner: 'kim', tool: false, zone })).toContain("when: the time you look again, as YYYY-MM-DDTHH:MM in the user's time zone: Asia/Bangkok (UTC+7);")
     expect(turnEndRules({ owner: 'kim', tool: true })).not.toContain('Times:')
     expect(zoneLabel('Asia/Bangkok')).toBe(zone)
     expect(zoneLabel('Asia/Makassar')).toBe('Asia/Makassar (UTC+8)')
@@ -301,8 +299,8 @@ describe('the texts', () => {
     expect(reminder(['questions', 'reply'])).toBe(`${reminder(['reply'])} ${reminder(['questions'])}`)
     // Without a call, a next step cannot be missing from it.
     expect(reminder(['call', 'next'])).toBe(reminder(['call']))
-    expect(reminder(['next'], { tool: false })).toBe(`${reminder(['next'])} Without the end_turn tool, end your reply with the Handoff block instead.`)
-    expect(reminder(['reply'], { tool: false })).toBe(reminder(['reply']))
+    // A session without the tool is not told about a block any more (a terminal fallback session has no turn routing).
+    expect(reminder(['next'], { tool: false })).toBe(reminder(['next']))
     // A session that gets the tool from an MCP server: the name the tool goes by there.
     const mcp = { mcpServer: 'cockpit' }
     expect(reminder(['next'], { tool: mcp })).toBe(`${reminder(['next'])} The tool is mcp__cockpit__end_turn, from the MCP server cockpit.`)
@@ -403,17 +401,6 @@ describe('the texts', () => {
     expect(END_TURN_DESCRIPTION.match(/keep working/g)).toHaveLength(1)
     expect(untilDoneRules('after')).toContain('- Not reached: name yourself as next, with the time you look again (when); a task that has a next run from its schedule needs no time. The cockpit wakes you then: a simple check needs no schedule tool call.')
     expect(turnEndRules({ owner: 'kim', agent: 'nova', tool: true })).toBe('## Ending a turn\nThe end_turn tool\'s description is the whole rule for ending a turn.\nHandles for who: the user is kim, you are nova.')
-  })
-
-  it('a session without the tool gets the block with the same fields', () => {
-    const rules = turnEndRules({ owner: 'kim', tool: false })
-    expect(rules).not.toContain('end_turn')
-    expect(rules).toContain('### Handoff')
-    expect(rules).toContain('Next: [<who>] <what they do> @ <when>')
-    expect(rules).toContain('- [kim] <what only the user can decide>')
-    expect(rules).toContain('Write no block for a turn that is plain conversation.')
-    expect(rules).toContain('End your reply with this block when you stop')
-    expect(rules).toContain('required unless who is the user, where it is not used')
   })
 
   it('a session that gets the tool from an MCP server reads the tool by its name there and its whole rule: its agent CLI may never load the description', () => {

@@ -22,15 +22,17 @@ import type { ProjectEntry } from './project-registry.js'
 import type { SpawnRequest } from './spawn-queue.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import { launchesUnattended } from './domain/spawn-request.js'
+import { TERMINAL_FALLBACK_OFF, TERMINAL_FALLBACK_OFF_MESSAGE } from './terminal-fallback.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
  *
  * Headless-xterm snapshot replay on reattach, supersede of a prior socket,
  * resize coalescing + SIGWINCH wiggle, first-chunk size resend, output
- * coalescing, WS backpressure, detached-session timeout (not for sessions kept
- * running for Remote Control until their pane is closed; a host start brings
- * those back). Sessions are spawned
+ * coalescing, WS backpressure, detached-session timeout. Every agent session
+ * runs in its chat (chat-bridge.ts); here it runs only as the hidden fallback,
+ * while Settings › Advanced › Terminal fallback is on (terminal-fallback.ts) —
+ * an `init` is refused with TERMINAL_FALLBACK_OFF otherwise. Sessions are spawned
  * directly and isolated: the session's agent provider (domain/agent-provider.ts) supplies binary,
  * arguments and its isolated config — for Claude Code the cockpit's own `claude`
  * with the app's CLAUDE_CONFIG_DIR + --mcp-config (brain) + --settings —,
@@ -43,7 +45,7 @@ import { launchesUnattended } from './domain/spawn-request.js'
  *   client → { type:'resize', cols, rows }
  *   host   → binary frame [0x01, ...utf8]           (pty output, hot path)
  *   host   → { type:'output', data }                (snapshot replay, notices)
- *   host   → { type:'error', message }
+ *   host   → { type:'error', message, code? }        (code TERMINAL_FALLBACK_OFF: the fallback is off)
  *
  * Attach handshake: POST /api/pty mints a one-time nonce; the WS upgrade must
  * present it (+ same-origin) — loopback binding alone is not enough, any local
@@ -102,10 +104,6 @@ type PtySessionEntry = {
   projectPath: string
   /** The brain space the session runs in. */
   spaceId: string
-  /** Reachable outside the cockpit (LaunchSpec.keepRunning): no detached timeout. */
-  keepRunning: boolean
-  /** A worker the host started without a pane (worker-start.ts): ends after a long idle time without a client. */
-  hostStarted: boolean
   /** When the process was started with a prompt (ms); null without one. */
   promptAt: number | null
   /** When a client last attached or left (ms); the idle time of a host-started worker counts from here too. */
@@ -167,15 +165,7 @@ const PTY_EXIT_TIMEOUT_MS = 5_000
 
 /** A session's turn state for the worker limits (turn-state.ts): the state and since when it holds (ms). */
 export type WorkerTurnOf = (sessionId: string) => { state: TurnState; since: number | null }
-// Terminal size of a kept session started without a client (host start);
-// the first pane that attaches resizes it to its own.
-const RESUME_COLS = 120
-const RESUME_ROWS = 40
 
-/** The ledger entries a host start brings back: kept running, and not a worker. */
-export function keptSessions<E extends { keepRunning: boolean; worker: boolean }>(entries: E[]): E[] {
-  return entries.filter((entry) => entry.keepRunning && !entry.worker)
-}
 
 /**
  * The live PTY of a conversation in a space, under whichever pane started it:
@@ -345,6 +335,11 @@ export interface SpawnContext {
   sessionLimits?: () => SessionLimits
   /** A session's agent process exited on its own (/exit, a crash) and was not started again: what the host kept for it goes. */
   onProcessEnd?: (sessionId: string) => void
+  /**
+   * Whether an agent session may open in a terminal (Settings › Advanced › Terminal fallback, terminal-fallback.ts).
+   * Absent: it may. The Shell plugin's terminal does not ask.
+   */
+  terminalFallback?: () => boolean
   /** Why the Shell plugin's terminal can't open for this client (plugin off, remote without the opt-in); null: it may. Absent: local clients only. */
   shellRefusal?: (local: boolean) => Promise<string | null>
 }
@@ -443,7 +438,6 @@ export class PtyBridge {
       try { proc.kill() } catch { /* already gone */ }
     }
     await Promise.all(exits)
-    this.ledger.setKeepRunning(sessionId, false)
     this.ctx.providers.forSession(sessionId).auth.invalidate()
   }
 
@@ -517,8 +511,7 @@ export class PtyBridge {
     isDarkMode: boolean,
     projectId: string,
     space: BrainSpace,
-    reachable = false,
-  ): { pty: IPty; keepRunning: boolean } {
+  ): IPty {
     const pty = require('node-pty') as typeof import('node-pty')
     const sessionSpace = sessionSpaceOf(space)
     provider.trustProject(cwd, sessionSpace)
@@ -530,7 +523,7 @@ export class PtyBridge {
     const { providerSessionId } = this.ledger.ref(sessionId, null)
     // The session gets its own space's brain and nothing else (brain-space.ts).
     const launch = provider.launch({
-      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended, reachable,
+      sessionId, address: sessionAddress(sessionId, projectId), providerSessionId, resume, initialPrompt: initialPrompt ?? greeting, unattended,
       space: sessionSpace,
       toolProfile: this.ledger.get(sessionId)?.toolProfile ?? null,
     })
@@ -559,7 +552,7 @@ export class PtyBridge {
     })
     const { memory, sessionLimits } = this.ctx
     if (memory && sessionLimits) memory.place(sessionId, proc.pid, sessionLimits())
-    return { pty: proc, keepRunning: launch.keepRunning }
+    return proc
   }
 
   // ── Per-entry plumbing ───────────────────────────────────────────────
@@ -689,10 +682,10 @@ export class PtyBridge {
         sendJson(session.ws, { type: 'output', data: '\x1bc' })
         const space = this.ctx.spaces.resolve(session.spaceId)
         const provider = this.ctx.providers.forSession(session.sessionId)
-        const { pty: fresh } = this.spawnAgent(
+        const fresh = this.spawnAgent(
           provider,
           session.sessionId, false, null, null, session.projectPath,
-          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space, session.hostStarted,
+          session.lastReportedSize.cols, session.lastReportedSize.rows, true, session.projectId, space,
         )
         session.pty = fresh
         session.spawnedWithResume = false
@@ -705,9 +698,6 @@ export class PtyBridge {
       }
 
       this.closeOut(key, session, `\r\n\x1b[33mProcess exited with code ${exitCode}${signal != null ? ` (${signal})` : ''}\x1b[0m\r\n`)
-      // The process ended on its own (/exit, a crash): nothing to bring back
-      // on the next host start. A host shutdown removes the entry first.
-      this.ledger.setKeepRunning(session.sessionId, false)
       this.ctx.onProcessEnd?.(session.sessionId)
       this.forgetIfEmpty(session.sessionId)
     })
@@ -754,30 +744,24 @@ export class PtyBridge {
     rows: number
     isDarkMode: boolean
     taskId: string | null
-    hostStarted?: boolean
   }, ws: WebSocket | null): void {
     const { key, sessionId, paneId, projectId, projectPath, space, provider, resume, initialPrompt, greeting, cols, rows } = opts
-    const { pty: proc, keepRunning } = this.spawnAgent(
-      provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space,
-      opts.hostStarted === true,
-    )
+    const proc = this.spawnAgent(provider, sessionId, resume, initialPrompt, greeting, projectPath, cols, rows, opts.isDarkMode, projectId, space)
     this.track(key, proc, ws, cols, rows, {
-      sessionId, paneId, projectId, projectPath, spaceId: space.id, keepRunning,
-      hostStarted: opts.hostStarted === true,
+      sessionId, paneId, projectId, projectPath, spaceId: space.id,
       promptAt: initialPrompt !== null ? Date.now() : null,
       spawnedWithResume: resume,
       shell: false,
     })
     this.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, initialPrompt !== null, opts.taskId, space.ledgerKey, greeting !== null)
-    this.ledger.setKeepRunning(sessionId, keepRunning)
     this.ledger.setRuntime(sessionId, 'terminal')
-    this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})${keepRunning ? ', kept running' : ''}`)
+    this.log(`${resume ? 'resuming' : 'starting'} session ${sessionId} in ${projectPath} (pane ${paneId ?? '-'})`)
   }
 
   /** Register a spawned process under `key` with a fresh headless mirror, and wire its output and exit. */
   private track(
     key: string, proc: IPty, ws: WebSocket | null, cols: number, rows: number,
-    fields: Pick<PtySessionEntry, 'sessionId' | 'paneId' | 'projectId' | 'projectPath' | 'spaceId' | 'keepRunning' | 'hostStarted' | 'promptAt' | 'spawnedWithResume' | 'shell'>,
+    fields: Pick<PtySessionEntry, 'sessionId' | 'paneId' | 'projectId' | 'projectPath' | 'spaceId' | 'promptAt' | 'spawnedWithResume' | 'shell'>,
   ): void {
     const headless = new HeadlessTerminal({
       cols, rows, scrollback: HEADLESS_SCROLLBACK, allowProposedApi: true,
@@ -838,8 +822,8 @@ export class PtyBridge {
       env: { ...baseAgentEnv(), TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: isDarkMode ? '15;0' : '0;15' },
     })
     this.track(key, proc, ws, cols, rows, {
-      sessionId: id, paneId, projectId: '', projectPath: home, spaceId: '', keepRunning: false,
-      hostStarted: false, promptAt: null, spawnedWithResume: false, shell: true,
+      sessionId: id, paneId, projectId: '', projectPath: home, spaceId: '',
+      promptAt: null, spawnedWithResume: false, shell: true,
     })
     this.log(`starting shell ${id} (${shell.bin}) in ${home} (pane ${paneId ?? '-'})`)
     return key
@@ -895,85 +879,6 @@ export class PtyBridge {
   }
 
   /**
-   * The user closed the pane (×): the session is no longer kept running. Like
-   * any detached session it then ends PTY_SESSION_TIMEOUT after its last
-   * client left, and stays resumable. Whether the pane's socket closes before
-   * or after this call, the timer starts once both have happened.
-   */
-  releasePane(sessionId: string, paneId: string | null): number {
-    let released = 0
-    for (const [key, session] of this.sessions) {
-      if (session.sessionId !== sessionId || (paneId && session.paneId !== paneId)) continue
-      session.keepRunning = false
-      if (!session.ws) this.scheduleDetachTimeout(key, session)
-      released += 1
-    }
-    this.ledger.setKeepRunning(sessionId, false)
-    return released
-  }
-
-  /**
-   * Host start: bring back the sessions that were kept running when the host
-   * went down (an update, a reboot), so they are reachable from the Claude app
-   * again without a browser. They start resumed and without a client; a pane
-   * that opens later reattaches to them.
-   */
-  resumeKeptSessions(): number {
-    let resumed = 0
-    for (const entry of keptSessions(this.ledger.list())) {
-      const space = entry.spaceId ? this.ctx.spaces.get(entry.spaceId) : this.ctx.spaces.main
-      const project = entry.projectId ? space?.registry.get(entry.projectId) : undefined
-      const provider = this.ctx.providers.forSession(entry.sessionId)
-      // Its agent's folder is away: stays kept, and comes back on a start with the folder in place.
-      const agentProblem = space?.runtime?.problem(provider.id)
-      if (agentProblem) {
-        this.log(`kept session ${entry.sessionId} not resumed: ${agentProblem}`)
-        continue
-      }
-      if (!space || !project?.path || !entry.projectId || !this.hasTranscript(entry.sessionId) || provider.runtime.problem()) {
-        this.log(`kept session ${entry.sessionId} can't be resumed (space, folder, transcript or agent CLI missing) → no longer kept`)
-        this.ledger.setKeepRunning(entry.sessionId, false)
-        continue
-      }
-      const key = `${space.id}_${entry.projectId}_${entry.sessionId}${entry.paneId ? `_pane_${entry.paneId}` : ''}`
-      if (this.sessions.has(key)) continue
-      this.startSession({
-        key, sessionId: entry.sessionId, paneId: entry.paneId, projectId: entry.projectId, projectPath: project.path,
-        space, provider, resume: true, initialPrompt: null, greeting: null,
-        cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: null,
-      }, null)
-      resumed += 1
-    }
-    return resumed
-  }
-
-  /**
-   * Start a worker a session asked for that no cockpit tab took (worker-start.ts):
-   * without a pane, under the request id as its session id (the address the
-   * requester already has), with the prompt as its first message. A pane opened
-   * later from the sidebar takes it over (runningEntry). Returns why it could
-   * not start, or null.
-   */
-  startWorker(request: SpawnRequest): string | null {
-    const space = this.ctx.spaces.resolve(request.spaceId ?? null)
-    const project = this.projectFor(space, request.projectId)
-    if (!project?.path) return `project ${request.projectId} has no folder`
-    const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
-    const problem = provider.runtime.problem() ?? space.runtime?.problem(provider.id)
-    if (problem) return problem
-    if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
-    this.startSession({
-      key: `${space.id}_${project.projectId}_${request.id}`,
-      sessionId: request.id, paneId: null, projectId: project.projectId, projectPath: project.path,
-      space, provider, resume: false, initialPrompt: request.prompt, greeting: null,
-      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: request.taskId ?? null, hostStarted: true,
-    }, null)
-    if (request.title) this.ledger.setAgentTitle(request.id, request.title)
-    if (request.jobId) this.ledger.setJobId(request.id, request.jobId)
-    return null
-  }
-
-  /**
    * End the workers that no client is attached to, that are not
    * working, and that have been quiet (no turn, no client) for `idleMs`. They
    * stay in the sidebar, resumable. Returns how many ended.
@@ -989,7 +894,7 @@ export class PtyBridge {
   }
 
   private isWorker(session: PtySessionEntry): boolean {
-    return session.hostStarted || this.ledger.get(session.sessionId)?.worker === true
+    return this.ledger.get(session.sessionId)?.worker === true
   }
 
   /** Workers without a client that are not working: key, entry, quiet time (ms), turn state. */
@@ -1010,7 +915,6 @@ export class PtyBridge {
     this.teardown(key, session)
     try { session.pty.kill() } catch { /* already gone */ }
     this.sessions.delete(key)
-    this.ledger.setKeepRunning(session.sessionId, false)
   }
 
   /**
@@ -1081,6 +985,11 @@ export class PtyBridge {
 
         if (data.type === 'init') {
           if (key || shell) return // one init per socket
+          // Every agent session runs in its chat; the terminal only while the user has the fallback on.
+          if (this.ctx.terminalFallback && !this.ctx.terminalFallback()) {
+            sendJson(ws, { type: 'error', code: TERMINAL_FALLBACK_OFF, message: TERMINAL_FALLBACK_OFF_MESSAGE })
+            return
+          }
           const sessionId = readString(data.sessionId)
           const paneId = readString(data.paneId) || null
           const projectId = readString(data.projectId)
@@ -1227,8 +1136,6 @@ export class PtyBridge {
         session.flushTimer = null
       }
       session.pendingOutput = ''
-      // Reachable from the Claude app: runs on without a browser, until × or /exit.
-      if (session.keepRunning) return
       this.scheduleDetachTimeout(key, session)
     })
 

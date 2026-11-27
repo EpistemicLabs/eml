@@ -142,22 +142,21 @@ describe('session identity', () => {
     expect(seen).toEqual(['working', 'working', 'waiting'])
   })
 
-  it('takes a terminal session back from its mark and the archive when a prompt is typed, not a chat session', () => {
-    const { ledger, hook } = setup(false)
+  it('leaves a session\'s mark and the archive to its chat: a hook moves only the turn state, in a terminal too', () => {
+    const { ledger, turns, hook } = setup(false)
     for (const id of ['s-term', 's-chat']) {
       ledger.recordSpawn(id, null, 'p1', 'claude')
-      ledger.setAttention(id, { kind: 'review', reason: 'Look at this' })
       ledger.archive(id)
+      ledger.setAttention(id, { kind: 'done', reason: 'Rescheduled' })
     }
     ledger.setRuntime('s-chat', 'sdk')
-    ledger.setAttention('s-term', { kind: 'done', reason: 'Rescheduled' })
-    ledger.setAttention('s-chat', { kind: 'done', reason: 'Rescheduled' })
-    hook('s-term', { id: 'term-id', state: 'working' })
-    hook('s-chat', { id: 'chat-id', state: 'working' })
-    expect(ledger.get('s-term')).toMatchObject({ attention: null, archivedAt: null })
-    // A chat session is settled by its own messages (chat-bridge.ts).
-    expect(ledger.get('s-chat')?.attention?.kind).toBe('done')
-    expect(ledger.get('s-chat')?.archivedAt).not.toBeNull()
+    hook('s-term', { id: 'term-id', state: 'working', prompt: true })
+    hook('s-chat', { id: 'chat-id', state: 'working', prompt: true })
+    for (const id of ['s-term', 's-chat']) {
+      expect(turns.get(id)?.state).toBe('working')
+      expect(ledger.get(id)?.attention?.kind).toBe('done')
+      expect(ledger.get(id)?.archivedAt).not.toBeNull()
+    }
   })
 
   it('a turn that ends with a question ends as done; only a live prompt is waiting', () => {
@@ -171,36 +170,14 @@ describe('session identity', () => {
     expect(turns.get('s-ask')?.state).toBe('waiting')
   })
 
-  it('a prompt typed into a task session counts as an answer, flagged or not', () => {
-    const ledger = new SessionLedger()
-    const providers = new ProviderRegistry({ providerOf: (id) => ledger.get(id)?.provider, providers: [fakeProvider(false)] })
-    const answered: string[] = []
-    const wrote: string[] = []
-    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns: new TurnTracker(), answered: (id) => answered.push(id), userWrote: (id) => wrote.push(id) }, named, payload)
-    ledger.recordSpawn('s-task', null, 'p1', 'claude', false, 't1')
-    ledger.recordSpawn('s-free', null, 'p1', 'claude')
-    hook('s-task', { id: 'task-id', state: 'working' })
-    hook('s-free', { id: 'free-id', state: 'working' })
-    hook('s-task', { id: 'task-id', state: 'done' })
-    expect(answered).toEqual(['s-task'])
-    // Every typed prompt is the user's writing: a closed task it works on reopens first (task-commands reopenByWriting).
-    expect(wrote).toEqual(['s-task', 's-free'])
-  })
-
-  it('a new turn starts with the user\'s prompt into a terminal, not with a tool that ran or a chat session\'s hook', () => {
-    const { ledger, providers, turns } = setup(false)
-    const started: string[] = []
-    const hook = (named: string, payload: Record<string, unknown>) => applySessionHook({ ledger, providers, turns, turnStarted: (id) => started.push(id) }, named, payload)
+  it('a terminal fallback session\'s done records no result: it has no turn routing', () => {
+    const { ledger, hook } = setup(false)
     ledger.recordSpawn('s-term', null, 'p1', 'claude')
-    ledger.recordSpawn('s-chat', null, 'p1', 'claude')
-    ledger.setRuntime('s-chat', 'sdk')
     hook('s-term', { id: 'term-id', state: 'working' })
     hook('s-term', { id: 'term-id', state: 'done' })
-    hook('s-chat', { id: 'chat-id', state: 'working', prompt: true })
-    expect(started).toEqual([])
-    hook('s-term', { id: 'term-id', state: 'working', prompt: true })
-    expect(started).toEqual(['s-term'])
+    expect(ledger.get('s-term')?.resultAt).toBeNull()
   })
+
 
   it('holds a done back while the session waits on its helpers, and applies any other signal', () => {
     const { ledger, providers, turns } = setup(false)

@@ -37,8 +37,8 @@ describe('spawn inbox', () => {
       spaces: new BrainSpaces(main),
       ledger: new SessionLedger(),
       providers: new ProviderRegistry({ providers: [
-        { id: 'claude', capabilities: { messaging: { supported: true } }, workerRunsInChat: () => true } as unknown as AgentProvider,
-        { id: 'codex', capabilities: { messaging: { supported: false, reason: 'no address' } }, workerRunsInChat: () => false } as unknown as AgentProvider,
+        { id: 'claude', capabilities: { messaging: { supported: true } } } as unknown as AgentProvider,
+        { id: 'codex', capabilities: { messaging: { supported: false, reason: 'no address' } } } as unknown as AgentProvider,
       ] }),
     })
   })
