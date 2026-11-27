@@ -245,6 +245,7 @@ describe('session task', () => {
   it('asks only an attended session where its task stands before an idle stop, and tells every session how a turn ends', async () => {
     const { ledger, tasks } = setup({ shared: false })
     ledger.recordSpawn(id(9), null, 'bp-eml', 'claude')
+    ledger.setRuntime(id(9), 'terminal')
     ledger.recordSpawn('worker-1', null, 'bp-eml', 'claude', true)
     ledger.setRuntime('worker-1', 'sdk')
     const own = await tasks.context(id(9))

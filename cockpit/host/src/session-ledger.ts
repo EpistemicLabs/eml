@@ -239,7 +239,8 @@ export class SessionLedger {
       ...(prev?.leadOf ? { leadOf: prev.leadOf } : {}),
       ...(prev?.snoozedUntil ? { snoozedUntil: prev.snoozedUntil } : {}),
       spaceId: spaceId ?? prev?.spaceId ?? null,
-      runtime: prev?.runtime ?? 'terminal',
+      // A new session runs in the chat; the terminal fallback records 'terminal' itself (pty-bridge.ts).
+      runtime: prev?.runtime ?? 'sdk',
       chatMode: prev?.chatMode ?? null,
       chatModel: prev?.chatModel ?? null,
       ...(prev?.chatEffort ? { chatEffort: prev.chatEffort } : {}),

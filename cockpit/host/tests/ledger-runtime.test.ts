@@ -19,6 +19,20 @@ describe('an older ledger with kept sessions', () => {
     expect(entry?.runtime).toBe('terminal')
     expect(entry).not.toHaveProperty('keepRunning')
   })
+
+  it('records a new session as one in the chat; an old entry without a runtime ran in a terminal', async () => {
+    writeFileSync(join(home, 'sessions.json'), JSON.stringify({ version: 1, sessions: {
+      'old-1': { createdAt: '2026-01-01T00:00:00Z', lastAttached: '2026-01-01T00:00:00Z', projectId: 'bp-eml' },
+    } }))
+    const { SessionLedger } = await import('../src/session-ledger.js')
+    const ledger = new SessionLedger()
+    expect(ledger.get('old-1')?.runtime).toBe('terminal')
+    ledger.recordSpawn('new-1', null, 'bp-eml', 'claude')
+    expect(ledger.get('new-1')?.runtime).toBe('sdk')
+    // A respawn keeps where it ran.
+    ledger.recordSpawn('old-1', null, 'bp-eml', 'claude')
+    expect(ledger.get('old-1')?.runtime).toBe('terminal')
+  })
 })
 
 describe('one process per conversation', () => {

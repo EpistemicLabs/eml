@@ -69,6 +69,8 @@ beforeAll(async () => {
   ledger.recordSpawn('term-1', null, 'bp-eml', 'codex')
   ledger.recordSpawn('term-2', null, 'bp-eml', 'codex')
   ledger.recordSpawn('term-other', null, 'bp-life', 'codex', false, null, 'brain-other')
+  // Sessions in the terminal fallback (a new one runs in the chat).
+  for (const id of ['term-1', 'term-2', 'term-other']) ledger.setRuntime(id, 'terminal')
   ledger.recordSpawn('chat-1', null, 'bp-eml', 'claude')
   ledger.setRuntime('chat-1', 'sdk')
 
