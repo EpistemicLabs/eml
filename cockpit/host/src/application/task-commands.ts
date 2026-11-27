@@ -231,8 +231,7 @@ interface BrainTask {
 
 /**
  * v0.23: a reopened task starts nothing on its own: a delegation keeps its agent and checkpoint but loses a request
- * that never ran, so only a new Delegate now starts it. Its schedule stays (brain schema 24: the task is the truth),
- * carried in the same delegation. The fields a reopen writes besides its status.
+ * that never ran, so only a new Delegate now starts it. Its schedule stays (brain schema 25: a field of its own). The fields a reopen writes besides its status.
  */
 const reopenPatch = (task: BrainTask): Record<string, unknown> => {
   const d = task.properties?.delegation
@@ -471,8 +470,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   const wakeEnds = (task: BrainTask): { patch: Record<string, unknown>; said: string } => {
     const wake = scheduleOf(task)
     if (!wake?.at) return { patch: {}, said: '' }
-    const whose = wake.by ? `${wake.by}'s check-back` : 'its wake-up'
-    return { patch: { schedule: null }, said: ` ${whose[0].toUpperCase()}${whose.slice(1)} for ${wake.at} ends with it.` }
+    return { patch: { schedule: null }, said: ` The wake-up for ${wake.at}${wake.by ? ` (${wake.by} checks back)` : ''} ends with it.` }
   }
 
   /** Why a task cannot be closed from the board: it has open steps, or decisions and notes bound to it; null when it can. */
@@ -729,7 +727,7 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     if (newest && deps.deliver && await deps.deliver(newest, message).catch(() => false)) return { sessionId: newest, how: 'delivered' }
     const started = deps.startOnTask ? await deps.startOnTask(spaceId, taskId, message).catch(() => null) : null
     if (started) return { sessionId: started, how: 'started' }
-    deps.log(`[commands] task ${taskId.slice(0, 8)} reopened, but its message reached no session`)
+    deps.log(`[commands] task ${taskId.slice(0, 8)} : its message reached no session`)
     return { sessionId: newest, how: 'failed' }
   }
 

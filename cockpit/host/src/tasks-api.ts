@@ -191,6 +191,8 @@ function answer(json: Json, res: http.ServerResponse, result: Submitted): void {
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.effects ? { effects: c.effects } : {}),
     ...(c.tookOver ? { sessionId: c.tookOver } : {}),
+    // Done: where the agent's wake went (delivered, started, failed), absent when nobody was woken.
+    ...(c.kind === 'done' && c.continued ? { continued: c.continued } : {}),
   })
 }
 
