@@ -130,7 +130,7 @@ function setup(opts: { provider?: 'claude' | 'codex'; chatRuntime?: SessionRunti
         if (patch.effort) entry.chatEffort = patch.effort
       },
       bindProviderSession: (id: string, conversation: string) => { (ledgerEntries.get(id) as { conversation?: string }).conversation = conversation },
-      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, _task?: unknown, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true },
+      recordSpawn: (id: string, _pane?: unknown, _project?: unknown, _provider?: unknown, worker?: boolean, task?: string | null, _space?: unknown, greeted?: boolean) => { if (!ledgerEntries.has(id)) ledgerEntries.set(id, { runtime: 'terminal', ...(greeted ? { greeted: true } : {}) } as never); if (worker) (ledgerEntries.get(id) as unknown as { worker: boolean }).worker = true; if (task) (ledgerEntries.get(id) as unknown as { taskId: string }).taskId = task },
       setRuntime: (id: string, runtime: string) => { (ledgerEntries.get(id) as { runtime: string }).runtime = runtime },
       touch: () => {},
       setAgentTitle: () => {},
@@ -1866,6 +1866,22 @@ describe('ChatBridge', () => {
     expect(unknown.ws.frames[0]).toEqual({ type: 'error', message: 'This cockpit has no such agent.' })
     expect(unknown.runtimes).toEqual([])
     expect(known.runtimes).toHaveLength(1)
+  })
+
+  it('records the pane\'s task on a new chat session, as the terminal did; a known session keeps its own', async () => {
+    const fresh = setup()
+    connect(fresh.bridge, { taskId: 'task-42' })
+    await flush()
+    expect(fresh.runtimes).toHaveLength(1)
+    expect((fresh.ledgerEntries.get('s1') as unknown as { taskId?: string }).taskId).toBe('task-42')
+    const bad = setup()
+    connect(bad.bridge, { taskId: 'not a task id!' })
+    await flush()
+    expect((bad.ledgerEntries.get('s1') as unknown as { taskId?: string } | undefined)?.taskId).toBeUndefined()
+    const known = setup({ runtimeOf: 'sdk' })
+    connect(known.bridge, { taskId: 'task-42' })
+    await flush()
+    expect((known.ledgerEntries.get('s1') as unknown as { taskId?: string }).taskId).toBeUndefined()
   })
 
   it('refuses a session the ledger keeps in another space, and starts nothing', async () => {

@@ -33,7 +33,7 @@ import { toolLabel } from './domain/tool-label.js'
  * every event. A conversation has one writer process, not one reader.
  *
  * Wire protocol:
- *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle?, readOnly? }
+ *   client → { type:'init', paneId, projectId, sessionId, spaceId?, epoch?, after?, whenIdle?, readOnly?, prompt?, model?, taskId? }
  *   client → { type:'start' }                        (a read-only view is about to be used)
  *   client → { type:'send', text, id? }              (`id`: the one the view already shows it under)
  *   client → { type:'interrupt' }
@@ -190,6 +190,8 @@ interface ChatEntry {
   ceilingNote: string | null
   /** The agent's process; null until it started. */
   pid: number | null
+  /** The brain task a new session from the page works on (the pane's taskId), recorded when its process starts. */
+  taskId?: string
   /** Limits the user lifted that the agent has not been told of yet: it goes with its next prompt. */
   liftNote?: string | null
   /** Its runtime reports its turns (SessionRuntimeFactory.reportsTurns): the bridge says working and done, not its hooks. */
@@ -639,12 +641,14 @@ export class ChatBridge {
     // A new chat from the launcher brings its first message (and model); a known session never does.
     const prompt = isNew ? text(data.prompt).trim() || null : null
     const model = isNew && SAFE_MODEL.test(text(data.model)) ? text(data.model) : null
+    // A new session opened on a task (Work on it now, a task run with a desk) works on it, as the terminal's did.
+    const taskId = isNew && SAFE_ID.test(text(data.taskId)) ? text(data.taskId) : null
     const greeting = greetingFor({ resume: !isNew, initialPrompt: prompt, greet: data.greet === true, worker: false })
     const handoff = this.handoff()
     if (handoff.switching(sessionId)) send(ws, { type: 'switching', reason: 'Waiting for the terminal session to end…' })
     const entered = handoff.enter('sdk', sessionId, () => this.open(ws, {
       sessionId, paneId, projectId, projectPath: path, space, provider, epoch, after,
-      readOnly, greeting, firstPrompt: prompt, model,
+      readOnly, greeting, firstPrompt: prompt, model, taskId,
       onSwitch: () => send(ws, { type: 'switching', reason: 'Loading the conversation…' }),
     }))
     entered.catch((error: Error) => {
@@ -671,6 +675,8 @@ export class ChatBridge {
     firstPrompt: string | null
     /** The model a new chat starts with. */
     model: string | null
+    /** The brain task a new chat works on. */
+    taskId: string | null
     onSwitch: () => void
   }): Promise<void> {
     if (ws.readyState !== WebSocket.OPEN) return
@@ -693,6 +699,7 @@ export class ChatBridge {
       sessionId, provider: provider.id, spaceId: space.id, projectId, projectPath, runtime: null, clients: new Set([ws]), active: false,
       openRequests: new Set(), turnEnded: null, backgroundTasks: new Set(), runningAgents: new Set(), runningWorkflows: new Map(), runningCommands: new Map(), held: false, parked: false, lastActivity: Date.now(), closing: false, closed: null, declared: false, status: null, call: null, callCtx: null, asks: false, replyText: '', reminded: false, alone: null, turnText: '', worked: false, stopAfterTurn: false, ceiling: null, ceilingNote: null, pid: null,
     }
+    if (opts.taskId) entry.taskId = opts.taskId
     this.entries.set(sessionId, entry)
     const epoch = this.ctx.events.reset(sessionId)
     send(ws, { type: 'reset', epoch })
@@ -705,7 +712,7 @@ export class ChatBridge {
     const first = resume ? null : opts.firstPrompt ?? opts.greeting
     if (first) {
       if (opts.model) {
-        this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, first === opts.greeting)
+        this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, opts.taskId, space.ledgerKey, first === opts.greeting)
         this.ctx.ledger.setChatSettings(sessionId, { model: opts.model })
       }
       this.startEntry(entry, provider, space, paneId, false, first === opts.greeting)
@@ -724,7 +731,7 @@ export class ChatBridge {
     const { sessionId, projectId, projectPath } = entry
     provider.trustProject(projectPath, sessionSpaceOf(space))
     // greeted: the title and summary logic skip the greeting as a first prompt, as in the terminal.
-    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, null, space.ledgerKey, greeted)
+    this.ctx.ledger.recordSpawn(sessionId, paneId, projectId, provider.id, false, entry.taskId ?? null, space.ledgerKey, greeted)
     this.ctx.ledger.setRuntime(sessionId, 'sdk')
     // A worker runs unattended in the terminal too, whatever Settings says for other sessions.
     const stored = this.ctx.ledger.get(sessionId)
