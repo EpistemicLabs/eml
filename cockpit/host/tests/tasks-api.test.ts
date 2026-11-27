@@ -36,6 +36,9 @@ const deps = {
     submit: async (input: Record<string, unknown>) => {
       splits.push(input)
       if (input.relation === 'sub') return { ok: false, refusal: 'sub_needs_task' }
+      // A split onto a task the lease refuses: the title names the refusal, the brief its message.
+      if (String(input.title).startsWith('task_')) return { ok: false, refusal: input.title, message: input.brief, ...(input.title === 'task_held_unreachable' ? { retry: input.projectId === 'busy' } : {}) }
+      if (input.existingTaskId === 't-held') return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: null, existingTaskId: 't-held', spawnedSessionId: 's-task', routed: true } } }
       return { ok: true, command: { opId: input.opId, state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', split: { createdTaskId: 't-new', spawnedSessionId: 's-new' } } }
     },
     owns: (opId: string) => opId.startsWith('split-'),
@@ -219,6 +222,19 @@ describe('task board routes', () => {
     expect(splits.at(-1)).toEqual({ opId: 'split-1', sessionId: 's1', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui' })
     expect((await post('/api/v1/commands/split-1/undo', {})).body).toEqual({ state: 'undone' })
     expect(splitUndone).toBe(1)
+  })
+
+  it('answers a split that went to the session the existing task already had with that session, routed', async () => {
+    const r = await post('/api/v1/sessions/s1/split', { opId: 'split-r', title: 'Media viewer', brief: 'Goal: files.', relation: 'spun', when: 'now', projectId: 'p-ui', existingTaskId: 't-held' })
+    expect(r).toEqual({ status: 202, body: { opId: 'split-r', state: 'applied', undoUntil: '2026-11-22T10:05:00.000Z', sessionId: 's-task', routed: true } })
+  })
+
+  it('refuses a split the task\'s lease refuses with its own message, saying whether a retry helps', async () => {
+    const refuse = (title: string, projectId = 'p-ui') => post('/api/v1/sessions/s1/split', { opId: `split-${title}-${projectId}`, title, brief: `why ${title}`, relation: 'spun', when: 'now', projectId, existingTaskId: 't-open' })
+    expect(await refuse('task_starting')).toEqual({ status: 409, body: { error: { code: 'task_starting', message: 'why task_starting', retry: true } } })
+    expect(await refuse('task_held_by_you')).toEqual({ status: 409, body: { error: { code: 'task_held_by_you', message: 'why task_held_by_you', retry: false } } })
+    expect(await refuse('task_held_unreachable', 'busy')).toEqual({ status: 409, body: { error: { code: 'task_held_unreachable', message: 'why task_held_unreachable', retry: true } } })
+    expect(await refuse('task_held_unreachable')).toEqual({ status: 409, body: { error: { code: 'task_held_unreachable', message: 'why task_held_unreachable', retry: false } } })
   })
 
   it('refuses a split with a missing field or a sub-task without a task', async () => {

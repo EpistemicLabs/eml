@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import { routeToTaskHolder, takenSince } from './application/task-lease.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
 import { handleTasksApi, type TasksApiDeps } from './tasks-api.js'
 import { handlePushApi, type PushApiDeps } from './push-api.js'
@@ -151,6 +152,8 @@ export interface HostDeps {
   sessionTask?: SessionTask
   sessionNamed?: SpawnDeps['sessionNamed']
   createTask?: SpawnDeps['createTask']
+  /** One live session per task (domain/task-lease.ts): what a spawn on a held task and the claim's fencing read. */
+  taskLease?: Pick<SpawnDeps, 'contextTokensOf' | 'putAway' | 'stale'>
   /** The user's time zone (jobs): a project lead's day. */
   timeZone?: () => string
   /** Weekly cycles (application/cycles.ts). */
@@ -793,7 +796,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask, ...deps.taskLease }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
@@ -1018,6 +1021,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const projectId = str(body.projectId), prompt = str(body.prompt), taskId = str(body.taskId)
     if (!space || !projectId || !prompt || !taskId) { json(res, 400, { error: { code: 'INVALID_RUN', message: 'projectId, prompt and taskId are required' } }); return true }
     if (!space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } }); return true }
+    // One live session per task (application/task-lease.ts): a task that has its session gets the run's prompt there,
+    // as a worker of a session would; a session still starting on it, or a holder that cannot take it, refuses.
+    const lease = { pending: () => deps.spawns.list(), sessions: () => deps.bridge.ledger.list(), deliver: deps.deliver, ...deps.taskLease }
+    const route = await routeToTaskHolder(lease, { taskId, prompt, fromSessionId: null, from: null })
+    if (route.kind === 'refused') { json(res, 409, { error: route.refusal }); return true }
+    if (route.kind === 'routed') { json(res, 200, { id: route.session.sessionId, routed: true }); return true }
+    const taken = takenSince(lease, taskId, route.replaced)
+    if (taken) { json(res, 409, { error: taken }); return true }
     const request = deps.spawns.add({
       projectId, prompt, title: str(body.title), fromSessionId: null, origin: 'runner', taskId,
       ...(space.main ? {} : { spaceId: space.id }),

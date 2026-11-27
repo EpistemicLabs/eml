@@ -100,6 +100,8 @@ export interface TaskCommand extends CommandInput {
     /** The open task the split went onto instead of making one. */
     existingTaskId?: string | null
     spawnedSessionId: string | null
+    /** spawnedSessionId is the session that already held the existing task: the brief went to it, Undo leaves it. */
+    routed?: boolean
     /** Steps done so far, so a retry after a failure part-way does each once. */
     linked?: boolean
     journaled?: { created?: boolean; source?: boolean; existing?: boolean }
@@ -255,6 +257,11 @@ export interface TaskCommandsDeps {
   newestSessionOn?(taskId: string): string | null
   /** Give a session the user's message, resuming it when stopped; true once it has it. */
   deliver?(sessionId: string, text: string): Promise<boolean>
+  /**
+   * Work on it now or Take over: a task runner request still queued for the task is revoked (domain/task-lease.ts),
+   * so it never starts beside the session the owner works in.
+   */
+  supersedeRunner?(taskId: string): void
   /** Start a session of the owner's own on the task with this prompt (a task without a session to wake). */
   startOnTask?(spaceId: string, taskId: string, prompt: string): Promise<string | null>
   /**
@@ -488,6 +495,8 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (input.handOver.mode !== 'together') return { ok: true, command: save(command) }
       // Work on it now and Take over: the owner is there, so it happens at once; the page opens the session (Take over:
       // the task's own one, which goes on from its current turn's end).
+      // Before the write: a runner request queued for the task must not start while it is under way.
+      deps.supersedeRunner?.(planned.task.id)
       await track(brain, planned.task.id, { ...planned.plan.patch }, planned.plan.journal)
       const tookOver = planned.plan.session?.sessionId
       deps.log(`[commands] ${input.opId.slice(0, 8)} together: task ${planned.task.id.slice(0, 8)} ${tookOver ? `taken over in session ${tookOver.slice(0, 8)}` : `in desk ${input.handOver.desk}`}`)
@@ -845,6 +854,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     /** A hand-over of the task can still be undone: nothing may start it yet. */
     held(taskId: string): boolean {
       return deps.store.commands().some((c) => c.kind === 'hand_over' && c.state === 'pending' && c.taskId === taskId)
+    },
+
+    /** A hand-over of the task chosen at or after `since` was undone: what it was to start is no longer wanted. */
+    undoneSince(taskId: string, since: string): boolean {
+      return deps.store.commands().some((c) => c.kind === 'hand_over' && c.state === 'undone' && c.taskId === taskId && Date.parse(c.createdAt) >= Date.parse(since))
     },
 
     /** The owner works on the task with its delegate (Work on it now): the runner must not start the delegate alone. */

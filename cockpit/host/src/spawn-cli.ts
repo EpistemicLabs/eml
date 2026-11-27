@@ -21,6 +21,9 @@
  * brain task; --step makes its task a new step of this session's task;
  * --new-task creates that task first (in --in, else the worker's project) and
  * puts the worker on it. Without any, it gets a task of its own.
+ *
+ * A task has one live session at a time: with --task on a task that already has its session, no worker starts; the
+ * prompt goes to that session as a message, and the CLI says so and prints that session's address.
  */
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
@@ -44,7 +47,7 @@ async function main(): Promise<void> {
   }
   if (!prompt?.trim()) fail(CLI, '--prompt-file or --prompt is required')
 
-  const answer = await requestHost<{ projectId?: string; address?: string; taskId?: string }>(CLI, { method: 'POST', path: '/api/spawn' }, {
+  const answer = await requestHost<{ id?: string; projectId?: string; address?: string; taskId?: string; routed?: boolean }>(CLI, { method: 'POST', path: '/api/spawn' }, {
     project,
     prompt,
     title: arg('title'),
@@ -60,6 +63,11 @@ async function main(): Promise<void> {
   })
   if (!answer) fail(CLI, `cockpit host unreachable at ${process.env.COCKPIT_URL}`)
   if (answer.status >= 400) fail(CLI, answer.body.error?.message ?? `HTTP ${answer.status}`)
+  if (answer.body.routed) {
+    process.stdout.write(`No worker started: task ${answer.body.taskId} already has its session ${answer.body.id}, and a task has one session at a time. Your prompt went to that session as a message.\n`)
+    if (answer.body.address) process.stdout.write(`Its address: ${answer.body.address} (for SendMessage and notify_when_idle).\n`)
+    return
+  }
   process.stdout.write(process.argv.includes('--open')
     ? `Worker requested in project ${answer.body.projectId} — it opens as a new pane next to this session; with no cockpit tab open, the host starts it on its own within seconds and it shows in the sidebar.\n`
     : `Worker requested in project ${answer.body.projectId} — it runs without a pane and shows in the sidebar under this session. It starts as soon as the machine has room.\n`)

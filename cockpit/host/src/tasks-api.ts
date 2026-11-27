@@ -130,14 +130,18 @@ const SPLIT_MESSAGES: Record<SplitRefusalCode, string> = {
   unknown_command: 'No such action to undo.',
   undo_expired: 'Too late to undo the split.',
   in_flight: 'This split is still running.',
+  task_starting: 'A session is starting on that task right now; try again once it runs.',
+  task_held_by_you: 'This session already works on that task: carry on here.',
+  task_held_unreachable: 'That task already has its session, which cannot take the brief.',
 }
 
 const SPLIT_STATUS: Partial<Record<SplitRefusalCode, number>> = {
-  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, no_project: 409, undo_expired: 409, in_flight: 409, no_brain: 503,
+  unknown_session: 404, unknown_project: 404, unknown_task: 404, unknown_command: 404, sub_needs_task: 409, no_project: 409, undo_expired: 409, in_flight: 409, task_starting: 409, task_held_by_you: 409, task_held_unreachable: 409, no_brain: 503,
 }
 
-function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode): void {
-  json(res, SPLIT_STATUS[refusal] ?? 400, { error: { code: refusal, message: SPLIT_MESSAGES[refusal], retry: refusal === 'no_brain' || refusal === 'in_flight' } })
+/** `retry`: whether trying again later can help; a refusal that knows it says so, else its code decides. */
+function refuseSplit(json: Json, res: http.ServerResponse, refusal: SplitRefusalCode, message?: string, retry?: boolean): void {
+  json(res, SPLIT_STATUS[refusal] ?? 400, { error: { code: refusal, message: message ?? SPLIT_MESSAGES[refusal], retry: retry ?? (refusal === 'no_brain' || refusal === 'in_flight' || refusal === 'task_starting') } })
 }
 
 /** A split or sort that failed part-way: what is done is recorded under its opId, so the same opId again resumes it. */
@@ -309,13 +313,15 @@ export async function handleTasksApi(
       failedPartWay(json, res, 'split', err)
       return true
     }
-    if (!result.ok) refuseSplit(json, res, result.refusal)
+    if (!result.ok) refuseSplit(json, res, result.refusal, result.message, result.retry)
     else {
       const c = result.command
       json(res, 202, {
         opId: c.opId, state: c.state, undoUntil: c.undoUntil,
         ...(c.split?.createdTaskId ? { taskId: c.split.createdTaskId } : {}),
         ...(c.split?.spawnedSessionId ? { sessionId: c.split.spawnedSessionId } : {}),
+        // The task's session got the brief: the page opens it, no new pane comes from the queue.
+        ...(c.split?.routed ? { routed: true } : {}),
       })
     }
     void deps.board.refresh().catch(() => {})

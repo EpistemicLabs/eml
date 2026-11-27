@@ -12,6 +12,7 @@ import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space
 import { parseToolProfile } from './domain/tool-profile.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
+import { routeToTaskHolder, takenSince, type LeaseRefusal, type RouteDeps } from './application/task-lease.js'
 
 /**
  * Worker spawns (skill spawn-session → cockpit-spawn → here):
@@ -27,7 +28,11 @@ import type { ProviderRegistry } from './infrastructure/providers/registry.js'
  *                                http.ts); the first tab wins and opens the pane,
  *                                with the request id as the worker's session id.
  *                                A chat worker starts here; the answer's `runtime` says so
- * plus the `spawns` / `spawn` / `claimed` events on /api/events.
+ * plus the `spawns` / `spawn` / `claimed` / `revoked` events on /api/events.
+ *
+ * One live session per task (domain/task-lease.ts): a worker asked for on an existing task (`task`) that a session
+ * holds is not started; its prompt goes to that session as a message, and the answer names that session with
+ * `routed: true`. A task with a request pending, or whose holder cannot take the message, refuses the spawn.
  *
  *   POST /api/sessions/<target>/message  a message for a session, by id or address; with the
  *                                spawn token, or from outside with the message token (message-token.ts)
@@ -49,6 +54,12 @@ export interface SpawnDeps {
   sessionNamed?: (sessionId: string, title: string) => void
   /** Task system: create a brain task in the space (spawn newTask); its id, or an error text. */
   createTask?: (space: BrainSpace, input: { title: string; content: string; scope: string; fromTaskId?: string }) => Promise<{ id: string } | { error: string }>
+  /** How full a session's context is, from its provider's summary; null when unknown. Without it a holder is never replaced. */
+  contextTokensOf?: (sessionId: string) => number | null
+  /** Put a session away (stop it and archive it); an error text when it cannot be now, e.g. it is in a turn. */
+  putAway?: (sessionId: string) => Promise<string | null>
+  /** Why a queued request must not start any more (domain/task-lease.ts staleRunnerRequest), or null when it may. */
+  stale?: (request: SpawnRequest) => string | null
 }
 
 const MAX_PROMPT = 50_000
@@ -74,9 +85,21 @@ export async function resolveProject(space: BrainSpace, input: string): Promise<
 
 export interface SpawnOutcome {
   status: number
-  /** `address`: the worker's address for SendMessage (session-address.ts) — absent when its provider has no such messaging. */
-  payload: { id: string; projectId: string; queued: true; address?: string; taskId?: string } | { error: { code: string; message: string } }
+  /**
+   * `address`: the worker's address for SendMessage (session-address.ts) — absent when its provider has no such messaging.
+   * `routed`: no worker was queued; the task's session (`id`) got the prompt as a message (`queued` is then false).
+   */
+  payload: { id: string; projectId: string; queued: boolean; address?: string; taskId?: string; routed?: true } | { error: { code: string; message: string; retry?: boolean } }
 }
+
+/** A refusal of the task's lease (application/task-lease.ts): 409, with whether trying again later can help. */
+export const leaseRefused = ({ code, message, retry }: LeaseRefusal): SpawnOutcome => ({ status: 409, payload: { error: { code, message, retry } } })
+
+/** What routing a start on a task to its holder reads from the spawn deps. */
+export const routeDepsOf = (deps: SpawnDeps): RouteDeps => ({
+  pending: () => deps.spawns.list(), sessions: () => deps.ledger.list(), deliver: deps.deliver,
+  ...(deps.contextTokensOf ? { contextTokensOf: deps.contextTokensOf } : {}), ...(deps.putAway ? { putAway: deps.putAway } : {}),
+})
 
 /**
  * Queue a worker request from a session — the one rule for both ways a request
@@ -114,6 +137,21 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     const limits = chosen.capabilities.toolLimits
     return fail(400, 'TOOLS_NEED_CHAT', limits.supported ? 'Tool limits need the chat runtime, which this provider or sign-in does not use' : limits.reason)
   }
+  // An existing task that a session or a pending request holds gets no second session (application/task-lease.ts).
+  let replaced: string | null = null
+  if (taskId) {
+    const requester = fromSessionId ? deps.ledger.get(fromSessionId) : undefined
+    const from = requester && fromSessionId ? sessionAddress(fromSessionId, requester.projectId) : null
+    const route = await routeToTaskHolder(routeDepsOf(deps), { taskId, prompt, fromSessionId, from })
+    if (route.kind === 'refused') return leaseRefused(route.refusal)
+    if (route.kind === 'routed') {
+      const holder = deps.ledger.get(route.session.sessionId)
+      const holderProject = holder?.projectId ?? projectId
+      const messaging = sessionMessaging(deps.providers.forSession(route.session.sessionId), holder).supported
+      return { status: 200, payload: { id: route.session.sessionId, projectId: holderProject, queued: false, routed: true, taskId, ...(messaging ? { address: sessionAddress(route.session.sessionId, holderProject) } : {}) } }
+    }
+    replaced = route.replaced
+  }
   // newTask: the task is made before the worker is queued, so it starts on it.
   let givenTask = taskId
   if (newTask) {
@@ -132,6 +170,9 @@ export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown
     if ('error' in created) return fail(400, 'NEW_TASK_FAILED', `The task could not be created: ${created.error}`)
     givenTask = created.id
   }
+  // The lease once more, in the same tick as the add: nothing took the task since it was asked above.
+  const taken = taskId ? takenSince(routeDepsOf(deps), taskId, replaced) : null
+  if (taken) return leaseRefused(taken)
   const request = deps.spawns.add({
     projectId,
     prompt,
@@ -245,6 +286,13 @@ export async function handleSpawnApi(
   if (claim && method === 'POST') {
     // Without room it stays queued, and the host starts it once there is (worker-start.ts).
     const waiting = deps.spawns.list().find((candidate) => candidate.id === claim[1])
+    // Fencing: a runner request whose task someone took over meanwhile is revoked, not handed out (domain/task-lease.ts).
+    const stale = waiting ? deps.stale?.(waiting) ?? null : null
+    if (waiting && stale) {
+      deps.spawns.revoke(waiting.id, stale)
+      json(res, 409, { error: { code: 'REVOKED', message: `No longer needed: ${stale}` } })
+      return true
+    }
     if (waiting && unattended(waiting) && !deps.workers.hasRoom()) {
       json(res, 409, { error: { code: 'NO_ROOM', message: 'Too little free memory for another worker right now' } })
       return true
@@ -268,11 +316,15 @@ export function attachSpawnEvents(spawns: SpawnQueue, send: (event: string, data
   send('spawns', spawns.list())
   const onSpawn = (request: SpawnRequest) => send('spawn', request)
   const onClaimed = (id: string) => send('claimed', { id })
+  // A revoked request is gone like a claimed one: tabs drop it.
+  const onRevoked = (id: string) => send('revoked', { id })
   spawns.on('spawn', onSpawn)
   spawns.on('claimed', onClaimed)
+  spawns.on('revoked', onRevoked)
   return () => {
     leave()
     spawns.off('spawn', onSpawn)
     spawns.off('claimed', onClaimed)
+    spawns.off('revoked', onRevoked)
   }
 }
