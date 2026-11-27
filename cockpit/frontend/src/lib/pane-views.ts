@@ -1,9 +1,10 @@
 // The views a pane can show (decision cockpit-builtin-plugins-first), in two
-// groups: the session's views (terminal, chat) and the plugins, the project's
+// groups: the session's (its chat; the terminal is only a hidden fallback,
+// lib/terminal-fallback.ts) and the plugins, the project's
 // views, which Settings › EML Plugins switches on or off (host: /api/plugins). The
 // tab bar, the "+" menus and the command palette are built from this list.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Brain, Clock, FileDiff, FolderGit2, MessageSquare, NotebookPen, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
+import { Brain, Clock, FileDiff, FolderGit2, MessageSquare, NotebookPen, SquareTerminal, type LucideIcon } from 'lucide-react';
 
 import type { PaneView } from '@/stores/usePaneStore';
 import { useActiveSpace } from '@/stores/useSpaceStore';
@@ -25,8 +26,7 @@ export interface PaneViewDef {
 }
 
 export const PANE_VIEW_DEFS: ReadonlyArray<PaneViewDef> = [
-  { view: 'terminal', label: 'Terminal', icon: Terminal, group: 'session', newLabel: 'New session' },
-  { view: 'chat', label: 'Chat', icon: MessageSquare, group: 'session', newLabel: 'New chat session' },
+  { view: 'chat', label: 'Chat', icon: MessageSquare, group: 'session', newLabel: 'New session' },
   {
     view: 'brain', label: 'Brain', icon: Brain, group: 'plugin', plugin: 'brain', newLabel: 'New brain view',
     description: "The project's brain: timeline, graph, tasks. Off hides only this view; the header's Brain tab stays.",

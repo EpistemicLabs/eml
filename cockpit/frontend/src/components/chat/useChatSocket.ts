@@ -84,6 +84,7 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
           greet: readSettings().greetOnStart,
           provider: paneStore.chatProviderOfPane(paneId),
           start: peekChatStart(sessionId),
+          taskId: paneStore.getPane(paneId)?.taskId ?? null,
         })));
       };
       sendInitRef.current = (wait) => { clearBusy(); sendInit(wait); };

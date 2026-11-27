@@ -1,44 +1,38 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode } from 'react';
+import { MessageSquare } from 'lucide-react';
 
 import { ChatPane } from '@/components/chat/ChatPane';
-import { useSwitchBlocked } from '@/components/chat/chat-store';
 import MainContentTabSwitcher from '@/components/main-content/view/subcomponents/MainContentTabSwitcher';
-import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
-import StandaloneShell from '@/components/standalone-shell/view/StandaloneShell';
-import { reclaimTerminal } from '@/lib/terminal-reclaim';
-import type { PaneView } from '@/stores/usePaneStore';
-import type { LLMProvider, ProjectSession } from '@/types/app';
-
-export type SessionView = 'terminal' | 'chat';
+import SessionStatusBar from '@/components/main-content/view/subcomponents/SessionStatusBar';
+import TerminalPane from '@/components/shell/view/TerminalPane';
+import { tellOnDesk } from '@/components/command-palette/openTask';
+import { cn } from '@/lib/utils';
+import { buttonVariants, LABEL } from '@/shared/view/ui';
+import type { ProjectSession } from '@/types/app';
 
 /**
- * The toolbar's pane actions; each one shows only where it is passed. A desk pane passes them all,
- * the task board none, so there only the terminal/chat switch shows.
+ * The toolbar's pane actions; each one shows only where it is passed. The task board passes the
+ * close action; a desk pane draws its own toolbar.
  */
 export interface SessionChatToolbar {
-  onAddPane?: (view: PaneView, provider?: LLMProvider, model?: string | null) => void;
   onClosePane?: () => void;
-  isMainPane?: boolean;
-  onToggleMainPane?: () => void;
 }
 
 /**
- * A session's conversation, wherever it is shown: the chat view for a session that runs in the chat,
- * its terminal (with the status bar) for one that runs in a terminal. One component for the desk
- * panes and the task board.
+ * A session's conversation, wherever it is shown: its chat. One component for the desk panes, the
+ * task board and the media viewer.
  *
- * - `view`/`onView` control which one shows (a desk pane keeps it in the pane); without them the
- *   component starts from how the session runs and keeps the choice itself.
- * - `toolbar` shows the view switch with the pane actions given; leave it out where the caller draws
- *   its own toolbar (a desk pane's, which also switches to the plugins).
- * - `borrowed`: shown outside its pane, so the terminal goes back to the pane on unmount.
+ * - `terminalFallback` (desk panes only, while the pane is in the hidden terminal fallback, Settings ›
+ *   Advanced): the same session in the agent's own terminal, under a "Terminal fallback" label with
+ *   "Back to chat". The host refuses the terminal while the switch is off; the pane then goes back to
+ *   the chat with a notice.
+ * - `toolbar` shows the pane actions given; leave it out where the caller draws its own toolbar.
  * - `paneId` names the surface, so scroll and draft are kept per surface.
- * - `composer` replaces the session's input (a closed task's chat in the task panel); the chat view
- *   then stays, since the terminal would write to the session straight away.
+ * - `composer` replaces the session's input (a closed task's chat in the task panel).
  */
 export function SessionChat({
-  paneId, projectId, sessionId, session, spaceId, view: controlled, onView, toolbar, borrowed = false,
-  isActive = true, whenIdle = false, command = null, title = null, composer,
+  paneId, projectId, sessionId, session, spaceId, toolbar, terminalFallback = null,
+  isActive = true, title = null, composer,
 }: {
   paneId: string;
   projectId: string | null;
@@ -46,50 +40,76 @@ export function SessionChat({
   session: ProjectSession | null;
   /** Outside the desks: the session's space, which a pane takes from its desk. */
   spaceId?: string | null;
-  view?: SessionView;
-  onView?: (view: SessionView) => void;
   toolbar?: SessionChatToolbar;
-  borrowed?: boolean;
+  terminalFallback?: { onBack: () => void } | null;
   isActive?: boolean;
-  whenIdle?: boolean;
-  /** First prompt for a freshly spawned terminal session. */
-  command?: string | null;
   title?: string | null;
   composer?: ReactNode;
 }) {
-  const [own, setOwn] = useState<SessionView>(session?.runtime === 'sdk' ? 'chat' : 'terminal');
-  const view = composer ? 'chat' : controlled ?? own;
-  const setView = (next: SessionView) => { if (onView) onView(next); else setOwn(next); };
-  const switchBlocked = useSwitchBlocked(sessionId);
-  useEffect(() => {
-    if (!borrowed || view !== 'terminal' || !sessionId) return;
-    return () => reclaimTerminal(sessionId);
-  }, [borrowed, view, sessionId]);
-
   if (!projectId) return <p className="p-4 text-body text-muted-foreground">This session has no project to open it in.</p>;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {toolbar && (
         <div className="flex shrink-0 justify-end px-2 py-1.5">
-          <MainContentTabSwitcher
-            groups={composer ? [] : ['session']}
-            paneView={view}
-            onSetPaneView={(next) => { if (next === 'terminal' || next === 'chat') setView(next); }}
-            switchBlocked={switchBlocked}
-            {...toolbar}
-          />
+          <MainContentTabSwitcher groups={[]} paneView="chat" onSetPaneView={() => {}} {...toolbar} />
         </div>
       )}
-      {view === 'chat' && sessionId ? (
-        <ChatPane paneId={paneId} projectId={projectId} sessionId={sessionId} session={session} whenIdle={whenIdle} isActive={isActive} spaceId={spaceId} composer={composer} />
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1">
-            <StandaloneShell paneId={paneId} projectId={projectId} sessionId={sessionId} sessionTitle={title ?? (session?.summary as string | undefined) ?? null} command={command} isActive={borrowed ? false : isActive} spaceId={spaceId} />
-          </div>
-          <TerminalStatusBar session={session} />
-        </div>
-      )}
+      {terminalFallback && sessionId && !composer ? (
+        <TerminalFallback
+          paneId={paneId}
+          projectId={projectId}
+          sessionId={sessionId}
+          session={session}
+          spaceId={spaceId}
+          isActive={isActive}
+          title={title ?? (session?.summary as string | undefined) ?? null}
+          onBack={terminalFallback.onBack}
+        />
+      ) : sessionId ? (
+        // Waits for a turn running in the terminal fallback to end rather than interrupting it.
+        <ChatPane paneId={paneId} projectId={projectId} sessionId={sessionId} session={session} whenIdle isActive={isActive} spaceId={spaceId} composer={composer} />
+      ) : null}
+    </div>
+  );
+}
+
+/** The session in its agent's own terminal (host PTY), for debugging: labelled, with the way back to the chat. */
+function TerminalFallback({ paneId, projectId, sessionId, session, spaceId, isActive, title, onBack }: {
+  paneId: string;
+  projectId: string;
+  sessionId: string;
+  session: ProjectSession | null;
+  spaceId?: string | null;
+  isActive: boolean;
+  title: string | null;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div role="status" className="flex shrink-0 items-center gap-2 px-2 pb-1">
+        <span className={LABEL}>Terminal fallback</span>
+        <button type="button" onClick={onBack} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'ml-auto gap-1.5')}>
+          <MessageSquare aria-hidden className="size-3.5" strokeWidth={1.8} />
+          Back to chat
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <TerminalPane
+          paneId={paneId}
+          projectId={projectId}
+          sessionId={sessionId}
+          sessionTitle={title}
+          initialCommand={null}
+          isActive={isActive}
+          autoConnect
+          spaceId={spaceId}
+          onFallbackOff={() => {
+            onBack();
+            tellOnDesk('The terminal fallback is off (Settings › Advanced), so this session is back in its chat.');
+          }}
+        />
+      </div>
+      <SessionStatusBar session={session} />
     </div>
   );
 }

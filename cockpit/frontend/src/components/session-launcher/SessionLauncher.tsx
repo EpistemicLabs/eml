@@ -14,7 +14,9 @@ import { Chip, FOCUS, LABEL } from '@/shared/view/ui';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { readable, useTaskBoard, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { getDeskOfPane, lastProjectOfDesk, newCliSessionId, newSessionView, resumeSessionInPane, startSessionInPane } from '@/stores/usePaneStore';
+import { getDeskOfPane, lastProjectOfDesk, newCliSessionId, resumeSessionInPane, startSessionInPane } from '@/stores/usePaneStore';
+import { useProviders } from '@/lib/providers';
+import { useTerminalFallback } from '@/lib/terminal-fallback';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 
@@ -43,7 +45,14 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
   const [text, setText] = useState('');
   const [manual, setManual] = useState<Project | null>(null);
   const agents = useAgentChoice();
+  // No agent with a chat set up: only the terminal fallback could start one, and only while it is on.
+  const { data: providers } = useProviders();
+  const fallbackOn = useTerminalFallback();
+  const terminalOnly = !agents.choice && fallbackOn
+    ? (providers ?? []).find((p) => p.version !== null && p.capabilities?.chat.supported === false) ?? null
+    : null;
   const [picking, setPicking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { box.current?.focus(); }, []);
 
@@ -56,10 +65,14 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
     const prompt = text.trim() || null;
     const sessionId = newCliSessionId();
     const choice = agents.choice;
-    // No agent with a chat set up: the session starts as a new session always did, with the default agent in its view.
-    if (!choice) { startSessionInPane(paneId, { projectId: project.projectId, view: newSessionView(), prompt, sessionId }); return; }
+    if (!choice) {
+      // An agent without a chat opens in the terminal fallback; its first message is typed there.
+      if (terminalOnly) { startSessionInPane(paneId, { projectId: project.projectId, sessionId, provider: terminalOnly.id, terminalFallback: true }); return; }
+      setProblem('No agent with a chat is set up yet. Set one up in Settings › Models.');
+      return;
+    }
     queueChatStart(sessionId, { provider: choice.provider, prompt, model: choice.model });
-    startSessionInPane(paneId, { projectId: project.projectId, view: 'chat', prompt, sessionId, provider: choice.provider });
+    startSessionInPane(paneId, { projectId: project.projectId, sessionId, provider: choice.provider });
   };
 
   const continueList = space ? recentSessions(sessions ?? [], space.id, RECENT_SESSIONS) : [];
@@ -103,6 +116,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
             </button>
           </div>
         </form>
+        {problem && <p role="alert" className="m-0 text-body text-stopped-ink">{problem}</p>}
 
         {ranked.length > 0 && (
           <section aria-label="Recent projects" className="flex flex-col gap-2">
@@ -131,7 +145,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
             <div className="flex flex-col overflow-hidden rounded-xl border border-border">
               {continueList.map((s) => (
                 <button key={s.id} type="button"
-                  onClick={() => resumeSessionInPane(paneId, { projectId: s.__projectId ?? '', sessionId: s.id, chat: s.runtime === 'sdk' })}
+                  onClick={() => resumeSessionInPane(paneId, { projectId: s.__projectId ?? '', sessionId: s.id })}
                   className={cn('grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-t border-border bg-card px-3 py-2 text-left first:border-t-0 hover:bg-muted', FOCUS)}>
                   <span className="flex min-w-0 items-center gap-2 text-body font-medium">
                     <span className="truncate">{readable(sessionDisplayName(s) || 'Untitled session')}</span>

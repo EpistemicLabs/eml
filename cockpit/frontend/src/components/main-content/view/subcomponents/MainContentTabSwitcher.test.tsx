@@ -12,6 +12,7 @@ const agent = (id: string, label: string, over: object = {}) => ({
 });
 
 let providers: unknown[] = [];
+let fallbackOn = false;
 const models = [
   { id: 'claude', models: [{ id: 'opus', label: 'Opus 5.5', description: '', resolved: null }] },
   { id: 'codex', models: [{ id: 'gpt-6-luna', label: 'GPT-6 Luna', description: '', resolved: null }] },
@@ -23,8 +24,10 @@ beforeEach(() => {
     agent('codex', 'Codex', { signedIn: false }),
     agent('qwen', 'Qwen Code', { capabilities: { chat: { supported: false, reason: 'Terminal only.' }, endTurnTool: yes, messaging: yes } }),
   ];
+  fallbackOn = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url === '/api/providers') return new Response(JSON.stringify({ providers }));
+    if (url === '/api/terminal-fallback') return new Response(JSON.stringify({ enabled: fallbackOn }));
     if (url === '/api/providers/models') return new Response(JSON.stringify({ providers: models }));
     return new Response(JSON.stringify({ plugins: [] }));
   }));
@@ -48,7 +51,7 @@ describe('the pane toolbar\'s "+"', () => {
       'New Claude Code chat', 'Opus 5.5', 'New Codex chat· not signed in', 'GPT-6 Luna', 'New brain view',
     ]));
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'GPT-6 Luna' }));
-    expect(onAddPane).toHaveBeenCalledWith('chat', 'codex', 'gpt-6-luna');
+    expect(onAddPane).toHaveBeenCalledWith('chat', 'codex', 'gpt-6-luna', undefined);
   });
 
   it('asks for no model list in a toolbar without "+" (a task\'s panel)', async () => {
@@ -61,13 +64,44 @@ describe('the pane toolbar\'s "+"', () => {
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).not.toContain('/api/providers/models');
   });
 
-  it('without any agent that has a chat, offers a session per ready agent CLI as before', async () => {
+  it('offers an agent without a chat only while the terminal fallback is on, and opens it there', async () => {
     providers = [agent('qwen', 'Qwen Code', { isDefault: true, capabilities: { chat: { supported: false, reason: 'Terminal only.' }, endTurnTool: yes, messaging: yes } })];
     const onAddPane = vi.fn();
     mount(onAddPane);
     fireEvent.click(screen.getByRole('button', { name: 'New pane next to this one' }));
-    await waitFor(() => expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'New Qwen Code session' })).toBeTruthy());
-    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'New Qwen Code session' }));
-    expect(onAddPane).toHaveBeenCalledWith('terminal', undefined, undefined);
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain('/api/terminal-fallback'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: /Qwen Code/ })).toBeNull();
+    cleanup();
+
+    fallbackOn = true;
+    mount(onAddPane);
+    fireEvent.click(screen.getByRole('button', { name: 'New pane next to this one' }));
+    const item = await within(screen.getByRole('menu')).findByRole('menuitem', { name: 'New Qwen Code session (terminal fallback)' });
+    fireEvent.click(item);
+    expect(onAddPane).toHaveBeenCalledWith('chat', 'qwen', undefined, true);
+  });
+});
+
+describe('the pane toolbar\'s ··· menu', () => {
+  it('holds the session\'s terminal fallback when it is given, and nothing otherwise', () => {
+    const run = vi.fn();
+    mount(() => {});
+    expect(screen.queryByRole('button', { name: 'More session actions' })).toBeNull();
+    cleanup();
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MainContentTabSwitcher paneView="chat" onSetPaneView={() => {}} fallback={{ label: 'Open in terminal (fallback)', run }} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'More session actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in terminal (fallback)' }));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no Terminal tab: the session\'s one view is the chat', () => {
+    mount(() => {});
+    expect(screen.queryByRole('radio', { name: 'Terminal' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Chat' })).toBeTruthy();
   });
 });

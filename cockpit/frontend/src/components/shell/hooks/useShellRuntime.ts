@@ -6,7 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 
 import { useTheme } from '@/contexts/ThemeContext';
-import { RECLAIM_TERMINAL_EVENT } from '@/lib/terminal-reclaim';
+import { isFallbackOff } from '@/lib/terminal-fallback';
 import { getDeskOfPane, getPane } from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
 import {
@@ -64,6 +64,8 @@ export interface ShellRuntimeOptions {
   spaceId?: string | null;
   /** 'shell': the Shell plugin's terminal, `sessionId` its shell id; no project, no agent. */
   kind?: 'session' | 'shell';
+  /** An agent session's terminal: the host refused it, since the terminal fallback is off (lib/terminal-fallback.ts). */
+  onFallbackOff?: (message: string) => void;
 }
 
 /** Input from outside the terminal: the compact layout's key row and its extras. */
@@ -222,6 +224,7 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
     try {
       const msg = parseTextFrame(payload);
       if (msg.kind === 'output') terminal.write(msg.data);
+      else if (msg.kind === 'error' && latestRef.current.kind !== 'shell' && isFallbackOff(msg)) latestRef.current.onFallbackOff?.(msg.message);
       else if (msg.kind === 'error') terminal.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
     } catch (error) {
       console.error('[Shell] Error handling WebSocket message:', payload, error);
@@ -505,15 +508,6 @@ export function useShellRuntime(options: ShellRuntimeOptions) {
   useEffect(() => {
     if (autoConnect && initialized && !connecting && !connected && !superseded) void connect();
   }, [autoConnect, initialized, connecting, connected, superseded, connect]);
-
-  // The task panel borrowed this terminal's session and is done with it: take it back.
-  useEffect(() => {
-    const onReclaim = (event: Event) => {
-      if ((event as CustomEvent<{ sessionId: string }>).detail?.sessionId === sessionId) setSuperseded(false);
-    };
-    window.addEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
-    return () => window.removeEventListener(RECLAIM_TERMINAL_EVENT, onReclaim);
-  }, [sessionId]);
 
   useEffect(() => {
     if (!isActive || !initialized || !connected) return;

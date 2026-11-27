@@ -24,6 +24,8 @@ export function chatInitFrame(opts: {
   greet: boolean;
   provider: string | null;
   start: ChatStart | null;
+  /** The brain task the pane's session advances (a task run): recorded with a new session, as the terminal's init did. */
+  taskId?: string | null;
 }): Record<string, unknown> {
   const { start } = opts;
   const provider = start?.provider ?? opts.provider;
@@ -36,6 +38,7 @@ export function chatInitFrame(opts: {
     // A chat started from a launcher: its first message and model.
     ...(start?.prompt ? { prompt: start.prompt } : {}),
     ...(start?.model ? { model: start.model } : {}),
+    ...(opts.taskId ? { taskId: opts.taskId } : {}),
   };
 }
 

@@ -316,7 +316,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
             </ul>
           )}
           {current ? (
-            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} borrowed toolbar={{ onClosePane: onClose }} {...(closed ? { composer: composer || <ClosedNote task={task} pending={Boolean(task.pending)} /> } : {})} />
+            <SessionChat key={current.id} paneId={TASK_BOARD_PANE_ID} projectId={current.__projectId ?? null} sessionId={current.id} session={current} spaceId={spaceKey(current.spaceId)} toolbar={{ onClosePane: onClose }} {...(closed ? { composer: composer || <ClosedNote task={task} pending={Boolean(task.pending)} /> } : {})} />
           ) : (
             <>
             <div className="flex shrink-0 justify-end px-2 py-1.5">

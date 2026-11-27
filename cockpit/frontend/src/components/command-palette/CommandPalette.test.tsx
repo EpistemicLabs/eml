@@ -26,11 +26,16 @@ vi.mock('@/lib/providers', () => ({ useProviders: () => ({ data: [] }) }));
 vi.mock('@/lib/queries', () => ({ useList: () => ({ data: undefined, isFetching: false }) }));
 vi.mock('@/lib/engram-panel', () => ({ useEngramPanel: () => ({ open: () => {} }) }));
 vi.mock('@/stores/useSpaceStore', async (importOriginal) => ({ ...(await importOriginal<object>()), useSpaces: () => [{ id: 'eml', name: 'EML', main: false, agent: null, upgrade: null }] }));
+const fallback = vi.hoisted(() => ({ on: false, inFallback: false, opened: [] as string[], closed: [] as string[] }));
+vi.mock('@/lib/terminal-fallback', () => ({ useTerminalFallback: () => fallback.on }));
 vi.mock('@/stores/usePaneStore', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useDesks: () => [{ id: 'd1', name: 'Desk 1', spaceId: 'eml', panes: [{ id: 'p1', sessionId: 's-here' }] }],
   useActiveDeskId: () => 'd1',
   useActiveSpaceId: () => 'eml',
+  useActivePane: () => ({ id: 'p1', paneView: 'chat', sessionId: 's-here', projectId: 'p', ...(fallback.inFallback ? { terminalFallback: true } : {}) }),
+  openTerminalFallback: (id: string) => { fallback.opened.push(id); },
+  closeTerminalFallback: (id: string) => { fallback.closed.push(id); },
 }));
 const media = vi.hoisted(() => ({ opened: [] as unknown[] }));
 vi.mock('@/components/media/files', () => ({
@@ -97,5 +102,32 @@ describe('files in ⌘K', () => {
       index: 1,
       chat: { sessionId: 's-1', projectId: 'p', spaceId: 'eml', title: 'Control group' },
     });
+  });
+});
+
+describe('the terminal fallback in ⌘K', () => {
+  afterEach(() => { fallback.on = false; fallback.inFallback = false; fallback.opened = []; fallback.closed = []; });
+  const open = () => {
+    renderPalette();
+    fireEvent.keyDown(document, { key: 'k', metaKey: true, ctrlKey: true });
+    return screen.getByRole('combobox');
+  };
+
+  it('is not offered while the switch is off', () => {
+    fireEvent.change(open(), { target: { value: 'terminal' } });
+    expect(screen.queryByText('Open in terminal (fallback)')).toBeNull();
+  });
+
+  it('opens the current session in the terminal while the switch is on, and goes back to the chat from there', () => {
+    fallback.on = true;
+    fireEvent.change(open(), { target: { value: 'fallback' } });
+    fireEvent.click(screen.getByText('Open in terminal (fallback)'));
+    expect(fallback.opened).toEqual(['p1']);
+    cleanup();
+
+    fallback.inFallback = true;
+    fireEvent.change(open(), { target: { value: 'back to chat' } });
+    fireEvent.click(screen.getByText('Back to chat'));
+    expect(fallback.closed).toEqual(['p1']);
   });
 });

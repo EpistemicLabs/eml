@@ -44,7 +44,8 @@ import { useProviders } from '@/lib/providers';
 import { useList } from '@/lib/queries';
 import { useEngramPanel } from '@/lib/engram-panel';
 import type { Engram, EngramStatus } from '@/lib/types';
-import { activateDesk, openInPane, useActiveDeskId, useActiveSpaceId, useDesks, type PaneView } from '@/stores/usePaneStore';
+import { activateDesk, closeTerminalFallback, openInPane, openTerminalFallback, useActiveDeskId, useActivePane, useActiveSpaceId, useDesks, type PaneView } from '@/stores/usePaneStore';
+import { useTerminalFallback } from '@/lib/terminal-fallback';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { typeLabel } from '@/components/media/file-refs';
 import { openMedia, useRecentFiles, type RecentFile } from '@/components/media/files';
@@ -106,7 +107,7 @@ const BRAIN_LIMIT = 8;
 const HIDDEN_ENGRAM_STATUSES: ReadonlySet<EngramStatus> = new Set(['superseded', 'invalidated']);
 
 const NAV_ENTRIES: ReadonlyArray<{ label: string; keywords: string; icon: LucideIcon; view: PaneView }> = [
-  { label: 'Go to Terminal', keywords: 'terminal shell console claude', icon: SquareTerminal, view: 'terminal' },
+  { label: 'Go to Chat', keywords: 'chat session conversation agent claude codex qwen', icon: MessageSquare, view: 'chat' },
   { label: 'Go to Brain', keywords: 'brain engrams timeline graph', icon: Brain, view: 'brain' },
   { label: 'Go to Notes', keywords: 'note notes todo checklist', icon: NotebookPen, view: 'note' },
   { label: 'Go to Worktrees', keywords: 'worktrees worktree branch git ports', icon: FolderGit2, view: 'worktrees' },
@@ -395,7 +396,7 @@ export default function CommandPalette({
   const selectProject = (project: Project) => {
     const provider = providerOnPage;
     run(() => {
-      if (provider) openInPane({ surface: 'terminal', projectId: project.projectId, provider });
+      if (provider) openInPane({ surface: 'session', projectId: project.projectId, provider });
       else onStartNewChat(project);
     });
   };
@@ -430,6 +431,10 @@ export default function CommandPalette({
     run(() => { requestTaskPanel(task.id); setTopView('tasks'); });
   };
   const activeDeskName = desks.find((d) => d.id === activeDeskId)?.name ?? 'this desk';
+  // The hidden terminal fallback (Settings › Advanced) for the session in the active pane, while it is on.
+  const fallbackOn = useTerminalFallback();
+  const activePane = useActivePane();
+  const activeSessionPane = activePane?.paneView === 'chat' && activePane.sessionId && activePane.projectId ? activePane : null;
 
   // ── Actions / Navigate / Settings (root only) ───────────────────────
   type ActionEntry = { label: string; icon: LucideIcon; hint?: string; onSelect: () => void };
@@ -455,6 +460,13 @@ export default function CommandPalette({
           },
         });
       }
+    }
+    if (activeSessionPane?.terminalFallback) {
+      const paneId = activeSessionPane.id;
+      actions.push({ label: 'Back to chat', icon: MessageSquare, onSelect: () => run(() => { setTopView('desks'); closeTerminalFallback(paneId); }) });
+    } else if (activeSessionPane && fallbackOn) {
+      const paneId = activeSessionPane.id;
+      actions.push({ label: 'Open in terminal (fallback)', icon: SquareTerminal, onSelect: () => run(() => { setTopView('desks'); openTerminalFallback(paneId); }) });
     }
     // Every shortcut is here too, with its keys (top-bar/shortcuts.ts).
     const hint = (label: string) => keysHint(SHORTCUTS.find((s) => s.label === label)?.keys ?? []);

@@ -182,7 +182,7 @@ export function HandOverDialog({ task, mode: initialMode, agents, desks, now, on
                 {mode === 'now'
                   ? `${continuable && !fresh
                     ? `${agentName(agent)} carries on in the task's session, with what was said there, once the few seconds to undo are over.`
-                    : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in a terminal' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
+                    : `${agentName(agent)} starts in a new session${task.ownSession && !continuable ? ` (${task.ownSession.why === 'terminal' ? 'its session runs in the terminal fallback' : task.ownSession.why === 'long_context' ? 'its session is very long' : 'its session cannot carry on'})` : ''}, from the task's journal, once the few seconds to undo are over.`} You stay the owner; the card moves to Agent working, then to Review.`
                   : then === 'repeat'
                     ? `${agentName(agent)} works on it on that rhythm until you end it, each time in a new session.${task.schedule?.crons?.length ? ' The time is added to those the task repeats at.' : ''} The task sits in Agent scheduled under Routines, on every device and for every member.`
                     : `${agentName(agent)} is woken on this task at that time.${task.schedule?.at ? ` It replaces the wake-up set for ${whenText(task.schedule.at, now)}.` : ''} Until then the card sits in Agent scheduled, with the date.`}

@@ -1,12 +1,12 @@
 /**
  * Multi-pane / multi-desk layout store.
  *
- * No chat pane (the terminal IS the chat — see decision cockpit-pane-types),
- * no sub-panes / editor / todos / plugin tabs. Projects are the host's
- * project registry (decision cockpit-isolation-scope-clarified). What stays is the model that carries the shell: Desks →
- * Panes, a session id per terminal pane, per-session view memory,
- * persistence with validation, cross-tab sync, and the pending-shell-command
- * queue for externally spawned panes.
+ * Every agent session runs in the chat; its terminal is only a hidden
+ * fallback for debugging (Settings › Advanced, lib/terminal-fallback.ts), a
+ * flag on a chat pane rather than a view of its own. No sub-panes / editor /
+ * todos. Projects are the host's project registry (decision
+ * cockpit-isolation-scope-clarified). What stays: Desks → Panes, a session id
+ * per session pane, persistence with validation and cross-tab sync.
  *
  * The cockpit is organised into **desks** (top-level tabs). Each desk
  * owns its own set of panes + active pane, so terminals opened in one
@@ -26,17 +26,16 @@
  */
 import type { EngramType } from '@/lib/types';
 import type { LLMProvider } from '@/types/app';
-import { chatProvider, providerCanChat, type AgentProviderInfo } from '@/lib/providers';
+import { chatProvider, type AgentProviderInfo } from '@/lib/providers';
 import { useCallback, useSyncExternalStore } from 'react';
-import { startsInChat } from '@/components/chat/chat-default';
-import { readSettings } from '@/components/settings/utils/settingsStorage';
+import { queueChatStart } from '@/components/chat/chat-start';
 import { setTopView } from './useTopViewStore';
 
 /**
  * Primary view mode for a pane's body. Mutually exclusive.
  *
- * Terminal mode hosts the embedded Claude CLI (xterm.js + node-pty), which
- * the host's pty-bridge resumes against the pane's session id. Brain mode
+ * Chat mode shows the pane's agent session (ChatPane); with `terminalFallback`
+ * set it shows the same session in the agent's own terminal instead. Brain mode
  * renders the local brain's views (graph / timeline / list). Note mode edits
  * one `type=note` engram of the pane's project (decision cockpit-notes-pane).
  * Worktrees mode shows the project's worktrees, sessions and ports. Repository
@@ -46,11 +45,9 @@ import { setTopView } from './useTopViewStore';
  * shows one file pinned from the media viewer ("Open as pane"); it is no tab of
  * the view switch, the pane holds that file alone. Labels, icons and groups of the views: lib/pane-views.ts.
  */
-export type PaneView = 'terminal' | 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time' | 'file';
+export type PaneView = 'chat' | 'brain' | 'note' | 'worktrees' | 'repository' | 'shell' | 'time' | 'file';
 
-export const PANE_VIEWS: ReadonlyArray<PaneView> = ['terminal', 'chat', 'brain', 'note', 'worktrees', 'repository', 'shell', 'time', 'file'];
-/** Views that show something of their own, not the pane's session: never remembered as a session's view. */
-const OWN_VIEWS: ReadonlySet<PaneView> = new Set(['note', 'shell', 'time', 'file']);
+export const PANE_VIEWS: ReadonlyArray<PaneView> = ['chat', 'brain', 'note', 'worktrees', 'repository', 'shell', 'time', 'file'];
 
 const isPaneView = (value: unknown): value is PaneView =>
   typeof value === 'string' && (PANE_VIEWS as readonly string[]).includes(value);
@@ -60,20 +57,27 @@ export interface PaneState {
   /** The host-registered project this pane's session runs in (cwd). */
   projectId: string | null;
   /**
-   * The Claude session this pane owns. Pre-minted (UUID) the moment a
-   * terminal pane is created — Claude's CLI accepts `--session-id <uuid>`,
+   * The agent session this pane owns. Pre-minted (UUID) the moment a
+   * session pane is created — Claude's CLI accepts `--session-id <uuid>`,
    * so the pane owns the id up front and the host can `--resume` it later
    * (see decision cockpit-session-resume-strategy). Brain panes carry null.
    */
   sessionId: string | null;
   paneView: PaneView;
   /**
-   * Auto-assigned label for terminal panes ("Terminal 1", "Terminal 2", …)
-   * so multiple terminals are distinguishable in the pane title. Only set
-   * while `paneView === 'terminal'`; cleared on toggle to brain. Numbers are
-   * recycled when a labelled pane closes, scoped per-desk.
+   * Auto-assigned label for session panes ("Chat 1", "Chat 2", …) so
+   * parallel sessions are distinguishable in the pane title before they have
+   * a name. Only set while `paneView === 'chat'`; cleared on toggle to brain.
+   * Numbers are recycled when a labelled pane closes, scoped per-desk.
    */
   label?: string;
+  /**
+   * The pane shows its session in the agent's own terminal (the hidden
+   * terminal fallback, Settings › Advanced) instead of the chat. Only while
+   * `paneView === 'chat'`; "Back to chat", another view or another session
+   * clears it, and so does the switch going off.
+   */
+  terminalFallback?: boolean;
   /**
    * User-chosen pane title (inline rename). Overrides the auto `label` for
    * display and persists with the layout so a renamed terminal survives
@@ -117,12 +121,12 @@ export interface PaneState {
   shellId?: string;
   /**
    * v0.17: the brain task this pane's session advances (a task run, skill
-   * task-run). Sent with the terminal's init so the host ledger records it.
+   * task-run). Sent with the session's init so the host ledger records it.
    */
   taskId?: string;
   /**
    * The agent CLI a NEW session in this pane starts with (a host provider
-   * id); unset → the cockpit's default. Sent with the terminal's init. The
+   * id); unset → the cockpit's default. Sent with the session's init. The
    * host records it with the session, so it only matters on the first spawn
    * and is dropped when the pane moves on to another session.
    */
@@ -207,12 +211,6 @@ interface PaneStoreSnapshot {
   activeDeskId: string;
   /** The space of the active desk — the space the cockpit shows (null = main). */
   activeSpaceId: string | null;
-  /**
-   * Per-session view-mode memory: when a session is loaded into a pane
-   * and an entry exists here, the pane snaps to that view. Shared across
-   * all desks (a session's preferred view is the same wherever it opens).
-   */
-  sessionViews: Record<string, PaneView>;
 }
 
 const STORAGE_KEY = 'cockpit-pane-layout';
@@ -221,7 +219,7 @@ const generateId = (): string => `pane-${crypto.randomUUID()}`;
 
 const generateDeskId = (): string => `desk-${crypto.randomUUID()}`;
 
-// Every terminal pane mints its own session id at birth — the cockpit's id of
+// Every session pane mints its own session id at birth — the cockpit's id of
 // the session. Claude Code adopts it (--session-id); Codex assigns its own and
 // the host binds the two (session-ledger.ts, providerSessionId).
 export const newCliSessionId = (): string => crypto.randomUUID();
@@ -229,20 +227,20 @@ export const newCliSessionId = (): string => crypto.randomUUID();
 const slugify = (input: string): string =>
   input.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-') || 'desk';
 
-const TERMINAL_LABEL_RE = /^Terminal (\d+)$/;
+const SESSION_LABEL_RE = /^Chat (\d+)$/;
 
 /**
- * Ensure every terminal pane has a unique `Terminal N` label and no brain
+ * Ensure every session pane has a unique `Chat N` label and no brain
  * pane carries one. Recycles numbers — N is the smallest positive integer
- * not already taken by another terminal pane in the SAME array (labels are
+ * not already taken by another session pane in the SAME array (labels are
  * scoped per-desk). Returns the same array reference when nothing changed
  * so callers can short-circuit.
  */
-const normalizeTerminalLabels = (panes: PaneState[]): PaneState[] => {
+const normalizeSessionLabels = (panes: PaneState[]): PaneState[] => {
   const used = new Set<number>();
   for (const p of panes) {
-    if (p.paneView === 'terminal' && p.label) {
-      const m = TERMINAL_LABEL_RE.exec(p.label);
+    if (p.paneView === 'chat' && p.label) {
+      const m = SESSION_LABEL_RE.exec(p.label);
       if (m) used.add(parseInt(m[1], 10));
     }
   }
@@ -256,10 +254,10 @@ const normalizeTerminalLabels = (panes: PaneState[]): PaneState[] => {
 
   let changed = false;
   const next = panes.map(pane => {
-    if (pane.paneView === 'terminal') {
+    if (pane.paneView === 'chat') {
       if (!pane.label) {
         changed = true;
-        return { ...pane, label: `Terminal ${nextFree()}` };
+        return { ...pane, label: `Chat ${nextFree()}` };
       }
       return pane;
     }
@@ -288,10 +286,10 @@ const normalizeMainPane = (desk: DeskState): DeskState => {
   return { ...desk, panes: [main, ...desk.panes.filter(p => p !== main)] };
 };
 
-const createPane = (paneView: PaneView = 'terminal', projectId: string | null = null): PaneState => ({
+const createPane = (paneView: PaneView = 'chat', projectId: string | null = null): PaneState => ({
   id: generateId(),
   projectId,
-  sessionId: paneView === 'terminal' || paneView === 'chat' ? newCliSessionId() : null,
+  sessionId: paneView === 'chat' ? newCliSessionId() : null,
   paneView,
 });
 
@@ -301,34 +299,40 @@ const createDeskWithPane = (
   defaultProjectId: string | null = null,
   spaceId: string | null = null,
 ): DeskState => {
-  const pane = createPane('terminal', defaultProjectId);
+  const pane = createPane('chat', defaultProjectId);
   return {
     id: generateDeskId(),
     spaceId,
     slug,
     name,
     defaultProjectId,
-    panes: normalizeTerminalLabels([pane]),
+    panes: normalizeSessionLabels([pane]),
     activePaneId: pane.id,
   };
 };
 
 const createDefaultState = (): PaneStoreSnapshot => {
   const desk = createDeskWithPane('desk-1', 'Desk 1');
-  return { desks: [desk], activeDeskId: desk.id, activeSpaceId: null, sessionViews: {} };
+  return { desks: [desk], activeDeskId: desk.id, activeSpaceId: null };
 };
 
 // ── Persistence ─────────────────────────────────────────────────────
-const parsePane = (entry: unknown): PaneState | null => {
+// Layouts from before chat was the only view: a pane in the old terminal view
+// (or any view this version does not know) opens in the chat, and its
+// "Terminal N" label becomes "Chat N". The per-session view memory
+// (`sessionViews`) is no longer read and drops out with the next write.
+export const parsePane = (entry: unknown): PaneState | null => {
   if (!entry || typeof entry !== 'object') return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.id !== 'string') return null;
+  const paneView: PaneView = isPaneView(e.paneView) ? e.paneView : 'chat';
   return {
     id: e.id,
     projectId: typeof e.projectId === 'string' ? e.projectId : null,
     sessionId: typeof e.sessionId === 'string' ? e.sessionId : null,
-    paneView: isPaneView(e.paneView) ? e.paneView : 'terminal',
-    label: typeof e.label === 'string' ? e.label : undefined,
+    paneView,
+    label: typeof e.label === 'string' ? e.label.replace(/^Terminal (\d+)$/, 'Chat $1') : undefined,
+    terminalFallback: e.terminalFallback === true && paneView === 'chat' ? true : undefined,
     title: typeof e.title === 'string' && e.title.trim() ? e.title : undefined,
     pinned: e.pinned === true ? true : undefined,
     noteId: typeof e.noteId === 'string' && e.noteId ? e.noteId : undefined,
@@ -341,22 +345,6 @@ const parsePane = (entry: unknown): PaneState | null => {
   };
 };
 
-// A session's remembered view wins over the persisted pane view; panes
-// without a session (brain panes) keep whatever was persisted. Resolved on
-// load so restored panes follow the rule too, not only freshly-opened ones.
-const resolvePaneViews = (
-  panes: PaneState[],
-  sessionViews: Record<string, PaneView>,
-): PaneState[] =>
-  panes.map((p) => ({
-    ...p,
-    paneView: p.sessionId ? (sessionViews[p.sessionId] ?? p.paneView) : p.paneView,
-  }));
-
-const finalisePanes = (
-  panes: PaneState[],
-  sessionViews: Record<string, PaneView>,
-): PaneState[] => normalizeTerminalLabels(resolvePaneViews(panes, sessionViews));
 
 const resolveActivePaneId = (panes: PaneState[], wanted: unknown): string => {
   const w = typeof wanted === 'string' ? wanted : '';
@@ -367,17 +355,11 @@ const resolveActivePaneId = (panes: PaneState[], wanted: unknown): string => {
 const parseMainWidth = (raw: unknown): number | undefined =>
   typeof raw === 'number' && raw > 0.05 && raw < 0.95 ? raw : undefined;
 
-const parseDesk = (
-  entry: unknown,
-  sessionViews: Record<string, PaneView>,
-): DeskState | null => {
+const parseDesk = (entry: unknown): DeskState | null => {
   if (!entry || typeof entry !== 'object') return null;
   const e = entry as Record<string, unknown>;
   if (typeof e.id !== 'string' || !Array.isArray(e.panes)) return null;
-  const panes = finalisePanes(
-    e.panes.map(parsePane).filter((p): p is PaneState => p !== null),
-    sessionViews,
-  );
+  const panes = normalizeSessionLabels(e.panes.map(parsePane).filter((p): p is PaneState => p !== null));
   if (panes.length === 0) return null;
   const slug = typeof e.slug === 'string' && e.slug ? e.slug : 'desk';
   // Default names persisted before the "Desk" rename migrate on load: "Space N"
@@ -400,16 +382,6 @@ const parseDesk = (
   });
 };
 
-const parseSessionViews = (raw: unknown): Record<string, PaneView> => {
-  const sessionViews: Record<string, PaneView> = {};
-  if (raw && typeof raw === 'object') {
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (typeof key === 'string' && isPaneView(value) && !OWN_VIEWS.has(value)) sessionViews[key] = value;
-    }
-  }
-  return sessionViews;
-};
-
 let loadedLegacyKeys = false;
 
 const loadPersisted = (): PaneStoreSnapshot | null => {
@@ -419,21 +391,22 @@ const loadPersisted = (): PaneStoreSnapshot | null => {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object') return null;
     const obj = parsed as Record<string, unknown>;
-    const sessionViews = parseSessionViews(obj.sessionViews);
 
     // Layouts persisted before 0.17.4 call desks `spaces` / `activeSpaceId`;
-    // they load as they are and are written back under the new keys.
-    loadedLegacyKeys = obj.desks === undefined && obj.spaces !== undefined;
+    // they load as they are and are written back under the new keys. A layout
+    // from before chat was the only view is written back too, without its
+    // session view memory.
+    loadedLegacyKeys = (obj.desks === undefined && obj.spaces !== undefined) || obj.sessionViews !== undefined;
     const rawDesks = obj.desks ?? obj.spaces;
     const rawActive = obj.activeDeskId ?? obj.activeSpaceId;
     if (!Array.isArray(rawDesks)) return null;
     const desks = rawDesks
-      .map(s => parseDesk(s, sessionViews))
+      .map(s => parseDesk(s))
       .filter((s): s is DeskState => s !== null);
     if (desks.length === 0) return null;
     const wanted = typeof rawActive === 'string' ? rawActive : '';
     const activeDesk = desks.find(s => s.id === wanted) ?? desks[0];
-    return { desks, activeDeskId: activeDesk.id, activeSpaceId: activeDesk.spaceId, sessionViews };
+    return { desks, activeDeskId: activeDesk.id, activeSpaceId: activeDesk.spaceId };
   } catch {
     return null;
   }
@@ -460,6 +433,9 @@ let snapshot: PaneStoreSnapshot = loadPersisted() ?? createDefaultState();
 // of reattaching to the running one.
 // Also rewrite a layout loaded from the pre-0.17.4 keys under the new ones.
 if (!localStorage.getItem(STORAGE_KEY) || loadedLegacyKeys) persist(snapshot);
+// The first-message queue of terminal worker panes is gone: workers start in
+// the chat on the host. What an older version left there is dropped.
+try { localStorage.removeItem('cockpit-pending-shell-commands'); } catch { /* storage unavailable */ }
 
 const listeners = new Set<() => void>();
 
@@ -475,7 +451,7 @@ const setSnapshot = (next: PaneStoreSnapshot): void => {
   // so consumers subscribed to a single desk don't re-render needlessly.
   let desksChanged = false;
   const desks = next.desks.map(desk => {
-    const panes = normalizeTerminalLabels(desk.panes);
+    const panes = normalizeSessionLabels(desk.panes);
     const normalized = normalizeMainPane(panes === desk.panes ? desk : { ...desk, panes });
     if (normalized === desk) return desk;
     desksChanged = true;
@@ -715,18 +691,13 @@ export function addPaneToDesk(
 ): string {
   const desk = snapshot.desks.find(s => s.id === deskId) ?? getActiveDesk();
   const newPane: PaneState = {
-    ...createPane(init.paneView ?? 'terminal'),
+    ...createPane(init.paneView ?? 'chat'),
     ...init,
     id: generateId(),
   };
   // Inherit the desk's default project when the caller didn't specify one.
   if (init.projectId === undefined && desk.defaultProjectId) {
     newPane.projectId = desk.defaultProjectId;
-  }
-  // If a session was provided and it has a remembered view, honor it
-  // (unless the caller explicitly overrode paneView in init).
-  if (init.paneView === undefined && newPane.sessionId && snapshot.sessionViews[newPane.sessionId]) {
-    newPane.paneView = snapshot.sessionViews[newPane.sessionId];
   }
   const desks = snapshot.desks.map(s =>
     s.id === desk.id
@@ -752,12 +723,12 @@ export function addPaneNextTo(paneId: string, init: Partial<Omit<PaneState, 'id'
   if (!loc) return addPane(init);
   const { desk, pane } = loc;
   const newPane: PaneState = {
-    ...createPane(init.paneView ?? 'terminal'),
+    ...createPane(init.paneView ?? 'chat'),
     ...init,
     id: generateId(),
   };
   // Project: the source pane's, else the desk's default, else whatever project
-  // the desk's other panes work in — a fresh terminal must never land on the
+  // the desk's other panes work in — a fresh session must never land on the
   // "Choose Your Project" screen next to a project that is right there.
   if (init.projectId === undefined) {
     newPane.projectId =
@@ -868,7 +839,7 @@ export function movePaneToDesk(paneId: string, deskId: string): void {
   const { desk: source, pane } = findPaneLocation(paneId)!;
   const idx = source.panes.findIndex(p => p.id === paneId);
   const rest = source.panes.filter(p => p.id !== paneId);
-  const sourcePanes = rest.length > 0 ? rest : [createPane('terminal')];
+  const sourcePanes = rest.length > 0 ? rest : [createPane('chat')];
   // Like removePane: the moved pane's previous sibling takes over as active.
   const sourceActive = source.activePaneId === paneId
     ? (sourcePanes[Math.max(0, idx - 1)] ?? sourcePanes[0]).id
@@ -893,10 +864,11 @@ export function clearPane(id: string): void {
     ...pane,
     projectId: null,
     sessionId: newCliSessionId(),
-    paneView: 'terminal',
+    paneView: 'chat',
     label: undefined,
     title: undefined,
     provider: undefined,
+    terminalFallback: undefined,
   }));
   if (changed) setSnapshot({ ...snapshot, desks });
 }
@@ -915,11 +887,11 @@ export function activatePane(id: string): void {
 export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): void {
   const { desks, changed } = mapPaneInDesks(id, (pane) => {
     const next: PaneState = { ...pane, ...patch };
-    // Switching session within a pane: snap to that session's remembered
-    // view mode. Sessions without a stored preference open in Terminal
-    // view by default (an explicit per-session choice still wins).
+    // Switching session within a pane: a session opens in the chat, never in
+    // the terminal fallback the pane may have shown for the one before.
     if ('sessionId' in patch && next.sessionId !== pane.sessionId && next.sessionId) {
-      next.paneView = snapshot.sessionViews[next.sessionId] ?? 'terminal';
+      next.paneView = 'chat';
+      next.terminalFallback = undefined;
     }
     // The provider choice belongs to the session it was made for.
     if (next.sessionId !== pane.sessionId && !('provider' in patch)) next.provider = undefined;
@@ -927,6 +899,7 @@ export function updatePane(id: string, patch: Partial<Omit<PaneState, 'id'>>): v
       next.projectId === pane.projectId &&
       next.sessionId === pane.sessionId &&
       next.paneView === pane.paneView &&
+      next.terminalFallback === pane.terminalFallback &&
       next.pinned === pane.pinned &&
       next.label === pane.label &&
       next.title === pane.title &&
@@ -954,47 +927,74 @@ export function renamePane(id: string, title: string): void {
 }
 
 /**
- * Switch a pane's body between Terminal and Brain. Mutually exclusive —
- * selecting one deselects the other.
- *
- * If the pane has a session attached, the choice is also remembered
- * per-session so the pane snaps back to the same view next time that
- * session is loaded (in this or any other pane).
+ * Switch a pane's body between its views (chat, brain, note, …). Mutually
+ * exclusive — selecting one deselects the other. Leaving the chat ends a
+ * terminal fallback: coming back shows the chat.
  */
 export function setPaneView(paneId: string, view: PaneView): void {
   const loc = findPaneLocation(paneId);
   if (!loc || loc.pane.paneView === view) return;
-  let sessionViews = snapshot.sessionViews;
-  // A note, the shell or the time is not a view of the session, so it is never remembered for it.
-  if (loc.pane.sessionId && !OWN_VIEWS.has(view)) {
-    sessionViews = { ...sessionViews, [loc.pane.sessionId]: view };
-  }
-  // A pane opened as a note or brain view has no session yet; the terminal and
-  // the chat only start with one, so switching to them mints the id a new pane would get.
-  const needsSession = view === 'terminal' || view === 'chat';
-  const sessionId = needsSession && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
-  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, paneView: view, sessionId }));
-  setSnapshot({ ...snapshot, desks, sessionViews });
+  // A pane opened as a note or brain view has no session yet; the chat only
+  // starts with one, so switching to it mints the id a new pane would get.
+  const sessionId = view === 'chat' && !loc.pane.sessionId ? newCliSessionId() : loc.pane.sessionId;
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, paneView: view, sessionId, terminalFallback: undefined }));
+  setSnapshot({ ...snapshot, desks });
 }
 
-/** The view this browser remembers for a session, if the user ever picked one. */
-export function getSessionView(sessionId: string): PaneView | undefined {
-  return snapshot.sessionViews[sessionId];
+// ── The terminal fallback (lib/terminal-fallback.ts) ───────────────────
+/**
+ * Show the pane's session in the agent's own terminal instead of the chat.
+ * Only offered while the cockpit's switch is on (Settings › Advanced); the host
+ * refuses the terminal otherwise, and the pane goes back to the chat.
+ */
+export function openTerminalFallback(paneId: string): void {
+  const { desks, changed } = mapPaneInDesks(paneId, (pane) =>
+    pane.terminalFallback || !pane.sessionId ? null : { ...pane, paneView: 'chat', terminalFallback: true });
+  if (changed) setSnapshot({ ...snapshot, desks });
+}
+
+/** Back to the chat ("Back to chat", or the host refused the terminal). */
+export function closeTerminalFallback(paneId: string): void {
+  const { desks, changed } = mapPaneInDesks(paneId, (pane) => {
+    if (!pane.terminalFallback) return null;
+    const { terminalFallback: _terminalFallback, ...rest } = pane;
+    return rest;
+  });
+  if (changed) setSnapshot({ ...snapshot, desks });
+}
+
+/** The switch is off: every pane in the fallback goes back to the chat. */
+export function closeAllTerminalFallbacks(): void {
+  let changed = false;
+  const desks = snapshot.desks.map(desk => {
+    if (!desk.panes.some(p => p.terminalFallback)) return desk;
+    changed = true;
+    return {
+      ...desk,
+      panes: desk.panes.map(p => {
+        if (!p.terminalFallback) return p;
+        const { terminalFallback: _terminalFallback, ...rest } = p;
+        return rest;
+      }),
+    };
+  });
+  if (changed) setSnapshot({ ...snapshot, desks });
 }
 
 // ── Opening things (decision cockpit-pane-model) ───────────────────────
 // A pane is an area for one project holding at most one item per surface
-// (terminal → session, note → note, brain / worktrees / repository → the project's view) and
+// (session → its chat, note → note, brain / worktrees / repository → the project's view) and
 // showing one of them. Each item lives in at most one pane across all desks.
 // Every user action that opens or focuses something goes through openInPane;
 // background worker spawns (addWorkerPane) deliberately do not.
 
 export type OpenTarget =
   /**
-   * An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default.
+   * An existing session, in its chat; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default.
    * `provider` with a sessionId: a new chat a launcher minted the id for (chat-start.ts queueChatStart).
+   * `terminalFallback`: a new session of an agent without a chat, in the terminal fallback (only while it is on).
    */
-  | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
+  | { surface: 'session'; projectId: string | null; sessionId?: string; provider?: LLMProvider; terminalFallback?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
   /** A file from the media viewer, pinned as a pane of its own. */
   | { surface: 'file'; projectId: string | null; filePath: string }
@@ -1007,7 +1007,7 @@ export type OpenTarget =
  * projects (a stale projectId or a never-spawned session id doesn't count), so
  * AppContent registers the test; without it only a pane with no project counts.
  */
-let isEmptyPaneTest: (pane: PaneState) => boolean = (pane) => pane.paneView === 'terminal' && !pane.projectId;
+let isEmptyPaneTest: (pane: PaneState) => boolean = (pane) => pane.paneView === 'chat' && !pane.projectId;
 
 export function setEmptyPaneTest(test: (pane: PaneState) => boolean): void {
   isEmptyPaneTest = test;
@@ -1036,11 +1036,6 @@ export function chatProviderOfPane(paneId: string): string | null {
   return chatProvider(providers, getPane(paneId)?.provider, defaultProvider);
 }
 
-/** The view a new session opens in, so it never starts a terminal just to leave it. */
-export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
-  const canChat = providerCanChat(providers, provider ?? defaultProvider);
-  return startsInChat({ chatDefault: readSettings().chatDefault, canChat }) ? 'chat' : 'terminal';
-}
 
 /**
  * The pane that already holds the target's item, on a desk of the active
@@ -1051,7 +1046,7 @@ export function newSessionView(provider?: LLMProvider): 'terminal' | 'chat' {
 function findPaneHolding(target: OpenTarget): PaneState | undefined {
   const panes = getSpaceDesks(snapshot.activeSpaceId).flatMap(s => s.panes);
   switch (target.surface) {
-    case 'terminal':
+    case 'session':
       return target.sessionId ? panes.find(p => p.sessionId === target.sessionId) : undefined;
     case 'note':
       return panes.find(p => p.noteId === target.noteId);
@@ -1091,12 +1086,8 @@ export function paneHoldingSession(sessionId: string): PaneState | undefined {
 export function openInPane(target: OpenTarget): string {
   setTopView('desks');
   const existing = findPaneHolding(target);
-  // A session the user moved to the chat view opens there; a new one as the settings say.
-  const shownView: PaneView = target.surface !== 'terminal'
-    ? target.surface
-    : !target.sessionId
-      ? newSessionView(target.provider)
-      : target.chat || snapshot.sessionViews[target.sessionId] === 'chat' ? 'chat' : 'terminal';
+  // A session opens in its chat; a pane that shows it in the terminal fallback keeps doing so.
+  const shownView: PaneView = target.surface === 'session' ? 'chat' : target.surface;
   // A checkout named: the repository view turns to it, in a pane that shows the project's repository already too.
   const checkout: Partial<PaneState> =
     target.surface === 'repository' && target.worktree ? { repositoryView: { worktree: target.worktree, tab: 'changes' } } : {};
@@ -1110,9 +1101,9 @@ export function openInPane(target: OpenTarget): string {
   }
 
   const items: Partial<PaneState> =
-    target.surface === 'terminal'
+    target.surface === 'session'
       // A known session keeps its own agent; a new one names it, also one whose id a launcher minted.
-      ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.provider }
+      ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.provider, terminalFallback: target.terminalFallback || undefined }
       : target.surface === 'note'
         ? { noteId: target.noteId }
         : target.surface === 'file'
@@ -1123,15 +1114,15 @@ export function openInPane(target: OpenTarget): string {
 
   const active = getActivePane();
   if (active && isEmptyPane(active)) {
-    // Set directly (not updatePane): the target's surface wins over a
-    // session's remembered view, and a new title/label starts clean.
-    const { desks } = mapPaneInDesks(active.id, (pane) => ({ ...pane, ...fields, title: undefined }));
+    // Set directly (not updatePane): the target's surface wins, and a new
+    // title/label starts clean.
+    const { desks } = mapPaneInDesks(active.id, (pane) => ({ ...pane, terminalFallback: undefined, ...fields, title: undefined }));
     setSnapshot({ ...snapshot, desks });
     return active.id;
   }
   return addPaneNextTo(getActiveDesk().activePaneId, {
     ...fields,
-    ...(target.surface === 'terminal' ? {} : { sessionId: null }),
+    ...(target.surface === 'session' ? {} : { sessionId: null }),
   });
 }
 
@@ -1239,7 +1230,7 @@ export function useActivePaneId(): string {
   return useSyncExternalStore(subscribe, getActivePaneId);
 }
 
-// ── Pending shell command ────────────────────────────────────────────
+// ── Worker panes ────────────────────────────────────────────────────
 /**
  * The pane a first-run session may take the place of: the active desk's only
  * pane, while it is still empty ("Choose Your Project"). Read when the request
@@ -1252,20 +1243,22 @@ export function findEmptyDeskPane(): string | null {
 }
 
 /**
- * A worker session another session asked for (skill spawn-session): a
- * terminal pane on the requester's desk, right of the requester's pane,
- * starting with `prompt` as its first message. Focus stays where it is — the
- * user may be typing in the requester. Without a known requester it lands on
- * the active desk. A task run (v0.17) names its desk (`deskId`) and its task.
+ * A worker session another session asked for (skill spawn-session): a chat
+ * pane on the requester's desk, right of the requester's pane. The host has
+ * started the worker in the chat with its first message already; the pane only
+ * joins. A session the host has not started (a task's "Work on it now") names
+ * its first message as `prompt`: it goes with the chat's init (chat-start.ts),
+ * and the pane's task with it. Focus stays where it is — the user may be typing in the requester.
+ * Without a known requester it lands on the active desk. A task run (v0.17)
+ * names its desk (`deskId`) and its task.
  *
- * `replacePaneId` (first run: the sign-in and getting-started sessions the
- * host opens, see findEmptyDeskPane): that pane — still the only one on its
- * desk — is swapped for the new pane, which becomes active.
+ * `replacePaneId` (first run: the getting-started session the host opens, see
+ * findEmptyDeskPane): that pane — still the only one on its desk — is swapped
+ * for the new pane, which becomes active.
  */
 export function addWorkerPane(opts: {
   fromSessionId: string | null;
   projectId: string;
-  prompt: string;
   title: string | null;
   deskId?: string;
   /** The space the worker runs in (null = main); picks a desk when no requester pane is known. */
@@ -1276,8 +1269,8 @@ export function addWorkerPane(opts: {
   replacePaneId?: string | null;
   /** The worker's session id, when the host fixed it in advance (the spawn request id — host spawn-api.ts). */
   sessionId?: string;
-  /** The host already runs it in chat: the pane only joins, with nothing to send. */
-  inChat?: boolean;
+  /** First message of a session the host has not started yet; empty or unset: the pane only joins. */
+  prompt?: string;
 }): string {
   const from = opts.fromSessionId
     ? snapshot.desks
@@ -1285,12 +1278,13 @@ export function addWorkerPane(opts: {
         .find(({ pane }) => pane.sessionId === opts.fromSessionId)
     : undefined;
   const newPane: PaneState = {
-    ...createPane(opts.inChat ? 'chat' : 'terminal', opts.projectId),
+    ...createPane('chat', opts.projectId),
     ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts.title ? { title: opts.title } : {}),
     ...(opts.taskId ? { taskId: opts.taskId } : {}),
     ...(opts.provider ? { provider: opts.provider } : {}),
   };
+  if (opts.prompt) queueChatStart(newPane.sessionId!, { provider: opts.provider ?? null, prompt: opts.prompt, model: null });
   const replaced = opts.replacePaneId
     ? snapshot.desks.find(s => s.panes.length === 1 && s.panes[0].id === opts.replacePaneId)
     : undefined;
@@ -1311,10 +1305,7 @@ export function addWorkerPane(opts: {
     desks = [...snapshot.desks, desk];
   }
   desk ??= getActiveDesk();
-  if (replaced && !hasPendingShellCommand(opts.replacePaneId!)) {
-    // Queue the prompt first: the pane is on screen, so it mounts (and reads
-    // its first message) as soon as the snapshot changes.
-    if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
+  if (replaced) {
     setSnapshot({
       ...snapshot,
       activeDeskId: replaced.id,
@@ -1328,79 +1319,35 @@ export function addWorkerPane(opts: {
   const idx = from && from.desk.id === target.id ? target.panes.findIndex(p => p.id === from.pane.id) : target.panes.length - 1;
   const panes = [...target.panes.slice(0, idx + 1), newPane, ...target.panes.slice(idx + 1)];
   setSnapshot({ ...snapshot, desks: desks.map(s => (s.id === target.id ? { ...s, panes } : s)) });
-  if (!opts.inChat) enqueuePendingShellCommand(newPane.id, opts.prompt);
   return newPane.id;
-}
-
-// Per-pane first-message queue for worker panes (skill spawn-session): the
-// prompt waits here until the pane's terminal mounts and MainContent passes it
-// as `initialCommand` to StandaloneShell. Persisted (0.15.1) so a worker whose
-// desk wasn't shown yet survives a reload — the spawn request is already
-// claimed, so a lost prompt would open a blank session. Read-and-clear, so it
-// fires once; entries of panes that no longer exist are dropped on load.
-const PENDING_KEY = 'cockpit-pending-shell-commands';
-
-const loadPending = (): Map<string, string> => {
-  try {
-    const raw = JSON.parse(localStorage.getItem(PENDING_KEY) ?? '{}') as Record<string, unknown>;
-    const live = new Set(snapshot.desks.flatMap(sp => sp.panes.map(p => p.id)));
-    return new Map(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string' && live.has(e[0])));
-  } catch {
-    return new Map();
-  }
-};
-
-const pendingShellCommands = loadPending();
-
-const persistPending = (): void => {
-  try { localStorage.setItem(PENDING_KEY, JSON.stringify(Object.fromEntries(pendingShellCommands))); } catch { /* non-fatal */ }
-};
-
-export function enqueuePendingShellCommand(paneId: string, command: string): void {
-  pendingShellCommands.set(paneId, command);
-  persistPending();
-}
-
-export function hasPendingShellCommand(paneId: string): boolean {
-  return pendingShellCommands.has(paneId);
-}
-
-/** The queued first message without taking it (MainContent reads it during render). */
-export function peekPendingShellCommand(paneId: string): string | null {
-  return pendingShellCommands.get(paneId) ?? null;
-}
-
-export function consumePendingShellCommand(paneId: string): string | null {
-  const entry = pendingShellCommands.get(paneId);
-  if (entry === undefined) return null;
-  pendingShellCommands.delete(paneId);
-  persistPending();
-  return entry;
 }
 
 // ── The empty pane's launcher (components/session-launcher) ─────────────
 /**
- * Start a new session in this (empty) pane: a chat or a terminal in the project. A
- * terminal's first message waits in the pending queue like a worker's; a chat's goes
- * with its init (components/chat/chat-start.ts). Returns the new session's id.
+ * Start a new session in this (empty) pane, as a chat in the project; its first
+ * message goes with the chat's init (components/chat/chat-start.ts).
+ * `terminalFallback`: an agent without a chat, in the terminal fallback (only
+ * while the switch is on). Returns the new session's id.
  */
-export function startSessionInPane(paneId: string, opts: { projectId: string; view: 'chat' | 'terminal'; prompt?: string | null; sessionId?: string; provider?: string | null }): string {
+export function startSessionInPane(paneId: string, opts: { projectId: string; sessionId?: string; provider?: string | null; terminalFallback?: boolean }): string {
   setTopView('desks');
   const sessionId = opts.sessionId ?? newCliSessionId();
   // The agent the launcher's picker chose: the pane opens as that agent's chat (chatProviderOfPane).
   const provider = (opts.provider ?? undefined) as LLMProvider | undefined;
-  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId, paneView: opts.view, title: undefined, provider }));
-  setSnapshot({ ...snapshot, desks, sessionViews: { ...snapshot.sessionViews, [sessionId]: opts.view } });
-  if (opts.view === 'terminal' && opts.prompt) enqueuePendingShellCommand(paneId, opts.prompt);
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({
+    ...pane, projectId: opts.projectId, sessionId, paneView: 'chat', title: undefined, provider, terminalFallback: opts.terminalFallback || undefined,
+  }));
+  setSnapshot({ ...snapshot, desks });
   activatePane(paneId);
   return sessionId;
 }
 
-/** Continue a session in this (empty) pane, in the view it was last shown in. */
-export function resumeSessionInPane(paneId: string, opts: { projectId: string; sessionId: string; chat: boolean }): void {
+/** Continue a session in this (empty) pane, in its chat. */
+export function resumeSessionInPane(paneId: string, opts: { projectId: string; sessionId: string }): void {
   setTopView('desks');
-  const view: PaneView = opts.chat || snapshot.sessionViews[opts.sessionId] === 'chat' ? 'chat' : 'terminal';
-  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId: opts.sessionId, paneView: view, title: undefined, provider: undefined }));
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({
+    ...pane, projectId: opts.projectId, sessionId: opts.sessionId, paneView: 'chat', title: undefined, provider: undefined, terminalFallback: undefined,
+  }));
   setSnapshot({ ...snapshot, desks });
   activatePane(paneId);
 }

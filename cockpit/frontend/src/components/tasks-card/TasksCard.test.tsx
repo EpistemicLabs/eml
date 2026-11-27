@@ -27,7 +27,6 @@ vi.mock('@/stores/usePaneStore', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useActiveDesk: () => live.desk,
   useActivePane: () => live.desk.panes.find((p) => (p as { id: string }).id === live.desk.activePaneId),
-  getSessionView: () => undefined,
   openSessionInSpace: (key: unknown, target: unknown) => { live.opened.push([key, target]); return 'pane'; },
   addWorkerPane: (opts: unknown) => { live.started.push(opts); return 'pane'; },
 }));
@@ -142,7 +141,7 @@ describe('the tasks card', () => {
   it('focuses or opens a session on click, and starts one on a task without a session', async () => {
     await renderAll();
     fireEvent.click(row(/^Board v4/).querySelector('[data-tree-row]')!);
-    expect(live.opened).toEqual([[null, { surface: 'terminal', projectId: 'p-ui', sessionId: 's-b', chat: false }]]);
+    expect(live.opened).toEqual([[null, { surface: 'session', projectId: 'p-ui', sessionId: 's-b' }]]);
     fireEvent.click(row(/^Media viewer/).querySelector('[data-tree-row]')!);
     await waitFor(() => expect(live.posts).toHaveLength(1));
     expect(live.posts[0]).toMatchObject({ url: '/api/v1/tasks/media-viewer/start', body: { spaceId: 'main', projectId: 'bp-ui', deskId: 'desk-1' } });

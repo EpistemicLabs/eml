@@ -76,13 +76,13 @@ export async function openTask(task: BoardTask, where: TaskLocation, opts: { new
   const dropDesk = () => { if (madeDesk) removeDesk(deskId); };
 
   if (where.kind === 'closed') {
-    const paneId = openInPane({ surface: 'terminal', projectId: where.projectId, sessionId: where.sessionId });
+    const paneId = openInPane({ surface: 'session', projectId: where.projectId, sessionId: where.sessionId });
     offer(opts.newDesk ? `Opened ${title} in a new desk.` : `Opened ${title} in a new pane.`, () => { removePane(paneId); dropDesk(); back(); });
     return;
   }
 
-  // No session yet: the host starts one with the task bound (in chat when that is the user's view); an older
-  // host can't, so then a terminal pane starts it. Any other failure starts nothing and puts the desk back.
+  // No session yet: the host starts one with the task bound, in the chat; an older host can't, so then a chat
+  // pane starts it with the prompt. Any other failure starts nothing and puts the desk back.
   const key = `${task.spaceId}:${task.id}`;
   if (starting.has(key)) return;
   const prompt = `Work on task ${task.id} ("${title}") together with the user. Start by saying where it stands and what you would do next.`;

@@ -153,13 +153,8 @@ export function useProjectsState() {
     };
   }, [allView, spaces, keepProjects]);
 
-  useEffect(() => {
-    if (isLoadingProjects || projects.length !== 1) return;
-    const pane = paneStore.getActivePane();
-    if (pane && !pane.projectId && pane.paneView === 'terminal') {
-      paneStore.updatePane(pane.id, { projectId: projects[0].projectId });
-    }
-  }, [projects, isLoadingProjects]);
+  // An empty pane stays empty with a single project too: its launcher (components/session-launcher)
+  // already picks that project, and a session starts only once the user asks for one.
 
   const handleSessionDelete = useCallback((sessionId: string) => {
     for (const pane of paneStore.getPanes()) {

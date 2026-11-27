@@ -1,18 +1,15 @@
 // Kept: the pane layout (title row, floating view-mode toolbar — shown on the
 // active pane, on hover of the corner elsewhere — error-bounded body), the
-// empty "Choose Your Project" state, the pending-shell-command consume once
-// the terminal can start, the body dispatch on paneView. Adapted: dispatch is terminal → the ported StandaloneShell,
-// brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
+// empty "Choose Your Project" state, the body dispatch on paneView. Adapted: dispatch is chat → SessionChat
+// (the session's chat, or its terminal while the pane is in the terminal fallback), brain → BrainPane (decision cockpit-pane-types), note → NotePane (decision
 // cockpit-notes-pane), worktrees → WorktreesPane, repository → RepositoryPane (loaded
 // on first use: it brings the code editor), shell → ShellPluginPane; a plugin switched off in
 // Settings › EML Plugins shows the brain instead. Trimmed: ChatInterface,
 // sub-panes (files / source control / editor), todos, TaskMaster, palette
 // ops, UI preferences, mobile menu, loading state.
-import { heldCommandAfter, shouldOpenInChat } from '@/components/chat/chat-default';
-import { readSettings, subscribeSettings } from '@/components/settings/utils/settingsStorage';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import type { LLMProvider } from '@/types/app';
-import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 
 import { BrainPane } from '../../brain/BrainPane';
 import { NotePane } from '../../notes/NotePane';
@@ -24,12 +21,11 @@ import { FilePane } from '../../media/FilePane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import { LimitsBadge } from '../../chat/LimitsBadge';
 import type { MainContentProps } from '../types/types';
-import { addPaneNextTo, consumePendingShellCommand, newCliSessionId, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { addPaneNextTo, closeTerminalFallback, newCliSessionId, openTerminalFallback, usePane, type PaneView } from '@/stores/usePaneStore';
 import { queueChatStart } from '@/components/chat/chat-start';
-import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
 import { PLUGIN_DEFS, useViewEnabled } from '@/lib/pane-views';
-import { providerCanChat, useProviders } from '@/lib/providers';
+import { useTerminalFallback } from '@/lib/terminal-fallback';
 
 import MainContentTitle from './subcomponents/MainContentTitle';
 import MainContentTabSwitcher from './subcomponents/MainContentTabSwitcher';
@@ -53,53 +49,25 @@ function MainContent({
   onToggleMainPane,
   paneLabel,
 }: MainContentProps) {
-  // The shell command queued by an external spawn for this pane, taken once the
-  // terminal can start — a worker of a space that isn't open has no project
-  // here yet. Read during render, removed from the (persisted) queue only
-  // after mount, so a reload before the space is opened keeps it. Held in a
-  // ref until the first turn is done: re-renders and reconnects until then reuse it.
   // A pane left on a plugin that was switched off moves to the first plugin
-  // still on, or with none on to the terminal.
+  // still on, or with none on to the chat.
   const viewEnabled = useViewEnabled();
   const paneView = viewEnabled(chosenView)
     ? chosenView
-    : PLUGIN_DEFS.find((def) => viewEnabled(def.view))?.view ?? 'terminal';
+    : PLUGIN_DEFS.find((def) => viewEnabled(def.view))?.view ?? 'chat';
   useEffect(() => {
     if (paneView !== chosenView) onSetPaneView(paneView);
   }, [paneView, chosenView, onSetPaneView]);
-  const heldShellCommand = useRef<string | null | undefined>(undefined);
-  if (heldShellCommand.current === undefined && (paneView !== 'terminal' || selectedProject)) {
-    heldShellCommand.current = peekPendingShellCommand(paneId);
-  }
-  const turnState = useTurnStore().turns[sessionId ?? '']?.state;
-  heldShellCommand.current = heldCommandAfter(heldShellCommand.current, turnState);
-  const initialShellCommand = heldShellCommand.current ?? null;
-  useEffect(() => {
-    if (initialShellCommand !== null) consumePendingShellCommand(paneId);
-  }, [paneId, initialShellCommand]);
   const pane = usePane(paneId);
   const noteId = pane?.noteId;
-  const chatDefault = useSyncExternalStore(subscribeSettings, () => readSettings().chatDefault);
-  const canChat = providerCanChat(useProviders().data, selectedSession?.__provider ?? pane?.provider ?? 'claude');
-  // A session's way of running follows it (session-handoff.ts): when it appears here
-  // or moves to chat elsewhere. Not on every look: a session the user just moved
-  // back to the terminal still reads as chat until the host has moved it.
-  const knownRuntime = useRef<{ sessionId: string; runtime: string | null } | null>(null);
-  useLayoutEffect(() => {
-    if (!selectedSession || !sessionId) return;
-    const runtime = (selectedSession.runtime as string | undefined) ?? null;
-    const known = knownRuntime.current;
-    const changed = known?.sessionId !== sessionId || known.runtime !== runtime;
-    knownRuntime.current = { sessionId, runtime };
-    if (shouldOpenInChat({
-      view: paneView,
-      runtime: changed ? runtime : null,
-      chatDefault,
-      pickedView: getSessionView(sessionId),
-      canChat,
-      queuedCommand: initialShellCommand !== null,
-    })) onSetPaneView('chat');
-  }, [selectedSession, sessionId, paneView, chatDefault, canChat, initialShellCommand, onSetPaneView]);
+  // The hidden terminal fallback (Settings › Advanced): offered in the pane's ··· menu while the switch is on.
+  const fallbackOn = useTerminalFallback();
+  const inFallback = paneView === 'chat' && pane?.terminalFallback === true;
+  const fallbackActions = paneView === 'chat' && sessionId && selectedProject && (fallbackOn || inFallback)
+    ? inFallback
+      ? { label: 'Back to chat', run: () => closeTerminalFallback(paneId) }
+      : { label: 'Open in terminal (fallback)', run: () => openTerminalFallback(paneId) }
+    : null;
   const switchBlocked = useSwitchBlocked(sessionId);
 
   // "+" in the toolbar: a new pane to the right of this one. Project: what
@@ -107,17 +75,19 @@ function MainContent({
   // projectId itself — its project comes from the session's owner), else the
   // store's fallbacks (this pane's id → desk default → a sibling's project).
   // A new chat the agent picker chose (MainContentTabSwitcher): its id minted here, so its model waits for the chat's socket.
-  const handleAddPane = (view: PaneView, provider?: LLMProvider, model?: string | null) => {
+  // `terminalFallback`: an agent without a chat, offered only while the fallback is on.
+  const handleAddPane = (view: PaneView, provider?: LLMProvider, model?: string | null, terminalFallback?: boolean) => {
     const project = selectedProject ? { projectId: selectedProject.projectId } : {};
-    if (view === 'chat' && provider) {
+    if (view === 'chat' && provider && !terminalFallback) {
       const sessionId = newCliSessionId();
       queueChatStart(sessionId, { provider, prompt: null, model: model ?? null });
       addPaneNextTo(paneId, { paneView: 'chat', sessionId, provider, ...project });
       return;
     }
     addPaneNextTo(paneId, {
-      paneView: view === 'terminal' ? newSessionView(provider) : view,
+      paneView: view,
       ...(provider ? { provider } : {}),
+      ...(terminalFallback ? { terminalFallback: true } : {}),
       ...project,
     });
   };
@@ -146,8 +116,8 @@ function MainContent({
     );
   }
 
-  // Plugin panes don't need a project here; terminal and chat panes do.
-  if ((paneView === 'terminal' || paneView === 'chat') && !selectedProject) {
+  // Plugin panes don't need a project here; session panes do.
+  if (paneView === 'chat' && !selectedProject) {
     return (
       <div className="relative flex h-full flex-col">
         {/* A main pane can't be closed, but must stay able to stop being main. */}
@@ -196,28 +166,26 @@ function MainContent({
                 isMainPane={isMainPane}
                 onToggleMainPane={onToggleMainPane}
                 switchBlocked={switchBlocked}
+                fallback={fallbackActions}
               />
             </div>
           </>
         )}
 
         <div
-          className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? (paneView === 'chat' ? 'px-0' : 'px-1') : 'px-2', paneView === 'chat' ? 'pb-0' : compact ? '' : 'pb-2')}
+          className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', compact ? (paneView === 'chat' && !inFallback ? 'px-0' : 'px-1') : 'px-2', paneView === 'chat' && !inFallback ? 'pb-0' : compact ? '' : 'pb-2')}
           // Only a chat runs under the floating header and to the bottom edge.
-          style={compact && paneView !== 'chat' ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-pane-compact-top))', paddingBottom: 'calc(var(--bottom-inset, 0px) + var(--pad-pane-compact-bottom))' } : undefined}
+          style={compact && (paneView !== 'chat' || inFallback) ? { paddingTop: 'calc(env(safe-area-inset-top) + var(--pad-pane-compact-top))', paddingBottom: 'calc(var(--bottom-inset, 0px) + var(--pad-pane-compact-bottom))' } : undefined}
         >
           <ErrorBoundary showDetails>
-            {paneView === 'terminal' || (paneView === 'chat' && selectedProject && sessionId) ? (
+            {paneView === 'chat' && selectedProject && sessionId ? (
               <SessionChat
                 paneId={paneId}
-                projectId={selectedProject?.projectId ?? null}
+                projectId={selectedProject.projectId}
                 sessionId={sessionId}
                 session={selectedSession}
-                view={paneView}
-                onView={onSetPaneView}
+                terminalFallback={inFallback ? { onBack: () => closeTerminalFallback(paneId) } : null}
                 isActive={isActive}
-                whenIdle={chatDefault}
-                command={initialShellCommand}
                 title={(selectedSession?.summary as string | undefined) || paneLabel || null}
               />
             ) : paneView === 'note' ? (

@@ -29,65 +29,94 @@ describe('opening a session of another space', () => {
 
   it('switches the space first and puts the pane on a desk of that space', () => {
     expect(store.getActiveSpaceId()).toBeNull();
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-1' });
     expect(store.getActiveSpaceId()).toBe(OTHER);
     expect(deskOfSession('s-1')?.spaceId).toBe(OTHER);
   });
 
   it('does not touch the panes of the space it left', () => {
-    store.openInPane({ surface: 'terminal', projectId: 'p', sessionId: 'main-session' });
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
+    store.openInPane({ surface: 'session', projectId: 'p', sessionId: 'main-session' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-1' });
     expect(deskOfSession('main-session')?.spaceId).toBeNull();
   });
 
   it('focuses a pane that already holds the session and moves the active space with it', () => {
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-1' });
     const paneId = store.getActivePaneId();
     store.activateSpace(null);
     expect(store.getActiveSpaceId()).toBeNull();
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-1' });
     expect(store.getActiveSpaceId()).toBe(OTHER);
     expect(store.getActivePaneId()).toBe(paneId);
     expect(store.getDesks().flatMap((desk) => desk.panes).filter((pane) => pane.sessionId === 's-1')).toHaveLength(1);
   });
 
   it('a pane of another space that still holds the session (it moved since) is left alone: the session opens on a desk of its space', () => {
-    store.openInPane({ surface: 'terminal', projectId: 'p', sessionId: 's-moved' });
+    store.openInPane({ surface: 'session', projectId: 'p', sessionId: 's-moved' });
     const stale = store.getActivePaneId();
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-moved' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-moved' });
     expect(store.getActiveSpaceId()).toBe(OTHER);
     expect(store.getActivePaneId()).not.toBe(stale);
     expect(store.getDesks().filter((desk) => desk.panes.some((pane) => pane.sessionId === 's-moved')).map((desk) => desk.spaceId)).toEqual([null, OTHER]);
   });
 
   it('activating a pane on a desk of another space moves the active space too', () => {
-    store.openSessionInSpace(OTHER, { surface: 'terminal', projectId: 'p', sessionId: 's-1' });
+    store.openSessionInSpace(OTHER, { surface: 'session', projectId: 'p', sessionId: 's-1' });
     const paneId = store.getActivePaneId();
     store.activateSpace(null);
     store.activatePane(paneId);
     expect(store.getActiveSpaceId()).toBe(OTHER);
   });
 
-  it('opens a new session as the settings and provider say, an existing one as it was', () => {
+  it('opens every session in its chat, a new one and an existing one', () => {
     const viewOf = (paneId: string) => store.getDesks().flatMap((desk) => desk.panes).find((pane) => pane.id === paneId)?.paneView;
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('terminal');
-    store.setDefaultProvider('claude');
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('chat');
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'codex' }))).toBe('terminal');
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', sessionId: 'kept' }))).toBe('terminal');
-    storage.set('cockpit-settings', JSON.stringify({ chatDefault: false }));
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1' }))).toBe('terminal');
+    expect(viewOf(store.openInPane({ surface: 'session', projectId: 'p1' }))).toBe('chat');
+    expect(viewOf(store.openInPane({ surface: 'session', projectId: 'p1', provider: 'codex' }))).toBe('chat');
+    expect(viewOf(store.openInPane({ surface: 'session', projectId: 'p1', sessionId: 'kept' }))).toBe('chat');
+  });
+});
+
+describe('the terminal fallback', () => {
+  let store: typeof import('./usePaneStore');
+
+  beforeEach(async () => {
+    vi.resetModules();
+    storage.clear();
+    store = await import('./usePaneStore');
+    store.setEmptyPaneTest((pane) => !pane.projectId);
   });
 
-  it('opens a new session in chat when the host says its provider has one', () => {
-    const viewOf = (paneId: string) => store.getDesks().flatMap((desk) => desk.panes).find((pane) => pane.id === paneId)?.paneView;
-    const provider = (id: string, chat: boolean) => ({
-      id,
-      capabilities: { chat: chat ? { supported: true } : { supported: false, reason: 'No chat view.' } },
-    });
-    store.setProviders([provider('claude', false), provider('codex', true)] as never);
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'claude' }))).toBe('terminal');
-    expect(viewOf(store.openInPane({ surface: 'terminal', projectId: 'p1', provider: 'codex' }))).toBe('chat');
-    store.setProviders(undefined);
+  const pane = (id: string) => store.getPane(id)!;
+
+  it('shows a pane\'s session in the terminal and goes back to the chat', () => {
+    const id = store.openInPane({ surface: 'session', projectId: 'p', sessionId: 's-1' });
+    store.openTerminalFallback(id);
+    expect(pane(id)).toMatchObject({ paneView: 'chat', sessionId: 's-1', terminalFallback: true });
+    store.closeTerminalFallback(id);
+    expect(pane(id).terminalFallback).toBeUndefined();
+  });
+
+  it('ends with another view, another session, or the switch going off', () => {
+    const a = store.openInPane({ surface: 'session', projectId: 'p', sessionId: 's-a' });
+    store.openTerminalFallback(a);
+    store.setPaneView(a, 'brain');
+    store.setPaneView(a, 'chat');
+    expect(pane(a).terminalFallback).toBeUndefined();
+
+    store.openTerminalFallback(a);
+    store.updatePane(a, { sessionId: 's-other' });
+    expect(pane(a)).toMatchObject({ paneView: 'chat', sessionId: 's-other' });
+    expect(pane(a).terminalFallback).toBeUndefined();
+
+    const b = store.openInPane({ surface: 'session', projectId: 'p', sessionId: 's-b' });
+    store.openTerminalFallback(a);
+    store.openTerminalFallback(b);
+    store.closeAllTerminalFallbacks();
+    expect([pane(a).terminalFallback, pane(b).terminalFallback]).toEqual([undefined, undefined]);
+  });
+
+  it('opens a new session of an agent without a chat in the fallback, when asked to', () => {
+    const id = store.openInPane({ surface: 'session', projectId: 'p', provider: 'codex', terminalFallback: true });
+    expect(pane(id)).toMatchObject({ paneView: 'chat', provider: 'codex', terminalFallback: true });
   });
 });

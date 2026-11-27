@@ -33,7 +33,9 @@ import { setSessionDeskMain } from '@/lib/session-actions';
 import { useSeenResults } from './useSeenResults';
 import { usePushLinks } from './usePushLinks';
 import { api } from '@/utils/api';
-import { setHostChatView } from '@/components/settings/utils/settingsStorage';
+import { useCloseFallbacksWhenOff } from '@/lib/terminal-fallback';
+import { tellOnDesk } from '@/components/command-palette/openTask';
+import { spawnProblem } from '@/lib/spawn-problem';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useNotesLiveSync } from '@/lib/notes';
 import { useTimeBeat } from '@/components/time-plugin/useTimeBeat';
@@ -136,11 +138,9 @@ function AppContentInner() {
   const { data: providers } = useProviders();
   paneStore.setProviders(providers);
   paneStore.setDefaultProvider((providers?.find((provider) => provider.isDefault) ?? providers?.[0])?.id ?? null);
-  const hostChatView = providers?.find((provider) => provider.id === 'claude')?.settings?.chatView;
-  React.useEffect(() => {
-    if (typeof hostChatView === 'boolean') setHostChatView(hostChatView);
-  }, [hostChatView]);
-  // One test for "empty pane" everywhere: a terminal pane whose projectId and
+  // A pane in the terminal fallback goes back to the chat when the switch (Settings › Advanced) is off.
+  useCloseFallbacksWhenOff();
+  // One test for "empty pane" everywhere: a session pane whose projectId and
   // pre-minted session both resolve to no project (Choose Your Project), or a
   // note pane with neither a note nor a project (Pick a project…). Against the
   // projects of the pane's own space.
@@ -157,7 +157,7 @@ function AppContentInner() {
       : projectsRef.current;
     const known = spaceProjects.some((project) => project.projectId === pane.projectId);
     if (pane.paneView === 'note') return !pane.noteId && !known;
-    return (pane.paneView === 'terminal' || pane.paneView === 'chat') && !known &&
+    return pane.paneView === 'chat' && !known &&
       !findProjectOwningSession(spaceProjects, pane.sessionId ?? '');
   });
 
@@ -171,7 +171,7 @@ function AppContentInner() {
     // worker of another space would wait out the whole loop (minutes in a
     // background tab, where the browser throttles the timers).
     const knownProject = (projectId: string) => projectsRef.current.some((project) => project.projectId === projectId);
-    const openWorker = async (request: SpawnRequest, inChat: boolean) => {
+    const openWorker = async (request: SpawnRequest) => {
       // Decided before loading the project — that can auto-select it into the empty pane.
       const replacePaneId = request.placement === 'replace-empty-desk' ? paneStore.findEmptyDeskPane() : null;
       const inOpenSpace = (request.spaceId ?? null) === paneStore.getActiveSpaceId();
@@ -181,16 +181,20 @@ function AppContentInner() {
       }
       // The request names a further space by brain id; absent = main, which the pane store calls null.
       // Its id is the worker's session id — the requester already got the worker's address from it.
-      paneStore.addWorkerPane({ ...request, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId, inChat });
+      // The host started it in the chat with its prompt: the pane only joins.
+      const { prompt: _prompt, ...worker } = request;
+      paneStore.addWorkerPane({ ...worker, sessionId: request.id, spaceId: request.spaceId ?? null, replacePaneId });
     };
     const onSpawns = (requests: SpawnRequest[]) => {
       for (const request of requests) {
         // A session's worker, a job's run and a background task run stay on the host and show in the sidebar, unless they asked for a pane.
         if ((request.fromSessionId || request.origin === 'job' || request.origin === 'runner') && !request.open) continue;
+        // The host starts the worker in the chat, or says why it could not: no terminal to fall back to.
         void api.claimSpawn(request.id).then(async (response) => {
-          if (!response.ok) return;
-          const { runtime } = await response.json() as { runtime?: string };
-          return openWorker(request, runtime === 'sdk');
+          if (response.ok) return openWorker(request);
+          const body = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+          const why = spawnProblem(body?.error);
+          if (why) tellOnDesk(why);
         }).catch(() => { /* host gone — the request is dropped with it */ });
       }
     };
@@ -272,17 +276,10 @@ function AppContentInner() {
   const [mountedDeskIds, setMountedDeskIds] = React.useState<Set<string>>(
     () => new Set([activeDeskId]),
   );
-  // A desk holding a worker pane that still waits for its first message is
-  // mounted right away (hidden), so the worker starts without being looked at.
+  // Workers start in the chat on the host, so a desk with a new worker pane waits to be opened like any other.
   useEffect(() => {
-    setMountedDeskIds(prev => {
-      const wanted = desks
-        .filter(s => s.id === activeDeskId || s.panes.some(p => paneStore.hasPendingShellCommand(p.id)))
-        .map(s => s.id)
-        .filter(id => !prev.has(id));
-      return wanted.length ? new Set([...prev, ...wanted]) : prev;
-    });
-  }, [activeDeskId, desks]);
+    setMountedDeskIds(prev => (prev.has(activeDeskId) ? prev : new Set([...prev, activeDeskId])));
+  }, [activeDeskId]);
 
   // ── Sidebar handlers (drive the active pane) ────────────────────────
 
@@ -299,7 +296,7 @@ function AppContentInner() {
   // on its desk, in its view, leaving the Brain tab — never duplicated; else
   // an empty active pane takes it; else it opens next to the active pane.
   const handleSessionSelect = useCallback((session: ProjectSession) => {
-    const target = { surface: 'terminal' as const, projectId: projectIdForSession(session), sessionId: session.id, chat: session.runtime === 'sdk' };
+    const target = { surface: 'session' as const, projectId: projectIdForSession(session), sessionId: session.id };
     if (session.__spaceKey !== undefined) paneStore.openSessionInSpace(session.__spaceKey, target);
     else paneStore.openInPane(target);
   }, [projectIdForSession]);
@@ -310,7 +307,7 @@ function AppContentInner() {
 
   // A new session never overwrites what the active pane shows.
   const handleNewSession = useCallback((project: Project) => {
-    paneStore.openInPane({ surface: 'terminal', projectId: project.projectId });
+    paneStore.openInPane({ surface: 'session', projectId: project.projectId });
   }, []);
 
   // The tasks card: next to the sidebar or right of the desk, never on a phone. It belongs to a desk: the
@@ -455,3 +452,4 @@ function AppContentInner() {
     </div>
   );
 }
+

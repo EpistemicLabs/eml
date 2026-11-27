@@ -27,14 +27,13 @@ function input(patch: Partial<TreeInput>): TreeInput {
     activeSessionId: null,
     showDone: false,
     allTasks: true,
-    viewOf: () => 'terminal',
     stateOfSession: () => ({ hue: 'waiting', hollow: true, label: 'Idle' }),
     ...patch,
   };
 }
 
 const titles = (nodes: TreeNode[]): unknown[] => nodes.map((n) => (n.children.length ? [n.title, titles(n.children)] : n.title));
-const desk = (...ids: string[]) => ids.map((sessionId, i) => ({ sessionId, paneId: `pane-${i}`, view: 'chat' as const }));
+const desk = (...ids: string[]) => ids.map((sessionId, i) => ({ sessionId, paneId: `pane-${i}` }));
 
 describe('the tasks card tree', () => {
   // root (ui) ─ spun off ─ owner (ui) ; root ─ spun off ─ loop (code) ─ sub ─ step (code)
@@ -66,7 +65,7 @@ describe('the tasks card tree', () => {
     const many = [task('root', { sessionIds: ['a', 'b'] })];
     const two = [session('a', { taskId: 'root' }), session('b', { taskId: 'root' })];
     const all = buildTaskTree(input({ board: board(many), sessions: two, desk: desk('a'), activeSessionId: 'a' }));
-    expect(all[0].nodes[0].sessions.map((s) => [s.id, s.open, s.current, s.view])).toEqual([['a', true, true, 'chat'], ['b', false, false, 'terminal']]);
+    expect(all[0].nodes[0].sessions.map((s) => [s.id, s.open, s.current])).toEqual([['a', true, true], ['b', false, false]]);
     const onlyOpen = buildTaskTree(input({ board: board(many), sessions: two, desk: desk('a'), allTasks: false }));
     expect(onlyOpen[0].nodes[0].sessions.map((s) => s.id)).toEqual(['a']);
   });

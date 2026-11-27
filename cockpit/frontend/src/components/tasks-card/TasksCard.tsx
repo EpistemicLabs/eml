@@ -14,7 +14,7 @@ import { lineOf, TaskNodeContent } from '@/components/task-tree/TaskNodeContent'
 import { Search } from 'lucide-react';
 import { openTaskSearch, tellOnDesk, tellStartProblem } from '@/components/command-palette/openTask';
 import { MOD } from '@/components/top-bar/shortcuts';
-import { addWorkerPane, getSessionView, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
+import { addWorkerPane, openSessionInSpace, useActiveDesk, useActivePane } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import { requestTaskPanel } from '@/stores/useTaskViewStore';
 import { setTopView } from '@/stores/useTopViewStore';
@@ -95,7 +95,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     projectsOfSpace(bySpace, paneSpaceKey(space)).map((p) => ({ spaceId: space.id, projectId: p.projectId, brainProjectId: p.brainProjectId ?? null, name: p.displayName }))), [bySpace, spaces]);
 
   const deskSessions = useMemo<DeskSession[]>(() => desk.panes.flatMap((p) =>
-    p.sessionId && (p.paneView === 'chat' || p.paneView === 'terminal') ? [{ sessionId: p.sessionId, paneId: p.id, view: p.paneView }] : []), [desk.panes]);
+    p.sessionId && p.paneView === 'chat' ? [{ sessionId: p.sessionId, paneId: p.id }] : []), [desk.panes]);
 
   // Show done: how many pages of closed work each section shows ("Show older" adds one); for this visit only.
   const [older, setOlder] = useState<Record<string, number>>({});
@@ -141,7 +141,6 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     closed,
     doneLimit,
     allTasks,
-    viewOf: (id) => (getSessionView(id) === 'chat' ? 'chat' : 'terminal'),
     stateOfSession,
   }), [board, sessions, deskSessions, projectNames, activePane?.sessionId, showDone, closed, doneLimit, allTasks, stateOfSession]);
 
@@ -150,7 +149,7 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     return space ? paneSpaceKey(space) : null;
   };
   const openSession = (leaf: SessionLeaf) => {
-    openSessionInSpace(spaceKeyOf(leaf.spaceId), { surface: 'terminal', projectId: leaf.projectId, sessionId: leaf.id, chat: leaf.view === 'chat' });
+    openSessionInSpace(spaceKeyOf(leaf.spaceId), { surface: 'session', projectId: leaf.projectId, sessionId: leaf.id });
   };
   /** A closed task row: the task's panel on the Tasks screen, where Reopen is (as ⌘K opens a closed task). */
   const openClosedTask = (node: TreeNode) => {
@@ -165,8 +164,8 @@ export function TasksCard({ projects: bySpace }: { projects: ProjectsBySpace }) 
     if (leaf) { openSession(leaf); return; }
     const task = node.kind === 'task' ? board?.tasks.find((t) => t.id === node.id) : undefined;
     if (!task?.project) return;
-    // A task without a session: the host starts one on it with the task bound, and it opens in chat when that is
-    // the user's view; an older host can't, so then a terminal pane starts it (the task-run path).
+    // A task without a session: the host starts one on it with the task bound, in the chat; an older host can't,
+    // so then a chat pane starts it with the prompt (the task-run path).
     const prompt = `Work on task ${task.id} ("${taskName(task)}") together with the user. Start by saying where it stands and what you would do next.`;
     void startTaskSession(task, { projectId: projectIdOfBrain(task.project), prompt, title: taskName(task), deskId: desk.id }).then((outcome) => {
       tellStartProblem(outcome, taskName(task));

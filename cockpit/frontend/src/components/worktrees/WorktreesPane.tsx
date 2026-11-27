@@ -311,7 +311,7 @@ function SessionRow({ session, projectId, now }: { session: ProjectSession; proj
   return (
     <button
       type="button"
-      onClick={() => openInPane({ surface: 'terminal', projectId, sessionId: session.id })}
+      onClick={() => openInPane({ surface: 'session', projectId, sessionId: session.id })}
       className={cn("-mx-1.5 flex min-h-(--target-min) w-(--size-worktree-row) min-w-0 items-center gap-2 rounded-md px-1.5 text-left text-ui transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}
     >
       <span className="flex w-3 flex-shrink-0 justify-center"><Dot state={state} /></span>
@@ -369,7 +369,7 @@ function PortRow({ port, now }: { port: ListeningPort; now: Date }) {
         {session && (
           <button
             type="button"
-            onClick={() => openInPane({ surface: 'terminal', projectId: session.projectId, sessionId: session.id })}
+            onClick={() => openInPane({ surface: 'session', projectId: session.projectId, sessionId: session.id })}
             title="Started by this cockpit session: open it"
             className={cn("flex min-h-(--target-min) min-w-0 flex-shrink items-center gap-1 rounded-full border border-border-strong px-2 text-caption text-foreground transition-colors duration-(--duration-fast) hover:bg-muted", FOCUS)}
           >

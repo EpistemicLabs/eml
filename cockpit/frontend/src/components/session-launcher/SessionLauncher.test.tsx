@@ -3,14 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const fx = vi.hoisted(() => ({ started: [] as unknown[], resumed: [] as unknown[], providers: [] as unknown[], models: [] as unknown[] }));
+const fx = vi.hoisted(() => ({ started: [] as unknown[], resumed: [] as unknown[], providers: [] as unknown[], models: [] as unknown[], fallback: false }));
 
 vi.mock('@/stores/usePaneStore', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getDeskOfPane: () => ({ spaceId: null, panes: [] }),
   lastProjectOfDesk: () => 'bp-cs',
   startSessionInPane: (paneId: string, opts: object) => { fx.started.push({ paneId, ...opts }); return 'x'; },
-  newSessionView: () => 'terminal',
   resumeSessionInPane: (paneId: string, opts: object) => { fx.resumed.push({ paneId, ...opts }); },
 }));
 vi.mock('@/stores/useSpaceStore', async (importOriginal) => ({
@@ -36,7 +35,7 @@ const agent = (id: string, label: string, over: object = {}) => ({
 });
 
 beforeEach(() => {
-  fx.started = []; fx.resumed = [];
+  fx.started = []; fx.resumed = []; fx.fallback = false;
   fx.providers = [
     agent('claude', 'Claude Code', { isDefault: true }),
     agent('codex', 'Codex'),
@@ -49,6 +48,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url === '/api/providers') return new Response(JSON.stringify({ providers: fx.providers }));
     if (url === '/api/providers/models') return new Response(JSON.stringify({ providers: fx.models }));
+    if (url === '/api/terminal-fallback') return new Response(JSON.stringify({ enabled: fx.fallback }));
     return new Response('{}', { status: 404 });
   }));
   setLauncherProjects([
@@ -68,7 +68,8 @@ describe('the empty pane\'s launcher', () => {
     fireEvent.change(box, { target: { value: 'Did Northwind answer?' } });
     expect(screen.getByRole('button', { name: 'Project: Northwind (from your words)' })).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(fx.started).toEqual([expect.objectContaining({ paneId: 'p1', projectId: 'bp-northwind', view: 'chat', prompt: 'Did Northwind answer?', provider: 'claude' })]);
+    expect(fx.started).toEqual([expect.objectContaining({ paneId: 'p1', projectId: 'bp-northwind', provider: 'claude' })]);
+    expect(fx.started[0]).not.toHaveProperty('terminalFallback');
     const id = (fx.started[0] as { sessionId: string }).sessionId;
     expect(peekChatStart(id)).toEqual({ provider: 'claude', prompt: 'Did Northwind answer?', model: null });
   });
@@ -85,20 +86,30 @@ describe('the empty pane\'s launcher', () => {
     const luna = within(picker).getByRole('option', { name: 'Codex · GPT-6 Luna' }) as HTMLOptionElement;
     fireEvent.change(picker, { target: { value: luna.value } });
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'First message' }), { key: 'Enter' });
-    expect(fx.started).toEqual([expect.objectContaining({ view: 'chat', prompt: null, provider: 'codex' })]);
+    expect(fx.started).toEqual([expect.objectContaining({ provider: 'codex' })]);
     expect(peekChatStart((fx.started[0] as { sessionId: string }).sessionId)).toEqual({ provider: 'codex', prompt: null, model: 'gpt-6-luna' });
   });
 
-  it('without any agent that has a chat, starts a new session as before, in the view the default agent opens in', async () => {
+  it('without any agent that has a chat, starts nothing and says so; only the terminal fallback could', async () => {
     fx.providers = [agent('qwen', 'Qwen Code', { isDefault: true, capabilities: { chat: { supported: false, reason: 'Terminal only.' }, endTurnTool: yes, messaging: yes } })];
     mount();
-    await waitFor(() => expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain('/api/providers'));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain('/api/terminal-fallback'));
     // The answer is in: a Qwen Code that has no chat is still not offered.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole('combobox', { name: 'Agent and model' })).toBeNull();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'First message' }), { key: 'Enter' });
-    expect(fx.started).toEqual([expect.objectContaining({ view: 'terminal', prompt: null })]);
-    expect(fx.started[0]).not.toHaveProperty('provider');
+    expect(fx.started).toEqual([]);
+    expect(screen.getByRole('alert').textContent).toMatch(/No agent with a chat/);
+  });
+
+  it('with the terminal fallback on, starts an agent without a chat in the fallback terminal', async () => {
+    fx.fallback = true;
+    fx.providers = [agent('qwen', 'Qwen Code', { isDefault: true, capabilities: { chat: { supported: false, reason: 'Terminal only.' }, endTurnTool: yes, messaging: yes } })];
+    mount();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain('/api/terminal-fallback'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'First message' }), { key: 'Enter' });
+    expect(fx.started).toEqual([expect.objectContaining({ provider: 'qwen', terminalFallback: true })]);
   });
 
   it('Shift+Enter is a new line; a pick sticks over the words', async () => {
@@ -112,7 +123,7 @@ describe('the empty pane\'s launcher', () => {
     expect(screen.getByRole('button', { name: 'Project: Northwind' })).toBeTruthy();
     fireEvent.change(box, { target: { value: '' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    expect(fx.started).toEqual([expect.objectContaining({ projectId: 'bp-northwind', view: 'chat', prompt: null })]);
+    expect(fx.started).toEqual([expect.objectContaining({ projectId: 'bp-northwind' })]);
   });
 
   it('continues a session of the space in this pane, marking the ones that ask you something', () => {
@@ -120,6 +131,6 @@ describe('the empty pane\'s launcher', () => {
     const row = screen.getByRole('button', { name: /Northwind: Max reply check/ });
     expect(row.textContent).toContain('waits for you');
     fireEvent.click(row);
-    expect(fx.resumed).toEqual([{ paneId: 'p1', projectId: 'bp-northwind', sessionId: 's-ask', chat: false }]);
+    expect(fx.resumed).toEqual([{ paneId: 'p1', projectId: 'bp-northwind', sessionId: 's-ask' }]);
   });
 });

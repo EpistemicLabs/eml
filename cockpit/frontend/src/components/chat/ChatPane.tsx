@@ -7,7 +7,7 @@ import {
   AlertCircle, ArrowDown, Brain, ChevronRight, Copy, Image as ImageIcon, Loader2,
 } from 'lucide-react';
 
-import TerminalStatusBar from '@/components/main-content/view/subcomponents/TerminalStatusBar';
+import SessionStatusBar from '@/components/main-content/view/subcomponents/SessionStatusBar';
 import { useCompactLayout } from '@/hooks/useCompactLayout';
 import { cn } from '@/lib/utils';
 import { buttonVariants, FIELD, FOCUS } from '@/shared/view/ui';
@@ -651,7 +651,7 @@ export function ChatPane({
   const openSplitSession = useCallback((id: string) => {
     const pane = paneHoldingSession(id);
     if (pane) activatePane(pane.id);
-    else openInPane({ surface: 'terminal', projectId, sessionId: id });
+    else openInPane({ surface: 'session', projectId, sessionId: id });
   }, [projectId]);
   const renderMark = useCallback((mark: SplitMark) => (
     <SplitMarker
@@ -728,7 +728,7 @@ export function ChatPane({
           )}
           {connection === 'superseded' && (
             <div className={cn(COLUMN, 'flex items-center gap-2 pb-1 text-muted-foreground')}>
-              This session moved to the terminal.
+              This session is open elsewhere, for example in the terminal fallback.
               <button type="button" onClick={reconnect} className={cn('rounded underline', FOCUS, TARGET)}>Bring it back here</button>
             </div>
           )}
@@ -815,7 +815,7 @@ export function ChatPane({
         {terminalBusy ? (
           <div role="status" className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
             <span className="min-w-0 flex-1">
-              {terminalBusy === 'waiting' ? 'The terminal is waiting for an answer.' : 'Working in the terminal. This opens here when the turn ends.'}
+              {terminalBusy === 'waiting' ? 'The terminal fallback is waiting for an answer.' : 'Working in the terminal fallback. This opens here when the turn ends.'}
             </span>
             <button type="button" onClick={takeOver} className={cn(CARD_BUTTON, 'flex-shrink-0')}>
               Take over
@@ -836,7 +836,7 @@ export function ChatPane({
           onSetModel={setModel}
         />
         )}
-        {!compact && <TerminalStatusBar
+        {!compact && <SessionStatusBar
           session={session}
           live={{ model: chat.model, contextTokens: chat.context?.usedTokens ?? null, contextWindow: chat.context?.maxTokens ?? null }}
           modelSlot={<div className="flex items-center gap-1"><ModelPicker chat={chat} onSetModel={setModel} /><EffortPicker chat={chat} onSetEffort={setEffort} /></div>}

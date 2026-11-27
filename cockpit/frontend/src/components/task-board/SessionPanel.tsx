@@ -39,7 +39,7 @@ export function SessionPanel({ session, board, spaces, onClose }: {
       </header>
       <section aria-label="Session" id={CHAT_ID} className="flex min-h-(--size-split-panel-min) min-w-0 flex-1 flex-col">
         {session ? (
-          <SessionChat key={session.id} paneId={TASK_BOARD_PANE_ID} projectId={session.__projectId ?? null} sessionId={session.id} session={session} spaceId={space ? paneSpaceKey(space) : null} borrowed toolbar={{ onClosePane: onClose }} />
+          <SessionChat key={session.id} paneId={TASK_BOARD_PANE_ID} projectId={session.__projectId ?? null} sessionId={session.id} session={session} spaceId={space ? paneSpaceKey(space) : null} toolbar={{ onClosePane: onClose }} />
         ) : (
           <>
             <div className="flex shrink-0 justify-end px-2 py-1.5">
