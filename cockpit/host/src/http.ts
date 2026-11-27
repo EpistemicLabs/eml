@@ -49,6 +49,7 @@ import { applySessionHook } from './application/apply-session-hook.js'
 import { directoryQueryOf } from './application/session-tools.js'
 import { isProviderId, writeDefaultProvider } from './provider-settings.js'
 import { readLimits, writeLimits } from './session-limits.js'
+import { readTerminalFallback, writeTerminalFallback } from './terminal-fallback.js'
 // Settings › Models › Claude sign-in and About still speak Claude Code's own
 // shapes (login modes, its version); everything else about an agent CLI goes
 // through /api/providers.
@@ -1155,6 +1156,18 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const result = body && typeof body === 'object' && !Array.isArray(body) ? writeLimits(body as Record<string, unknown>) : 'expected an object'
       if (typeof result === 'string') json(res, 400, { error: { code: 'INVALID_INPUT', message: result } })
       else json(res, 200, { limits: result, ceilingUnavailable: deps.memoryUnavailable ?? null })
+      return true
+    }
+
+    // Settings › Advanced › Terminal fallback (terminal-fallback.ts): whether an agent session may open in a terminal.
+    if (resource === 'terminal-fallback' && !id && method === 'GET') {
+      json(res, 200, readTerminalFallback())
+      return true
+    }
+    if (resource === 'terminal-fallback' && !id && method === 'PATCH') {
+      const result = writeTerminalFallback(await readJson(req))
+      if (typeof result === 'string') json(res, 400, { error: { code: 'INVALID_INPUT', message: result } })
+      else json(res, 200, result)
       return true
     }
 

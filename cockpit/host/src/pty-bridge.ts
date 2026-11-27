@@ -22,15 +22,17 @@ import type { ProjectEntry } from './project-registry.js'
 import type { SpawnRequest } from './spawn-queue.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import { launchesUnattended } from './domain/spawn-request.js'
+import { TERMINAL_FALLBACK_OFF, TERMINAL_FALLBACK_OFF_MESSAGE } from './terminal-fallback.js'
 
 /**
  * PTY ↔ browser bridge with a persistent session registry.
  *
  * Headless-xterm snapshot replay on reattach, supersede of a prior socket,
  * resize coalescing + SIGWINCH wiggle, first-chunk size resend, output
- * coalescing, WS backpressure, detached-session timeout (not for sessions kept
- * running for Remote Control until their pane is closed; a host start brings
- * those back). Sessions are spawned
+ * coalescing, WS backpressure, detached-session timeout. Every agent session
+ * runs in its chat (chat-bridge.ts); here it runs only as the hidden fallback,
+ * while Settings › Advanced › Terminal fallback is on (terminal-fallback.ts) —
+ * an `init` is refused with TERMINAL_FALLBACK_OFF otherwise. Sessions are spawned
  * directly and isolated: the session's agent provider (domain/agent-provider.ts) supplies binary,
  * arguments and its isolated config — for Claude Code the cockpit's own `claude`
  * with the app's CLAUDE_CONFIG_DIR + --mcp-config (brain) + --settings —,
@@ -43,7 +45,7 @@ import { launchesUnattended } from './domain/spawn-request.js'
  *   client → { type:'resize', cols, rows }
  *   host   → binary frame [0x01, ...utf8]           (pty output, hot path)
  *   host   → { type:'output', data }                (snapshot replay, notices)
- *   host   → { type:'error', message }
+ *   host   → { type:'error', message, code? }        (code TERMINAL_FALLBACK_OFF: the fallback is off)
  *
  * Attach handshake: POST /api/pty mints a one-time nonce; the WS upgrade must
  * present it (+ same-origin) — loopback binding alone is not enough, any local
@@ -333,6 +335,11 @@ export interface SpawnContext {
   sessionLimits?: () => SessionLimits
   /** A session's agent process exited on its own (/exit, a crash) and was not started again: what the host kept for it goes. */
   onProcessEnd?: (sessionId: string) => void
+  /**
+   * Whether an agent session may open in a terminal (Settings › Advanced › Terminal fallback, terminal-fallback.ts).
+   * Absent: it may. The Shell plugin's terminal does not ask.
+   */
+  terminalFallback?: () => boolean
   /** Why the Shell plugin's terminal can't open for this client (plugin off, remote without the opt-in); null: it may. Absent: local clients only. */
   shellRefusal?: (local: boolean) => Promise<string | null>
 }
@@ -978,6 +985,11 @@ export class PtyBridge {
 
         if (data.type === 'init') {
           if (key || shell) return // one init per socket
+          // Every agent session runs in its chat; the terminal only while the user has the fallback on.
+          if (this.ctx.terminalFallback && !this.ctx.terminalFallback()) {
+            sendJson(ws, { type: 'error', code: TERMINAL_FALLBACK_OFF, message: TERMINAL_FALLBACK_OFF_MESSAGE })
+            return
+          }
           const sessionId = readString(data.sessionId)
           const paneId = readString(data.paneId) || null
           const projectId = readString(data.projectId)

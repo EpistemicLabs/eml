@@ -16,6 +16,7 @@ import { launchBrainServer } from './server-launch.js'
 import { ProviderRegistry, defaultProviders } from './infrastructure/providers/registry.js'
 import { SessionLedger } from './session-ledger.js'
 import { readDefaultProvider } from './provider-settings.js'
+import { readTerminalFallback } from './terminal-fallback.js'
 import { ReportedModels } from './reported-models.js'
 import { PtyBridge } from './pty-bridge.js'
 import { mcpRelay, onSignInRefused, pluginStates, pluginStore, spacePlugins } from './plugins-api.js'
@@ -610,6 +611,8 @@ async function main() {
     ledger, providers, spaces, sessionEnv, handoff, chatHolds: (sessionId) => chat.isRunning(sessionId),
     memory, sessionLimits: () => sessionLimits(readLimits()),
     onProcessEnd: (sessionId) => sessionGone(sessionId),
+    // An agent session opens in a terminal only while the user has the fallback on.
+    terminalFallback: () => readTerminalFallback().enabled,
     // The Shell plugin's terminal: while the plugin is on, on this machine, and remotely only after `eml-cockpit remote shell on`.
     shellRefusal: async (local) => {
       if (!(await pluginStates()).shell) return 'Shell is switched off (Settings › EML Plugins)'
