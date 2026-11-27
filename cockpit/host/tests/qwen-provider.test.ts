@@ -116,7 +116,8 @@ describe('what Qwen Code can do', () => {
   })
 })
 
-describe('Qwen Code provider', () => {
+// Where the registry offers Qwen Code (registry.ts): not on Windows, whose paths and hook quoting differ.
+describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('Qwen Code provider', () => {
   let provider: AgentProvider
   const settings = () => JSON.parse(readFileSync(join(qwenHome, 'settings.json'), 'utf8'))
 
