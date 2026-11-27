@@ -1102,6 +1102,22 @@ describe('live updates', () => {
     expect(await board.closed('nowhere', 'acme', 3)).toEqual({ ok: false, refusal: 'unknown_space' })
   })
 
+  it('names on a closed page what replaced each replaced task: an open replacement first, else a closed one', async () => {
+    const { board } = setup({ main: [
+      { id: 'a', status: 'superseded', updated_at: '2026-11-18T09:00:00Z' },
+      { id: 'b', status: 'superseded', updated_at: '2026-11-17T09:00:00Z' },
+      { ...mine('done-next', {}, 'resolved'), supersedes: ['a', 'b'] } as Row,
+      { ...mine('open-next'), supersedes: ['a'] } as Row,
+    ] })
+    await board.refresh()
+    const answer = await board.closed('main', 'acme', 20)
+    if (!answer.ok) throw new Error('closed page refused')
+    const byId = new Map(answer.page.tasks.map((t) => [t.id, t]))
+    expect(byId.get('a')).toMatchObject({ blocked: 'superseded', replacedBy: 'open-next' })
+    expect(byId.get('b')).toMatchObject({ replacedBy: 'done-next' })
+    expect(byId.get('done-next')).not.toHaveProperty('replacedBy')
+  })
+
   it('leaves out a closed task whose Reopen is still in its Undo window', async () => {
     const { board } = setup({
       main: [{ id: 'reopening', status: 'resolved' }, { id: 'done', status: 'resolved' }],

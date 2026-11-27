@@ -240,10 +240,13 @@ export function createTaskRouter(deps: TaskRouterDeps): TaskRouter {
 
     if (replaced) {
       const outcome = await deps.follow!.follow(sessionId)
+      // A brain that did not answer: the turn stays unrouted and is tried again (application/unrouted-turns.ts).
+      if (outcome.kind === 'failed') throw new Error(`task ${task.id.slice(0, 8)} was replaced and where it went could not be read`)
       if (outcome.kind === 'moved') return route(sessionId, message, call, unsaid, callCtx, saidAt, true)
       if (outcome.kind === 'held') {
         const block = call ? handoffBlock(call, who) : handoff?.text
-        const handed = block ? await deps.follow!.handOver(sessionId, outcome, block) : 'journaled'
+        // A turn that handed nothing over (a status only) leaves nothing to write: the holder goes on with the task.
+        const handed = block ? await deps.follow!.handOver(sessionId, outcome, block) : 'nothing to hand over'
         if (handed === 'moved') return route(sessionId, message, call, unsaid, callCtx, saidAt, true)
         lastRouted.set(sessionId, key)
         deps.finished?.(sessionId)

@@ -18,7 +18,7 @@ import {
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
 } from '../domain/task-turn.js'
 import type { ReopenItem, TaskCommand } from './task-commands.js'
-import { replacingIds, type ReplaceableTask } from '../domain/task-replacement.js'
+import { namedReplacement, replacingIds, type ReplaceableTask } from '../domain/task-replacement.js'
 
 /**
  * The task board's read model (decision whose-turn-derived-in-cockpit-host): the open tasks of every
@@ -415,6 +415,10 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     return read
   }
 
+  /** What replaced each of these replaced rows, as the panel names it. */
+  const replacedByOf = async (brain: Pick<EmlApi, 'get'>, rows: readonly Row[], isOpen: (id: string) => boolean) =>
+    new Map(await Promise.all(rows.filter((r) => r.status === 'superseded').map(async (r) => [r.id, namedReplacement(await replacingOf(brain, r.id), isOpen)] as const)))
+
   const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) => {
     const query: Record<string, string | number> = { type: 'task', status, with_parent: 'true', with_latest_note: 'true', limit: OPEN_LIMIT, ...extra }
     try {
@@ -572,10 +576,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         slice.waits.set(r.id, { open: isOpen(r.id), sessions })
       }
       // Replaced tasks: what replaced each (an open one first), and their live sessions go on there.
-      const replacedBy = new Map(await Promise.all(superseded.map(async (r) => {
-        const ids = await replacingOf(brain, r.id)
-        return [r.id, ids.find(isOpen) ?? ids[0] ?? null] as const
-      })))
+      const replacedBy = await replacedByOf(brain, superseded, isOpen)
       if (superseded.length > 0) deps.replaced?.(superseded.map((r) => r.id))
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
@@ -850,10 +851,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     // The board holds every open task: a parent it doesn't list as open is closed.
     const open = new Set((current?.tasks ?? []).filter((t) => t.spaceId === spaceId && (t.status === 'planned' || t.status === 'active')).map((t) => t.id))
     const page = rows.slice(0, want)
-    const replacedBy = new Map(await Promise.all(page.filter((r) => r.status === 'superseded').map(async (r) => {
-      const ids = await replacingOf(brain, r.id)
-      return [r.id, ids.find((id) => open.has(id)) ?? ids[0] ?? null] as const
-    })))
+    const replacedBy = await replacedByOf(brain, page, (id) => open.has(id))
     const tasks = page.map((row) => closedTaskOf(row, space, (id) => open.has(id), commandOf(row.id), now, replacedBy.get(row.id) ?? null))
     return { ok: true, page: { tasks, more: rows.length > want } }
   }

@@ -1,4 +1,5 @@
 import type { LeaseHolder } from './task-lease.js'
+import { replacingIds, type TaskRelations } from './task-relations.js'
 
 /**
  * A session follows its task when another task replaces it (decision session-follows-replacing-task).
@@ -18,26 +19,18 @@ import type { LeaseHolder } from './task-lease.js'
  */
 
 /** How far the cockpit follows a chain of replacements. */
-export const REPLACEMENT_DEPTH = 8
-
-export interface TaskRelation { relation: string; source_id: string; target_id: string }
+const REPLACEMENT_DEPTH = 8
 
 /** A task as the replacement search reads it: the brain's GET /engram/:id?with_relations=true. */
-export interface ReplaceableTask {
-  id: string
-  status: string
-  relations?: TaskRelation[]
-}
+export type ReplaceableTask = TaskRelations & { status: string }
 
 const isOpen = (status: string) => status === 'planned' || status === 'active'
 
-/** The ids of the tasks that replaced this one (the sources of a `supersedes` relation onto it). */
-export function replacingIds(task: ReplaceableTask): string[] {
-  const ids = (task.relations ?? [])
-    .filter((r) => r.relation === 'supersedes' && r.target_id === task.id && r.source_id !== task.id)
-    .map((r) => r.source_id)
-  return [...new Set(ids)]
-}
+export { replacingIds }
+
+/** The task to name as a task's replacement: an open one first, else the first. */
+export const namedReplacement = (ids: readonly string[], open: (id: string) => boolean): string | null =>
+  ids.find(open) ?? ids[0] ?? null
 
 /** Where a replaced task's work goes on: one open task, none, or several (then nothing moves). */
 export type Replacement =
@@ -47,16 +40,17 @@ export type Replacement =
 
 /**
  * The open task that replaced this one, following replacements of replacements. A replacing task that is closed some
- * other way (done or dropped) ends that branch: its work is over, not moved on.
+ * other way (done or dropped) ends that branch: its work is over, not moved on. A read that fails throws: a brain that
+ * did not answer must not read as "nothing replaced it".
  */
-export async function findReplacement(read: (id: string) => Promise<ReplaceableTask | null>, task: ReplaceableTask, depth = REPLACEMENT_DEPTH): Promise<Replacement> {
+export async function findReplacement(read: (id: string) => Promise<ReplaceableTask | null>, task: ReplaceableTask): Promise<Replacement> {
   const seen = new Set([task.id])
   const open: string[] = []
   let frontier: ReplaceableTask[] = [task]
-  for (let level = 0; level < depth && frontier.length > 0; level++) {
+  for (let level = 0; level < REPLACEMENT_DEPTH && frontier.length > 0; level++) {
     const ids = [...new Set(frontier.flatMap(replacingIds))].filter((id) => !seen.has(id))
     for (const id of ids) seen.add(id)
-    const found = (await Promise.all(ids.map((id) => read(id).catch(() => null)))).filter((t): t is ReplaceableTask => t !== null)
+    const found = (await Promise.all(ids.map(read))).filter((t): t is ReplaceableTask => t !== null)
     open.push(...found.filter((t) => isOpen(t.status)).map((t) => t.id))
     frontier = found.filter((t) => t.status === 'superseded')
   }
