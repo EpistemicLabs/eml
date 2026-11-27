@@ -2,6 +2,7 @@
 // every place that needs them — the "+" menu, Settings › Models.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import type { ModelOption } from '@/components/chat/chat-state';
 import type { LLMProvider } from '@/types/app';
 
 export interface RuntimeResult {
@@ -75,6 +76,29 @@ const send = (method: 'PATCH' | 'POST', body?: unknown): RequestInit => ({
  */
 export function useProviders(options: { refresh?: boolean } = {}) {
   return useQuery({ queryKey: providersKey, queryFn: () => request(options.refresh ? '?refresh=1' : ''), staleTime: 15_000 });
+}
+
+/** The models one agent offers a new chat (host: application/chat-models.ts). */
+export interface ProviderModels {
+  id: string;
+  models: ModelOption[];
+}
+
+/**
+ * The models each chat-capable agent offers a new chat (GET /api/providers/models), for the agent
+ * picker. Kept a few minutes: the host keeps them longer, and a model list rarely changes. A host
+ * that cannot say answers no models, and the picker offers each agent's default model alone.
+ */
+export function useChatModels() {
+  return useQuery({
+    queryKey: [...providersKey, 'models'],
+    queryFn: async (): Promise<ProviderModels[]> => {
+      const res = await fetch('/api/providers/models');
+      const body = await res.json().catch(() => null);
+      return res.ok && Array.isArray(body?.providers) ? body.providers as ProviderModels[] : [];
+    },
+    staleTime: 5 * 60_000,
+  });
 }
 
 /**

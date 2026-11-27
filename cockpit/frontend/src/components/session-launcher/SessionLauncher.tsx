@@ -1,18 +1,20 @@
 // The empty pane (mockup new session pane): say what you want to do and press Enter. The
 // session starts in the project shown next to the box, picked from the desk, from your words
-// or by you, as a chat unless you pick the terminal. Under it, the space's recent projects and
-// the sessions to continue. Tokens v2; colour only for "waits for you".
+// or by you, as a chat of the agent and model in the picker (components/agent-picker). Under
+// it, the space's recent projects and the sessions to continue. Tokens v2; colour only for
+// "waits for you".
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
-import { knownModels, queueChatStart } from '@/components/chat/chat-start';
+import { AgentPicker, useAgentChoice } from '@/components/agent-picker/AgentPicker';
+import { queueChatStart } from '@/components/chat/chat-start';
 import { ADD_PROJECT_EVENT } from '@/components/projects/useProjectActions';
 import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
-import { Chip, FOCUS, LABEL, TAB, TRACK } from '@/shared/view/ui';
+import { Chip, FOCUS, LABEL } from '@/shared/view/ui';
 import { MOD } from '@/components/top-bar/shortcuts';
 import { readable, useTaskBoard, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
-import { getDeskOfPane, lastProjectOfDesk, newCliSessionId, resumeSessionInPane, startSessionInPane } from '@/stores/usePaneStore';
+import { getDeskOfPane, lastProjectOfDesk, newCliSessionId, newSessionView, resumeSessionInPane, startSessionInPane } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces } from '@/stores/useSpaceStore';
 import type { Project } from '@/types/app';
 
@@ -40,9 +42,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
 
   const [text, setText] = useState('');
   const [manual, setManual] = useState<Project | null>(null);
-  const [mode, setMode] = useState<'chat' | 'terminal'>('chat');
-  const models = useMemo(() => knownModels(), []);
-  const [model, setModel] = useState<string | null>(null);
+  const agents = useAgentChoice();
   const [picking, setPicking] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { box.current?.focus(); }, []);
@@ -55,8 +55,11 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
     if (!project) { setPicking(true); return; }
     const prompt = text.trim() || null;
     const sessionId = newCliSessionId();
-    if (mode === 'chat') queueChatStart(sessionId, { prompt, model });
-    startSessionInPane(paneId, { projectId: project.projectId, view: mode, prompt, sessionId });
+    const choice = agents.choice;
+    // No agent with a chat set up: the session starts as a new session always did, with the default agent in its view.
+    if (!choice) { startSessionInPane(paneId, { projectId: project.projectId, view: newSessionView(), prompt, sessionId }); return; }
+    queueChatStart(sessionId, { provider: choice.provider, prompt, model: choice.model });
+    startSessionInPane(paneId, { projectId: project.projectId, view: 'chat', prompt, sessionId, provider: choice.provider });
   };
 
   const continueList = space ? recentSessions(sessions ?? [], space.id, RECENT_SESSIONS) : [];
@@ -66,7 +69,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
       <div className="flex w-full max-w-(--container-measure) flex-col gap-5">
         <div className="flex flex-col gap-1">
           <h2 className="m-0 text-display font-bold tracking-title">New session</h2>
-          <p className="m-0 text-body text-muted-foreground">Say what you want to do. It starts in the project shown below, as a chat unless you pick the terminal.</p>
+          <p className="m-0 text-body text-muted-foreground">Say what you want to do. It starts in the project shown below, as a chat with the agent you pick.</p>
         </div>
 
         <form
@@ -94,22 +97,7 @@ export function SessionLauncher({ paneId }: { paneId: string }) {
               now={now}
               onPick={(p) => { setManual(p); setPicking(false); box.current?.focus(); }}
             />
-            <div role="tablist" aria-label="Session type" className={cn(TRACK, 'bg-foreground/8')}>
-              {(['chat', 'terminal'] as const).map((m) => (
-                <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)} className={TAB}>{m === 'chat' ? 'Chat' : 'Terminal'}</button>
-              ))}
-            </div>
-            {mode === 'chat' && models.length > 0 && (
-              <select
-                aria-label="Model"
-                value={model ?? ''}
-                onChange={(e) => setModel(e.target.value || null)}
-                className={cn('h-(--size-tab) rounded-(--radius-tab) bg-transparent px-2 text-ui text-muted-foreground hover:bg-muted hover:text-foreground', FOCUS)}
-              >
-                <option value="">Default model</option>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-            )}
+            <AgentPicker groups={agents.groups} choice={agents.choice} onChoose={agents.choose} />
             <button type="submit" className={cn('ml-auto inline-flex h-(--target-comfortable) items-center gap-2 rounded-full bg-primary px-3.5 text-body font-semibold text-primary-foreground hover:opacity-90', FOCUS)}>
               Start <kbd aria-hidden className="text-caption opacity-70">↵</kbd>
             </button>
