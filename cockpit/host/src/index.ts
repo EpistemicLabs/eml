@@ -52,6 +52,7 @@ import type { RecordEndTurnDeps } from './application/record-end-turn.js'
 import { createSessionTask } from './application/session-task.js'
 import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
+import { createFollowReplacement } from './application/follow-replacement.js'
 import { createTurnContexts, endTurnAccess } from './application/turn-context.js'
 import { createTurnWake } from './application/turn-wake.js'
 import { resultOfTurn } from './domain/turn-end.js'
@@ -423,8 +424,17 @@ async function main() {
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
   const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })
+  // A session whose task another task replaced goes on there (application/follow-replacement.ts). The turns, the
+  // context reads and the lease are made further down; these are only called once sessions run.
+  const followReplacement = createFollowReplacement({
+    ledger, spaces, brain: taskBrain, log, deliver,
+    pending: () => spawns.list(),
+    working: (sessionId) => turns.get(sessionId)?.state === 'working',
+    contextTokensOf: (sessionId) => contextTokensOf(sessionId),
+    putAway: (sessionId) => taskLease.spawn.putAway(sessionId),
+  })
   const taskRouter = createTaskRouter({
-    ledger, spaces, brain: taskBrain, owner, log,
+    ledger, spaces, brain: taskBrain, owner, log, follow: followReplacement,
     handles: (space) => turnContexts.handles(space),
     // A worker that closed its step leaves the lists; one the user started or pinned stays where they put it.
     finished: (sessionId) => {
@@ -1035,6 +1045,7 @@ async function main() {
     ownSessionOf: (taskId) => continueSession.boardView(taskId),
     reopenedWith: (taskId) => taskCommands?.reopenedWith(taskId) ?? [],
     ledgerSessionsOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId).map((e) => e.sessionId),
+    replaced: (taskIds) => followReplacement.sweep(taskIds),
     runnerBusy, runnerHeld,
     scheduleFacts: (taskId) => scheduleFacts(taskId),
     runnerStartedAt: (taskId) => taskRunner.startedAt(taskId),

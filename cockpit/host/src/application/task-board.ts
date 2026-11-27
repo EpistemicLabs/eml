@@ -18,6 +18,7 @@ import {
   type Coverage, type LiveFacts, type NobodyReason, type TaskFacts, type Turn, type TurnGroup, type WaitingOn,
 } from '../domain/task-turn.js'
 import type { ReopenItem, TaskCommand } from './task-commands.js'
+import { namedReplacement, replacingIds, type ReplaceableTask } from '../domain/task-replacement.js'
 
 /**
  * The task board's read model (decision whose-turn-derived-in-cockpit-host): the open tasks of every
@@ -141,6 +142,8 @@ export interface ClosedTask {
   originId: string | null
   sessionIds: string[]
   blocked?: 'superseded' | 'parent_closed'
+  /** A replaced task: the task that replaced it (an open one when there is one), where its work and sessions went on. */
+  replacedBy?: string
   pending?: { opId: string; kind: TaskCommand['kind']; undoUntil: string }
 }
 
@@ -212,6 +215,8 @@ export interface TaskBoardDeps {
   runnerStartedAt?(taskId: string): number | null
   /** Every session the ledger links to the task, put away or not: a closed task's chat shows its last one. */
   ledgerSessionsOn?(taskId: string): string[]
+  /** The replaced tasks a build read: their live sessions go on at the replacement (application/follow-replacement.ts). */
+  replaced?(taskIds: string[]): void
   /**
    * What this cockpit's record of the task says of its schedule (domain/job.ts): the cursor, the wake-up it fired, a
    * run that waits to start. Without it the next run is the schedule's next time ahead.
@@ -395,6 +400,25 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   let events: BoardEvent[] = []
   const listeners = new Set<(events: BoardEvent[]) => void>()
 
+  /**
+   * The tasks that replaced a task (the sources of its `supersedes` relations), read once per task: a replaced task stays
+   * replaced, so its first answer holds until the host restarts. A read that fails is tried again next build.
+   */
+  const replacing = new Map<string, Promise<string[]>>()
+  const replacingOf = (brain: Pick<EmlApi, 'get'>, id: string): Promise<string[]> => {
+    const known = replacing.get(id)
+    if (known) return known
+    const read = (brain.get(`/engram/${encodeURIComponent(id)}`, { with_relations: 'true' }) as Promise<ReplaceableTask>)
+      .then((task) => replacingIds({ ...task, id }))
+      .catch(() => { replacing.delete(id); return [] as string[] })
+    replacing.set(id, read)
+    return read
+  }
+
+  /** What replaced each of these replaced rows, as the panel names it. */
+  const replacedByOf = async (brain: Pick<EmlApi, 'get'>, rows: readonly Row[], isOpen: (id: string) => boolean) =>
+    new Map(await Promise.all(rows.filter((r) => r.status === 'superseded').map(async (r) => [r.id, namedReplacement(await replacingOf(brain, r.id), isOpen)] as const)))
+
   const list = async (brain: Pick<EmlApi, 'get'>, status: string, extra: Record<string, string | number> = {}) => {
     const query: Record<string, string | number> = { type: 'task', status, with_parent: 'true', with_latest_note: 'true', limit: OPEN_LIMIT, ...extra }
     try {
@@ -503,7 +527,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
   }
 
   /** A closed row as the panel's Reopen and ⌘K read it; `isOpen` says whether its parent is open (the host checks again). */
-  const closedTaskOf = (row: Row, space: BrainSpace, isOpen: (id: string) => boolean, command: TaskCommand | undefined, now: number): ClosedTask => {
+  const closedTaskOf = (row: Row, space: BrainSpace, isOpen: (id: string) => boolean, command: TaskCommand | undefined, now: number, replacedBy: string | null): ClosedTask => {
     const props = row.properties ?? {}
     const blocked = row.status === 'superseded' ? 'superseded' as const : row.parent_id && !isOpen(row.parent_id) ? 'parent_closed' as const : undefined
     return {
@@ -518,6 +542,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       parentId: row.parent_id ?? null, originId: row.origin_task_id ?? null,
       sessionIds: deps.ledgerSessionsOn?.(row.id) ?? deps.sessionsOn(row.id).map((s) => s.sessionId),
       ...(blocked ? { blocked } : {}),
+      ...(replacedBy ? { replacedBy } : {}),
       ...(command && Date.parse(command.undoUntil) >= now ? { pending: { opId: command.opId, kind: command.kind, undoUntil: command.undoUntil } } : {}),
     }
   }
@@ -550,6 +575,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         const sessions = new Set(waitsOf(r.properties).map((w) => w.session_id || w.id))
         slice.waits.set(r.id, { open: isOpen(r.id), sessions })
       }
+      // Replaced tasks: what replaced each (an open one first), and their live sessions go on there.
+      const replacedBy = await replacedByOf(brain, superseded, isOpen)
+      if (superseded.length > 0) deps.replaced?.(superseded.map((r) => r.id))
       // Synced runs that are not ended: sessions on other members' cockpits too (domain/runs.ts).
       const runs = openRunsByTask(runsOf(await objects(brain, 'run')))
       // When each task's newest run started: a delegation request is open while none started after it (domain/delegation.ts).
@@ -598,7 +626,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
         if (CLOSED_STATUSES.has(row.status)) {
-          slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now))
+          slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now, replacedBy.get(row.id) ?? null))
           if (row.status === 'superseded') continue
         }
         const facts: TaskFacts = {
@@ -822,7 +850,9 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''))
     // The board holds every open task: a parent it doesn't list as open is closed.
     const open = new Set((current?.tasks ?? []).filter((t) => t.spaceId === spaceId && (t.status === 'planned' || t.status === 'active')).map((t) => t.id))
-    const tasks = rows.slice(0, want).map((row) => closedTaskOf(row, space, (id) => open.has(id), commandOf(row.id), now))
+    const page = rows.slice(0, want)
+    const replacedBy = await replacedByOf(brain, page, (id) => open.has(id))
+    const tasks = page.map((row) => closedTaskOf(row, space, (id) => open.has(id), commandOf(row.id), now, replacedBy.get(row.id) ?? null))
     return { ok: true, page: { tasks, more: rows.length > want } }
   }
 

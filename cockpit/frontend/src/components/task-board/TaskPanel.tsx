@@ -111,8 +111,19 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   // A task closed in the Done window comes from the board's tasks; when and why it can't reopen are in its closed entry.
   const closedEntry = closed ? board.closed?.find((c) => c.id === task.id && c.spaceId === task.spaceId) : undefined;
   const blocked = task.blocked ?? closedEntry?.blocked;
-  const goOn = closed && !task.pending ? continueMode({ owner: task.owner, closedAt: task.closedAt ?? closedEntry?.closedAt ?? null, blocked }, board.viewer, now) : null;
-  const composer = goOn && <ContinueComposer mode={goOn} onSend={(text, how, restore) => onContinue(task, text, how, restore)} />;
+  // A replaced task goes on in the task that replaced it: its sessions moved there (host application/follow-replacement.ts).
+  const replacedById = task.replacedBy ?? closedEntry?.replacedBy;
+  const replacement = replacedById ? board.tasks.find((t) => t.id === replacedById && t.spaceId === task.spaceId) ?? board.closed?.find((c) => c.id === replacedById && c.spaceId === task.spaceId) : undefined;
+  const openReplacement = replacement && 'turn' in replacement ? replacement : undefined;
+  const replacementLink = replacement && (
+    <button type="button" className={cn('underline underline-offset-2', FOCUS)} onClick={() => onOpenTask('turn' in replacement ? replacement : closedAsTask(replacement))}>{taskName(replacement)}</button>
+  );
+  const goOn = closed && !task.pending && !openReplacement ? continueMode({ owner: task.owner, closedAt: task.closedAt ?? closedEntry?.closedAt ?? null, blocked }, board.viewer, now) : null;
+  const composer = openReplacement ? (
+    <p className="m-0 shrink-0 border-t border-border p-3 text-ui text-muted-foreground">
+      Replaced by {replacementLink}: write there, its sessions go on in it.
+    </p>
+  ) : goOn && <ContinueComposer mode={goOn} onSend={(text, how, restore) => onContinue(task, text, how, restore)} />;
   // It has repeating times: the task closes only by ending them. A wake-up alone ends with the task.
   const scheduled = repeats(task);
   const menu: MenuItem[] = closed ? [] : scheduled ? [
@@ -151,7 +162,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
         {(task.outcome ?? closedEntry?.outcome) && <span className="text-muted-foreground"> · {task.outcome ?? closedEntry?.outcome}</span>}
       </div>
       {blocked === 'superseded' ? (
-        <span className="text-ui text-muted-foreground">Another task replaced it: go on there.</span>
+        <span className="text-ui text-muted-foreground">{replacementLink ? <>Replaced by {replacementLink}: go on there.</> : 'Another task replaced it: go on there.'}</span>
       ) : blocked === 'parent_closed' ? (
         <span className="text-ui text-muted-foreground">
           Its parent{parent ? <> <button type="button" className={cn('underline underline-offset-2', FOCUS)} onClick={() => onOpenTask('turn' in parent ? parent : closedAsTask(parent))}>{taskName(parent)}</button></> : null} is closed: reopen the parent first.

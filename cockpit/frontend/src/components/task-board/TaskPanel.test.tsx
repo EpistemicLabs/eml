@@ -151,6 +151,54 @@ describe('the task panel', () => {
       expect(screen.getByText(/reopen the parent first/)).toBeTruthy();
     });
 
+    it('a replaced task links the task that replaced it and sends you there instead of offering a follow-up', () => {
+      const onOpenTask = vi.fn();
+      render(
+        <MemoryRouter><QueryClientProvider client={client}>
+          <TaskPanel task={closed({ blocked: 'superseded', status: 'superseded', replacedBy: 'parent' })} board={{ ...board(parent), viewer: 'lasse', closed: [] }} now={NOW} sessions={[]} spaces={[]}
+            onClose={() => {}} onOpenTask={onOpenTask} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
+        </QueryClientProvider></MemoryRouter>,
+      );
+      expect(screen.queryByRole('button', { name: /^Start follow-up/ })).toBeNull();
+      expect(screen.getByText(/write there, its sessions go on in it/)).toBeTruthy();
+      const links = screen.getAllByRole('button', { name: /claude mcp plugin marketing channel research/i });
+      expect(links).toHaveLength(2);
+      fireEvent.click(links[0]!);
+      expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'parent' }));
+    });
+
+    describe('a replaced task whose replacement is closed, unknown, or named only by its closed entry', () => {
+      const closedEntry = (id: string, patch: Record<string, unknown> = {}) => ({ id, spaceId: 'main', spaceName: 'Main', project: 'acme', title: id, status: 'resolved', closedAt: new Date(NOW).toISOString(), parentId: null, originId: null, sessionIds: [], ...patch });
+      const showWith = (t: BoardTask, closedList: unknown[], onOpenTask = vi.fn()) => {
+        render(
+          <MemoryRouter><QueryClientProvider client={client}>
+            <TaskPanel task={t} board={{ ...board(parent), viewer: 'lasse', closed: closedList as never }} now={NOW} sessions={[]} spaces={[]}
+              onClose={() => {}} onOpenTask={onOpenTask} onHandOver={() => {}} onReview={() => {}} onDrop={() => {}} onEndSchedule={() => {}} onReopen={() => {}} onContinue={async () => true} />
+          </QueryClientProvider></MemoryRouter>,
+        );
+        return onOpenTask;
+      };
+
+      it('links a closed replacement, opens it, and still offers a follow-up', () => {
+        const onOpenTask = showWith(closed({ blocked: 'superseded', status: 'superseded', replacedBy: 'next' }), [closedEntry('next', { displayTitle: 'Next step' })]);
+        expect(screen.getByRole('button', { name: /^Start follow-up/ })).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+        expect(onOpenTask).toHaveBeenCalledWith(expect.objectContaining({ id: 'next', status: 'resolved' }));
+      });
+
+      it('says another task replaced it, without a link, when the board does not know the replacement', () => {
+        showWith(closed({ blocked: 'superseded', status: 'superseded', replacedBy: 'unknown' }), []);
+        expect(screen.getByText('Another task replaced it: go on there.')).toBeTruthy();
+        expect(screen.queryByText(/Replaced by/)).toBeNull();
+      });
+
+      it('reads the replacement from the closed entry when the task itself does not carry it', () => {
+        showWith(closed({ blocked: 'superseded', status: 'superseded' }), [closedEntry('c', { status: 'superseded', blocked: 'superseded', replacedBy: 'parent' })]);
+        expect(screen.getByText(/write there, its sessions go on in it/)).toBeTruthy();
+        expect(screen.queryByRole('button', { name: /^Start follow-up/ })).toBeNull();
+      });
+    });
+
     it('under its session\'s chat: the input for the owner; for someone else\'s task or one being reopened, a note', () => {
       const withSession = (patch: Partial<BoardTask>, viewer = 'lasse') => render(
         <MemoryRouter><QueryClientProvider client={client}>

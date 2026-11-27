@@ -125,6 +125,8 @@ export interface BoardTask {
   outcome?: string;
   stage?: string;
   blocked?: 'superseded' | 'parent_closed';
+  /** A replaced task: the task that replaced it, where its work and its sessions go on. */
+  replacedBy?: string;
 }
 
 /** A decision or note that closed with a task (host task-commands ReopenItem). */
@@ -149,6 +151,8 @@ export interface ClosedTask {
   originId: string | null;
   sessionIds: string[];
   blocked?: 'superseded' | 'parent_closed';
+  /** A replaced task: the task that replaced it, where its work and its sessions go on. */
+  replacedBy?: string;
   pending?: { opId: string; kind: string; undoUntil: string };
 }
 

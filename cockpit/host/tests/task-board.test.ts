@@ -35,6 +35,8 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
         const relations = [
           ...(row.parent_id ? [{ relation: 'part_of', source_id: id, target_id: row.parent_id }] : []),
           ...(row.origin_task_id ? [{ relation: 'derived_from', source_id: id, target_id: row.origin_task_id, target_engram: { type: 'task' } }] : []),
+          // A task replaced by others: the brain returns their supersedes relations onto it.
+          ...[...rows, ...unlisted].filter((r) => (r as { supersedes?: string[] }).supersedes?.includes(id)).map((r) => ({ relation: 'supersedes', source_id: r.id, target_id: id })),
         ]
         return { type: 'task', title: row.id, scope: 'project.acme', updated_at: '2026-01-01T00:00:00Z', ...row, relations }
       }
@@ -43,7 +45,7 @@ function brainOf(rows: Row[], agents = ['atlas'], projects = [{ id: 'acme', name
   }
 }
 
-function setup(opts: { viewer?: string; main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }> } ) {
+function setup(opts: { viewer?: string; main: Row[]; other?: Row[]; unlisted?: Row[]; oldBrain?: boolean; working?: string[]; jobs?: Record<string, string>; openJobs?: string[]; pending?: TaskBoardDeps['pendingCommands']; released?: Record<string, string>; head?: TaskBoardDeps['head']; log?: string[]; busy?: string[]; held?: string[]; ledger?: Record<string, string[]>; runs?: Array<Record<string, unknown>>; schedules?: Record<string, Record<string, unknown>>; started?: Record<string, number>; own?: Record<string, { sessionId: string; continues: true }>; heldFor?: string[]; commands?: Record<string, Array<Array<{ description: string; since: string }>>>; scheduleFacts?: Record<string, { cursor?: string | null; firedWake?: string | null; waitingRunDueAt?: string | null; needsOk?: boolean }>; replaced?: string[][] } ) {
   const main = { id: 'main', name: 'Main', shared: false, main: true }
   const ebisu = { id: 'ebisu', name: 'Ebisu', shared: true }
   // A planned task handed over with the flat fields has the delegation core mirrors, with a request (v0.23).
@@ -83,6 +85,7 @@ function setup(opts: { viewer?: string; main: Row[]; other?: Row[]; unlisted?: R
     runnerStartedAt: (taskId) => opts.started?.[taskId] ?? null,
     ...(opts.ledger ? { ledgerSessionsOn: (taskId: string) => opts.ledger![taskId] ?? [] } : {}),
     ...(opts.scheduleFacts ? { scheduleFacts: (taskId: string) => opts.scheduleFacts![taskId] ?? {} } : {}),
+    ...(opts.replaced ? { replaced: (taskIds: string[]) => { opts.replaced!.push(taskIds) } } : {}),
   }
   const board = createTaskBoard(deps)
   return { board, brains, clock }
@@ -696,6 +699,29 @@ describe('the task board', () => {
     expect(brains.get('main')!.queries.map((q) => q.status)).toEqual(expect.arrayContaining(['invalidated', 'superseded']))
   })
 
+  it('names what replaced a replaced task, an open one first, reads that once, and hands the replaced tasks to the sweep', async () => {
+    const replaced: string[][] = []
+    const { board, brains } = setup({
+      replaced,
+      main: [
+        mine('merged-away', {}, 'superseded'),
+        { ...mine('successor'), supersedes: ['old', 'merged-away'] } as Row,
+        mine('old', {}, 'superseded'),
+        { ...mine('done-successor', {}, 'resolved'), supersedes: ['old'] } as Row,
+        mine('orphaned', {}, 'superseded'),
+      ],
+    })
+    const model = await board.refresh()
+    const closed = new Map(model.closed.map((t) => [t.id, t]))
+    expect(closed.get('old')).toMatchObject({ blocked: 'superseded', replacedBy: 'successor' })
+    expect(closed.get('merged-away')).toMatchObject({ replacedBy: 'successor' })
+    expect(closed.get('orphaned')).not.toHaveProperty('replacedBy')
+    expect(replaced).toEqual([expect.arrayContaining(['old', 'merged-away', 'orphaned'])])
+    await board.refresh()
+    const reads = brains.get('main')!.fetched.filter((id) => id === 'old')
+    expect(reads).toHaveLength(1)
+  })
+
   it('says how a task hangs in its tree: sub-task under its parent, spun off from its origin', async () => {
     const { board } = setup({
       main: [mine('root'), mine('spun', {}, 'active'), mine('step', {}, 'planned')].map((r) =>
@@ -1074,6 +1100,22 @@ describe('live updates', () => {
     expect(brains.get('main')!.queries.at(-1)).toMatchObject({ type: 'task', scope: 'project.acme', order_by: 'updated_at', limit: 4 })
     expect(await board.closed('main', 'acme', 4)).toMatchObject({ ok: true, page: { more: false } })
     expect(await board.closed('nowhere', 'acme', 3)).toEqual({ ok: false, refusal: 'unknown_space' })
+  })
+
+  it('names on a closed page what replaced each replaced task: an open replacement first, else a closed one', async () => {
+    const { board } = setup({ main: [
+      { id: 'a', status: 'superseded', updated_at: '2026-11-18T09:00:00Z' },
+      { id: 'b', status: 'superseded', updated_at: '2026-11-17T09:00:00Z' },
+      { ...mine('done-next', {}, 'resolved'), supersedes: ['a', 'b'] } as Row,
+      { ...mine('open-next'), supersedes: ['a'] } as Row,
+    ] })
+    await board.refresh()
+    const answer = await board.closed('main', 'acme', 20)
+    if (!answer.ok) throw new Error('closed page refused')
+    const byId = new Map(answer.page.tasks.map((t) => [t.id, t]))
+    expect(byId.get('a')).toMatchObject({ blocked: 'superseded', replacedBy: 'open-next' })
+    expect(byId.get('b')).toMatchObject({ replacedBy: 'done-next' })
+    expect(byId.get('done-next')).not.toHaveProperty('replacedBy')
   })
 
   it('leaves out a closed task whose Reopen is still in its Undo window', async () => {
