@@ -162,6 +162,30 @@ describe('Codex provider', () => {
     expect(readFileSync(join(codexHome, 'turn-hook.json'), 'utf8')).toContain('fedcba9876543210')
   })
 
+  it('trusts each of its own hooks with Codex\'s hash, so Codex runs them without asking, and only those', async () => {
+    const { codexHookHash, hookEventKey, hooksSourcePath } = await import('../src/infrastructure/providers/codex/hook-trust.js')
+    const hooksPath = hooksSourcePath(codexHome)
+    const hooks = JSON.parse(readFileSync(join(codexHome, 'hooks.json'), 'utf8')).hooks as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>
+    let count = 0
+    for (const [event, groups] of Object.entries(hooks)) {
+      groups.forEach((group, i) => group.hooks.forEach((handler, j) => {
+        count++
+        const hash = codexHookHash(event, undefined, handler)
+        expect(hash).toMatch(/^sha256:[0-9a-f]{64}$/)
+        expect(config()).toContain(`[hooks.state.${tomlString(`${hooksPath}:${hookEventKey(event)}:${i}:${j}`)}]\ntrusted_hash = "${hash}"\n`)
+      }))
+    }
+    expect(count).toBe(9)
+    expect(config().split('[hooks.state.').length - 1).toBe(9)
+    // A second boot writes the same file.
+    const before = config()
+    provider.prepare({
+      hookUrl: 'http://127.0.0.1:60001/api/hook', hookToken: HOOK_TOKEN, mcpUrl: MCP_URL, cockpitMcpUrl: COCKPIT_MCP_URL,
+      writableDirs: [join(home, 'spawn-inbox'), join(home, 'tasks')],
+    })
+    expect(config()).toBe(before)
+  })
+
   it('delivers the EML skills and the cockpit\'s own, and lets the sandbox write where those need to', () => {
     const skills = readdirSync(join(codexHome, 'skills')).sort()
     expect(skills).toEqual(['brain-hygiene', 'checkpoint', 'consolidate', 'getting-started', 'report-issue', 'schedule', 'spawn-session', 'task-run'])
