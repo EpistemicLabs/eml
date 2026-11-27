@@ -7,6 +7,7 @@ import type {
 } from '../../../domain/session-runtime.js'
 import type { SessionRef } from '../../../domain/agent-provider.js'
 import { AppServerClient, AppServerError, type AppServerProcess } from './app-server-client.js'
+import { hooksSourcePath } from './hook-trust.js'
 import { CodexEventMapper, HIDDEN_INPUT_CLOSE, HIDDEN_INPUT_OPEN, historyEvents } from './event-mapper.js'
 import {
   METHOD_NOT_FOUND, type ApprovalsReviewer, type AskForApproval, type InitializeParams, type McpServerStatus, type Model, type SandboxMode, type SandboxPolicy,
@@ -274,14 +275,16 @@ class CodexChatRuntime implements SessionRuntime {
   }
 
   /**
-   * app-server runs the cockpit's hooks (index.ts hooks.json) only once the user trusted them, and never asks: until
-   * then the session goes without its brain boot, project block, task context and reminder. Said once in the
-   * conversation, with what to do. A server that cannot tell says nothing.
+   * app-server runs the cockpit's hooks (index.ts hooks.json) only once they are trusted, and never asks. The cockpit
+   * trusts them itself at boot (hook-trust.ts), so this is the fallback for when that did not hold — a Codex that
+   * hashes hooks differently, a config.toml the cockpit could not write: the session then goes without its brain
+   * boot, project block, task context and reminder. Said once in the conversation, with what to do. A server that
+   * cannot tell says nothing.
    */
   private async checkHookTrust(client: AppServerClient, threadId: string): Promise<void> {
     const listed = await client.request('hooks/list', { threadId }).catch(() => null)
     if (!listed || this.closing || this.exitReported) return
-    const own = path.join(CODEX_CONFIG_DIR, 'hooks.json')
+    const own = hooksSourcePath(CODEX_CONFIG_DIR)
     const hooks = (Array.isArray(listed.data) ? listed.data : []).flatMap((entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []))
     const untrusted = hooks.filter((hook) => hook?.sourcePath === own && hook.trustStatus !== 'trusted' && hook.trustStatus !== 'managed')
     if (untrusted.length > 0) this.emit({ kind: 'notice', text: HOOKS_UNTRUSTED })
@@ -568,8 +571,8 @@ export const OPEN_ELSEWHERE = 'this conversation is still open in another proces
 export function createCodexChatRuntimes(spawnProcess: SpawnAppServer = spawnAppServer, host: CodexChatHost = {}): SessionRuntimeFactory {
   return {
     workerMode: WORKER_MODE,
-    // app-server runs the cockpit's hooks only once the user trusted them (hooks.state in config.toml): its own turns
-    // say when the session works.
+    // app-server runs the cockpit's hooks only once they are trusted (hooks.state in config.toml, hook-trust.ts), and
+    // they may not be: its own turns say when the session works.
     reportsTurns: true,
     start: (request) => new CodexChatRuntime(request, spawnProcess, host),
     // Every Codex session keeps its conversation in the one Codex home (index.ts launch).

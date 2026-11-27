@@ -20,6 +20,7 @@ import { codexRuntime } from './runtime.js'
 import { codexSettings, readCodexSettings } from './settings.js'
 import { hasTable, removeTables, setTopLevelKey, tomlString, upsertTables } from './toml.js'
 import { codexPluginArgs, codexPluginTables } from './plugin-servers.js'
+import { hooksSourcePath, trustOwnHooks, type CodexHooks } from './hook-trust.js'
 import type { McpServerConfig } from '../../../domain/space-plugins.js'
 
 /**
@@ -44,15 +45,19 @@ import type { McpServerConfig } from '../../../domain/space-plugins.js'
  *     (Codex asks per call otherwise, and fails the call where nobody can
  *     answer), and the same way the cockpit's own session tools (cockpit, the
  *     host's endpoint for terminal sessions: end_turn, schedule, send_message,
- *     list_sessions); one `projects."<path>"` table per trusted folder. Codex keeps
+ *     list_sessions); one `projects."<path>"` table per trusted folder; the
+ *     trust of the cockpit's own hooks (hooks.json, below). Codex keeps
  *     its own state in the same file, so only these tables are replaced. No
  *     token in it.
  *   - turn-hook.json (chmod 600): URL and per-boot token for the turn-state hook.
  *   - hooks.json: turn state to the host, and the EML hooks (boot, project block, reminder,
  *     consolidate at stop).
- *     Codex runs a hook only after the user trusted it; it asks once, in the
- *     first session, and again whenever a hook's text changes — which is why
- *     nothing per boot or per space is in the hook text.
+ *     Codex runs a hook only once its current text is trusted. The cockpit
+ *     trusts its own hooks right after writing them (hook-trust.ts: one
+ *     `hooks.state` table per hook in config.toml, only for this hooks.json),
+ *     so neither the chat nor a terminal waits for the user's "Trust all".
+ *     Nothing per boot or per space is in the hook text, so the file and its
+ *     trust stay the same from boot to boot.
  *
  *   - skills/<name>/SKILL.md: the EML skills (consolidate, checkpoint,
  *     getting-started) from the bundled mcp-server and the cockpit's own
@@ -236,30 +241,28 @@ class CodexProvider implements AgentProvider {
     // come in the JSON envelope.
     const eml = (hook: Parameters<typeof emlHookCommand>[0], json: boolean, options: Record<string, unknown> = {}, flags: string[] = []) =>
       entry(emlHookCommand(hook, undefined, json, flags), { ...EML_HOOK_OPTIONS, ...options })
-    fs.writeFileSync(
-      HOOKS_JSON,
-      JSON.stringify({
-        hooks: {
-          // The project block (mcp-server hooks/project-block.ts), as for Claude: a second
-          // SessionStart command; it brings the session's project, so the reminder drops
-          // its guess from the working directory.
-          SessionStart: [
-            eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
-            eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
-            // The session's task (task-hook.ts).
-            entry(taskHookCommand(), { ...TASK_HOOK_OPTIONS, additionalContextLimit: BOOT_CONTEXT_LIMIT }),
-          ],
-          UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],
-          PermissionRequest: [turn],
-          // Back to "working" once an approved tool ran — Codex has no other signal for it.
-          PostToolUse: [turn],
-          // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
-          Stop: [turn, eml('stop', false)],
-        },
-      }, null, 2),
-      { mode: 0o600 },
-    )
+    const hooks: CodexHooks = {
+      // The project block (mcp-server hooks/project-block.ts), as for Claude: a second
+      // SessionStart command; it brings the session's project, so the reminder drops
+      // its guess from the working directory.
+      SessionStart: [
+        eml('session-start', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+        eml('project-block', true, { additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+        // The session's task (task-hook.ts).
+        entry(taskHookCommand(), { ...TASK_HOOK_OPTIONS, additionalContextLimit: BOOT_CONTEXT_LIMIT }),
+      ],
+      UserPromptSubmit: [turn, eml('user-prompt-submit', true, {}, ['--no-cwd-nudge'])],
+      PermissionRequest: [turn],
+      // Back to "working" once an approved tool ran — Codex has no other signal for it.
+      PostToolUse: [turn],
+      // The EML stop hook may block the stop once to consolidate (mcp-server hooks/compaction.ts).
+      Stop: [turn, eml('stop', false)],
+    }
+    fs.writeFileSync(HOOKS_JSON, JSON.stringify({ hooks }, null, 2), { mode: 0o600 })
     fs.chmodSync(HOOKS_JSON, 0o600)
+    // The cockpit's hooks are its own: trusted as written, so app-server runs them and a terminal does not ask
+    // (hook-trust.ts). Nothing else in the file is trusted here.
+    writeConfig(trustOwnHooks(readConfig(), hooksSourcePath(CODEX_CONFIG_DIR), hooks))
   }
 
   trustProject(projectPath: string): void {
