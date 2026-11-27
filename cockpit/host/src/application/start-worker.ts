@@ -1,6 +1,5 @@
 import type { AgentProvider } from '../domain/agent-provider.js'
-import type { SessionRuntimeKind } from '../domain/session-runtime.js'
-import { unattended, type SpawnRequest, ownStart } from '../domain/spawn-request.js'
+import type { SpawnRequest } from '../domain/spawn-request.js'
 
 /** One way of running workers. Starts one under the request's id; returns why it could not, or null. */
 export interface WorkerRunner {
@@ -21,8 +20,7 @@ export function workerInChat(provider: Pick<AgentProvider, 'capabilities'>, requ
 
 export interface StartWorkerDeps {
   chat: WorkerRunner
-  terminal: WorkerRunner
-  /** Whether the request's provider runs this worker through the chat runtime. */
+  /** Whether the request's provider can run this worker through the chat runtime (workerInChat). */
   runsInChat: (request: SpawnRequest) => boolean
   /** Free memory in bytes; null where the system's number means nothing. */
   freeMemory: () => number | null
@@ -33,18 +31,17 @@ export interface StartWorkerDeps {
   log: (line: string) => void
 }
 
+/** Why a worker with tool limits whose provider's chat cannot hold them does not start. */
+export const TOOL_PROFILE_NEEDS_CHAT = 'a tool profile needs the chat runtime'
+
 /**
- * Starts the workers sessions ask for. A chat worker runs on the host from its first
- * moment and a pane only attaches, so its prompt never depends on a browser. The
- * host's own requests (a sign-in by /login, getting started, hygiene) need a person at a
- * terminal and stay there.
+ * Starts the workers and sessions the cockpit queues: a session's worker, a job's or task's run, a split, the host's
+ * own (getting started, brain hygiene). Each runs in the chat on the host from its first moment, and a pane only
+ * attaches, so its prompt never depends on a browser. There is no terminal fallback: a chat start that fails is
+ * refused with its reason, which reaches the tab that claimed it (spawn-api.ts claim) or the host log.
  */
 export class StartWorker {
   constructor(private deps: StartWorkerDeps) {}
-
-  private inChat(request: SpawnRequest): boolean {
-    return (unattended(request) || ownStart(request)) && this.deps.runsInChat(request)
-  }
 
   /** Whether the machine has room for another worker: enough free memory, and below the cap or a quiet session made room. */
   hasRoom(): boolean {
@@ -53,29 +50,10 @@ export class StartWorker {
     return !this.deps.atCap?.() || this.deps.makeRoom?.() === true
   }
 
-  /**
-   * A tab took the request. `terminal`: the pane starts the worker itself, with the
-   * prompt. Null: it could not start. A worker with a tool profile has no fallback:
-   * a pane's start would lose its limits.
-   */
-  forPane(request: SpawnRequest): SessionRuntimeKind | null {
-    if (!this.inChat(request)) return request.toolProfile ? null : 'terminal'
-    const problem = this.deps.chat.startWorker(request)
-    if (!problem) return 'sdk'
-    if (request.toolProfile) {
-      this.deps.log(`[worker] ${request.id} could not start: ${problem}`)
-      return null
-    }
-    this.deps.log(`[worker] ${request.id} stays in the terminal: ${problem}`)
-    return 'terminal'
-  }
-
-  /** No tab took it: the host runs it without a pane. Returns why it could not start, or null. */
-  withoutPane(request: SpawnRequest): string | null {
-    if (!this.inChat(request)) return request.toolProfile ? 'a tool profile needs the chat runtime' : this.deps.terminal.startWorker(request)
-    const problem = this.deps.chat.startWorker(request)
-    if (!problem || request.toolProfile) return problem
-    this.deps.log(`[worker] ${request.id} goes to the terminal: ${problem}`)
-    return this.deps.terminal.startWorker(request)
+  /** Starts it in the chat, with a tab that took it or without one. Returns why it could not start, or null. */
+  start(request: SpawnRequest): string | null {
+    const problem = this.deps.runsInChat(request) ? this.deps.chat.startWorker(request) : TOOL_PROFILE_NEEDS_CHAT
+    if (problem) this.deps.log(`[worker] ${request.id} could not start: ${problem}`)
+    return problem
   }
 }

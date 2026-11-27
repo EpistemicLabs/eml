@@ -948,32 +948,6 @@ export class PtyBridge {
   }
 
   /**
-   * Start a worker a session asked for that no cockpit tab took (worker-start.ts):
-   * without a pane, under the request id as its session id (the address the
-   * requester already has), with the prompt as its first message. A pane opened
-   * later from the sidebar takes it over (runningEntry). Returns why it could
-   * not start, or null.
-   */
-  startWorker(request: SpawnRequest): string | null {
-    const space = this.ctx.spaces.resolve(request.spaceId ?? null)
-    const project = this.projectFor(space, request.projectId)
-    if (!project?.path) return `project ${request.projectId} has no folder`
-    const provider = this.ctx.providers.get(request.provider ?? '') ?? this.ctx.providers.default()
-    const problem = provider.runtime.problem() ?? space.runtime?.problem(provider.id)
-    if (problem) return problem
-    if (runningEntry(this.sessions, space.id, request.id)) return 'already running'
-    this.startSession({
-      key: `${space.id}_${project.projectId}_${request.id}`,
-      sessionId: request.id, paneId: null, projectId: project.projectId, projectPath: project.path,
-      space, provider, resume: false, initialPrompt: request.prompt, greeting: null,
-      cols: RESUME_COLS, rows: RESUME_ROWS, isDarkMode: true, taskId: request.taskId ?? null, hostStarted: true,
-    }, null)
-    if (request.title) this.ledger.setAgentTitle(request.id, request.title)
-    if (request.jobId) this.ledger.setJobId(request.id, request.jobId)
-    return null
-  }
-
-  /**
    * End the workers that no client is attached to, that are not
    * working, and that have been quiet (no turn, no client) for `idleMs`. They
    * stay in the sidebar, resumable. Returns how many ended.

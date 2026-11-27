@@ -15,7 +15,6 @@ const until = async (check: () => boolean) => {
 describe('startOnboarding', () => {
   let mods: {
     startOnboarding: typeof import('../src/onboarding.js')['startOnboarding']
-    queueSignInSession: typeof import('../src/onboarding.js')['queueSignInSession']
     ONBOARDING_DIR: string
     ProjectRegistry: typeof import('../src/project-registry.js')['ProjectRegistry']
     SpawnQueue: typeof import('../src/spawn-queue.js')['SpawnQueue']
@@ -54,15 +53,5 @@ describe('startOnboarding', () => {
     await until(() => JSON.parse(readFileSync(join(home, 'config'), 'utf8')).onboarding === 'done')
     expect(JSON.parse(readFileSync(join(home, 'config'), 'utf8')).token).toBe('t')
     stop()
-  })
-
-  it('queues a /login session in the given project, or in Getting started without one', async () => {
-    const projects = new mods.ProjectRegistry()
-    const spawns = new mods.SpawnQueue()
-    mods.queueSignInSession(projects, spawns, 'bp-acme')
-    mods.queueSignInSession(projects, spawns, null)
-    const [own, fallback] = spawns.list()
-    expect(own).toMatchObject({ projectId: 'bp-acme', prompt: '/login', placement: 'replace-empty-desk' })
-    expect(fallback.projectId).toBe(projects.list().find((p) => p.displayName === 'Getting started')?.projectId)
   })
 })

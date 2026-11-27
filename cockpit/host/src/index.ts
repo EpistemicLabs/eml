@@ -694,7 +694,7 @@ async function main() {
     if (request.origin === 'split' || request.origin === 'task') ledger.expectOwn(request.id)
   })
   const startWorker = new StartWorker({
-    chat, terminal: bridge, log,
+    chat, log,
     runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), request),
     freeMemory: () => platform.freeMemory(),
     atCap: () => cap() > 0 && running() >= cap(),
@@ -1293,7 +1293,7 @@ async function main() {
   const workers = new WorkerStarter({
     spawns, log, stale: taskLease.spawn.stale,
     bridge: {
-      startWorker: (request) => startWorker.withoutPane(request),
+      startWorker: (request) => startWorker.start(request),
       hasRoom: () => startWorker.hasRoom(),
       sweepIdleWorkers: (quietMs, turnOf) => bridge.sweepIdleWorkers(quietMs, turnOf) + chat.sweepIdle(),
     },

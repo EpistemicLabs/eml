@@ -67,7 +67,6 @@ import { projectKey, type TimeTracker } from './time-tracking.js'
 import { handlePluginsApi, mcpRelay, spacePlugins, type PluginsApiDeps, type TimeNames, type PortSession } from './plugins-api.js'
 import { OutsideServers } from './infrastructure/plugins/outside-servers.js'
 import { CLAUDE_BIN } from './infrastructure/providers/claude/runtime.js'
-import { queueSignInSession } from './onboarding.js'
 import { readCockpitConfig } from './config.js'
 import type { BrainHygiene } from './brain-hygiene.js'
 import { HOOKS_PATH, MCP_PATH, sessionModel } from './brain-mcp.js'
@@ -386,22 +385,20 @@ async function handleSessionActions(req: http.IncomingMessage, res: http.ServerR
 }
 
 /**
- * A new lead or planner: started here in the chat runtime when the page asks for chat (the user's new
- * sessions open there), the pane then only joins; else the page starts it in a terminal with the prompt.
+ * A new lead or planner: started here in the chat runtime, the pane then only joins. There is no terminal fallback:
+ * a start that fails answers 409 with why, and the lead is no longer expected (the next ask starts a new one).
  */
-function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string; chat: boolean }) {
-  const answer = { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId }
-  if (lead.chat) {
-    const problem = deps.chat.startWorker({
-      id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
-      createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
-    })
-    if (!problem) {
-      deps.bridge.ledger.claimLead(lead.sessionId)
-      return { ...answer, runtime: 'sdk' }
-    }
+function startLead(deps: HostDeps, space: BrainSpace, lead: { sessionId: string; projectId: string; title: string; prompt: string }): { status: number; payload: unknown } {
+  const problem = deps.chat.startWorker({
+    id: lead.sessionId, projectId: lead.projectId, prompt: lead.prompt, title: lead.title, fromSessionId: null,
+    createdAt: new Date().toISOString(), ...(space.main ? {} : { spaceId: space.id }),
+  })
+  if (problem) {
+    deps.bridge.ledger.dropExpectedLead(lead.sessionId)
+    return { status: 409, payload: { error: { code: 'NOT_STARTED', message: `${lead.title} could not start: ${problem}` } } }
   }
-  return { ...answer, runtime: 'terminal', prompt: lead.prompt }
+  deps.bridge.ledger.claimLead(lead.sessionId)
+  return { status: 200, payload: { sessionId: lead.sessionId, existing: false, title: lead.title, projectId: lead.projectId, runtime: 'sdk' } }
 }
 
 type LedgerEntry = ReturnType<PtyBridge['ledger']['list']>[number]
@@ -1009,12 +1006,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       const current = deps.cycles.current()
       const key = `cycle:${current.id}`
       const existing = ledger.leadFor(key, current.id, space.ledgerKey)
-      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+      if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Planner · ${current.id}`, projectId, runtime: ledger.get(existing)?.runtime ?? 'sdk' }); return true }
       const sessionId = randomUUID()
       ledger.expectLead(sessionId, { projectId: key, day: current.id })
-      const body = await readJson(req)
       const prompt = plannerPrompt(current, deps.cycles.next(), cycleOf(new Date(), deps.timeZone?.() ?? 'UTC', -1))
-      json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt, chat: body.chat === true }))
+      const started = startLead(deps, space, { sessionId, projectId, title: `Planner · ${current.id}`, prompt })
+      json(res, started.status, started.payload)
       return true
     }
   }
@@ -1031,10 +1028,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     const day = leadDay(new Date(), deps.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone)
     const name = project.customName ?? project.displayName
     const existing = ledger.leadFor(projectId, day, space.ledgerKey)
-    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'terminal' }); return true }
+    if (existing) { json(res, 200, { sessionId: existing, existing: true, title: `Lead · ${name}`, day, runtime: ledger.get(existing)?.runtime ?? 'sdk' }); return true }
     const sessionId = randomUUID()
     ledger.expectLead(sessionId, { projectId, day })
-    json(res, 200, startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day), chat: body.chat === true }))
+    const started = startLead(deps, space, { sessionId, projectId, title: `Lead · ${name}`, prompt: leadPrompt({ name, brainId: brainIdFromProjectId(projectId) }, day) })
+    json(res, started.status, started.payload)
     return true
   }
 
@@ -1228,19 +1226,6 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
     }
 
-    // Claude sign-in (Settings › Models): mode (Claude Code login | setup-token),
-    // the account Claude Code reports, the optional token. The token is
-    // write-only from the browser: GET returns set/prefix, never the value.
-    // Settings › Models › Sign in: a session that starts with /login, in the
-    // active pane's project or the Getting started project (onboarding.ts).
-    if (resource === 'agents' && id === 'login' && parts[3] === 'session' && method === 'POST') {
-      const body = await readJson(req)
-      const requested = typeof body.projectId === 'string' ? body.projectId : null
-      const known = requested && (space.registry.get(requested) || brainIdFromProjectId(requested)) ? requested : null
-      json(res, 202, { id: queueSignInSession(space.registry, deps.spawns, known) })
-      return true
-    }
-
     // Settings › Models: the agent CLIs sessions can run with — which one new
     // sessions start with, each one's cockpit-owned runtime (version, background
     // updates, check now, roll back) and its own settings.
@@ -1308,6 +1293,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
       }
     }
 
+    // Claude sign-in (Settings › Models): mode (Claude Code login | setup-token),
+    // the account Claude Code reports, the optional token. The token is
+    // write-only from the browser: GET returns set/prefix, never the value.
     if (resource === 'agents' && id === 'login' && !parts[3]) {
       if (method === 'GET') {
         if (url.searchParams.has('refresh')) invalidateAccountCache()

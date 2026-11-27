@@ -10,8 +10,8 @@ const home = mkdtempSync(join(tmpdir(), 'cockpit-codex-workers-'))
 process.env.EML_COCKPIT_HOME = home
 
 /**
- * Where a Codex worker runs and whether it gets an address: in the chat once the user switched Codex's chat view
- * on (Settings › Models › Codex), in a terminal before; a worker with tool limits never, since Codex cannot hold them.
+ * Where a Codex worker runs and whether it gets an address: in the chat, with an address; a worker with tool limits
+ * never, since Codex cannot hold them.
  */
 
 const space: SessionSpace = { id: 'main', mcpToken: 't', files: { mcpConfig: '/m.json', settings: '/s.json', emlConfig: '/e' } }
@@ -49,7 +49,6 @@ describe('Codex workers', () => {
     const started: string[] = []
     const worker = new mods.StartWorker({
       chat: { startWorker: () => { started.push('chat'); return null } },
-      terminal: { startWorker: () => { started.push('terminal'); return null } },
       runsInChat: (asked) => mods.workerInChat(codex, asked),
       freeMemory: () => mods.MIN_FREE_MEMORY,
       log: () => {},
@@ -61,20 +60,17 @@ describe('Codex workers', () => {
     expect(mods.workerInChat(codex, request)).toBe(true)
     const chat = starter()
     // A session's worker, a job's run, a task run: each starts on the host in the chat, a pane only joins.
-    for (const origin of [{}, { fromSessionId: null, origin: 'job' as const }, { fromSessionId: null, origin: 'runner' as const }]) {
-      expect(chat.worker.forPane({ ...request, ...origin })).toBe('sdk')
+    // The host's own requests too.
+    for (const origin of [{}, { fromSessionId: null, origin: 'job' as const }, { fromSessionId: null, origin: 'runner' as const }, { fromSessionId: null }]) {
+      expect(chat.worker.start({ ...request, ...origin })).toBeNull()
     }
-    expect(chat.worker.withoutPane(request)).toBeNull()
     expect(chat.started).toEqual(['chat', 'chat', 'chat', 'chat'])
-    // The host's own requests need a person at a terminal, as for Claude Code.
-    expect(chat.worker.forPane({ ...request, fromSessionId: null })).toBe('terminal')
   })
 
   it('with tool limits stay refused: Codex cannot hold them', () => {
     expect(mods.workerInChat(codex, limited)).toBe(false)
     const { worker, started } = starter()
-    expect(worker.forPane(limited)).toBeNull()
-    expect(worker.withoutPane(limited)).toBe('a tool profile needs the chat runtime')
+    expect(worker.start(limited)).toBe('a tool profile needs the chat runtime')
     expect(started).toEqual([])
   })
 
@@ -97,9 +93,9 @@ describe('Codex workers', () => {
       expect(chat.status).toBe(202)
       const { id, address } = chat.payload as { id: string; address?: string }
       expect(address).toBe(mods.sessionAddress(id, 'bp-eml'))
-      // The host's own start stays in a terminal: nothing to send to.
+      // The host's own start runs in the chat too.
       const own = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'do it', provider: 'codex' })
-      expect(own.payload).not.toHaveProperty('address')
+      expect(own.payload).toHaveProperty('address')
     })
 
     it('with tool limits are refused with the reason', async () => {

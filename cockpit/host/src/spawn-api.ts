@@ -1,7 +1,7 @@
 import type * as http from 'node:http'
 import * as path from 'node:path'
 import type { SpawnQueue, SpawnRequest } from './spawn-queue.js'
-import { ownStart, unattended } from './domain/spawn-request.js'
+import { unattended } from './domain/spawn-request.js'
 import { workerInChat, type StartWorker } from './application/start-worker.js'
 import { sessionMessaging } from './domain/agent-provider.js'
 import type { MessageRequest } from './application/deliver-message.js'
@@ -200,9 +200,8 @@ async function queueSpawn(deps: SpawnDeps, body: Record<string, unknown>): Promi
   if (stepOf) deps.ledger.expectTaskParent(request.id, stepOf)
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
-  // Where it will run decides it for a provider that takes messages in the chat only (Codex).
-  const runtime = (unattended(request) || ownStart(request)) && workerInChat(chosen, request) ? 'sdk' : 'terminal'
-  const messaging = sessionMessaging(chosen, { runtime }).supported
+  // It runs in the chat, where every provider's session takes messages.
+  const messaging = sessionMessaging(chosen, { runtime: 'sdk' }).supported
   return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}), ...(givenTask ? { taskId: givenTask } : {}) } }
 }
 
@@ -313,9 +312,11 @@ export async function handleSpawnApi(
       json(res, 409, { error: { code: 'ALREADY_CLAIMED', message: 'Taken by another tab or expired' } })
       return true
     }
-    const runtime = deps.workers.forPane(request)
-    if (runtime) json(res, 200, { ...request, runtime })
-    else json(res, 500, { error: { code: 'NOT_STARTED', message: 'The worker could not start; the host log says why' } })
+    // It runs in the chat on the host from here on; the tab only opens a pane on it. No terminal fallback: a start
+    // that fails answers with why.
+    const problem = deps.workers.start(request)
+    if (problem === null) json(res, 200, { ...request, runtime: 'sdk' })
+    else json(res, 500, { error: { code: 'NOT_STARTED', message: `${request.title ?? 'The session'} could not start: ${problem}` } })
     return true
   }
   return false

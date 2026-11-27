@@ -55,4 +55,12 @@ describe('project lead', () => {
     ledger.recordSpawn('lead-1', 'pane', 'bp-website', 'claude')
     expect(new SessionLedger().get('lead-1')!.leadOf).toEqual({ projectId: 'bp-website', day: '2026-11-18' })
   })
+
+  it('forgets a lead that did not start, so the next ask starts a new one', () => {
+    const ledger = new SessionLedger()
+    ledger.expectLead('lead-2', { projectId: 'bp-shop', day: '2026-11-18' })
+    expect(ledger.leadFor('bp-shop', '2026-11-18', null)).toBe('lead-2')
+    ledger.dropExpectedLead('lead-2')
+    expect(ledger.leadFor('bp-shop', '2026-11-18', null)).toBeNull()
+  })
 })

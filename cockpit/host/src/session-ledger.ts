@@ -325,6 +325,11 @@ export class SessionLedger {
     this.expectedLeads.set(sessionId, lead)
   }
 
+  /** A lead that did not start: it is no longer about to. */
+  dropExpectedLead(sessionId: string): void {
+    this.expectedLeads.delete(sessionId)
+  }
+
   /** The lead of a project for a day: a session that is one, or one about to start; null when there is none. */
   leadFor(projectId: string, day: string, spaceId: string | null): string | null {
     for (const [sessionId, lead] of this.expectedLeads) if (lead.projectId === projectId && lead.day === day && !this.data.sessions[sessionId]?.leadOf) return sessionId
