@@ -477,6 +477,16 @@ for the whole cockpit in Settings › EML Plugins (`config` → `plugins`, `GET/
 `host/src/plugins-api.ts`), per space. Brain, Note and Worktrees start on, the later ones off, until the user switches them; a switch
 the user set is kept.
 
+**New sessions** start as a chat of the agent and model in one picker (`components/agent-picker`), wherever one is
+started by hand: the empty pane's launcher, the sidebar's New session and the pane toolbar's "+". It offers every
+agent the host reports (`GET /api/providers`) that is set up and has a chat (`capabilities.chat`), each with its
+default model and the models `GET /api/providers/models` lists (`application/chat-models.ts`), and starts on the
+default agent of Settings › Models. No agent is named in the picker: one the host reports with a chat shows up as it
+is. An agent that lists its models without a session says them itself (`AgentProvider.chatModels`: Codex asks a
+short-lived app-server for `model/list`, kept 30 minutes); for the others the host offers what their last chat
+reported (`chat-models.json`, `reported-models.ts`). An agent without a chat is not offered there (the command palette
+still starts one in the terminal); without any agent that has a chat, the launchers start a session as they did.
+
 Every plugin has a manifest, `plugin.json` (`host/src/domain/plugin-manifest.ts`): id, name, tier and
 its parts — `pane` (a built-in view), `mcp` (an MCP server, stdio or http, whose settings may name a
 `secret` filled in from a connection) and `channel` (a channel bridge adapter by account type) — and
@@ -601,8 +611,8 @@ The cockpit brings its own Claude Code and never uses — or changes — one ins
 
 ## Codex
 
-Codex is the second agent CLI a session can run with (Settings › Models › Agent; the sidebar's "+"
-starts a session with either). The cockpit owns its copy the same way
+Codex is the second agent CLI a session can run with (Settings › Models › Agent; the agent picker of
+the launchers starts a chat with either). The cockpit owns its copy the same way
 (`src/infrastructure/providers/codex/`), under `~/.eml-cockpit/codex/` with the layout above
 (`versions/<v>/bin/codex`).
 
