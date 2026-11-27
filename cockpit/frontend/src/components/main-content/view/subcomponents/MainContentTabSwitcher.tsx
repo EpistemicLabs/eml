@@ -1,5 +1,6 @@
 // Adapted: the views come from lib/pane-views.ts, in two groups — the
 // session's (Terminal, Chat) and the plugins switched on; a group with none shows no pill.
+// The "+" menu's sessions are the agent picker's (components/agent-picker): a new chat per agent and model.
 // Trimmed: additive sub-pane toggles (Files / Source Control), i18n.
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { PanelLeft, Plus, X, type LucideIcon } from 'lucide-react';
@@ -8,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { buttonVariants, LABEL, POPOVER, ROW, TAB, TRACK } from '@/shared/view/ui';
 import Tooltip from '@/shared/view/ui/Tooltip';
 import { PANE_VIEW_DEFS, useViewEnabled, type PaneViewDef } from '@/lib/pane-views';
+import { useAgentChoice } from '@/components/agent-picker/AgentPicker';
 import { newSessionEntries, useProviders } from '@/lib/providers';
 import type { PaneView } from '@/stores/usePaneStore';
 import type { LLMProvider } from '@/types/app';
@@ -20,11 +22,12 @@ type MainContentTabSwitcherProps = {
   // hides it (e.g. the last remaining pane).
   onClosePane?: () => void;
   // Cockpit: "+" next to the close action opens a new
-  // pane to the right of this one — Terminal or Brain, asked via a tiny menu
-  // because a terminal pane spawns an agent session the moment it mounts.
-  // With more than one agent CLI set up, the menu offers a session per CLI
-  // (like the sidebar's "+"); `provider` is then the chosen one.
-  onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
+  // pane to the right of this one — a session or a plugin, asked via a tiny menu
+  // because a session pane starts its agent the moment it mounts.
+  // The sessions are a new chat per agent with a chat, and per model it offers;
+  // `provider` and `model` are then the chosen ones (model null: the agent's default).
+  // Without any agent that has a chat, a session per ready agent CLI, as before.
+  onAddPane?: (view: PaneView, provider?: LLMProvider, model?: string | null) => void;
   // This pane is its desk's main pane; the toggle makes it one, or ends that.
   isMainPane?: boolean;
   onToggleMainPane?: () => void;
@@ -61,21 +64,35 @@ export default function MainContentTabSwitcher({
   const addLabel = 'New pane next to this one';
   const [addOpen, setAddOpen] = useState(false);
   const sessionEntries = newSessionEntries(useProviders().data ?? []);
+  const agents = useAgentChoice().groups;
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
   const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
   // The offered groups that still have a view switched on.
   const shown = GROUPS.filter(({ group }) => modes.some((mode) => mode.group === group));
-  type AddItem = { key: string; label: string; icon: LucideIcon; view: PaneView; provider?: LLMProvider };
-  // Same wording as the sidebar's "+" menu (SidebarProjectNotes NewPaneButton);
-  // terminal entries come from newSessionEntries, one per ready agent CLI.
+  type AddItem = { key: string; label: string; icon: LucideIcon | null; view: PaneView; provider?: LLMProvider; model?: string | null; note?: string | null };
+  // Sessions: per agent with a chat a new chat with its default model, then one per model it
+  // offers, indented under it. Without such an agent, the entries from newSessionEntries, one per
+  // ready agent CLI, and the chat view's own.
+  const chatIcon = PANE_VIEW_DEFS.find((mode) => mode.view === 'chat')?.icon ?? null;
+  const agentItems: AddItem[] = agents.flatMap((agent) => agent.entries.map((entry, index): AddItem => ({
+    key: `chat-${entry.value}`,
+    label: index === 0 ? `New ${agent.label} chat` : entry.modelLabel ?? entry.label,
+    icon: index === 0 ? chatIcon : null,
+    view: 'chat',
+    provider: entry.choice.provider as LLMProvider,
+    model: entry.choice.model,
+    note: index === 0 ? agent.note : null,
+  })));
   const addItems = (group: PaneViewDef['group']): AddItem[] =>
-    modes.filter((mode) => mode.group === group).flatMap((mode): AddItem[] =>
-      mode.view === 'terminal'
-        ? sessionEntries.map(({ label, provider }) => ({
-            key: provider ? `terminal-${provider}` : 'terminal', label, icon: mode.icon, view: mode.view, provider,
-          }))
-        : [{ key: mode.view, label: mode.newLabel, icon: mode.icon, view: mode.view }]);
+    group === 'session' && agentItems.length > 0
+      ? agentItems
+      : modes.filter((mode) => mode.group === group).flatMap((mode): AddItem[] =>
+        mode.view === 'terminal'
+          ? sessionEntries.map(({ label, provider }) => ({
+              key: provider ? `terminal-${provider}` : 'terminal', label, icon: mode.icon, view: mode.view, provider,
+            }))
+          : [{ key: mode.view, label: mode.newLabel, icon: mode.icon, view: mode.view }]);
   const addRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!addOpen) return;
@@ -152,7 +169,7 @@ export default function MainContentTabSwitcher({
           {addOpen && (
             <div
               role="menu"
-              className={cn(POPOVER, 'absolute top-full right-0 mt-1 min-w-(--size-menu-min)')}
+              className={cn(POPOVER, 'absolute top-full right-0 mt-1 max-h-[70vh] min-w-(--size-menu-min) overflow-y-auto')}
             >
               {shown.map(({ group, title }, index) => (
                 <Fragment key={group}>
@@ -164,11 +181,12 @@ export default function MainContentTabSwitcher({
                       key={item.key}
                       type="button"
                       role="menuitem"
-                      onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider); }}
-                      className={cn(ROW, 'py-1 whitespace-nowrap')}
+                      onClick={() => { setAddOpen(false); onAddPane(item.view, item.provider, item.model); }}
+                      className={cn(ROW, 'py-1 whitespace-nowrap', !item.icon && 'pl-7.5 text-ui text-muted-foreground hover:text-foreground')}
                     >
-                      <item.icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />
+                      {item.icon && <item.icon aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />}
                       {item.label}
+                      {item.note && <span className="text-ui text-muted-foreground">· {item.note}</span>}
                     </button>
                   ))}
                 </Fragment>
