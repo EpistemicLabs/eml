@@ -20,7 +20,7 @@ export type MainContentProps = {
   selectedSession: ProjectSession | null;
   /** The pane's pre-minted session id (null for brain panes). */
   sessionId: string | null;
-  // Body slot — Terminal or Brain (mutually exclusive).
+  // Body slot — the session's chat or another view (mutually exclusive).
   paneView: PaneView;
   // Switch the pane's body. Wired to the segmented control in the in-pane
   // toolbar.
@@ -33,7 +33,7 @@ export type MainContentProps = {
   /** Make it the main pane, or return the desk to the even grid. */
   onToggleMainPane?: () => void;
   /**
-   * Auto-assigned pane label ("Terminal 2") shown in the title when the pane
+   * Auto-assigned pane label ("Chat 2") shown in the title when the pane
    * has no user-chosen title — keeps parallel panes distinguishable.
    */
   paneLabel?: string | null;
