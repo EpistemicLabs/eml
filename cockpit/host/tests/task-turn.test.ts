@@ -150,3 +150,22 @@ describe('a shared space (B1)', () => {
     expect(turnOf(t, live(), 'lasse', NOW)).toEqual({ turn: 'needs_you', group: 'nobody', reason: 'stopped' })
   })
 })
+
+describe('a step the person takes themselves (do, "Your move")', () => {
+  // the viewer of these cases, who owns the task
+  const turn = (t: Partial<TaskFacts> = {}, l: Partial<LiveFacts> = {}) => turnOf(task({ owner: 'dev-user', ...t }), live(l), 'dev-user', NOW)
+  const doWait = { who: 'dev-user', kind: 'do', why: 'Sign the contract', due: '2026-11-20' }
+  it('is the viewer\'s move, in Needs you as asked, even while the agent\'s check-back is coming up', () => {
+    expect(waitKind(doWait)).toBe('do')
+    expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: doWait })).toEqual({ turn: 'needs_you', group: 'asked' })
+    expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: doWait }, { nextRunAt: '2026-11-21T09:00:00Z', schedule: { at: '2026-11-21T09:00:00Z', by_session: 's1' } }))
+      .toEqual({ turn: 'needs_you', group: 'asked' })
+    // a person's own reminder on a task nobody is delegated
+    expect(turn({ waitingOn: { who: 'dev-user', kind: 'do', why: 'Call the bank' } })).toEqual({ turn: 'needs_you', group: 'asked' })
+  })
+
+  it('is someone else\'s move for anyone it does not name, and parks like any wait', () => {
+    expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: { ...doWait, who: 'dominik' } })).toEqual({ turn: 'waiting_on_others' })
+    expect(turn({ waitingOn: { ...doWait, snoozed_until: 'open' } })).toEqual({ turn: 'parked' })
+  })
+})

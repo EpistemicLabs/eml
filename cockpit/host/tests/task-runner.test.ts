@@ -11,10 +11,10 @@ type Mod = typeof import('../src/application/task-runner.js')
 
 type T = { id: string; status: string; goal?: string; author?: string; title?: string; scope?: string; checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: Record<string, unknown>; schedule?: Record<string, unknown>; waiting_on?: Record<string, string>; parent?: string }
 const DAILY = { crons: ['0 9 * * *'], time_zone: 'UTC' }
-/** The task's delegation: as given, else requested when planned with a delegate and a checkpoint; its schedule rides in it. */
-const delegationOf = (t: T): { delegation?: Record<string, unknown> } => {
-  const base = t.delegation ?? (t.status === 'planned' && t.delegate && t.checkpoint ? { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } : t.schedule ? { agent: t.delegate ?? 'atlas' } : null)
-  return base ? { delegation: { ...base, ...(t.schedule ? { schedule: t.schedule } : {}) } } : {}
+/** The task's delegation: as given, else requested when planned with a delegate and a checkpoint; its schedule is a field of its own beside it. */
+const delegationOf = (t: T): { delegation?: Record<string, unknown>; schedule?: Record<string, unknown> } => {
+  const base = t.delegation ?? (t.status === 'planned' && t.delegate && t.checkpoint ? { agent: t.delegate, checkpoint: t.checkpoint, requested_at: '2026-01-01T00:00:00.000Z' } : null)
+  return { ...(base ? { delegation: base } : {}), ...(t.schedule ? { schedule: t.schedule } : {}) }
 }
 
 /** A brain with tasks and their part_of relations, as GET /engram?with_relations and /list give them. */
@@ -365,7 +365,7 @@ describe('task runner', () => {
     expect(mod.stepPrompt(step, 'none')).toContain('to the end on your own')
     // How a turn ends is in the session's start context: the prompt names no tool and no block.
     expect(mod.stepPrompt(step, 'before')).toContain('Ask the user for the go and stop.')
-    expect(mod.stepPrompt(step, 'after')).toContain('Checkpoint after: do the step, then hand the result over for review (next names the owner).')
+    expect(mod.stepPrompt(step, 'after')).toContain('Checkpoint after: do the step, then hand the result over for review (an ask for the owner, kind review).')
     for (const c of ['before', 'after', 'none']) expect(mod.stepPrompt(step, c)).not.toMatch(/handoff|session_status|\[lasse\]|schedule tool/i)
     // A job's run never closes its task: the job's prompt does not ask for it.
     expect(mod.stepPrompt({ ...step, ofJob: true }, 'none')).toContain('to the end on your own')
@@ -419,7 +419,7 @@ describe('the delegation request (v0.23)', () => {
     const brain = brainOf([
       { id: 'old-signal', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' } },
       { id: 'no-checkpoint', status: 'planned', delegate: 'atlas', delegation: { agent: 'atlas', requested_at: REQUESTED } },
-      { id: 'scheduled', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', schedule: { cron: '0 8 * * *' } } },
+      { id: 'scheduled', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 8 * * *'] } },
       { id: 'planned-request', status: 'planned', delegate: 'atlas', checkpoint: 'after', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: REQUESTED } },
     ])
     const started: string[] = []

@@ -168,6 +168,9 @@ export function formatInZone(at: number, zone: string): string {
   return `${parts.weekday} ${parts.day} ${parts.month}${year} ${parts.hour}:${parts.minute}`
 }
 
+/** "Mon 9 Nov 08:00 (Europe/Berlin)": a time (ISO) as the user reads it, with the zone it is in. */
+export const localTime = (at: string, zone: string): string => `${formatInZone(Date.parse(at), zone)} (${zone})`
+
 /** "UTC+7", "UTC+5:30", "UTC-3", "UTC": the zone's offset from UTC now. */
 export function utcOffset(zone: string): string {
   const minutes = Math.round(offsetAt(Date.now(), zone) / 60_000)

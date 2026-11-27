@@ -32,7 +32,7 @@ function homeWith(opts: { jobs?: unknown; tasks?: TaskRow[]; spaces?: Array<{ to
   const home: MigrateJobsHome = {
     dir, jobsFile,
     config: async () => (opts.config === false ? null : { token: 'main-token', handle: 'owner', mainName: 'Main', spaces: opts.spaces ?? [] }),
-    brainOf: (token) => (token === 'main-token' ? { brainId: 'main-brain', brainFile, schemaVersion: opts.schema ?? 24 } : token === 'team-token' ? { brainId: 'space-2', brainFile, schemaVersion: 24 } : { brainId: null, brainFile: null, schemaVersion: null }),
+    brainOf: (token) => (token === 'main-token' ? { brainId: 'main-brain', brainFile, schemaVersion: opts.schema ?? 25 } : token === 'team-token' ? { brainId: 'space-2', brainFile, schemaVersion: 25 } : { brainId: null, brainFile: null, schemaVersion: null }),
   }
   const printed: string[] = []
   return { dir, jobsFile, home, printed, run: (argv: string[] = ['migrate-jobs']) => runMigrateJobsCommand(argv, (text) => printed.push(text), home) }
@@ -116,7 +116,7 @@ describe('eml-cockpit migrate-jobs', () => {
     expect(text).toContain('## Task left (left) — a schedule without a job\n\n- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
     // and the task's current schedule is the one its job gives it
     expect(text).toContain('- The task has that schedule already: it is not written again.')
-    // a brain at schema 24 gets no such line
+    // a brain at schema 25 gets no such line
     const now = homeWith({ jobs: { version: 1, jobs: { j1: job('j1') }, runs: {}, keys: {} }, tasks: [{ id: 't1' }] })
     await now.run()
     expect(now.printed.join('')).not.toContain('its brain is at schema')

@@ -54,7 +54,7 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
         return made
       }
       const id = decodeURIComponent(/^\/task\/([^/]+)\/track$/.exec(path)![1])
-      if (opts.failOn?.includes(id)) throw new Error('Invalid engram: delegation.schedule has an unknown key')
+      if (opts.failOn?.includes(id)) throw new Error('Invalid engram: schedule has an unknown key')
       // as the brain does (packages/core): a rewrite of the text needs a journal line
       if (body.content !== undefined && !body.text) throw new Error('Invalid engram: a content rewrite needs text')
       const t = byId.get(id)! as Task & { rev?: number }
@@ -85,8 +85,8 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
     saveReport: (markdown: string) => { saved.push(markdown); return '/home/someone/.eml-cockpit/jobs-migration-report.md' },
     notify: (input: Record<string, unknown>) => { notices.push(input) },
     spaceKind: async (space: { shared: boolean | null }) => { kind.asked += 1; return space.shared ?? kind.answer },
-    // The brain's schema as the host's control data has it: 24 unless a test says otherwise.
-    brainSchema: (space: { id: string }) => (opts.schema && space.id in opts.schema ? opts.schema[space.id] : 24),
+    // The brain's schema as the host's control data has it: 25 (the schedule a task field of its own) unless a test says otherwise.
+    brainSchema: (space: { id: string }) => (opts.schema && space.id in opts.schema ? opts.schema[space.id] : 25),
     store, spaces: () => spaces as never, brain: (space: { id: string }) => (opts.noBrain?.includes(space.id) ? null : brainOf(space.id)),
     me: 'member', moveSessions: (from: string, to: string) => { moved.push([from, to]) }, now: () => NOW, log: (line: string) => logs.push(line),
   }
@@ -94,21 +94,22 @@ function world(jobs: Array<Record<string, unknown>>, tasks: Task[], opts: { runs
 }
 
 describe('the migration of jobs.json to schedules on tasks', () => {
-  it('writes each task in one brain call with everything else of its delegation unchanged, then the record, and moves the jobs\' sessions to it', async () => {
-    const delegation = { agent: 'motti', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } }
+  it('writes each task in one brain call with its schedule and its delegation left as it is, then the record, and moves the jobs\' sessions to it', async () => {
+    const delegation = { agent: 'motti', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z' }
     const w = world(
       [v1('j1', { notify: 'always' }), v1('j2', { triggers: [{ type: 'schedule', at: AHEAD, timeZone: 'UTC' }], prompt: 'Look again.', target: { type: 'session', sessionId: 'sess-1' }, runCount: 0 })],
-      [task('t1', { delegation })], { runs: { j1: [openRun('j1')] } },
+      [task('t1', { delegation, schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })], { runs: { j1: [openRun('j1')] } },
     )
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 1, dropped: 0, left: 0, failed: [] })
     expect(result.reports[0]).toContain('# Schedules onto tasks — run')
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: {
       content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.',
-      delegation: { agent: 'motti', checkpoint: 'after', requested_at: '2026-11-20T00:00:00.000Z', schedule: { crons: ['0 8 * * 1-5'], at: AHEAD, why: 'Look again.', by_session: 'sess-1', time_zone: 'UTC' } },
+      schedule: { crons: ['0 8 * * 1-5'], at: AHEAD, why: 'Look again.', by_session: 'sess-1', time_zone: 'UTC' },
       // a rewrite of the task's text never goes without a journal line: the brain refuses it
       text: 'Schedules moved onto tasks: what its repeating job did was added to the task\'s text, as "Every <cron>: …".',
     } }])
+    expect(w.byId.get('t1')!.properties.delegation).toEqual(delegation)
     expect(w.store.list()).toMatchObject([{ id: 't1', taskId: 't1', spaceId: null, notify: 'always', projectId: 'bp-ops', cursor: '2026-11-26T10:00:00.000Z', firedWake: null, runCount: 1 }])
     expect(w.store.runs('t1')).toMatchObject([{ id: 'run-j1', jobId: 't1', status: 'started' }])
     expect(w.moved).toEqual([['j1', 't1'], ['j2', 't1']])
@@ -145,24 +146,26 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     await next
   })
 
-  it('a task without a delegation gets one for the space\'s agent with its schedule', async () => {
+  it('a task without a delegation gets its schedule and no delegation: moving a job onto it hands it to no agent', async () => {
     const w = world([v1('j1')], [task('t1')])
     await w.migration.run()
-    expect(w.posts[0].body.delegation).toEqual({ agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })
+    expect(w.posts[0].body.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'UTC' })
+    expect(w.posts[0].body).not.toHaveProperty('delegation')
+    expect(w.byId.get('t1')!.properties).not.toHaveProperty('delegation')
   })
 
-  it('a journal line without a change of the schedule is posted on its own: the text, and no delegation', async () => {
+  it('a journal line without a change of the schedule is posted on its own: the text, and no schedule', async () => {
     // The task has its job's time and says what it is for already; its second job ran in another zone and is left out.
-    const has = task('t1', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
+    const has = task('t1', { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })
     has.content = 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.'
     const w = world([v1('j1'), v1('j2', { name: 'Tokyo brief', createdAt: '2026-11-02T00:00:00.000Z', triggers: [{ type: 'schedule', cron: '0 9 * * *', timeZone: 'Asia/Tokyo' }] })], [has])
     expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: { text: expect.stringContaining('The routine "Tokyo brief" NO LONGER FIRES') } }])
-    expect(w.byId.get('t1')!.properties.delegation).toEqual({ agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })
+    expect(w.byId.get('t1')!.properties.schedule).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'UTC' })
   })
 
   it('a task that has the schedule already gets only the text of what its time is for, with the journal line the brain asks for', async () => {
-    const w = world([v1('j1')], [task('t1', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })])
+    const w = world([v1('j1')], [task('t1', { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } })])
     expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: {
       content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.',
@@ -174,9 +177,9 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a task whose write fails keeps its jobs for the next start; the others move', async () => {
     const w = world([v1('j1'), v1('j2', { taskId: 't2' })], [task('t1'), task('t2')], { failOn: ['t1'] })
     const result = await w.migration.run()
-    expect(result).toMatchObject({ moved: 1, failed: ['Main: "t1": Invalid engram: delegation.schedule has an unknown key'] })
+    expect(result).toMatchObject({ moved: 1, failed: ['Main: "t1": Invalid engram: schedule has an unknown key'] })
     // what failed is said to the user by name, and in the log by id
-    expect(w.logs).toContain('[jobs] migration: space main: task t1: Invalid engram: delegation.schedule has an unknown key')
+    expect(w.logs).toContain('[jobs] migration: space main: task t1: Invalid engram: schedule has an unknown key')
     expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j1'])
     expect(w.store.list().map((r) => r.id)).toEqual(['t2'])
     expect(w.moved).toEqual([['j2', 't2']])
@@ -190,8 +193,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const w = world([v1('j1')], [task('t1')])
     const first = createJobMigration({
       store: { pendingV1: () => w.store.pendingV1(), migrateV1: () => { throw new Error('host stopped') } }, spaces: () => [{ id: 'main-id', name: 'Main', main: true, agent: 'atlas', shared: false }] as never,
-      brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async (_p: string, body: Record<string, unknown>) => { w.posts.push({ space: 'main-id', path: _p, body }); const t = w.byId.get('t1')!; t.content = body.content as string; t.properties.delegation = body.delegation; return t } }),
-      me: 'member', moveSessions: () => {}, now: () => NOW, log: () => {}, brainSchema: () => 24,
+      brain: () => ({ get: async (path: string) => structuredClone(w.byId.get(path.slice('/engram/'.length))!), post: async (_p: string, body: Record<string, unknown>) => { w.posts.push({ space: 'main-id', path: _p, body }); const t = w.byId.get('t1')!; t.content = body.content as string; t.properties.schedule = body.schedule; return t } }),
+      me: 'member', moveSessions: () => {}, now: () => NOW, log: () => {}, brainSchema: () => 25,
     } as never)
     expect((await first.run()).failed).toEqual(['Main: "t1": host stopped'])
     expect(w.posts).toHaveLength(1)
@@ -213,7 +216,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     w.opts.noBrain = []
     const last = await w.restart().run()
     expect(last.moved).toBe(1)
-    expect(w.posts.at(-1)).toMatchObject({ space: 'space-2', path: '/task/t2/track', body: { delegation: { agent: 'motti' } } })
+    expect(w.posts.at(-1)).toMatchObject({ space: 'space-2', path: '/task/t2/track', body: { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
     expect(new JobStore(w.file).get('t2')).toMatchObject({ spaceId: 'space-2' })
     expect(Object.keys(new JobStore(w.file).pendingV1()!.jobs)).toEqual(['j3'])
   })
@@ -221,11 +224,11 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('drops the jobs of a closed task and a gone one; only the closed one is written to', async () => {
     const w = world(
       [v1('j1', { taskId: 'closed' }), v1('j2', { taskId: 'gone' })],
-      [task('closed', { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'] } } }, 'resolved')], { runs: { j2: [openRun('j2')] } },
+      [task('closed', { schedule: { crons: ['0 8 * * 1-5'] } }, 'resolved')], { runs: { j2: [openRun('j2')] } },
     )
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 0, dropped: 2, failed: [] })
-    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/closed/track', body: { delegation: { agent: 'atlas' }, text: expect.stringContaining('the task is closed') } }])
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/closed/track', body: { schedule: null, text: expect.stringContaining('the task is closed') } }])
     expect(w.store.list()).toEqual([])
     // their sessions keep no version 1 job's id: they work for their task from now on, as a moved job's do
     expect(w.moved).toEqual([['j1', 'closed'], ['j2', 'gone']])
@@ -235,7 +238,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   })
 
   it('in a shared space a job on another member\'s task is not moved: nothing is written to that task, the job leaves the version 1 data, and the user is told it no longer fires', async () => {
-    const theirs = task('theirs', { assignee_ids: ['other'], delegation: { agent: 'motti', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } })
+    const theirs = task('theirs', { assignee_ids: ['other'], delegation: { agent: 'motti', checkpoint: 'after' }, schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } })
     const w = world(
       [v1('j1', { spaceId: 'space-2', taskId: 'theirs', limited: true }), v1('j2', { spaceId: 'space-2', taskId: 'agents' }), v1('j3', { spaceId: 'space-2', taskId: 'mine' })],
       [theirs, { ...task('agents', { assignee_ids: [] }), ingested_by: 'atlas' } as never, task('mine')], { team: true, runs: { j1: [openRun('j1')] } },
@@ -291,7 +294,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 1, failed: [] })
     expect(w.posts[0]).toMatchObject({ path: '/engram/task', body: { title: 'routine-daily-brief-job-1234', display_title: 'Daily brief', content: 'Write the brief.', scope: 'project.ops', assignee_ids: ['member'] } })
-    expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
+    expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
     expect(w.store.get('made-0')).toMatchObject({ id: 'made-0', taskId: 'made-0', projectId: 'bp-ops' })
     expect(w.moved).toEqual([['job-12345678-loose', 'made-0']])
   })
@@ -299,14 +302,14 @@ describe('the migration of jobs.json to schedules on tasks', () => {
   it('a job without a task never gets two: the task it got is in the store before its schedule is written, so a retry after a failed write makes none', async () => {
     const w = world([v1('job-12345678-loose', { taskId: null })], [], { failOn: ['made-0'], titleBlind: true })
     w.spaces.pop()
-    expect((await w.migration.run()).failed).toEqual(['Main: "Daily brief": Invalid engram: delegation.schedule has an unknown key'])
+    expect((await w.migration.run()).failed).toEqual(['Main: "Daily brief": Invalid engram: schedule has an unknown key'])
     // the job names its task from now on: the engine waits for it there, and the next pass plans it on that task
     expect(new JobStore(w.file).pendingV1()!.jobs['job-12345678-loose'].taskId).toBe('made-0')
     expect(new JobStore(w.file).v1TaskIds()).toEqual(new Set(['made-0']))
     w.opts.failOn = []
     expect(await w.restart().run()).toMatchObject({ moved: 1, failed: [] })
     expect(w.posts.filter((p) => p.path === '/engram/task')).toHaveLength(1)
-    expect(w.posts.at(-1)).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
+    expect(w.posts.at(-1)).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
     expect(new JobStore(w.file).get('made-0')).toMatchObject({ id: 'made-0', projectId: 'bp-ops' })
   })
 
@@ -315,7 +318,8 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     w.spaces.pop()
     w.store.migrateV1 = () => { throw new Error('host stopped') }
     expect((await w.migration.run()).failed).toEqual(['Main: "Daily brief": host stopped'])
-    expect(w.byId.get('made-0')!.properties.delegation).toEqual({ agent: 'atlas', schedule: { at: '2026-11-26T09:00:00.000Z', why: 'Write the brief.', time_zone: 'UTC' } })
+    expect(w.byId.get('made-0')!.properties.schedule).toEqual({ at: '2026-11-26T09:00:00.000Z', why: 'Write the brief.', time_zone: 'UTC' })
+    expect(w.byId.get('made-0')!.properties).not.toHaveProperty('delegation')
     // the engine holds the task while its job waits: the past wake-up does not fire before the record exists
     expect(new JobStore(w.file).v1TaskIds()).toEqual(new Set(['made-0']))
     const posts = w.posts.length
@@ -332,7 +336,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
     expect(await w.migration.run()).toMatchObject({ moved: 1, failed: [] })
     expect(w.posts[0]).toMatchObject({ path: '/engram/task', body: { title: 'routine-daily-brief-job-1234', content: long } })
     // the prompt is the new task's text: no paragraph is added to it
-    expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } } })
+    expect(w.posts[1]).toEqual({ space: 'main-id', path: '/task/made-0/track', body: { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } } })
   })
 
   it('leaves the sessions of a dropped job without a task as they are: they have no task to name', async () => {
@@ -360,7 +364,7 @@ describe('the migration of jobs.json to schedules on tasks', () => {
 })
 
 describe('a schedule the old mirror left on a task without a job', () => {
-  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }
 
   it('is removed in the first pass of its space, before the jobs move, with a journal line; a second pass looks for none', async () => {
     const w = world([v1('j1')], [task('t1'), task('left', stale), task('kept', stale)])
@@ -369,10 +373,12 @@ describe('a schedule the old mirror left on a task without a job', () => {
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 1, leftovers: 1, failed: [] })
     expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: {
-      delegation: { agent: 'atlas', checkpoint: 'after' },
+      schedule: null,
       text: 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.',
     } })
-    expect(w.byId.get('kept')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('kept')!.properties.schedule).toEqual(stale.schedule)
+    // only the schedule goes: the task's delegation stays as it was
+    expect(w.byId.get('left')!.properties).toMatchObject({ delegation: stale.delegation, schedule: null })
     expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
     expect(w.store.leftoversChecked(null)).toBe(true)
     expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 1 moved, 0 not moved, 1 schedule without a job removed — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
@@ -384,17 +390,17 @@ describe('a schedule the old mirror left on a task without a job', () => {
     await w.migration.run()
     expect(w.store.leftoversChecked(null)).toBe(true)
     // a schedule written to the brain directly, after the space was looked through: no record, no job
-    w.byId.get('later')!.properties.delegation = structuredClone(stale.delegation)
+    w.byId.get('later')!.properties.schedule = structuredClone(stale.schedule)
     const again = await w.restart().run()
     expect(again).toMatchObject({ leftovers: 0, left: 1 })
-    expect(w.byId.get('later')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('later')!.properties.schedule).toEqual(stale.schedule)
   })
 
   it('a removal the brain refuses is said and tried again at the next pass: the space is not marked as looked through', async () => {
     const w = world([v1('j1')], [task('t1'), task('left', stale)], { failOn: ['left'] })
     w.spaces.pop()
     const first = await w.migration.run()
-    expect(first.failed).toEqual(['Main: "left": its schedule without a job could not be removed: Invalid engram: delegation.schedule has an unknown key'])
+    expect(first.failed).toEqual(['Main: "left": its schedule without a job could not be removed: Invalid engram: schedule has an unknown key'])
     expect(first).toMatchObject({ moved: 1, leftovers: 0 })
     expect(w.store.leftoversChecked(null)).toBe(false)
   })
@@ -402,10 +408,10 @@ describe('a schedule the old mirror left on a task without a job', () => {
 })
 
 describe('the migration writes only onto what it planned against', () => {
-  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }
 
   it('a left-over schedule that changed between the plan and its removal is left alone, and the report says so', async () => {
-    const w = world([], [task('left', stale)], { onRead: (id) => { if (id === 'left') w.byId.get('left')!.properties.delegation = { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 9 * * *'], time_zone: 'UTC' } } } })
+    const w = world([], [task('left', stale)], { onRead: (id) => { if (id === 'left') w.byId.get('left')!.properties.schedule = { crons: ['0 9 * * *'], time_zone: 'UTC' } } })
     w.spaces.pop()
     const result = await w.migration.run()
     expect(result).toMatchObject({ leftovers: 0, failed: [], unlooked: 0 })
@@ -421,7 +427,7 @@ describe('the migration writes only onto what it planned against', () => {
     const result = await w.migration.run()
     expect(result).toMatchObject({ leftovers: 0, failed: [] })
     expect(w.posts).toEqual([])
-    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('left')!.properties.schedule).toEqual(stale.schedule)
     expect(result.reports[0]).toContain('changed meanwhile, left alone.')
   })
 
@@ -442,7 +448,7 @@ describe('the migration writes only onto what it planned against', () => {
     const second = await w.migration.run()
     expect(second).toMatchObject({ moved: 1, left: 0, failed: [] })
     expect(w.posts).toEqual([{ space: 'main-id', path: '/task/t1/track', body: {
-      content: 'Keep the customer informed, daily.\n\nEvery 0 8 * * 1-5: Write the brief.', delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' } },
+      content: 'Keep the customer informed, daily.\n\nEvery 0 8 * * 1-5: Write the brief.', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'UTC' },
       text: 'Schedules moved onto tasks: what its repeating job did was added to the task\'s text, as "Every <cron>: …".', base_rev: 5,
     } }])
     expect(w.store.pendingV1()).toBeNull()
@@ -450,7 +456,7 @@ describe('the migration writes only onto what it planned against', () => {
 })
 
 describe('a space without version 1 jobs, in a home that was on version 1', () => {
-  const stale = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
+  const stale = { delegation: { agent: 'atlas', checkpoint: 'after' }, schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }
   const NOTE = 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. Nothing ran it then, so it is removed and nothing starts to run it now. Set a new time if the task should run at one.'
 
   it('is looked through once all the same: a schedule left there without a job is removed, though the space is never planned for a job', async () => {
@@ -459,15 +465,15 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.store.awaitsLeftoverLook(null)).toBe(true)
     const result = await w.migration.run()
     expect(result).toMatchObject({ moved: 1, leftovers: 1, failed: [], unlooked: 0 })
-    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
+    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { schedule: null, text: NOTE } })
     expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)); removed.')
     expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([false, false])
     expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 1 moved, 0 not moved, 1 schedule without a job removed — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
     // looked through once: a schedule set on a jobless task afterwards is real, in this process and after a restart
-    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
+    w.byId.get('left')!.properties.schedule = structuredClone(stale.schedule)
     expect(await w.migration.run()).toMatchObject({ leftovers: 0, unlooked: 0, reports: [] })
     expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0, reports: [] })
-    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('left')!.properties.schedule).toEqual(stale.schedule)
     expect(w.posts.filter((p) => p.path === '/task/left/track')).toHaveLength(1)
   })
 
@@ -482,7 +488,7 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(await w.restart().run()).toMatchObject({ leftovers: 0, unlooked: 0 })
     expect(new JobStore(w.file, ['space-3']).awaitsLeftoverLook('space-3')).toBe(false)
     expect(w.posts).toEqual([])
-    expect(w.byId.get('left')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('left')!.properties.schedule).toEqual(stale.schedule)
   })
 
   it('a space no agent was bound to at the first start is neither looked through nor marked; bound later, it is held and looked through before anything in it fires', async () => {
@@ -492,7 +498,7 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.map((p) => p.space)).toEqual(['main-id'])
     expect([w.store.leftoversChecked(null), w.store.leftoversChecked('space-2')]).toEqual([true, false])
     // the team space's task (the fake brain serves one set of tasks to every space) shows a schedule the old mirror left
-    w.byId.get('left')!.properties.delegation = structuredClone(stale.delegation)
+    w.byId.get('left')!.properties.schedule = structuredClone(stale.schedule)
     // bound now: the engine holds it until it was looked through, also after a restart
     w.spaces[1].agent = 'motti'
     expect(w.store.awaitsLeftoverLook('space-2')).toBe(true)
@@ -513,8 +519,8 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     w.store.put({ id: 'kept', spaceId: null, taskId: 'kept', runCount: 0 } as never)
     expect(w.store.pendingV1()).toBeNull()
     expect(await w.migration.run()).toMatchObject({ moved: 0, leftovers: 1, failed: [], unlooked: 0 })
-    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } }])
-    expect(w.byId.get('kept')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.posts).toEqual([{ space: 'main-id', path: '/task/left/track', body: { schedule: null, text: NOTE } }])
+    expect(w.byId.get('kept')!.properties.schedule).toEqual(stale.schedule)
     expect(JSON.parse(readFileSync(w.file, 'utf8'))).toMatchObject({ version: 2, fromV1: true, leftoversChecked: ['', 'space-2'] })
     expect(existsSync(`${w.file}.v1-backup`)).toBe(true)
   })
@@ -525,7 +531,7 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     w.spaces.shift()
     const result = await w.migration.run()
     expect(result).toMatchObject({ leftovers: 1, failed: [], unlooked: 0 })
-    expect(w.posts).toEqual([{ space: 'space-2', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. No job on this cockpit ran it; it is removed so nothing starts to run it now. Set a new time if the task should run at one.' } }])
+    expect(w.posts).toEqual([{ space: 'space-2', path: '/task/left/track', body: { schedule: null, text: 'A schedule without a job was left on this task (0 7 * * * (UTC)) from before schedules moved onto tasks. No job on this cockpit ran it; it is removed so nothing starts to run it now. Set a new time if the task should run at one.' } }])
     expect(w.byId.get('theirs')).toEqual(theirs)
     expect(result.reports[0]).toContain('- A schedule without a job was left on this task (0 7 * * * (UTC)). No job on this cockpit ran it; it is removed so nothing starts to run it now.')
     expect(result.reports[0]).not.toContain('theirs')
@@ -559,22 +565,22 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(w.posts.map((p) => [p.space, p.path])).toEqual([['main-id', '/task/left/track']])
   })
 
-  it('a space whose brain is not at schema 24 yet is neither planned nor looked through: an old-shape schedule reads as none there, so the space waits and is tried again', async () => {
-    // schema 23: one cron, no list. Read as schema 24 it is no schedule at all.
-    const old = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { cron: '0 7 * * *', time_zone: 'UTC', session: 'new' } } }
+  it('a space whose brain is not at the schema of schedules on tasks yet is neither planned nor looked through: an old-shape schedule reads as none there, so the space waits and is tried again', async () => {
+    // before schema 25 the schedule lived in the delegation: read as the task's own field it is no schedule at all.
+    const old = { delegation: { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } } }
     const w = world([v1('j2', { spaceId: 'space-2', taskId: 't2' })], [task('t2'), task('left', old)], { schema: { 'main-id': 23, 'space-2': null } })
     const first = await w.migration.run()
     expect(first).toMatchObject({ moved: 0, leftovers: 0, unlooked: 2, jobs: { moved: 0, notMoved: 1 } })
     expect(first.failed).toEqual(['Team: the schema of its brain could not be read, its 1 job(s) wait'])
     expect(w.posts).toEqual([])
     expect([w.store.awaitsLeftoverLook(null), w.store.awaitsLeftoverLook('space-2')]).toEqual([true, true])
-    expect(w.logs).toContain('[jobs] migration, space main: not looked through yet for schedules left without a job: its brain is at schema 23, not at 24 yet')
+    expect(w.logs).toContain('[jobs] migration, space main: not looked through yet for schedules left without a job: its brain is at schema 23, not at 25 yet')
     expect(Object.keys(w.store.pendingV1()!.jobs)).toEqual(['j2'])
     // the brains were migrated: the schedule has its new shape, and is found
     w.opts.schema = {}
-    w.byId.get('left')!.properties.delegation = { agent: 'atlas', checkpoint: 'after', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }
+    w.byId.get('left')!.properties = { ...w.byId.get('left')!.properties, ...structuredClone(stale) }
     expect(await w.migration.run()).toMatchObject({ moved: 1, leftovers: 1, unlooked: 0, failed: [] })
-    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { delegation: { agent: 'atlas', checkpoint: 'after' }, text: NOTE } })
+    expect(w.posts[0]).toEqual({ space: 'main-id', path: '/task/left/track', body: { schedule: null, text: NOTE } })
   })
 
   it('a space no agent is bound to is not looked through yet and not counted: nothing there can fire; one that is bound and has no brain now still waits', async () => {
@@ -604,7 +610,7 @@ describe('a space without version 1 jobs, in a home that was on version 1', () =
     expect(new JobStore(w.file).awaitsLeftoverLook(null)).toBe(false)
     expect(await w.restart().run()).toEqual({ moved: 0, dropped: 0, left: 0, failed: [], reports: [], jobs: { moved: 0, notMoved: 0 }, leftovers: 0, arrivedPaused: 0, arrivedHeld: 0, reportFile: null, unlooked: 0 })
     expect(w.posts).toEqual([])
-    expect(w.byId.get('later')!.properties.delegation).toEqual(stale.delegation)
+    expect(w.byId.get('later')!.properties.schedule).toEqual(stale.schedule)
   })
 })
 
@@ -693,7 +699,7 @@ describe('the report of a real run is kept, and the user is told of what did not
     w.spaces.pop()
     const result = await w.migration.run()
     expect(result).toMatchObject({ jobs: { moved: 2, notMoved: 0 }, arrivedPaused: 1 })
-    expect(w.byId.get('t1')!.properties.delegation).toMatchObject({ schedule: { crons: ['0 8 * * 1-5', '0 18 * * *'], paused: true } })
+    expect(w.byId.get('t1')!.properties.schedule).toMatchObject({ crons: ['0 8 * * 1-5', '0 18 * * *'], paused: true })
     expect(w.notices.map((n) => n.body)).toEqual(['Schedules moved onto their tasks: 2 moved, 0 not moved, 1 schedule arrived paused — see /home/someone/.eml-cockpit/jobs-migration-report.md'])
   })
 
@@ -718,7 +724,7 @@ describe('the report of a real run is kept, and the user is told of what did not
     w.spaces.pop()
     await w.migration.run()
     expect(w.posts).toHaveLength(1)
-    expect(w.posts[0].body).toMatchObject({ goal: 'The customer hears from us every morning.', delegation: { schedule: { crons: ['0 8 * * 1-5'] } } })
+    expect(w.posts[0].body).toMatchObject({ goal: 'The customer hears from us every morning.', schedule: { crons: ['0 8 * * 1-5'] } })
     expect(w.notices).toEqual([])
   })
 
@@ -726,7 +732,7 @@ describe('the report of a real run is kept, and the user is told of what did not
     const w = world([v1('j1')], [task('t1')])
     const migration = createJobMigration({
       store: w.store, spaces: () => [w.spaces[0]] as never, brain: () => ({ get: async (path: string) => (path === '/list' ? { engrams: [] } : structuredClone(w.byId.get(path.slice('/engram/'.length))!)), post: async () => ({}) }),
-      me: 'member', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') }, brainSchema: () => 24,
+      me: 'member', moveSessions: () => {}, now: () => NOW, log: (line: string) => w.logs.push(line), saveReport: () => { throw new Error('disk full') }, brainSchema: () => 25,
     } as never)
     expect(await migration.run()).toMatchObject({ moved: 1, reportFile: null })
     expect(w.logs.some((l) => l.includes('its report could not be written: disk full'))).toBe(true)

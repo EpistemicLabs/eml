@@ -1,5 +1,5 @@
 import { ownerOf, runsHere, type OwnedTask } from './task-owner.js'
-import { requestOpen, type DelegationFields } from './delegation.js'
+import { requestOpen, type DelegationFields, type ScheduleFields } from './delegation.js'
 
 /**
  * Whether the runner (application/task-runner.ts) starts a delegated task now, and if not, why. The runner and the
@@ -57,7 +57,7 @@ export interface GateTask extends OwnedTask {
   properties?: (OwnedTask['properties'] & {
     checkpoint?: string
     delegate?: string
-    delegation?: DelegationFields | null
+    delegation?: DelegationFields | null; schedule?: ScheduleFields | null
     display_title?: string
     waiting_on?: { who?: string; kind?: string; why?: string } | Record<string, string>
   }) | null

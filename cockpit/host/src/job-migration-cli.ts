@@ -29,12 +29,13 @@ type TaskRow = { id: string; status: string; title: string | null; content: stri
 function taskOfRow(row: TaskRow): JobMigrationTask {
   let properties: JobMigrationTask['properties'] = null
   try { properties = row.properties ? JSON.parse(row.properties) as JobMigrationTask['properties'] : null } catch { /* a task without readable properties has none */ }
-  // The schedule in the shape of schema 24, also from a brain file still at 23.
-  const delegation = properties?.delegation
+  // The schedule as the task's own field, also from a brain file of an older schema, where it lived
+  // in the delegation (scheduleAtSchema24 reads both of its shapes).
+  const delegation = properties?.delegation as (Record<string, unknown> & { schedule?: unknown }) | null | undefined
   if (properties && delegation && typeof delegation === 'object' && 'schedule' in delegation) {
     const { schedule: stored, ...rest } = delegation
-    const schedule = scheduleAtSchema24(stored)
-    properties = { ...properties, delegation: schedule ? { ...rest, schedule } : rest }
+    const schedule = properties.schedule ?? scheduleAtSchema24(stored)
+    properties = { ...properties, delegation: rest as typeof properties.delegation, ...(schedule ? { schedule } : {}) }
   }
   return { id: row.id, status: row.status, title: row.title, content: row.content, ingested_by: row.ingested_by, properties }
 }
@@ -47,7 +48,7 @@ function taskFrom(db: Db, id: string): JobMigrationTask | null {
 /** The brain's open tasks that have a schedule: among them the pass looks for schedules left without a job. */
 function scheduledFrom(db: Db): JobMigrationTask[] {
   const rows = db.prepare("SELECT id, status, title, content, properties, ingested_by FROM engrams WHERE type = 'task' AND status IN ('planned', 'active')").all() as TaskRow[]
-  return rows.map(taskOfRow).filter((task) => task.properties?.delegation?.schedule)
+  return rows.map(taskOfRow).filter((task) => task.properties?.schedule)
 }
 
 /** The home the dry run reads: its folder (named in what it prints), its jobs.json, its config, and the brain a space's token belongs to. */
@@ -112,7 +113,7 @@ export async function runMigrateJobsCommand(argv: string[], out: (text: string) 
       })
       // A space that has no job and nothing left over has nothing to report, as in the host's pass.
       if (mine.length > 0 || (plan.leftovers?.length ?? 0) > 0) {
-        // The host waits for a brain that is not at schema 24 yet; the dry run shows what it does once it is.
+        // The host waits for a brain that is not at SCHEDULES_ON_TASKS_SCHEMA yet; the dry run shows what it does once it is.
         if (info.schemaVersion !== null && info.schemaVersion < SCHEDULES_ON_TASKS_SCHEMA) out(`${space.name}: its brain is at schema ${info.schemaVersion}: the host moves it at its first start on the new version; planned here as it will be then.\n\n`)
         out(`${jobMigrationReport(plan, { space: space.name, at: new Date(now).toISOString(), dryRun: true })}\n`)
       }

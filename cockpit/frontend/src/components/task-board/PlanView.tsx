@@ -2,7 +2,7 @@
 // split into those nothing moves without the viewer and those an agent covers.
 import { useState } from 'react';
 
-import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, isScheduled, NEEDS_OK, projectRows, quietProjects, readable, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
+import { type Board, type BoardTask, COVERAGE_META, coverageText, dueLabel, focus, hueOf, NEEDS_OK, projectRows, quietProjects, readable, repeats, resolveFilter, taskName, TURN_META, visibleInPlan } from '@/lib/task-board';
 import { ProjectsSection, type PlanSpace } from '@/components/projects/ProjectsSection';
 import type { ProjectActions } from '@/components/projects/useProjectActions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
@@ -166,7 +166,7 @@ function PlanTask({ task, step, viewer, now, onOpen, onClose, onEndSchedule }: {
         </span>
         {task.statusLine && <span className="col-start-2 col-end-4 min-w-0 truncate text-ui text-muted-foreground max-md:col-end-3 max-md:whitespace-normal">{task.statusLine.now}</span>}
       </button>
-      {isScheduled(task)
+      {repeats(task)
         ? <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="No more runs. The task closes as done." onClick={() => onEndSchedule(task)}>End schedule and close</button>
         : task.status !== 'resolved' && <button type="button" className={cn(MINI, 'max-md:ml-6.5')} title="Close: the task is not needed" onClick={() => onClose(task)}>Close</button>}
     </div>

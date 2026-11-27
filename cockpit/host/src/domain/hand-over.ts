@@ -1,9 +1,9 @@
 import { waitKind, type WaitingOn } from './task-turn.js'
-import type { DelegationFields } from './delegation.js'
+import type { DelegationFields, ScheduleFields } from './delegation.js'
 import { cronInWords } from './run-text.js'
 import { isTimeZone, formatInZone, unknownTimeZone } from './schedule.js'
 import { readAt } from './schedule-tool.js'
-import { addCron, cronRefusal, cronZoneRefusal, ScheduleError, setWake, withSchedule } from './task-schedule.js'
+import { addCron, cronRefusal, cronZoneRefusal, ScheduleError, setWake } from './task-schedule.js'
 import { waitsBody, waitsOf, type Wait } from './task-waits.js'
 import { PLACEHOLDER_TITLE } from './task-title.js'
 
@@ -19,11 +19,9 @@ import { PLACEHOLDER_TITLE } from './task-title.js'
  * back to planned. Work on it now writes no delegation; a task delegated before loses it (with a journal line), so
  * the runner does not start the agent on its own meanwhile, and the status moves to active.
  *
- * Brain schema 24: the task holds its schedule in the delegation, and a delegation written without it ends it. So
- * every delegation planned here carries the task's schedule along: Delegate now keeps it, Schedule adds to it (one
- * time: the task's wake-up, which replaces the one it had; repeat: one more repeating time), and Work on it now on a
- * task with a schedule keeps the agent as its holder, without checkpoint or request, so nothing starts on its own
- * but its schedule.
+ * The task's schedule is its own field, and no delegation written here touches it: Delegate now and
+ * Work on it now leave it as it is, and Schedule adds to it (one time: the task's wake-up for the delegate, which
+ * replaces the one it had; repeat: one more repeating time).
  *
  * An open question is never dropped: a plan that clears a question waiting on the owner puts it
  * into the journal and into the delegate's brief in the same step.
@@ -82,7 +80,7 @@ export interface HandOverTask {
   /** The task's waits (brain schema 23); without them, the one waitingOn stands for. */
   waits?: Wait[]
   waitingOn?: WaitingOn
-  delegation?: DelegationFields
+  delegation?: DelegationFields; schedule?: ScheduleFields | null
   goal?: string
 }
 
@@ -102,7 +100,7 @@ export type HandOverRefusal =
 
 export interface TaskPatch {
   status?: string
-  delegation?: DelegationFields | null
+  delegation?: DelegationFields | null; schedule?: ScheduleFields | null
   waits?: Wait[] | null
 }
 
@@ -140,9 +138,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
 
   const patch: TaskPatch = {}
   const lines: string[] = []
-  // The task's schedule goes with every delegation written here: without it the brain ends the schedule.
-  const schedule = task.delegation?.schedule ?? null
-  if (req.mode === 'now') patch.delegation = withSchedule({ agent: req.delegate, checkpoint: req.checkpoint, requested_at: ctx.now }, schedule)
+  const schedule = task.schedule ?? null
+  if (req.mode === 'now') patch.delegation = { agent: req.delegate, checkpoint: req.checkpoint, requested_at: ctx.now }
   // Its schedule starts it at its time; no request for the runner.
   if (req.mode === 'schedule') {
     const spec = req.schedule!
@@ -150,8 +147,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
     const theirs = spec.cron !== undefined ? cronZoneRefusal(schedule, spec.timeZone) : null
     if (theirs) return { ok: false, refusal: 'schedule_zone', message: `Times of this task are in ${theirs}, and this one was given in ${spec.timeZone}: give it in ${theirs}.` }
     try {
-      const next = spec.at !== undefined ? setWake(schedule, { at: spec.at, timeZone: spec.timeZone }) : addCron(schedule, spec.cron, spec.timeZone)
-      patch.delegation = withSchedule({ agent: req.delegate, checkpoint: req.checkpoint }, next)
+      patch.schedule = spec.at !== undefined ? setWake(schedule, { at: spec.at, by: req.delegate, timeZone: spec.timeZone }) : addCron(schedule, spec.cron, spec.timeZone)
+      patch.delegation = { agent: req.delegate, ...(req.checkpoint ? { checkpoint: req.checkpoint } : {}) }
     } catch (err) {
       if (err instanceof ScheduleError) return { ok: false, refusal: 'schedule_invalid' }
       throw err
@@ -159,8 +156,8 @@ export function planHandOver(task: HandOverTask, req: HandOverRequest, ctx: Hand
   }
   const was = task.delegation?.agent ?? task.delegate
   if (req.mode === 'together') {
-    // A schedule needs a delegation to live in: its agent stays as the holder, without checkpoint or request.
-    if (was) patch.delegation = schedule ? withSchedule({ agent: was }, schedule) : null
+    // The agent no longer works on it alone; the task's schedule is the task's and stays.
+    if (was) patch.delegation = null
     if (task.status === 'planned') patch.status = 'active'
   }
   if (req.mode === 'now') lines.push(`Handed to ${req.delegate} with checkpoint ${req.checkpoint}; the owner stays.${req.fresh ? ' It starts in a new session (Start fresh).' : ''}`)
@@ -210,11 +207,11 @@ export const continuedBrief = (question: string): string =>
 
 const waitsOfTask = (task: HandOverTask): Wait[] => task.waits ?? waitsOf({ waiting_on: task.waitingOn })
 
-/** The change that puts a task back as it was before a hand-over, its schedule too (`before.delegation` carries it). */
+/** The change that puts a task back as it was before a hand-over, its delegation and its schedule. */
 export function planUndo(before: HandOverTask): { patch: Required<TaskPatch>; journal: string } {
   const delegation = before.delegation ?? (before.delegate ? { agent: before.delegate, ...(before.checkpoint ? { checkpoint: before.checkpoint } : {}) } : null)
   return {
-    patch: { delegation, waits: waitsBody(waitsOfTask(before)).waits, status: before.status },
+    patch: { delegation, schedule: before.schedule ?? null, waits: waitsBody(waitsOfTask(before)).waits, status: before.status },
     journal: 'Hand-over undone; the task is back as it was.',
   }
 }

@@ -1,4 +1,4 @@
-import type { DelegationFields } from './delegation.js'
+import type { DelegationFields, ScheduleFields } from './delegation.js'
 import type { Wait } from './task-waits.js'
 import { waitsOf } from './task-waits.js'
 
@@ -32,7 +32,7 @@ export interface MigrationTask {
     assignee_ids?: string[]
     delegate?: string
     checkpoint?: string
-    delegation?: DelegationFields
+    delegation?: DelegationFields; schedule?: ScheduleFields | null
     goal?: string
     intent?: string
     blockers?: string[]
@@ -116,7 +116,7 @@ export function planTaskStateMigration(input: MigrationInput): MigrationPlan {
       patch.checkpoint = null
       rules.push('checkpoint_cleared')
       lines.push(`checkpoint ${p.checkpoint} cleared: no agent is delegated`)
-    } else if (!input.ranBefore && task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !delegation?.schedule) {
+    } else if (!input.ranBefore && task.status === 'planned' && p.delegate && p.checkpoint && !delegation?.requested_at && !p.schedule) {
       delegation = { ...delegation!, requested_at: input.now }
       rules.push('requested')
       lines.push(`requested now, so the runner starts ${p.delegate} as before`)

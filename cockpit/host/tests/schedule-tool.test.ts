@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-09T00:00:00Z') // Monday 08:00 in Asia/Makassar 
 const ZONE = 'Asia/Makassar'
 const task = (id: string, name: string, schedule?: Record<string, unknown> | null, more: Partial<ToolTask> = {}): ToolTask => ({
   id, title: `kebab-${id}`, status: 'active', content: 'Text.', ...more,
-  properties: { display_title: name, ...(schedule ? { delegation: { agent: 'atlas', schedule } } : {}), ...more.properties },
+  properties: { display_title: name, ...(schedule ? { schedule } : {}), ...more.properties },
 })
 const WEEKDAYS = { crons: ['0 8 * * 1-5'], time_zone: ZONE }
 
@@ -21,7 +21,7 @@ describe('the tool\'s actions', () => {
 
 describe('the task a key names', () => {
   const tasks = [task('aaaaaaaa-1111', 'Daily brief', WEEKDAYS), task('aaaaaaaa-2222', 'Refund'), task('bbbbbbbb-3333', 'Refund', WEEKDAYS), task('cccccccc-4444', 'Notes')]
-  const listed = (t: ToolTask) => Boolean(t.properties?.delegation?.schedule)
+  const listed = (t: ToolTask) => Boolean(t.properties?.schedule)
 
   it('finds it by its id, by the first 8 characters of its id, or by its exact display title whatever the case', () => {
     expect(findTask(tasks, 'cccccccc-4444', listed)).toMatchObject({ id: 'cccccccc-4444' })
@@ -173,6 +173,12 @@ describe('a task\'s schedule as the agent reads it', () => {
       '  new sessions start in: EML',
       '  last run: Fri 6 Nov 08:00, failed (no room)',
     ])
+  })
+
+  it('names who the wake-up is for', () => {
+    const text = describeTask(task('aaaaaaaa-1111', 'Refund', { at: '2026-11-13T02:00:00.000Z', by: 'dev-user' }), undefined, [], NOW, ZONE)
+    expect(text.split('\n')).toContain('  the wake-up is for dev-user')
+    expect(describeTask(task('aaaaaaaa-1111', 'Refund', WEEKDAYS), undefined, [], NOW, ZONE)).not.toContain('the wake-up is for')
   })
 
   it('says when its channel waits for the user, when its end has passed and when the task is closed', () => {

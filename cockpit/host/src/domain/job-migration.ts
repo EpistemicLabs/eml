@@ -76,8 +76,8 @@ import { addCron, cronZoneRefusal, sameSchedule, scheduleOf, scheduleText, SCHED
  * or record that is already there is not written twice.
  */
 
-/** The brain schema from which a task holds its schedule: a space's jobs are planned against a brain at it, never an older one. */
-export const SCHEDULES_ON_TASKS_SCHEMA = 24
+/** The brain schema whose task schedule this cockpit reads and writes: a space's jobs are planned against a brain at it, never an older one. */
+export const SCHEDULES_ON_TASKS_SCHEMA = 25
 
 /**
  * A stored schedule as a brain at schema 24 holds it, from either shape. Schema 23 held one `cron` and a `session`;
@@ -110,7 +110,7 @@ export interface JobMigrationTask {
   content?: string
   /** The task's author: its owner when nobody is assigned (domain/task-owner.ts ownerOf). */
   ingested_by?: string | null
-  properties?: { delegation?: DelegationFields | null; assignee_ids?: string[]; display_title?: string; goal?: string } | null
+  properties?: { delegation?: DelegationFields | null; schedule?: ScheduleFields | null; assignee_ids?: string[]; display_title?: string; goal?: string } | null
 }
 
 /** A task to make for a job without one (application/task-state-migration.ts routineTask). */
@@ -305,7 +305,7 @@ const describe = (job: JobV1): string => {
 function notMine(task: JobMigrationTask, owner: string | null, jobs: readonly JobV1[], input: JobMigrationInput): TaskMigration {
   const name = nameOfTask(task)
   const why = owner ? `the task is ${owner}'s: this cockpit does not fire it and writes nothing to it` : 'nobody owns the task: this cockpit moves no job onto it and writes nothing to it'
-  const plan = dropped(task.id, name, jobs, input, why, task.properties?.delegation?.schedule ?? null, null, () => '')
+  const plan = dropped(task.id, name, jobs, input, why, task.properties?.schedule ?? null, null, () => '')
   const lines: TaskMigration['jobs'] = jobs.map((job) => {
     if (job.endedAt) return { id: job.id, name: job.name, what: 'had ended: its runs stay as history', kind: 'history' }
     const trigger = scheduleTriggerOf(job)
@@ -354,7 +354,7 @@ function moved(task: JobMigrationTask, create: NewRoutineTask | null, jobs: read
   const allPaused = timed.length > 0 && (timed.every((j) => j.paused) || pausedCrons.length > 0)
   const leftOut = (job: JobV1) => job.paused && !allPaused
 
-  const current = task.properties?.delegation?.schedule ?? null
+  const current = task.properties?.schedule ?? null
   let schedule: ScheduleFields | null = null
   let content = create ? create.content : task.content ?? ''
   const kept: JobV1[] = []
@@ -599,7 +599,7 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
         ? 'the brain server has not said yet whether this space is shared: nothing is planned until it has'
         : 'the members of this space could not be read, so it is not known whether a member owns the task: it waits'
       tasks.push({
-        taskId, create: null, title: nameOfTask(task), outcome: 'left', why, schedule: task.properties?.delegation?.schedule ?? null, brain: null, record: null,
+        taskId, create: null, title: nameOfTask(task), outcome: 'left', why, schedule: task.properties?.schedule ?? null, brain: null, record: null,
         runs: [], keys: {}, history: {}, settles: [], renamed: [], jobs: jobs.map((j) => ({ id: j.id, name: j.name, what: `${describe(j)} → waits`, kind: 'waits' as const })), settings: [],
       })
       continue
@@ -610,11 +610,11 @@ export function planJobMigration(input: JobMigrationInput): JobMigrationPlan {
     const nobodys = firing === 'ownerless'
     if (!isOpenTask(task)) {
       if (owner || nobodys) {
-        tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status}) and ${owner ? `${owner}'s` : 'nobody owns it'}: nothing is written`, task.properties?.delegation?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
+        tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status}) and ${owner ? `${owner}'s` : 'nobody owns it'}: nothing is written`, task.properties?.schedule ?? null, null, (j) => `${describe(j)} → dropped: the task is closed`))
         continue
       }
       const live = jobs.filter((j) => !j.endedAt)
-      const leftover = task.properties?.delegation?.schedule ?? null
+      const leftover = task.properties?.schedule ?? null
       const journal = live.length > 0 ? [`${live.length === 1 ? 'A job' : `${live.length} jobs`} of this task (${live.map((j) => `"${j.name}": ${describe(j)}`).join('; ')}) ended when schedules moved onto tasks: the task is closed. Reopen it and set a schedule to bring ${live.length === 1 ? 'it' : 'them'} back.`] : []
       const brain = leftover || journal.length > 0 ? { setSchedule: leftover !== null, content: null, appended: [], journal } : null
       tasks.push(dropped(taskId, nameOfTask(task), jobs, input, `the task is closed (${task.status})`, null, brain, (j) => `${describe(j)} → dropped: the task is closed`))

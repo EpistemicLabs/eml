@@ -1,8 +1,8 @@
 // A task opened from the board: the task on the left, its session's chat on the right. A question is
 // the one thing to do here, so answering comes first; Delegate (a task with you) or Take over (one the agent works on
 // alone), Hand over and Looks good are the direct actions,
-// Done and Not needed sit in the ⋯ menu. A task whose schedule is still on is not closed that way: Looks good
-// approves the run, and the menu has End schedule and close instead; its schedule and the schedule's controls are a
+// Done and Not needed sit in the ⋯ menu. A task with repeating times is not closed that way: Looks good
+// approves the run, and the menu has End schedule and close instead (a wake-up alone ends with the task); its schedule and the schedule's controls are a
 // section of their own (ScheduleSection). A closed task keeps its chat: writing there reopens it or starts
 // a follow-up (decision task-closing-and-continuation-rules), and Reopen still reopens without a message.
 import { useEffect, useState } from 'react';
@@ -14,7 +14,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, isScheduled, type ScheduleAction, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, repeats, type ScheduleAction, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { commandsNote } from '@/lib/working-now';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
@@ -113,8 +113,8 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   const blocked = task.blocked ?? closedEntry?.blocked;
   const goOn = closed && !task.pending ? continueMode({ owner: task.owner, closedAt: task.closedAt ?? closedEntry?.closedAt ?? null, blocked }, board.viewer, now) : null;
   const composer = goOn && <ContinueComposer mode={goOn} onSend={(text, how, restore) => onContinue(task, text, how, restore)} />;
-  // Its schedule is on: the task closes only by ending it.
-  const scheduled = isScheduled(task);
+  // It has repeating times: the task closes only by ending them. A wake-up alone ends with the task.
+  const scheduled = repeats(task);
   const menu: MenuItem[] = closed ? [] : scheduled ? [
     { label: 'End schedule and close', onSelect: () => onEndSchedule(task) },
   ] : [
@@ -256,7 +256,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
               )}
             </dl>
 
-            {!closed && onSchedule && <ScheduleSection task={task} now={now} onAct={onSchedule} onEndSchedule={onEndSchedule} onAddTime={(t) => onHandOver(t, 'schedule')} />}
+            {!closed && onSchedule && <ScheduleSection task={task} now={now} viewer={board.viewer} onAct={onSchedule} onEndSchedule={onEndSchedule} onAddTime={(t) => onHandOver(t, 'schedule')} />}
 
             {!closed && !asked && task.group !== 'own' && !review ? (
               <div className={cn('rounded-xl border px-3 py-2.5 text-body', HUE[hue].tint, HUE[hue].edge)}>

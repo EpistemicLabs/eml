@@ -130,7 +130,7 @@ describe('planning jobs onto their tasks', () => {
     expect(u).toMatchObject({ brain: null, record: null, history: { [ran.id]: [{ id: 'r1', status: 'finished' }] } })
     expect(u.jobs[0]).toMatchObject({ kind: 'history', what: `once at ${PAST} → it has run: no time to carry over` })
     // the schedule the mirror left on the task for a job that is over is cleared
-    const [v] = plan([once(PAST, { runCount: 1 })], [task('t1', {}, { delegation: { agent: 'atlas', schedule: { at: PAST } } })]).tasks
+    const [v] = plan([once(PAST, { runCount: 1 })], [task('t1', {}, { schedule: { at: PAST } })]).tasks
     expect(v).toMatchObject({ schedule: null, brain: { setSchedule: true } })
   })
 
@@ -164,7 +164,7 @@ describe('planning jobs onto their tasks', () => {
 
   it('a job whose task is closed is dropped: a journal line on the task, a schedule it still shows cleared, open runs closed', () => {
     const j = cron('0 8 * * 1-5')
-    const closed = task('t1', { status: 'resolved' }, { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'] } } })
+    const closed = task('t1', { status: 'resolved' }, { schedule: { crons: ['0 8 * * 1-5'] } })
     const [t] = plan([j], [closed], { runs: { [j.id]: [run(j.id, 'r1', 'waiting'), run(j.id, 'r2', 'started', 2), run(j.id, 'r3', 'finished', 3)] } }).tasks
     expect(t).toMatchObject({ taskId: 't1', outcome: 'dropped', why: 'the task is closed (resolved)', schedule: null, record: null, runs: [], renamed: [], settles: [j.id] })
     expect(t.brain).toEqual({ setSchedule: true, content: null, appended: [], journal: ['A job of this task ("Daily brief": cron "0 8 * * 1-5" (Europe/Berlin)) ended when schedules moved onto tasks: the task is closed. Reopen it and set a schedule to bring it back.'] })
@@ -238,7 +238,7 @@ describe('planning jobs onto their tasks', () => {
 
     it('a live job on another member\'s task is not moved and nothing is written to the task: it ends here, and the report says loudly that it no longer fires and how its owner brings it back', () => {
       const j = cron('0 8 * * 1-5', { limited: true, toolProfile: { deniedTools: ['Bash'], mcpServers: null }, end: { afterRuns: 5 }, notify: 'always' })
-      const theirs = task('t1', { ingested_by: 'member' }, { assignee_ids: ['other', 'member'], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], time_zone: 'Europe/Berlin' } } })
+      const theirs = task('t1', { ingested_by: 'member' }, { assignee_ids: ['other', 'member'], schedule: { crons: ['0 7 * * *'], time_zone: 'Europe/Berlin' } })
       const [t] = plan([j], [theirs], { ...shared, runs: { [j.id]: [run(j.id, 'r1', 'started')] } }).tasks
       expect(t).toMatchObject({ outcome: 'dropped', why: 'the task is other\'s: this cockpit does not fire it and writes nothing to it', brain: null, record: null, runs: [], renamed: [], settles: [j.id] })
       // the schedule the task has is its owner's: it stays as it is
@@ -288,7 +288,7 @@ describe('planning jobs onto their tasks', () => {
       // a channel alone, and a closed task no member owns: nothing is written either
       const mail = plan([job({ name: 'Mail', triggers: [{ type: 'mail', match: ['a@example.com'] } as never] })], [task('t1', { ingested_by: 'atlas' }, { assignee_ids: [] })], shared).tasks[0]
       expect(mail.jobs[0].what).toBe('NOT MOVED, IT NO LONGER FIRES: nobody owns this task: "Task t1" (t1). The job (no time, woken by mail) had the prompt "Write the brief." To bring it back, assign the task to yourself and set it up on it again on your cockpit: a channel is kept per machine.')
-      const closed = outcome(task('t1', { ingested_by: 'atlas', status: 'resolved' }, { assignee_ids: [], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'] } } }))
+      const closed = outcome(task('t1', { ingested_by: 'atlas', status: 'resolved' }, { assignee_ids: [], schedule: { crons: ['0 7 * * *'] } }))
       expect(closed).toMatchObject({ outcome: 'dropped', brain: null, record: null, why: 'the task is closed (resolved) and nobody owns it: nothing is written' })
     })
 
@@ -312,7 +312,7 @@ describe('planning jobs onto their tasks', () => {
     })
 
     it('a closed task of another member is dropped and nothing is written to it', () => {
-      const t = outcome(task('t1', { status: 'resolved' }, { assignee_ids: ['other'], delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'] } } }))
+      const t = outcome(task('t1', { status: 'resolved' }, { assignee_ids: ['other'], schedule: { crons: ['0 7 * * *'] } }))
       expect(t).toMatchObject({ outcome: 'dropped', brain: null, record: null, why: 'the task is closed (resolved) and other\'s: nothing is written' })
     })
 
@@ -325,7 +325,7 @@ describe('planning jobs onto their tasks', () => {
 
   describe('a schedule the old mirror left on a task without a job', () => {
     const leftover = (id: string, patch: Partial<JobMigrationTask> = {}, properties: JobMigrationTask['properties'] = {}) =>
-      task(id, patch, { delegation: { agent: 'atlas', schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' } }, ...properties })
+      task(id, patch, { schedule: { crons: ['0 7 * * *'], time_zone: 'UTC' }, ...properties })
 
     it('is removed in the pass that moves the jobs: nothing ran it before, so nothing may start to', () => {
       const j = cron('0 8 * * 1-5')
@@ -369,7 +369,7 @@ describe('planning jobs onto their tasks', () => {
   it('planned again against what it wrote, it writes nothing more to the brain', () => {
     const j = cron('0 8 * * 1-5')
     const first = plan([j, once(AHEAD)]).tasks[0]
-    const written = task('t1', { content: first.brain!.content! }, { delegation: { agent: 'atlas', schedule: first.schedule! } })
+    const written = task('t1', { content: first.brain!.content! }, { schedule: first.schedule! })
     const again = plan([j, once(AHEAD)], [written]).tasks[0]
     expect(again.brain).toBeNull()
     expect(again.schedule).toEqual(first.schedule)
@@ -457,7 +457,7 @@ describe('planning jobs onto their tasks', () => {
     expect(t.brain!.journal).toEqual(['Schedules moved onto tasks: what its one-time job was to do is longer than a wake-up\'s reason holds, so it was added to the task\'s text in full, as "At <time>: …".'])
     expect(t.jobs[0].what).toBe(`once at ${AHEAD} → the task's wake-up, set by session sess-123; its prompt is longer than a wake-up's reason holds (2000 characters): it is appended to the task's text in full, and the reason points to it`)
     // planned again against what it wrote: nothing more
-    const again = plan([once(AHEAD, { prompt: long })], [task('t1', { content: t.brain!.content! }, { delegation: { agent: 'atlas', schedule: t.schedule! } })]).tasks[0]
+    const again = plan([once(AHEAD, { prompt: long })], [task('t1', { content: t.brain!.content! }, { schedule: t.schedule! })]).tasks[0]
     expect(again.brain).toBeNull()
     // a prompt that fits is the reason itself, as before
     expect(plan([once(AHEAD)]).tasks[0]).toMatchObject({ schedule: { why: 'Look whether the reply came.' }, brain: { appended: [] } })
@@ -478,13 +478,13 @@ describe('planning jobs onto their tasks', () => {
     expect(two.brain).toMatchObject({ goal: 'The customer hears from us every morning.' })
     expect(two.brain!.journal).toContain('The job "Second" had a goal of its own when schedules moved onto tasks; the task keeps its goal, so the job\'s is noted here: "Nothing is left open."')
     // a goal alone is a reason to write the task
-    const mirrored = task('t1', { content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' }, { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } } })
+    const mirrored = task('t1', { content: 'Keep the customer informed.\n\nEvery 0 8 * * 1-5: Write the brief.' }, { schedule: { crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' } })
     expect(plan([j], [mirrored]).tasks[0].brain).toEqual({ setSchedule: false, content: null, appended: [], journal: [], goal: 'The customer hears from us every morning.', goalOf: 'Daily brief' })
   })
 
   it('a job that has ended leaves only its runs, as history under its id', () => {
     const done = cron('0 8 * * 1-5', { endedAt: '2026-11-20T00:00:00.000Z' })
-    const [t] = plan([done], [task('t1', {}, { delegation: { agent: 'atlas', schedule: { crons: ['0 8 * * 1-5'] } } })], { runs: { [done.id]: [run(done.id, 'r1')] } }).tasks
+    const [t] = plan([done], [task('t1', {}, { schedule: { crons: ['0 8 * * 1-5'] } })], { runs: { [done.id]: [run(done.id, 'r1')] } }).tasks
     expect(t).toMatchObject({ outcome: 'moved', schedule: null, record: null, renamed: [], settles: [done.id], history: { [done.id]: [{ id: 'r1' }] } })
     // the schedule its mirror left on the task goes
     expect(t.brain).toEqual({ setSchedule: true, content: null, appended: [], journal: [] })

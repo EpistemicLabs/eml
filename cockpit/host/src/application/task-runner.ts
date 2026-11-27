@@ -2,7 +2,7 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { MAX_RUNNING, holdsSlot, isStandaloneRunnerTask, newestStart, runnerBlock } from '../domain/runner-gate.js'
 import { openRunsByTask, runsOf, type RunFacts } from '../domain/runs.js'
-import { lastStartsOf, requestOpen, type DelegationFields } from '../domain/delegation.js'
+import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields } from '../domain/delegation.js'
 import { runComingAt, type ScheduleFacts } from '../domain/task-schedule.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { childrenOf, parentOf } from '../domain/task-relations.js'
@@ -96,7 +96,7 @@ interface Task {
   status: string
   scope: string
   ingested_by?: string | null
-  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; waiting_on?: Record<string, string> }
+  properties?: { checkpoint?: string; depends_on?: string[]; assignee_ids?: string[]; delegate?: string; delegation?: DelegationFields; schedule?: ScheduleFields | null; waiting_on?: Record<string, string> }
   relations?: Array<{ source_id: string; target_id: string; relation: string }>
 }
 
@@ -201,7 +201,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
         lastRunStartedAt: lastStarts.get(step.id) ?? null,
         busy: deps.busy?.(step.id, runs.get(step.id) ?? []), held: deps.held?.(step.id, step.properties?.delegation?.requested_at ?? null),
         // Its schedule starts it at its time: one ahead, one due now, or a run that waits to start (domain/task-schedule.ts).
-        scheduled: Boolean(runComingAt(step.properties?.delegation?.schedule, deps.scheduleFacts?.(step.id) ?? {}, Date.now(), JOB_LIMITS.lateLimitMs)),
+        scheduled: Boolean(runComingAt(step.properties?.schedule, deps.scheduleFacts?.(step.id) ?? {}, Date.now(), JOB_LIMITS.lateLimitMs)),
       })
       if (block?.kind === 'no_project') deps.log(`[runner] step ${step.id.slice(0, 8)} has no project to run in (scope ${step.scope})`)
       if (block) continue

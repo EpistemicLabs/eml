@@ -24,6 +24,11 @@ const deps = {
       if (input.taskId === 'closed') return { ok: false, refusal: 'task_closed' }
       if (input.taskId === 'daily' && input.kind === 'close') return { ok: false, refusal: 'scheduled' }
       if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
+      if (input.taskId === 'plain' && (input.kind === 'remove_wake' || input.kind === 'reschedule_wake')) return { ok: false, refusal: 'not_scheduled', message: 'It has no wake-up.' }
+      if (input.kind === 'done' && input.waitId === 'w-gone') return { ok: false, refusal: 'unknown_wait' }
+      if (input.kind === 'done' && input.waitId === 'w-woke') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z', continued: { sessionId: 's-ask', how: 'delivered' } } }
+      // Done and the wake-up's controls act at once: applied, with no undo window
+      if (input.kind === 'done' || input.kind === 'remove_wake' || input.kind === 'reschedule_wake') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z' } }
       if (input.taskId === 'theirs') return { ok: false, refusal: 'not_owner', message: 'Only its owner (dominik) can reopen this task.' }
       if (input.taskId === 'gone') return { ok: false, refusal: 'no_session' }
       if (input.taskId === 'placeholder') return { ok: false, refusal: 'not_ready' }
@@ -156,14 +161,46 @@ describe('task board routes', () => {
       .toBe('schedule: that cron fires every 1 min; at most every 15 min')
   })
 
-  it('takes End schedule and close under a kebab-case route like its siblings, and refuses Close on a task whose schedule is on with a code to branch on', async () => {
+  it('takes End schedule and close under a kebab-case route like its siblings, and refuses Close on a task whose repeating times are on with a code to branch on', async () => {
     expect(await post('/api/v1/tasks/daily/end-schedule', { opId: 'op-es', spaceId: 'main' }))
       .toEqual({ status: 202, body: { opId: 'op-es', state: 'pending', undoUntil: '2026-11-19T10:00:08.000Z' } })
     expect(submitted.at(-1)).toEqual({ opId: 'op-es', spaceId: 'main', kind: 'end_schedule', taskId: 'daily' })
     expect(await post('/api/v1/tasks/daily/close', { opId: 'op-c', spaceId: 'main' }))
-      .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its schedule is still on: use End schedule and close.', retry: false } } })
+      .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its repeating times are still on: use End schedule and close.', retry: false } } })
     expect(await post('/api/v1/tasks/plain/end-schedule', { opId: 'op-p', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule to end: close it instead.', retry: false } } })
+  })
+
+  it('takes Done on a do wait with the wait\'s id; a step that is not open is a conflict, and the id is required', async () => {
+    expect(await post('/api/v1/tasks/contract/done', { opId: 'op-done', spaceId: 'main', waitId: 'w-do' }))
+      .toEqual({ status: 202, body: { opId: 'op-done', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z' } })
+    expect(submitted.at(-1)).toEqual({ opId: 'op-done', spaceId: 'main', kind: 'done', taskId: 'contract', waitId: 'w-do' })
+    // where the agent's wake went comes with the answer when someone was woken, and is absent when nobody was
+    expect(await post('/api/v1/tasks/contract/done', { opId: 'op-woke', spaceId: 'main', waitId: 'w-woke' }))
+      .toEqual({ status: 202, body: { opId: 'op-woke', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', continued: { sessionId: 's-ask', how: 'delivered' } } })
+    expect(await post('/api/v1/tasks/contract/done', { opId: 'op-gone', spaceId: 'main', waitId: 'w-gone' }))
+      .toEqual({ status: 409, body: { error: { code: 'unknown_wait', message: 'That step is not open on the task any more.', retry: false } } })
+    const before = submitted.length
+    expect(await post('/api/v1/tasks/contract/done', { opId: 'op-none', spaceId: 'main' }))
+      .toEqual({ status: 400, body: { error: { code: 'invalid', message: 'waitId is required: the step that is done', retry: false } } })
+    expect(submitted).toHaveLength(before)
+  })
+
+  it('takes Remove and Move of the wake-up under kebab-case routes; Move needs a time; a task without a wake-up is a conflict', async () => {
+    expect(await post('/api/v1/tasks/contract/remove-wake', { opId: 'op-rw', spaceId: 'main' }))
+      .toEqual({ status: 202, body: { opId: 'op-rw', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z' } })
+    expect(submitted.at(-1)).toEqual({ opId: 'op-rw', spaceId: 'main', kind: 'remove_wake', taskId: 'contract' })
+    expect((await post('/api/v1/tasks/contract/reschedule-wake', { opId: 'op-mw', spaceId: 'main', at: '2026-11-22T10:00:00.000Z' })).status).toBe(202)
+    expect(submitted.at(-1)).toEqual({ opId: 'op-mw', spaceId: 'main', kind: 'reschedule_wake', taskId: 'contract', at: '2026-11-22T10:00:00.000Z' })
+    const before = submitted.length
+    for (const at of [undefined, 'someday']) {
+      expect(await post('/api/v1/tasks/contract/reschedule-wake', { opId: 'op-bad', spaceId: 'main', ...(at ? { at } : {}) }))
+        .toEqual({ status: 400, body: { error: { code: 'invalid', message: 'at is required: the new time of the wake-up', retry: false } } })
+    }
+    expect(submitted).toHaveLength(before)
+    expect(await post('/api/v1/tasks/plain/remove-wake', { opId: 'op-pw', spaceId: 'main' }))
+      .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no wake-up.', retry: false } } })
+    expect((await post('/api/v1/tasks/plain/reschedule-wake', { opId: 'op-pm', spaceId: 'main', at: '2026-11-22T10:00:00.000Z' })).status).toBe(409)
   })
 
   it('takes Run now, and answers each of its refusals with its status', async () => {

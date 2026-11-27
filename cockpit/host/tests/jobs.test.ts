@@ -26,13 +26,13 @@ class Brain {
     const id = `${this.prefix}${String(this.made).padStart(7, '0')}-0000-4000-8000-000000000000`
     const task: ToolTask = {
       id, type: 'task', title: `kebab-${id}`, content: 'Text of the task.', status: 'active', scope: 'project.eml', ...more,
-      properties: { display_title: name, assignee_ids: ['kim'], ...(schedule ? { delegation: { agent: 'atlas', checkpoint: 'after', schedule } } : {}), ...more.properties },
+      properties: { display_title: name, assignee_ids: ['kim'], ...(schedule ? { schedule } : {}), ...more.properties },
     }
     this.tasks.set(id, task)
     return task
   }
 
-  schedule(id: string): ScheduleFields | null { return this.tasks.get(id)?.properties?.delegation?.schedule ?? null }
+  schedule(id: string): ScheduleFields | null { return this.tasks.get(id)?.properties?.schedule ?? null }
 
   async get(path: string, query?: Record<string, unknown>): Promise<unknown> {
     if (this.down) throw new Error('the brain does not answer')
@@ -60,7 +60,8 @@ class Brain {
       task.content = body.content
     }
     if (typeof body.goal === 'string') task.properties = { ...task.properties, goal: body.goal }
-    if (body.delegation) task.properties = { ...task.properties, delegation: body.delegation as never }
+    if ('delegation' in body) task.properties = { ...task.properties, delegation: body.delegation as never }
+    if ('schedule' in body) task.properties = { ...task.properties, schedule: body.schedule as never }
     return {}
   }
 }
@@ -122,8 +123,9 @@ describe('create: a repeating time', () => {
     // The task as the routine-task creation makes it: the member's, in the caller's project, the prompt as its text.
     expect(task).toMatchObject({ content: 'Write the daily brief.', scope: 'project.eml', status: 'active', properties: { display_title: 'Daily brief', assignee_ids: ['kim'] } })
     expect(task.title).toMatch(/^routine-daily-brief-[0-9a-f]{8}$/)
-    // Not delegated yet: the space's agent holds its schedule.
-    expect(task.properties?.delegation).toEqual({ agent: 'atlas', schedule: { crons: [WEEKDAYS_8], time_zone: ZONE } })
+    // Scheduling does not delegate: the task gets its schedule and no delegation.
+    expect(task.properties?.schedule).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
+    expect(task.properties?.delegation).toBeUndefined()
     expect(answer.schedule).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
     // The prompt is the new task's text: nothing is appended to it.
     expect(world.main.posts.filter((p) => 'content' in p.body && p.path !== '/engram/task')).toEqual([])
@@ -162,7 +164,7 @@ describe('create: a repeating time', () => {
     // One write: the schedule, the text and the journal line that a rewrite of the text needs.
     expect(world.main.posts).toEqual([{ path: `/task/${task.id}/track`, body: {
       content: 'Text of the task.\n\nEvery 0 8 * * 1-5: Look for new mail from Acme.',
-      delegation: { agent: 'atlas', schedule: { crons: [WEEKDAYS_8], time_zone: ZONE } },
+      schedule: { crons: [WEEKDAYS_8], time_zone: ZONE },
       text: 'The schedule tool added the repeating time "0 8 * * 1-5". The schedule tool added what a time is for to the task\'s text.',
     } }])
     // The same call again adds nothing: no second time, no second paragraph.
@@ -187,11 +189,11 @@ describe('create: a repeating time', () => {
   })
 
   it('keeps the delegation of a task as it is, and its wake-up', async () => {
-    const task = world.main.add('Mission', { at: '2026-11-13T02:00:00.000Z', why: 'Look again', by_session: 's9' })
+    const task = world.main.add('Mission', { at: '2026-11-13T02:00:00.000Z', why: 'Look again', by: 'atlas', by_session: 's9' }, { properties: { delegation: { agent: 'motti', checkpoint: 'after' } } })
     await create({ task_id: task.id, cron: WEEKDAYS_8 })
-    expect(world.main.tasks.get(task.id)!.properties?.delegation).toEqual({
-      agent: 'atlas', checkpoint: 'after', schedule: { crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'Look again', by_session: 's9', time_zone: ZONE },
-    })
+    expect(world.main.tasks.get(task.id)!.properties?.delegation).toEqual({ agent: 'motti', checkpoint: 'after' })
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'Look again', by: 'atlas', by_session: 's9', time_zone: ZONE })
+    expect(world.main.posts.every((p) => !('delegation' in p.body))).toBe(true)
   })
 
   it('reads a task\'s repeating times in one zone: a cron written in another is refused, never joined at other hours', async () => {
@@ -220,7 +222,7 @@ describe('create: the wake-up', () => {
     const answer = await create({ at: '2026-11-13T10:00', target: 'self', prompt: 'Check whether the refund arrived.' }, onTask(task))
     expect(answer.status, answer.text).toBe(201)
     expect(answer.taskId).toBe(task.id)
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'Check whether the refund arrived.', by_session: 'maker', time_zone: ZONE })
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'Check whether the refund arrived.', by: 'atlas', by_session: 'maker', time_zone: ZONE })
     // A wake-up's prompt is its reason: the task's text stays.
     expect(world.main.tasks.get(task.id)!.content).toBe('Text of the task.')
     expect(answer.text).toContain('cron "0 8 * * 1-5" + once, Fri 13 Nov 10:00 (Asia/Makassar)')
@@ -231,7 +233,79 @@ describe('create: the wake-up', () => {
     const task = world.main.add('Refund', { crons: [WEEKDAYS_8], at: '2026-11-11T02:00:00.000Z', why: 'Old reason', by_session: 'someone', time_zone: ZONE })
     await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'New reason.' })
     // Set from a session that does not work on the task: a new session starts for it.
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'New reason.', time_zone: ZONE })
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', why: 'New reason.', by: 'atlas', time_zone: ZONE })
+  })
+
+  it('a wake-up is for the space\'s agent by default: it checks back, and the journal says so', async () => {
+    const task = world.main.add('Refund')
+    const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'Check the refund.' }, onTask(task))
+    expect(answer.status, answer.text).toBe(201)
+    expect(world.main.schedule(task.id)).toEqual({ at: '2026-11-13T02:00:00.000Z', why: 'Check the refund.', by: 'atlas', by_session: 'maker', time_zone: ZONE })
+    expect(world.main.posts).toEqual([{ path: `/task/${task.id}/track`, body: {
+      schedule: { at: '2026-11-13T02:00:00.000Z', why: 'Check the refund.', by: 'atlas', by_session: 'maker', time_zone: ZONE },
+      text: 'The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z (atlas checks back).',
+    } }])
+    expect(answer.text).toContain('the wake-up is for atlas')
+    // "self", "agent" and the agent's own handle name it too
+    for (const by of ['self', 'agent', '@Atlas']) {
+      const named = world.main.add(`Refund ${by}`)
+      expect((await create({ task_id: named.id, at: '2026-11-13T10:00', by })).status).toBe(201)
+      expect(world.main.schedule(named.id)?.by).toBe('atlas')
+    }
+  })
+
+  it('in a space without an agent a wake-up without by is the user\'s reminder when the user sets it, and names nobody when a session does', async () => {
+    world.agent = null
+    const fromPage = world.main.add('From the page')
+    expect((await create({ task_id: fromPage.id, at: '2026-11-13T10:00', prompt: 'Call the bank.' }, { ...caller, sessionId: null })).status).toBe(201)
+    expect(world.main.schedule(fromPage.id)).toMatchObject({ by: 'kim' })
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z (a reminder for kim).')
+    const fromSession = world.main.add('From a session')
+    expect((await create({ task_id: fromSession.id, at: '2026-11-13T10:00', prompt: 'Look again.' })).status).toBe(201)
+    expect(world.main.schedule(fromSession.id)).not.toHaveProperty('by')
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z.')
+  })
+
+  it('by the user\'s handle (or "user", "owner") is a reminder for the user: no session continues it, and the journal names it a reminder', async () => {
+    const task = world.main.add('Refund')
+    const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', prompt: 'Call the bank.', by: 'kim' }, onTask(task))
+    expect(answer.status, answer.text).toBe(201)
+    // the caller works on the task, yet a reminder carries no session: a person is reminded, no session goes on
+    expect(world.main.schedule(task.id)).toEqual({ at: '2026-11-13T02:00:00.000Z', why: 'Call the bank.', by: 'kim', time_zone: ZONE })
+    expect(world.main.posts[0].body.text).toBe('The schedule tool set the wake-up for 2026-11-13T02:00:00.000Z (a reminder for kim).')
+    for (const by of ['@Kim', 'user', 'owner']) {
+      const named = world.main.add(`Reminder ${by}`)
+      expect((await create({ task_id: named.id, at: '2026-11-13T10:00', by }, onTask(named))).status).toBe(201)
+      expect(world.main.schedule(named.id)).toMatchObject({ by: 'kim' })
+      expect(world.main.schedule(named.id)).not.toHaveProperty('by_session')
+    }
+  })
+
+  it('refuses a wake-up for anyone else, and writes nothing', async () => {
+    const task = world.main.add('Refund')
+    const answer = await create({ task_id: task.id, at: '2026-11-13T10:00', by: 'motti' })
+    expect(answer).toMatchObject({ status: 400 })
+    expect(answer.text).toMatch(/^by is who the wake-up is for/)
+    expect(answer.text).toContain('(kim)')
+    expect(world.main.posts).toEqual([])
+    expect(world.main.schedule(task.id)).toBeNull()
+    // also for a new task: none is made
+    expect((await create({ name: 'Elsewhere', at: '2026-11-13T10:00', by: 'someone-else' })).status).toBe(400)
+    expect([...world.main.tasks.values()].map((t) => t.properties?.display_title)).toEqual(['Refund'])
+  })
+
+  it('a repeating time has no by: it is not a wake-up', async () => {
+    const task = world.main.add('Brief')
+    expect((await create({ task_id: task.id, cron: WEEKDAYS_8, by: 'motti' })).status).toBe(201)
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], time_zone: ZONE })
+  })
+
+  it('scheduling a task hands it to no agent: a new task and one that exists get their schedule and no delegation', async () => {
+    const made = await create({ name: 'Check Acme reply', at: '2026-11-13T10:00' })
+    expect(made.status, made.text).toBe(201)
+    expect(world.main.tasks.get(made.taskId!)!.properties).not.toHaveProperty('delegation')
+    expect(world.main.schedule(made.taskId!)).toMatchObject({ at: '2026-11-13T02:00:00.000Z', by: 'atlas' })
+    expect(world.main.posts.filter((p) => 'delegation' in p.body)).toEqual([])
   })
 
   it('names the task with task_id before the caller\'s own; without either it makes one', async () => {
@@ -293,7 +367,7 @@ describe('create: what it refuses', () => {
   it('makes no task where none can hold a schedule: a folder that is no project of the brain, a space without an agent', async () => {
     expect((await create({ name: 'x', cron: '0 8 * * *', project: 'folder' })).text).toBe('a new task needs a project of the brain: pass project, or put the time on a task that exists (task_id)')
     world.agent = null
-    expect((await create({ name: 'x', cron: '0 8 * * *' })).text).toBe('this space has no agent to hold a schedule')
+    expect((await create({ name: 'x', cron: '0 8 * * *' })).text).toBe('this space has no agent to run a new task\'s schedule')
     expect(world.main.tasks.size).toBe(0)
   })
 
@@ -457,18 +531,36 @@ describe('update', () => {
   it('replaces the wake-up; its reason stays unless a prompt gives a new one', async () => {
     const task = world.main.add('Refund', { crons: [WEEKDAYS_8], at: '2026-11-11T02:00:00.000Z', why: 'Check the card', by_session: 'someone', time_zone: ZONE })
     await act({ action: 'update', job: task.id, at: '2026-11-18T09:00' })
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-18T01:00:00.000Z', why: 'Check the card', time_zone: ZONE })
+    // A wake-up without by is the space's agent's: it checks back.
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-18T01:00:00.000Z', why: 'Check the card', by: 'atlas', time_zone: ZONE })
     // From the session that works on the task: it is the one that continues.
     await act({ action: 'update', job: task.id, at: '2026-11-19T09:00', prompt: 'Ask the bank.' }, { ...caller, taskId: task.id })
     expect(world.main.schedule(task.id)).toMatchObject({ at: '2026-11-19T01:00:00.000Z', why: 'Ask the bank.', by_session: 'maker' })
     expect((await act({ action: 'update', job: task.id, at: '2026-11-08T09:00' })).text).toMatch(/has passed/)
   })
 
+  it('an update of the wake-up keeps who it is for unless by names another; a reminder stays a reminder', async () => {
+    const task = world.main.add('Refund', { at: '2026-11-11T02:00:00.000Z', why: 'Call the bank', by: 'kim', time_zone: ZONE })
+    const moved = await act({ action: 'update', job: task.id, at: '2026-11-18T09:00' }, { ...caller, taskId: task.id })
+    expect(moved.status, moved.text).toBe(200)
+    expect(world.main.schedule(task.id)).toEqual({ at: '2026-11-18T01:00:00.000Z', why: 'Call the bank', by: 'kim', time_zone: ZONE })
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-18T01:00:00.000Z (a reminder for kim).')
+    // by self makes it the agent's: then the session on the task continues it
+    await act({ action: 'update', job: task.id, at: '2026-11-19T09:00', by: 'self' }, { ...caller, taskId: task.id })
+    expect(world.main.schedule(task.id)).toMatchObject({ at: '2026-11-19T01:00:00.000Z', by: 'atlas', by_session: 'maker' })
+    expect(world.main.posts.at(-1)!.body.text).toBe('The schedule tool set the wake-up for 2026-11-19T01:00:00.000Z (atlas checks back).')
+    const before = world.main.posts.length
+    expect((await act({ action: 'update', job: task.id, at: '2026-11-20T09:00', by: 'motti' })).status).toBe(400)
+    expect(world.main.posts).toHaveLength(before)
+  })
+
   it('gives a task that has no schedule its first time', async () => {
     const task = world.main.add('Plain')
     const answer = await act({ action: 'update', job: task.id, at: '2026-11-18T09:00' })
     expect(answer.status, answer.text).toBe(200)
-    expect(world.main.tasks.get(task.id)!.properties?.delegation).toEqual({ agent: 'atlas', schedule: { at: '2026-11-18T01:00:00.000Z', time_zone: ZONE } })
+    // Its schedule alone: scheduling hands the task to no agent.
+    expect(world.main.schedule(task.id)).toEqual({ at: '2026-11-18T01:00:00.000Z', by: 'atlas', time_zone: ZONE })
+    expect(world.main.tasks.get(task.id)!.properties?.delegation).toBeUndefined()
     expect(world.store.get(task.id)).toMatchObject({ createdBy: 'maker' })
   })
 
@@ -492,13 +584,13 @@ describe('update', () => {
     const answer = await act({ action: 'update', job: task.id, at: '2026-11-10T10:00', timezone: 'Europe/Berlin' })
     expect(answer.status, answer.text).toBe(200)
     // 10:00 in Berlin; the routine still runs at 08:00 in its own zone
-    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-10T09:00:00.000Z', time_zone: ZONE })
+    expect(world.main.schedule(task.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-10T09:00:00.000Z', by: 'atlas', time_zone: ZONE })
     await create({ task_id: task.id, at: '2026-11-11T10:00', timezone: 'Europe/Berlin' })
     expect(world.main.schedule(task.id)).toMatchObject({ crons: [WEEKDAYS_8], at: '2026-11-11T09:00:00.000Z', time_zone: ZONE })
     // repeating times without a zone are read in UTC: a wake-up gives them none
     const bare = world.main.add('Hourly', { crons: ['0 * * * *'] })
     await act({ action: 'update', job: bare.id, at: '2026-11-10T10:00', timezone: 'Europe/Berlin' })
-    expect(world.main.schedule(bare.id)).toEqual({ crons: ['0 * * * *'], at: '2026-11-10T09:00:00.000Z' })
+    expect(world.main.schedule(bare.id)).toEqual({ crons: ['0 * * * *'], at: '2026-11-10T09:00:00.000Z', by: 'atlas' })
     await create({ task_id: bare.id, at: '2026-11-11T10:00' })
     expect(world.main.schedule(bare.id)).toMatchObject({ crons: ['0 * * * *'], at: '2026-11-11T02:00:00.000Z' })
     expect(world.main.schedule(bare.id)).not.toHaveProperty('time_zone')
@@ -560,15 +652,16 @@ describe('pause, resume, delete and finish', () => {
   })
 
   it.each(['delete', 'finish'])('%s ends the schedule: cleared on the task, which stays open', async (action) => {
-    const task = world.main.add('Refund', { crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', by_session: 's1', time_zone: ZONE })
+    const task = world.main.add('Refund', { crons: [WEEKDAYS_8], at: '2026-11-13T02:00:00.000Z', by_session: 's1', time_zone: ZONE }, { properties: { delegation: { agent: 'atlas', checkpoint: 'after' } } })
     const answer = await act({ action, job: 'Refund' })
     expect(answer).toMatchObject({ status: 200, schedule: null, text: 'Ended the schedule of "Refund": nothing wakes it any more. The task stays open; a new time (update with cron or at) brings its schedule back.' })
-    // The delegation is written whole without its schedule; agent and checkpoint stay.
+    // The schedule is ended on its own: the delegation is not written and stays as it is.
     expect(world.main.posts).toEqual([{ path: `/task/${task.id}/track`, body: {
-      delegation: { agent: 'atlas', checkpoint: 'after' },
+      schedule: null,
       text: 'Its schedule (0 8 * * 1-5 (Asia/Makassar), wake-up 2026-11-13T02:00:00.000Z) was ended with the schedule tool: nothing wakes it any more. The task stays open.',
     } }])
     expect(world.main.tasks.get(task.id)!.status).toBe('active')
+    expect(world.main.tasks.get(task.id)!.properties?.delegation).toEqual({ agent: 'atlas', checkpoint: 'after' })
     // Ending what has ended is safe, and a new time brings the schedule back.
     expect(await act({ action, job: task.id })).toMatchObject({ status: 200, text: '"Refund" has no schedule: nothing to end.' })
     expect((await act({ action: 'update', job: task.id, at: '2026-11-18T09:00' })).schedule).toMatchObject({ at: '2026-11-18T01:00:00.000Z' })
@@ -683,14 +776,14 @@ describe('a limited task\'s session looking after its own schedule', () => {
     const woken = await act({ action: 'update', job: own.id, at: '2026-11-11T09:00', goal: 'Refund on the card' }, session)
     expect(woken.status, woken.text).toBe(200)
     // It continues itself then: it is the session on the task.
-    expect(world.main.schedule(own.id)).toEqual({ at: '2026-11-11T01:00:00.000Z', by_session: 'run-session', time_zone: ZONE })
+    expect(world.main.schedule(own.id)).toEqual({ at: '2026-11-11T01:00:00.000Z', by: 'atlas', by_session: 'run-session', time_zone: ZONE })
     expect(world.main.tasks.get(own.id)!.properties?.goal).toBe('Refund on the card')
     expect(world.store.get(own.id)!.triggers.map((t) => t.type)).toEqual(['mail'])
 
     // It can read its wake-up in another zone, and never moves the zone of the task's repeating times with it.
-    world.main.tasks.get(own.id)!.properties!.delegation = { agent: 'atlas', schedule: { crons: [WEEKDAYS_8], time_zone: ZONE } }
+    world.main.tasks.get(own.id)!.properties!.schedule = { crons: [WEEKDAYS_8], time_zone: ZONE }
     expect((await act({ action: 'update', job: own.id, at: '2026-11-11T09:00', timezone: 'Europe/Berlin' }, session)).status).toBe(200)
-    expect(world.main.schedule(own.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-11T08:00:00.000Z', by_session: 'run-session', time_zone: ZONE })
+    expect(world.main.schedule(own.id)).toEqual({ crons: [WEEKDAYS_8], at: '2026-11-11T08:00:00.000Z', by: 'atlas', by_session: 'run-session', time_zone: ZONE })
     expect((await act({ action: 'update', job: own.id, timezone: 'Europe/Berlin' }, session)).status).toBe(400)
     expect(world.main.schedule(own.id)?.time_zone).toBe(ZONE)
 

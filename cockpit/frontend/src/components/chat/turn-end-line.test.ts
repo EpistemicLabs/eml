@@ -22,7 +22,7 @@ const line = (input: Record<string, unknown>, context: TurnEndContext = ctx) => 
 
 describe('turnEndOfTool', () => {
   it('reads end_turn and session_status, with or without the server prefix', () => {
-    expect(turnEndOfTool({ name: 'end_turn', input: { result: 'Shipped' } })).toMatchObject({ kind: 'end_turn', result: 'Shipped', next: null, questions: [], failed: null });
+    expect(turnEndOfTool({ name: 'end_turn', input: { result: 'Shipped' } })).toMatchObject({ kind: 'end_turn', result: 'Shipped', ask: null, check: null, next: null, questions: [], failed: null });
     expect(turnEndOfTool({ name: 'mcp__cockpit__session_status', input: { status: 'review', reason: 'Look' } })).toEqual({ kind: 'session_status', status: 'review', reason: 'Look' });
   });
 
@@ -40,7 +40,15 @@ describe('turnEndOfTool', () => {
   });
 
   it('drops what is not as the tool takes it: a next without who, empty questions', () => {
-    expect(call({ result: 'x', next: { what: 'look' }, questions: ['', 3, ' One? '], failed: ' ' })).toEqual({ kind: 'end_turn', result: 'x', next: null, questions: ['One?'], failed: null, savedAt: null });
+    expect(call({ result: 'x', next: { what: 'look' }, questions: ['', 3, ' One? '], failed: ' ' })).toEqual({ kind: 'end_turn', result: 'x', ask: null, check: null, next: null, questions: ['One?'], failed: null, savedAt: null });
+  });
+
+  it('reads ask and check: a kind it does not know is no kind, a check without a when is none given, "none" removes', () => {
+    expect(call({ result: 'x', ask: { who: ' kim ', what: 'Sign', kind: 'DO', due: '2026-11-27' }, check: { when: '2026-11-26T10:00', why: 'See' } })).toMatchObject({
+      ask: { who: 'kim', what: 'Sign', kind: 'do', due: '2026-11-27' }, check: { when: '2026-11-26T10:00', why: 'See' },
+    });
+    expect(call({ result: 'x', ask: { who: 'kim', kind: 'later' }, check: { why: 'See' } })).toMatchObject({ ask: { who: 'kim', what: '', kind: null, due: null }, check: null });
+    expect(call({ result: 'x', ask: { what: 'Sign' }, check: 'none' })).toMatchObject({ ask: null, check: 'none' });
   });
 });
 
@@ -54,9 +62,9 @@ describe('the line of an end_turn call', () => {
     expect(line({ result: 'Half done', questions: ['A?', 'B?', 'C?'] })).toBe('Inbox · 3 questions');
   });
 
-  it('the owner next is a review of the result', () => {
+  it('the owner next is a review of the result; with a when it is their own step and the agent checks back (as the host reads it)', () => {
     expect(line({ result: 'Draft is ready', next: { who: 'kim', what: 'Read the draft' } })).toBe('Review · Draft is ready');
-    expect(line({ result: 'Draft is ready', next: { who: '@Kim', what: 'Read the draft', when: '2026-11-26T10:00' } })).toBe('Review · Draft is ready');
+    expect(line({ result: 'Draft is ready', next: { who: '@Kim', what: 'Read the draft', when: '2026-11-26T10:00' } })).toBe('Your move · Read the draft · checks tomorrow 10:00');
     expect(line({ result: '', next: { who: 'kim', what: 'Read the draft' } })).toBe('Review · Read the draft');
   });
 
@@ -114,6 +122,42 @@ describe('the line of an end_turn call', () => {
     const unknown = { now: NOW, owner: 'kim' };
     expect(line({ result: 'Runs', next: { who: 'self', what: 'Check', when: '2026-11-26T10:00' } }, unknown)).toBe('Check scheduled · tomorrow 10:00');
     expect(line({ result: 'Runs', next: { who: 'nova', what: 'Check', when: '2026-11-26T10:00' } }, unknown)).toBe('Waiting on Nova · Check · checks tomorrow 10:00');
+  });
+});
+
+describe('the line of an end_turn call with ask and check (0.25)', () => {
+  it('the owner\'s own step is Your move, with its what (else the result), and the check beside it', () => {
+    expect(line({ result: 'Offer drafted', ask: { who: 'kim', what: 'Send the offer to Acme', kind: 'do' } })).toBe('Your move · Send the offer to Acme');
+    expect(line({ result: 'Offer drafted', ask: { who: 'user', what: '', kind: 'do' } })).toBe('Your move · Offer drafted');
+    expect(line({ result: 'Offer drafted', ask: { who: 'kim', what: 'Send the offer', kind: 'do' }, check: { when: '2026-11-26T10:00', why: 'Did Acme answer?' } }))
+      .toBe('Your move · Send the offer · checks tomorrow 10:00');
+  });
+
+  it('the owner asked for a review (or with no kind) is Review of the result', () => {
+    expect(line({ result: 'Draft is ready', ask: { who: 'kim', what: 'Read the draft', kind: 'review' } })).toBe('Review · Draft is ready');
+    expect(line({ result: 'Draft is ready', ask: { who: 'owner', what: 'Read the draft' } })).toBe('Review · Draft is ready');
+    expect(line({ result: 'Draft is ready', ask: { who: 'kim', kind: 'review' }, check: { when: '2026-11-27T10:00', why: 'Merge it' } })).toBe('Review · Draft is ready · checks Fri 10:00');
+  });
+
+  it('anyone else is a wait on them, with the check when one is set', () => {
+    expect(line({ result: 'Sent', ask: { who: 'sam', what: 'Approve the budget' }, check: { when: '2026-11-26T10:00', why: 'x' } })).toBe('Waiting on Sam · Approve the budget · checks tomorrow 10:00');
+    expect(line({ result: 'Sent', ask: { who: 'outside:Acme GmbH', what: 'Sign' } })).toBe('Waiting on Acme GmbH · Sign');
+  });
+
+  it('a check alone is a scheduled check; check none or no check without an ask is done', () => {
+    expect(line({ result: 'Deploy runs', check: { when: '2026-11-25T15:30', why: 'Is it up?' } })).toBe('Check scheduled · 15:30');
+    expect(line({ result: 'Merged', check: 'none' })).toBe('Done · Merged');
+    expect(line({ result: 'Merged', ask: { who: 'kim', what: 'Look', kind: 'do' }, check: 'none' })).toBe('Your move · Look');
+  });
+
+  it('ask and check win over an older next sent along', () => {
+    expect(line({ result: 'Sent', ask: { who: 'kim', what: 'Call Acme', kind: 'do' }, next: { who: 'sam', what: 'x', when: '2026-11-26T10:00' } })).toBe('Your move · Call Acme');
+  });
+
+  it('shows the instant the host saved for the check, from the tool\'s answer with its state echo', () => {
+    const answer = 'Recorded: you look again at 2026-11-25T20:15 (Asia/Bangkok, 2026-11-25T13:15Z). The task now — Lifecycle: active. Check: 2026-11-25T13:15Z.';
+    const saved = turnEndOfTool({ name: 'mcp__cockpit__end_turn', input: { result: 'Sent', ask: { who: 'kim', what: 'Sign', kind: 'do' }, check: { when: '2026-11-25T20:15', why: 'x' } }, status: 'completed', output: answer });
+    expect(text(saved!, { ...ctx, now: Date.parse('2026-11-25T10:00:00Z'), zone: 'UTC' })).toBe('Your move · Sign · checks 13:15');
   });
 });
 

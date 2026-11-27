@@ -108,12 +108,14 @@ describe('task router', () => {
   })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
 
+  /** The task's owner in these tests: the one an ask for the user names. */
+  const OWNER = 'lasse'
   const setup = (task: Record<string, unknown>, space: { shared: boolean; agent?: string } = { shared: false }, handles: string[] = []) => {
     const ledger = new SessionLedger()
     const brain = fakeBrain(task)
     const logs: string[] = []
     const r = router.createTaskRouter({
-      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: 'lasse', handles: async () => handles,
+      ledger, spaces: { resolve: () => space as never }, brain: () => brain, owner: OWNER, handles: async () => handles,
       log: (l) => logs.push(l), now: () => new Date('2026-11-17T09:00:00Z'),
     })
     return { ledger, brain, r, logs }
@@ -176,6 +178,11 @@ describe('task router', () => {
       ['a failure stops on the owner', { result: 'Stuck', failed: 'No access to the shop', next: { who: 'dominik', what: 'x' } }, {}, { who: 'lasse', kind: 'stopped', why: 'No access to the shop' }],
       ['its own next step at a time waits on nobody', { result: 'Mail sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } }, {}, null],
       ['nothing next waits on nobody', { result: 'All done' }, { checkpoint: 'after' }, null],
+      ['an ask for the owner is a review', { result: 'Draft ready', ask: { who: 'user', what: 'read the draft' } }, {}, { who: OWNER, kind: 'review', why: 'read the draft' }],
+      ['a do ask for the owner is their move, with its due', { result: 'Form ready', ask: { who: 'user', what: 'sign the form', kind: 'do', due: '2026-11-28' } }, {}, { who: OWNER, kind: 'do', why: 'sign the form', due: '2026-11-28' }],
+      ['an ask for someone outside with a check is an outside wait', { result: 'Mail sent', ask: { who: 'outside:Acme', what: 'answer' }, check: { when: '2026-11-27T10:00', why: 'answered?' } }, {}, { who: 'Acme', kind: 'outside', why: 'answer' }],
+      ['an ask for someone outside without a check is no wait', { result: 'Mail sent', ask: { who: 'outside:Acme', what: 'answer' } }, {}, null],
+      ['a check alone waits on nobody', { result: 'Mail sent', check: { when: '2026-11-27T10:00', why: 'look again' } }, {}, null],
     ])('%s', async (_row, call, properties, expected) => {
       const { brain, r } = called(properties)
       await r.turnEnded('s-c', 'The reply, without a block.', call as never)
@@ -184,12 +191,19 @@ describe('task router', () => {
 
     it('writes the call into the journal as its block, once, and takes the call over a block in the reply', async () => {
       const { brain, r } = called()
-      const call = { result: 'Mail sent to Acme', checked: 'the address', decided: 'no reminder', next: { who: 'me', what: 'look for the answer', when: '2026-11-27T10:00' } }
+      const call = { result: 'Mail sent to Acme', checked: 'the address', decided: 'no reminder', ask: { who: 'outside:Acme', what: 'answer the mail' }, check: { when: '2026-11-27T10:00', why: 'look for the answer' } }
       await r.turnEnded('s-c', HANDOFF, call)
       await r.turnEnded('s-c', HANDOFF, call)
       expect(brain.posts).toEqual([{ path: '/task/t-c/track', body: {
-        text: '### Handoff\nResult: Mail sent to Acme\nChecked: the address\nDecided: no reminder\nNext: [atlas] look for the answer @ 2026-11-27T10:00',
+        text: '### Handoff\nResult: Mail sent to Acme\nChecked: the address\nDecided: no reminder\nAsk: [outside:Acme] answer the mail\nCheck: 2026-11-27T10:00 · look for the answer',
+        waits: [wait({ who: 'Acme', kind: 'outside', why: 'answer the mail' })],
       } }])
+    })
+
+    it('writes an older call\'s next into the journal as the check it stands for', async () => {
+      const { brain, r } = called()
+      await r.turnEnded('s-c', '', { result: 'Mail sent to Acme', next: { who: 'me', what: 'look for the answer', when: '2026-11-27T10:00' } })
+      expect(brain.posts).toEqual([{ path: '/task/t-c/track', body: { text: '### Handoff\nResult: Mail sent to Acme\nCheck: 2026-11-27T10:00' } }])
     })
 
     it('a call replaces the wait of the session\'s last call and keeps another session\'s', async () => {
@@ -241,6 +255,9 @@ describe('task router', () => {
       ['the owner', 'Next: [lasse] read it', { who: 'lasse', kind: 'review', why: 'read it' }],
       ['the agent itself', 'Next: [atlas] look again @ 2026-11-27T10:00', null],
       ['nobody', 'Next: review by Lasse', null],
+      ['an Ask for the owner, kind do', 'Ask: [user] sign it · do · due 2026-11-28', { who: OWNER, kind: 'do', why: 'sign it', due: '2026-11-28' }],
+      ['an Ask for a member with a Check', 'Ask: [dominik] sign it\nCheck: 2026-11-27T10:00 · signed?', { who: 'dominik', kind: 'outside', why: 'sign it' }],
+      ['an Ask for a member without a Check', 'Ask: [dominik] sign it', null],
     ])('%s', async (_who, next, expected) => {
       const { ledger, brain, r } = setup({ id: 't-b', status: 'active', properties: {} }, { shared: true, agent: 'atlas' }, ['lasse', 'dominik', 'atlas'])
       ledger.recordSpawn('s-b', null, 'bp-eml', 'claude', false, 't-b')

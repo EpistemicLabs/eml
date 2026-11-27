@@ -244,7 +244,7 @@ describe('the tools a terminal session gets', () => {
     expect(listed).toEqual(['term-1', 'term-2'])
     expect(delivered.map((r) => r.from)).toEqual(['eml-term-2'])
 
-    await call(two.client, 'end_turn', { result: 'Two is done', next: { who: 'atlas', what: 'Check it', when: '2026-11-25T10:00' } })
+    await call(two.client, 'end_turn', { result: 'Two is done', check: { when: '2026-11-25T10:00', why: 'Check it' } })
     expect(checks).toEqual([['term-2', '2026-11-25T10:00']])
 
     // Another session with the first one's MCP session id: the session is bound to its caller.
@@ -321,9 +321,9 @@ describe('a chat session whose agent CLI gets the tools here', () => {
 })
 
 describe('end_turn from a session in the terminal fallback', () => {
-  it('is answered, and sets the wake-up its next.when asks for, but nothing is routed: no turn routing there', async () => {
+  it('is answered, and sets the wake-up its check.when asks for, but nothing is routed: no turn routing there', async () => {
     const { client } = await connect('term-1')
-    const answer = await call(client, 'end_turn', { result: 'Waiting for the build', next: { who: 'atlas', what: 'Check the build', when: '2026-11-25T10:00' } })
+    const answer = await call(client, 'end_turn', { result: 'Waiting for the build', check: { when: '2026-11-25T10:00', why: 'Check the build' } })
     expect(answer.isError).toBe(false)
     expect(answer.text).toMatch(/^Recorded/)
     expect(checks).toEqual([['term-1', '2026-11-25T10:00']])
@@ -336,10 +336,10 @@ describe('end_turn from a session in the terminal fallback', () => {
     const { client } = await connect('term-1')
     const empty = await call(client, 'end_turn', { result: '   ' })
     expect([empty.isError, empty.text]).toEqual([true, expect.stringMatching(/^Not recorded: result is missing/)])
-    const noWho = await call(client, 'end_turn', { result: 'Done', next: { what: 'Review it' } })
-    expect([noWho.isError, noWho.text]).toEqual([true, expect.stringMatching(/^Not recorded: next\.who is missing/)])
-    const passed = await call(client, 'end_turn', { result: 'Waiting', next: { who: 'atlas', what: 'Check', when: '2026-11-24T10:00' } })
-    expect([passed.isError, passed.text]).toEqual([true, expect.stringMatching(/^Not recorded: next\.when "2026-11-24T10:00" has passed/)])
+    const noWho = await call(client, 'end_turn', { result: 'Done', ask: { what: 'Review it' } })
+    expect([noWho.isError, noWho.text]).toEqual([true, expect.stringMatching(/^Not recorded: ask\.who is missing/)])
+    const passed = await call(client, 'end_turn', { result: 'Waiting', check: { when: '2026-11-24T10:00', why: 'Check' } })
+    expect([passed.isError, passed.text]).toEqual([true, expect.stringMatching(/^Not recorded: check\.when "2026-11-24T10:00" has passed/)])
     expect(checks).toEqual([])
     await client.close()
   })
@@ -347,9 +347,9 @@ describe('end_turn from a session in the terminal fallback', () => {
   it('a task with a next run needs no time', async () => {
     taskHasNextRun = true
     const { client } = await connect('term-1')
-    const answer = await call(client, 'end_turn', { result: 'Asked Acme', next: { who: 'outside:acme', what: 'Answer the offer' } })
+    const answer = await call(client, 'end_turn', { result: 'Asked Acme', ask: { who: 'outside:acme', what: 'Answer the offer' } })
     expect(answer.isError).toBeFalsy()
-    expect(answer.text).not.toMatch(/next\.when/)
+    expect(answer.text).not.toMatch(/check\.when/)
     await client.close()
   })
 })

@@ -6,7 +6,6 @@ import { JobStore } from '../src/job-store.js'
 import { JobRunner, runProjectOf, type JobRunnerDeps, type RunnerSpace, type RunnerTask, type RunSessionState } from '../src/application/job-runner.js'
 import { newRecord, RECORD_GRACE_MS, type Job, type JobRun } from '../src/domain/job.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
-import { withSchedule } from '../src/domain/task-schedule.js'
 import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
 import type { WorkerStatus } from '../src/domain/session-attention.js'
 import { SCHEDULE_TASK_RULE } from '../src/domain/run-text.js'
@@ -72,7 +71,7 @@ class World {
     const { space = null, owner = ['member'], properties, ...rest } = patch
     const task: WorldTask = {
       id, title: `slug-${id}`, content: `Do the work of ${id}.`, status: 'active', scope: 'project.eml', ingested_by: 'member', space,
-      properties: { assignee_ids: owner, display_title: `Task ${id}`, ...(schedule ? { delegation: { agent: 'atlas', checkpoint: 'none', schedule } } : {}), ...properties },
+      properties: { assignee_ids: owner, display_title: `Task ${id}`, ...(schedule ? { delegation: { agent: 'atlas', checkpoint: 'none' }, schedule } : {}), ...properties },
       ...rest,
     }
     this.tasks.set(id, task)
@@ -84,13 +83,13 @@ class World {
   }
 
   scheduleOf(id: string): ScheduleFields | null {
-    return this.tasks.get(id)?.properties?.delegation?.schedule ?? null
+    return this.tasks.get(id)?.properties?.schedule ?? null
   }
 
   setSchedule(id: string, schedule: ScheduleFields | null): void {
     const task = this.tasks.get(id)!
-    const delegation = withSchedule(task.properties?.delegation ?? { agent: 'atlas' }, schedule)
-    this.patch(id, { properties: { ...task.properties, delegation } })
+    const { schedule: _old, ...rest } = task.properties ?? {}
+    this.patch(id, { properties: { ...rest, ...(schedule ? { schedule } : {}) } })
   }
 
   session(taskId: string, sessionId: string, working = false, linked = true): void {
@@ -403,7 +402,7 @@ describe('deriving what is due', () => {
     world.now = Date.parse('2026-11-09T06:00:30Z')
     await runner.tick()
     expect(world.started).toHaveLength(1)
-    expect(runs('mail')[0].fired).toEqual({ wake: { at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', bySession: null }, timeZone: ZONE })
+    expect(runs('mail')[0].fired).toEqual({ wake: { at: '2026-11-09T06:00:00.000Z', why: 'Check the reply.', by: null, bySession: null }, timeZone: ZONE })
     // approved after 18:00: that time is not made up; 22:00 fires
     const { pendingApproval: _ok, ...approved } = world.store.get('mail')!
     world.store.put(approved)
@@ -1006,7 +1005,7 @@ describe('the four-line order', () => {
     await runner.tick()
     // no skipped row, and the wake-up is still the task's
     expect(statuses('mixed')).toEqual(['waiting'])
-    expect(runs('mixed')[0].fired).toEqual({ crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], wake: { at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', bySession: 's-gone' }, timeZone: 'UTC' })
+    expect(runs('mixed')[0].fired).toEqual({ crons: [{ cron: '0 * * * *', dueAt: '2026-11-09T01:00:00.000Z' }], wake: { at: '2026-11-09T01:02:00.000Z', why: 'IMPORTANT follow-up.', by: null, bySession: 's-gone' }, timeZone: 'UTC' })
     expect(world.scheduleOf('mixed')?.at).toBe('2026-11-09T01:02:00.000Z')
     expect(world.store.get('mixed')?.firedWake).toBeNull()
     world.now += MIN
@@ -1053,6 +1052,8 @@ describe('the four-line order', () => {
     await firstSeenThen('2026-11-09T02:00:10Z')
     expect(statuses('once')).toEqual(['failed'])
     expect(world.scheduleOf('once')).toBeNull()
+    // the journal says the wake-up fired and why its run failed
+    expect(world.edits.find((e) => e.taskId === 'once')?.text).toBe('Wake-up fired: its run failed (the worker could not start: the task has no project to run in).')
     world.startProblem = null
     world.now += MIN
     await runner.tick()
@@ -1980,5 +1981,71 @@ describe('what the engine knows of a task', () => {
     expect(runner.held(record)).toBe(true)
     runner.resumed('daily')
     expect(runner.held(record)).toBe(false)
+  })
+})
+
+// Brain schema 25: a wake-up names who it is for (schedule.by). An agent's is a run on the task, and the journal says
+// which session it went to; a person's is a reminder: a do wait for them, the wake-up used up, no session started.
+describe('firing a wake-up by who it is for', () => {
+  const reminders: Array<{ taskId: string; at: string; who: string; why: string | null }> = []
+  const withRemind = () => new JobRunner(world.deps({
+    remind: async (_space, taskId, r) => {
+      reminders.push({ taskId, ...r })
+      world.setSchedule(taskId, null)
+    },
+  }))
+  beforeEach(() => { reminders.length = 0 })
+
+  it('a person\'s wake-up is a reminder: it calls remind, starts no session, is used up on the record and recorded', async () => {
+    runner = withRemind()
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('call', { at: '2026-11-09T02:00:00.000Z', why: 'Call the vendor.', by: 'member' })
+    await runner.tick()
+    expect(reminders).toEqual([{ taskId: 'call', at: '2026-11-09T02:00:00.000Z', who: 'member', why: 'Call the vendor.' }])
+    expect(world.started).toEqual([])
+    expect(world.store.get('call')?.firedWake).toBe('2026-11-09T02:00:00.000Z')
+    expect(runs('call').map((r) => [r.status, r.note])).toEqual([['finished', 'a reminder for member: it is in their Inbox']])
+    expect(world.alerts.some((a) => a.includes('Reminder: Call the vendor.'))).toBe(true)
+    // a later pass fires nothing more
+    world.now += 60_000
+    await runner.tick()
+    expect(reminders).toHaveLength(1)
+  })
+
+  it('a wake-up for one of the task\'s owners is a reminder too; one for an agent is a run', async () => {
+    runner = withRemind()
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('owned', { at: '2026-11-09T02:00:00.000Z', by: 'kim' }, { owner: ['kim'] })
+    world.task('agent', { at: '2026-11-09T02:00:00.000Z', by: 'atlas', why: 'Check the reply.' })
+    await runner.tick()
+    expect(reminders.map((r) => r.taskId)).toEqual(['owned'])
+    expect(statuses('agent')).toEqual(['started'])
+  })
+
+  it('an agent\'s wake-up journals that it started a new session when the one that set it is gone', async () => {
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('check', { at: '2026-11-09T02:00:00.000Z', by: 'atlas', by_session: 's-gone', why: 'Check the reply.' })
+    await runner.tick()
+    expect(statuses('check')).toEqual(['started'])
+    await Promise.resolve()
+    expect(world.edits.find((e) => e.taskId === 'check')?.text).toBe('Wake-up fired: atlas starts in a new session.')
+    expect(world.scheduleOf('check')).toBeNull()
+  })
+
+  it('an agent\'s wake-up journals that it continues the session that set it', async () => {
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('own', { at: '2026-11-09T02:00:00.000Z', by: 'atlas', by_session: 's-own', why: 'Check the reply.' })
+    world.session('own', 's-own')
+    await runner.tick()
+    await Promise.resolve()
+    expect(world.delivered.some((d) => d.sessionId === 's-own')).toBe(true)
+    expect(world.edits.find((e) => e.taskId === 'own')?.text).toBe('Wake-up fired: atlas continues the session that set it.')
+  })
+
+  it('without a remind port a person\'s wake-up fires as a run: never a silent no-op', async () => {
+    world.now = Date.parse('2026-11-09T05:00:00Z')
+    world.task('plain', { at: '2026-11-09T02:00:00.000Z', by: 'member' })
+    await runner.tick()
+    expect(statuses('plain')).toEqual(['started'])
   })
 })

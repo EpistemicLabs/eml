@@ -210,9 +210,11 @@ export interface TrackTaskInput {
   /** v0.22 task system: the one agent that works on the task (the owner stays in assignee_ids); null clears. */
   delegate?: string | null
   display_title?: string | null
-  /** v0.23: the hand-over as one value ({ agent, checkpoint?, requested_at?, schedule? }, see task-state.ts); mirrors delegate and checkpoint; null clears all three. */
+  /** v0.23: the hand-over as one value ({ agent, checkpoint?, requested_at? }, see task-state.ts); mirrors delegate and checkpoint; null clears all three. */
   delegation?: Record<string, unknown> | null
-  /** v0.23: everyone the task waits on ({ id, who, kind?, why?, since?, session_id? }); waiting_on follows the most urgent; null or [] clears both. */
+  /** v0.25: the task's schedule ({ crons?, at?, why?, by?, by_session?, time_zone?, paused?, ends_at? }, see task-state.ts); null ends it. */
+  schedule?: Record<string, unknown> | null
+  /** v0.23: everyone the task waits on ({ id, who, kind?, why?, since?, session_id?, snoozed_until?, due? }); waiting_on follows the most urgent; null or [] clears both. */
   waits?: Array<Record<string, string>> | null
 }
 /** What a track takes besides the task's id and base_rev. */

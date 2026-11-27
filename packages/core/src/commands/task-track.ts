@@ -85,7 +85,7 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
 
   // the typed fields this call sets (null clears an optional one)
   const fieldPatch: Record<string, unknown> = {}
-  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title', 'delegation', 'waits'] as const) {
+  for (const k of ['intent', 'context', 'priority', 'assignee_ids', 'due_date', 'blockers', 'stage', 'depends_on', 'checkpoint', 'waiting_on', 'goal', 'delegate', 'display_title', 'delegation', 'schedule', 'waits'] as const) {
     if (input[k] !== undefined) fieldPatch[k] = input[k]
   }
   if (input.outcome !== undefined) fieldPatch.outcome = input.outcome
@@ -216,11 +216,14 @@ function trackTask(ctx: CommandContext, id: string, input: TrackTaskInput): Stor
     change(`waits → ${waits.length > 0 ? waits.map(w => `${w.who} · ${w.kind ?? 'wait'}`).join(', ') : 'none'}`)
   }
   if (props.delegate !== old.delegate) change(`delegate ${show(old.delegate)} → ${show(props.delegate)}`)
-  const was = old.delegation as { requested_at?: string, schedule?: Record<string, unknown> } | undefined
-  const now = props.delegation as { requested_at?: string, schedule?: Record<string, unknown> } | undefined
+  const was = old.delegation as { requested_at?: string } | undefined
+  const now = props.delegation as { requested_at?: string } | undefined
   if (was?.requested_at !== now?.requested_at) change(now?.requested_at !== undefined ? 'delegation requested' : 'delegation request cleared')
   // v0.24: a schedule whose times stay as they are (only the wake-up's reason or session changed) reads the same and gets no entry
-  if (scheduleText(was?.schedule) !== scheduleText(now?.schedule)) change(`schedule ${scheduleText(was?.schedule)} → ${scheduleText(now?.schedule)}`)
+  // v0.25: the schedule is the task's own field; a new owner of the wake-up (by) is a change
+  const wasSchedule = old.schedule as Record<string, unknown> | undefined
+  const nowSchedule = props.schedule as Record<string, unknown> | undefined
+  if (scheduleText(wasSchedule) !== scheduleText(nowSchedule)) change(`schedule ${scheduleText(wasSchedule)} → ${scheduleText(nowSchedule)}`)
   if (input.goal !== undefined && (input.goal ?? undefined) !== old.goal) change(input.goal === null ? 'goal cleared' : old.goal === undefined ? 'goal set' : 'goal changed')
   if (input.intent !== undefined && (input.intent ?? undefined) !== old.intent) change(input.intent === null ? 'intent cleared' : old.intent === undefined ? 'intent set' : 'intent changed')
   if (input.context !== undefined && (input.context ?? undefined) !== old.context) change('context changed')
@@ -284,12 +287,13 @@ function closedWithTask(ctx: CommandContext, taskId: string): BoundItem[] {
 /**
  * v0.24: a schedule as one journal word group — "crons <rule>; <rule> (<time zone>)",
  * "at <time>" and "ends <time>" as far as it has them, paused marked; "none" without one.
+ * v0.25: the wake-up names who it is for ("at <time> by <handle>").
  */
 export function scheduleText(s: Record<string, unknown> | undefined): string {
   if (!s) return 'none'
   const parts: string[] = []
   if (Array.isArray(s.crons) && s.crons.length > 0) parts.push(`crons ${s.crons.join('; ')}${s.time_zone ? ` (${String(s.time_zone)})` : ''}`)
-  if (s.at !== undefined) parts.push(`at ${String(s.at)}`)
+  if (s.at !== undefined) parts.push(`at ${String(s.at)}${s.by !== undefined ? ` by ${String(s.by)}` : ''}`)
   if (s.ends_at !== undefined) parts.push(`ends ${String(s.ends_at)}`)
   return `${parts.join(', ')}${s.paused === true ? ' (paused)' : ''}`
 }

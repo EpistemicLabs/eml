@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   addCron, clearWake, cronRefusal, cronZoneRefusal, dueOf, hasSchedule, nextRunOfSchedule, removeCron, runComingAt, sameInstant, sameSchedule, scheduleIsOff, scheduleOf, ScheduleError,
-  scheduleText, setCrons, setEndsAt, setPaused, setWake, withSchedule,
+  scheduleText, setCrons, setEndsAt, setPaused, setWake, storedSchedule,
+  isReminder, wakeOwnerText,
 } from '../src/domain/task-schedule.js'
 import type { ScheduleFields } from '../src/domain/delegation.js'
 
@@ -12,13 +13,17 @@ const NOW = at('2026-11-25T10:00:00.000Z')
 const daily: ScheduleFields = { crons: ['0 8 * * *'], time_zone: 'UTC' }
 
 describe('a task has a schedule', () => {
-  const task = (schedule?: ScheduleFields | null) => ({ properties: { delegation: { agent: 'atlas', ...(schedule ? { schedule } : {}) } } })
-  it('when its delegation holds a repeating time or a wake-up: the task is the truth', () => {
+  const task = (schedule?: ScheduleFields | null) => ({ properties: { ...(schedule ? { schedule } : {}) } })
+  it('when its schedule holds a repeating time or a wake-up: the task is the truth', () => {
     expect(hasSchedule(task(daily))).toBe(true)
     expect(hasSchedule(task({ at: '2026-11-26T02:00:00.000Z' }))).toBe(true)
     expect(hasSchedule(task())).toBe(false)
     expect(hasSchedule({})).toBe(false)
     expect(hasSchedule({ properties: null })).toBe(false)
+  })
+  it('a schedule left in the delegation (before schema 25) is not read: the task\'s own field is the only place', () => {
+    expect(hasSchedule({ properties: { delegation: { agent: 'atlas', schedule: daily } } } as never)).toBe(false)
+    expect(scheduleOf({ properties: { delegation: { agent: 'atlas' }, schedule: daily } } as never)).toEqual(daily)
   })
   it('also a paused one, one past its end and one whose wake-up has passed: only ending it takes it off', () => {
     expect(hasSchedule(task({ ...daily, paused: true }))).toBe(true)
@@ -75,7 +80,7 @@ describe('what of a schedule is due', () => {
     expect(dueOf(schedule, { cursor }, NOW, LATE)).toEqual({
       firing: {
         dueAt: '2026-11-25T08:00:00.000Z',
-        wake: { at: '2026-11-25T09:00:00.000Z', why: 'Check the reply', bySession: 's1' },
+        wake: { at: '2026-11-25T09:00:00.000Z', why: 'Check the reply', by: null, bySession: 's1' },
         crons: [{ cron: '0 8 * * *', dueAt: '2026-11-25T08:00:00.000Z' }, { cron: '30 9 * * *', dueAt: '2026-11-25T09:30:00.000Z' }],
       },
       missed: [], cursor: '2026-11-25T10:00:00.000Z',
@@ -97,7 +102,7 @@ describe('what of a schedule is due', () => {
   it('the wake-up fires once its time has come, however late and whatever the cursor, and only once', () => {
     const wake: ScheduleFields = { at: '2026-11-20T09:00:00.000Z', why: 'Look again' }
     expect(dueOf(wake, {}, NOW, LATE)).toEqual({
-      firing: { dueAt: '2026-11-20T09:00:00.000Z', wake: { at: '2026-11-20T09:00:00.000Z', why: 'Look again', bySession: null }, crons: [] },
+      firing: { dueAt: '2026-11-20T09:00:00.000Z', wake: { at: '2026-11-20T09:00:00.000Z', why: 'Look again', by: null, bySession: null }, crons: [] },
       missed: [], cursor: '2026-11-25T10:00:00.000Z',
     })
     // the write that clears it failed: the one fired last does not fire again, in whatever form its time is written
@@ -140,7 +145,7 @@ describe('what of a schedule is due', () => {
     expect(runComingAt(ended, {}, NOW, LATE)).toBe('2026-11-27T02:00:00.000Z')
     // its time has come, long after the end: it fires, alone
     const then = Date.parse('2026-11-27T02:00:30.000Z')
-    expect(dueOf(ended, { cursor }, then, LATE).firing).toEqual({ dueAt: '2026-11-27T02:00:00.000Z', wake: { at: '2026-11-27T02:00:00.000Z', why: 'Look again', bySession: null }, crons: [] })
+    expect(dueOf(ended, { cursor }, then, LATE).firing).toEqual({ dueAt: '2026-11-27T02:00:00.000Z', wake: { at: '2026-11-27T02:00:00.000Z', why: 'Look again', by: null, bySession: null }, crons: [] })
     // fired and off the task: nothing is left
     expect(nextRunOfSchedule({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, then)).toBeNull()
     // "off" speaks of the repeating times: past the end they are, with a wake-up still to fire or without
@@ -176,11 +181,16 @@ describe('editing a schedule', () => {
     expect(clearWake({ at: '2026-11-26T02:00:00.000Z', why: 'x', time_zone: 'UTC' })).toBeNull()
     expect(clearWake(null)).toBeNull()
   })
-  it('clearing it for one session only clears a wake-up that session set', () => {
-    expect(clearWake(full, { onlyBySession: 's2' })).toEqual(full)
-    expect(clearWake(full, { onlyBySession: 's1' })?.at).toBeUndefined()
-    // one nobody's session set is not that session's
-    expect(clearWake({ at: '2026-11-26T02:00:00.000Z' }, { onlyBySession: 's1' })).toEqual({ at: '2026-11-26T02:00:00.000Z' })
+  it('clearing takes who the wake-up was for along; nothing clears it for one session only any more', () => {
+    expect(clearWake({ ...full, by: 'atlas' })).toEqual({ crons: ['0 8 * * *'], time_zone: 'Europe/Berlin', paused: true, ends_at: '2027-01-01T00:00:00.000Z' })
+    expect(clearWake({ at: '2026-11-26T02:00:00.000Z', by: 'atlas', by_session: 's1' })).toBeNull()
+  })
+  it('the wake-up names who it is for; setting it again without one drops the old one', () => {
+    expect(setWake(null, { at: '2026-11-27T02:00:00Z', why: 'Look again', by: 'atlas', bySession: 's2' })).toEqual({ at: '2026-11-27T02:00:00.000Z', why: 'Look again', by: 'atlas', by_session: 's2' })
+    expect(setWake({ at: '2026-11-26T02:00:00.000Z', by: 'atlas' }, { at: '2026-11-27T02:00:00Z' })).toEqual({ at: '2026-11-27T02:00:00.000Z' })
+    // by, why and by_session belong to the wake-up: without one they are dropped
+    expect(storedSchedule({ crons: ['0 8 * * *'], why: 'x', by: 'atlas', by_session: 's1' })).toEqual({ crons: ['0 8 * * *'] })
+    expect(dueOf({ at: '2026-11-25T09:00:00.000Z', by: 'lena' }, {}, NOW, LATE).firing?.wake).toEqual({ at: '2026-11-25T09:00:00.000Z', why: null, by: 'lena', bySession: null })
   })
   it('adding a repeating time checks it, adds it once and keeps everything else', () => {
     expect(addCron(null, '0 8 * * 1-5', 'Europe/Berlin')).toEqual({ crons: ['0 8 * * 1-5'], time_zone: 'Europe/Berlin' })
@@ -253,14 +263,13 @@ describe('a repeating time that cannot be taken', () => {
   })
 })
 
-describe('a schedule in a delegation and in words', () => {
-  it('the delegation carries a schedule along unchanged, or loses it with null', () => {
-    const d = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T00:00:00.000Z', schedule: daily }
-    expect(withSchedule(d, { at: '2026-11-26T02:00:00Z' })).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T00:00:00.000Z', schedule: { at: '2026-11-26T02:00:00.000Z' } })
-    expect(withSchedule(d, null)).toEqual({ agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T00:00:00.000Z' })
-    expect(withSchedule({ agent: 'atlas' }, daily)).toEqual({ agent: 'atlas', schedule: daily })
+describe('a schedule as stored and in words', () => {
+  it('is stored with its keys in order and its times in one form, or as null when it has no time', () => {
+    expect(storedSchedule({ at: '2026-11-26T02:00:00Z', crons: ['0 8 * * *'] })).toEqual({ crons: ['0 8 * * *'], at: '2026-11-26T02:00:00.000Z' })
+    expect(Object.keys(storedSchedule({ time_zone: 'UTC', by: 'atlas', at: '2026-11-26T02:00:00Z', crons: ['0 8 * * *'] })!)).toEqual(['crons', 'at', 'by', 'time_zone'])
     // a schedule without a time is none: the brain refuses crons: []
-    expect(withSchedule(d, { crons: [], paused: true })).not.toHaveProperty('schedule')
+    expect(storedSchedule({ crons: [], paused: true })).toBeNull()
+    expect(storedSchedule(null)).toBeNull()
   })
   it('two schedules are the same whatever the key order or the form of their times', () => {
     expect(sameSchedule({ at: '2026-11-26T02:00:00Z', crons: ['0 8 * * *'] }, { crons: ['0 8 * * *'], at: '2026-11-26T02:00:00.000Z' })).toBe(true)
@@ -272,6 +281,7 @@ describe('a schedule in a delegation and in words', () => {
   })
   it('reads as one line', () => {
     expect(scheduleText({ crons: ['0 13 * * 1-5', '0 18,22 * * 1-5'], at: '2026-11-27T02:00:00.000Z', time_zone: 'Asia/Makassar', paused: true })).toBe('0 13 * * 1-5; 0 18,22 * * 1-5 (Asia/Makassar), wake-up 2026-11-27T02:00:00.000Z, paused')
+    expect(scheduleText({ at: '2026-11-27T02:00:00.000Z', by: 'atlas' })).toBe('wake-up 2026-11-27T02:00:00.000Z for atlas')
     expect(scheduleText(null)).toBe('none')
   })
 })
@@ -337,5 +347,24 @@ describe('when a task is started next for its schedule, as this cockpit knows it
     expect(runComingAt({ at: '2026-11-25T09:30:00.000Z', paused: true }, {}, NOW, LATE)).toBeNull()
     expect(runComingAt({ ...daily, ends_at: '2026-11-25T09:00:00.000Z' }, {}, NOW, LATE)).toBeNull()
     expect(runComingAt(null, {}, NOW, LATE)).toBeNull()
+  })
+})
+
+describe('whose a wake-up is: one rule for firing, the schedule tool and the end_turn answer', () => {
+  const people = { me: 'dev-user', owners: ['dev-user', 'kim'] }
+  it('is a person\'s reminder for this cockpit\'s member and for any owner of the task', () => {
+    expect(isReminder('dev-user', people)).toBe(true)
+    expect(isReminder('kim', people)).toBe(true)
+    expect(isReminder('kim', { me: 'dev-user' })).toBe(false)
+  })
+  it('is an agent\'s run for anyone else, and for a wake-up that names nobody', () => {
+    expect(isReminder('atlas', people)).toBe(false)
+    expect(isReminder(undefined, people)).toBe(false)
+    expect(isReminder(null, people)).toBe(false)
+  })
+  it('is phrased the same everywhere', () => {
+    expect(wakeOwnerText('kim', people)).toBe('a reminder for kim')
+    expect(wakeOwnerText('atlas', people)).toBe('atlas checks back')
+    expect(wakeOwnerText(undefined, people)).toBe('the agent checks back')
   })
 })

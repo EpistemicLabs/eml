@@ -289,7 +289,7 @@ describe('session task', () => {
     const worker = await tasks.context('worker-dw')
     expect(worker).toContain('Goal: Kim confirmed the cancellation is withdrawn')
     expect(worker).toContain('## Until it is done')
-    expect(worker).toContain('name yourself as next, with the time you look again')
+    expect(worker).toContain('set a check with the time you look again (check.when)')
     // The user's own session on the handed-over task reads them too; a worker on a task that is not handed over does not.
     expect(await tasks.context(id(8))).toContain('## Until it is done')
     const none = await tasks.context('worker-none')

@@ -479,11 +479,13 @@ describe('ChatBridge', () => {
 
     it.each<[string, EndTurn, { kind: string; reason: string }]>([
       ['failed', { result: 'Stuck at the login', failed: 'No access to the shop' }, { kind: 'failed', reason: 'No access to the shop' }],
-      ['questions', { result: 'Draft ready', questions: ['Send it today?', 'To whom?'], next: { who: 'atlas', what: 'send', when: '2026-11-27T10:00' } }, { kind: 'question', reason: 'Send it today?' }],
-      ['the owner next', { result: 'Draft ready', next: { who: 'lasse', what: 'read the draft' } }, { kind: 'review', reason: 'Draft ready' }],
-      ['another member next', { result: 'Draft ready', next: { who: 'dominik', what: 'sign it' } }, { kind: 'done', reason: 'Draft ready' }],
-      ['someone outside next', { result: 'Mail sent', next: { who: 'outside:Acme', what: 'answer the mail' } }, { kind: 'done', reason: 'Mail sent' }],
-      ['itself next, at a time', { result: 'Mail sent', next: { who: 'atlas', what: 'look for the answer', when: '2026-11-27T10:00' } }, { kind: 'done', reason: 'Mail sent' }],
+      ['questions', { result: 'Draft ready', questions: ['Send it today?', 'To whom?'], check: { when: '2026-11-27T10:00', why: 'send' } }, { kind: 'question', reason: 'Send it today?' }],
+      ['an ask for the owner', { result: 'Draft ready', ask: { who: 'user', what: 'read the draft' } }, { kind: 'review', reason: 'Draft ready' }],
+      ['a do ask for the owner', { result: 'Form ready', ask: { who: 'user', what: 'sign the form', kind: 'do' } }, { kind: 'review', reason: 'Form ready' }],
+      ['an ask for another member', { result: 'Draft ready', ask: { who: 'dominik', what: 'sign it' } }, { kind: 'done', reason: 'Draft ready' }],
+      ['an ask for someone outside', { result: 'Mail sent', ask: { who: 'outside:Acme', what: 'answer the mail' } }, { kind: 'done', reason: 'Mail sent' }],
+      ['a check alone', { result: 'Mail sent', check: { when: '2026-11-27T10:00', why: 'look for the answer' } }, { kind: 'done', reason: 'Mail sent' }],
+      ['the older next, itself at a time', { result: 'Mail sent', next: { who: 'atlas', what: 'look for the answer', when: '2026-11-27T10:00' } }, { kind: 'done', reason: 'Mail sent' }],
       ['nothing next', { result: 'All done' }, { kind: 'done', reason: 'All done' }],
     ])('a call with %s sets the session\'s attention', async (_row, call, expected) => {
       const { worker, attention } = started()
@@ -502,40 +504,49 @@ describe('ChatBridge', () => {
     it('answers with what the call lacks', async () => {
       const { worker } = started()
       expect(await worker.endTurn({ result: 'Half way' })).toMatchObject({ missing: ['next'] })
-      // A step for anyone but the owner needs the time the agent looks again.
-      for (const who of ['me', 'dominik', 'outside:Acme']) expect(await worker.endTurn({ result: 'Half way', next: { who, what: 'go on' } }), who).toMatchObject({ missing: ['when'] })
-      expect(await worker.endTurn({ result: 'Half way', next: { who: 'dominik', what: 'go on', when: '2026-11-27T10:00' } })).toMatchObject({ missing: [] })
-      expect(await worker.endTurn({ result: 'Half way', next: { who: 'lasse', what: 'decide' } })).toMatchObject({ missing: [] })
+      // An ask for anyone but the owner needs a check.
+      for (const who of ['dominik', 'outside:Acme']) expect(await worker.endTurn({ result: 'Half way', ask: { who, what: 'go on' } }), who).toMatchObject({ missing: ['when'] })
+      expect(await worker.endTurn({ result: 'Half way', ask: { who: 'dominik', what: 'go on' }, check: { when: '2026-11-27T10:00', why: 'see' } })).toMatchObject({ missing: [] })
+      expect(await worker.endTurn({ result: 'Half way', ask: { who: 'user', what: 'decide' } })).toMatchObject({ missing: [] })
+      expect(await worker.endTurn({ result: 'Half way', check: { when: '2026-11-27T10:00', why: 'see' } })).toMatchObject({ missing: [] })
+      // The older next for itself without a time names nothing: the open task lacks who moves next.
+      expect(await worker.endTurn({ result: 'Half way', next: { who: 'me', what: 'go on' } })).toMatchObject({ missing: ['next'] })
+      expect(await worker.endTurn({ result: 'Half way', next: { who: 'dominik', what: 'go on' } })).toMatchObject({ missing: ['when'] })
     })
 
     it('refuses a call whose time has passed: nothing is recorded, no wake-up is asked for', async () => {
       const checks: unknown[] = []
       const { worker, attention } = started({ turnWake: async (_id, wake) => { checks.push(wake.edit); return { problem: null, saved: null, nextRun: false } } })
+      await expect(worker.endTurn({ result: 'Sent', check: { when: '2026-11-25T07:59', why: 'look again' } }))
+        .rejects.toThrow('check.when "2026-11-25T07:59" has passed (read in UTC); name a time that is still to come')
       await expect(worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-25T07:59' } }))
         .rejects.toThrow('next.when "2026-11-25T07:59" has passed (read in UTC); name a time that is still to come')
+      // The older next for the owner with a time stands for an ask and a check: a passed time refuses it too.
+      await expect(worker.endTurn({ result: 'Sent', next: { who: 'user', what: 'sign it', when: '2026-11-25T07:59' } })).rejects.toThrow('has passed')
       expect(attention() ?? null).toBeNull()
       expect(checks).toEqual([])
       // The turn then counts as one without a call.
       expect(await worker.onTurnEnding()).toBe(reminder(['call']))
-      // A hand-over to the user sets no check: its time is not used, so a passed one refuses nothing.
-      expect(await worker.endTurn({ result: 'Sent', next: { who: 'lasse', what: 'read it', when: '2026-11-25T07:59' } })).toMatchObject({ derived: { status: 'review', checkAt: null }, missing: [] })
-      // The hand-over clears the task's wake-up, whoever set it.
-      expect(checks).toEqual([{ kind: 'clear', whose: 'any' }])
+      // A hand-over to the user without a check refuses nothing, and keeps the task's wake-up, whoever set it.
+      expect(await worker.endTurn({ result: 'Sent', ask: { who: 'user', what: 'read it' } })).toMatchObject({ derived: { status: 'review', wake: { kind: 'keep' } }, missing: [] })
+      expect(checks).toEqual([{ kind: 'keep' }])
     })
 
     it('reads a call against the space\'s agent and nobody else when the host gives no context, or its context fails', async () => {
-      const call = { result: 'Draft ready', next: { who: 'nova', what: 'look again', when: '2026-11-27T10:00' } }
+      const call = { result: 'Draft ready', check: { when: '2026-11-27T10:00', why: 'look again' } }
       for (const turnContext of [undefined, async () => { throw new Error('the brain does not answer') }]) {
         const ends: Array<{ ctx: unknown }> = []
         const made = setup({ agent: 'nova', turnContext, turnDone: (_id, _text, turn) => ends.push(turn) })
         made.bridge.startWorker({ id: 's1', projectId: 'p1', prompt: 'x', title: null, fromSessionId: 'r', createdAt: '' })
         const worker = made.runtimes[0].start.worker!
         // Its own handle is known; no task is: an open one cannot be missing a next step.
-        expect(await worker.endTurn(call)).toMatchObject({ derived: { status: 'done', wait: null, checkAt: '2026-11-27T10:00' }, missing: [] })
+        expect(await worker.endTurn(call)).toMatchObject({ derived: { status: 'done', wait: null, wake: { kind: 'set', when: '2026-11-27T10:00', why: 'look again' } }, missing: [] })
+        // The older next for its own handle is read as a check.
+        expect((await worker.endTurn({ result: 'Draft ready', next: { who: 'nova', what: 'look again', when: '2026-11-27T10:00' } })).derived.wake).toMatchObject({ kind: 'set', when: '2026-11-27T10:00' })
         expect((await worker.endTurn({ result: 'Draft ready' })).missing).toEqual([])
         // "user" names the owner whatever their handle; any other handle is someone outside.
-        expect((await worker.endTurn({ result: 'Draft ready', next: { who: 'user', what: 'read it' } })).derived).toMatchObject({ status: 'review', wait: { who: 'user', kind: 'review' } })
-        expect((await worker.endTurn({ result: 'Draft ready', next: { who: 'sam', what: 'sign it', when: '2026-11-27T10:00' } })).derived.wait).toMatchObject({ who: 'sam', kind: 'outside' })
+        expect((await worker.endTurn({ result: 'Draft ready', ask: { who: 'user', what: 'read it' } })).derived).toMatchObject({ status: 'review', wait: { who: 'user', kind: 'review' } })
+        expect((await worker.endTurn({ result: 'Draft ready', ask: { who: 'sam', what: 'sign it' }, check: { when: '2026-11-27T10:00', why: 'signed?' } })).derived.wait).toMatchObject({ who: 'sam', kind: 'outside' })
         made.runtimes[0].emit({ kind: 'turn_end', reason: 'success' })
         // The router gets the same context the answer was read against.
         expect(ends[0].ctx).toEqual({ owner: 'user', agent: 'nova', members: [] })
@@ -557,22 +568,27 @@ describe('ChatBridge', () => {
         edits.push(wake.edit)
         return wake.edit.kind === 'set' && wake.edit.when === '2028-01-01T10:00' ? { problem: 'at most a year ahead', fix: 'time', saved: null, nextRun: false } : { problem: null, saved: null, nextRun: false }
       } })
-      expect((await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2026-11-27T10:00' } })).checkProblem).toBeUndefined()
-      const far = await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again', when: '2028-01-01T10:00' } })
+      expect((await worker.endTurn({ result: 'Sent', check: { when: '2026-11-27T10:00', why: 'look again' } })).checkProblem).toBeUndefined()
+      const far = await worker.endTurn({ result: 'Sent', check: { when: '2028-01-01T10:00', why: 'look again' } })
       expect(far).toMatchObject({ checkProblem: 'at most a year ahead', checkFix: 'time' })
       await worker.endTurn({ result: 'Sent' })
-      // A call without a time goes there too: the wake-up this session set earlier is cleared.
-      expect(edits).toEqual([{ kind: 'set', when: '2026-11-27T10:00' }, { kind: 'set', when: '2028-01-01T10:00' }, { kind: 'clear', whose: 'own' }])
+      await worker.endTurn({ result: 'Sent', check: 'none' })
+      // A call without a check goes there too, and keeps the wake-up; check "none" removes it.
+      expect(edits).toEqual([
+        { kind: 'set', when: '2026-11-27T10:00', why: 'look again' }, { kind: 'set', when: '2028-01-01T10:00', why: 'look again' }, { kind: 'keep' }, { kind: 'remove' },
+      ])
     })
 
     it('asks for no time, and records the wait, when the task has a next run from its schedule', async () => {
       const { worker } = started({ turnWake: async () => ({ problem: null, saved: null, nextRun: true }) })
-      expect(await worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again' } })).toMatchObject({ derived: { status: 'done', wait: null, checkAt: null }, missing: [], nextRun: true })
-      expect(await worker.endTurn({ result: 'Sent', next: { who: 'outside:Acme', what: 'answers' } }))
+      // A call without an ask on a task with a next run (a wake-up it kept counts) lacks nothing.
+      expect(await worker.endTurn({ result: 'Sent' })).toMatchObject({ derived: { status: 'done', wait: null, wake: { kind: 'keep' } }, missing: [], nextRun: true })
+      expect(await worker.endTurn({ result: 'Sent', ask: { who: 'outside:Acme', what: 'answers' } }))
         .toMatchObject({ derived: { wait: { who: 'Acme', kind: 'outside', why: 'answers' } }, missing: [], nextRun: true })
-      // Without a next run the same calls lack the time.
+      // Without a next run the same calls lack who moves next, and the check.
       const bare = started({ turnWake: async () => ({ problem: null, saved: null, nextRun: false }) })
-      expect((await bare.worker.endTurn({ result: 'Sent', next: { who: 'atlas', what: 'look again' } })).missing).toEqual(['when'])
+      expect((await bare.worker.endTurn({ result: 'Sent' })).missing).toEqual(['next'])
+      expect((await bare.worker.endTurn({ result: 'Sent', ask: { who: 'outside:Acme', what: 'answers' } })).missing).toEqual(['when'])
     })
 
     it('reads next.when in the user\'s time zone, names the instant the schedule saved, and tells the session the zone (the process runs in UTC)', async () => {

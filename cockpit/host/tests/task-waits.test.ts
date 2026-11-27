@@ -67,6 +67,18 @@ describe('a task\'s waits', () => {
     expect(withoutSession(start, 'a').map((x) => x.id)).toEqual(['b'])
   })
 
+  it('a session\'s wait whose due changed is replaced, and two lists that differ only in a due are not the same', () => {
+    const due = (d?: string) => ({ ...w('a', 'do', '2026-11-19T09:00:00.000Z'), ...(d ? { due: d } : {}) })
+    const start = [due('2026-11-20')]
+    const moved = withSessionWait(start, { who: start[0].who, kind: 'do', since: '2026-11-19T11:00:00.000Z', session_id: 'a', due: '2026-11-21' })
+    expect(moved.map((x) => [x.id, x.due, x.since])).toEqual([['a', '2026-11-21', '2026-11-19T11:00:00.000Z']])
+    expect(sameWaits(moved, start)).toBe(false)
+    expect(sameWaits([due()], [due('2026-11-20')])).toBe(false)
+    expect(sameWaits([due('2026-11-20')], [due('2026-11-20')])).toBe(true)
+    // the same due again leaves the wait as it is, its since too
+    expect(withSessionWait(start, { who: start[0].who, kind: 'do', since: '2026-11-19T11:00:00.000Z', session_id: 'a', due: '2026-11-20' })).toEqual(start)
+  })
+
   it('writes only what core accepts, and null for none', () => {
     expect(waitsBody([])).toEqual({ waits: null })
     expect(waitsBody([{ id: 'w', who: 'kim', kind: 'later', since: 'soon', why: 'r', extra: 1 } as unknown as Wait])).toEqual({ waits: [{ id: 'w', who: 'kim', why: 'r' }] })
