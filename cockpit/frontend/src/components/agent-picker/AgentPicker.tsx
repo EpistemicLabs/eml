@@ -12,11 +12,12 @@ import { agentGroups, choiceValue, defaultChoice, entryOf, parseChoice, type Age
 
 /**
  * The agents on offer and the one chosen: the user's pick while it is still offered, else the default
- * agent with its default model. `choice` is null while no agent with a chat is set up.
+ * agent with its default model. `choice` is null while no agent with a chat is set up. `models: false`:
+ * a place that offers no new session now asks the host for no model list.
  */
-export function useAgentChoice(): { groups: AgentGroup[]; choice: AgentChoice | null; choose: (choice: AgentChoice) => void } {
+export function useAgentChoice(options: { models?: boolean } = {}): { groups: AgentGroup[]; choice: AgentChoice | null; choose: (choice: AgentChoice) => void } {
   const { data: providers } = useProviders();
-  const { data: models } = useChatModels();
+  const { data: models } = useChatModels({ enabled: options.models ?? true });
   const [picked, setPicked] = useState<AgentChoice | null>(null);
   const groups = agentGroups(providers, models);
   const choice = entryOf(groups, picked) ? picked : defaultChoice(groups, providers);

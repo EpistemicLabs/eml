@@ -51,6 +51,16 @@ describe('the pane toolbar\'s "+"', () => {
     expect(onAddPane).toHaveBeenCalledWith('chat', 'codex', 'gpt-6-luna');
   });
 
+  it('asks for no model list in a toolbar without "+" (a task\'s panel)', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MainContentTabSwitcher groups={[]} paneView="chat" onSetPaneView={() => {}} onClosePane={() => {}} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain('/api/providers'));
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).not.toContain('/api/providers/models');
+  });
+
   it('without any agent that has a chat, offers a session per ready agent CLI as before', async () => {
     providers = [agent('qwen', 'Qwen Code', { isDefault: true, capabilities: { chat: { supported: false, reason: 'Terminal only.' }, endTurnTool: yes, messaging: yes } })];
     const onAddPane = vi.fn();

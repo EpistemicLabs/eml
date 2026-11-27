@@ -89,8 +89,9 @@ export interface ProviderModels {
  * picker. Kept a few minutes: the host keeps them longer, and a model list rarely changes. A host
  * that cannot say answers no models, and the picker offers each agent's default model alone.
  */
-export function useChatModels() {
+export function useChatModels(options: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryKey: [...providersKey, 'models'],
     queryFn: async (): Promise<ProviderModels[]> => {
       const res = await fetch('/api/providers/models');

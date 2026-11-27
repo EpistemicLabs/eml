@@ -64,7 +64,8 @@ export default function MainContentTabSwitcher({
   const addLabel = 'New pane next to this one';
   const [addOpen, setAddOpen] = useState(false);
   const sessionEntries = newSessionEntries(useProviders().data ?? []);
-  const agents = useAgentChoice().groups;
+  // A toolbar without "+" (a task's panel) offers no session: it asks for no model list.
+  const agents = useAgentChoice({ models: !!onAddPane }).groups;
   const enabled = useViewEnabled();
   // Mutually exclusive: each view swaps the pane's body.
   const modes = PANE_VIEW_DEFS.filter((mode) => enabled(mode.view) && groups.includes(mode.group));
