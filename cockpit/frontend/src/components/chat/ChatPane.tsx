@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { buttonVariants, FIELD, FOCUS } from '@/shared/view/ui';
 import type { ProjectSession } from '@/types/app';
 import { copyTextToClipboard } from '@/utils/clipboard';
-import { sortSummary, undoSplit } from '@/lib/split';
+import { closesPaneOnUndo, sessionToOpen, sortSummary, undoSplit } from '@/lib/split';
 import { closeTask, useTaskBoard } from '@/lib/task-board';
 import { useTimeZone } from '@/lib/time-zone';
 import { activatePane, getDeskOfPane, openInPane, paneHoldingSession, removePane } from '@/stores/usePaneStore';
@@ -662,7 +662,7 @@ export function ChatPane({
         void undoSplit(mark.opId).then((answer) => {
           if (!answer.ok) return;
           // A session the existing task already had keeps running after Undo, and so does its pane.
-          const pane = mark.sessionId && !mark.routed ? paneHoldingSession(mark.sessionId) : undefined;
+          const pane = closesPaneOnUndo(mark) ? paneHoldingSession(mark.sessionId!) : undefined;
           if (pane) removePane(pane.id);
           setMarks((prev) => prev.map((m) => (m.opId === mark.opId ? { ...m, undone: true } : m)));
         });
@@ -771,7 +771,8 @@ export function ChatPane({
               }]);
               setSplitFrom(null);
               // A task has one session at a time: onto a task that had its session, the brief went there and it opens.
-              if (result.routed && result.sessionId) openSplitSession(result.sessionId);
+              const toOpen = sessionToOpen(result);
+              if (toOpen) openSplitSession(toOpen);
               setAnnounced(`Split off ${result.title}${result.when === 'park' ? ', parked in Plan' : result.routed ? ', sent to the session the task already had' : ', opened in a new pane'}.`);
               // The new task and session show in the tasks card now, not at the next poll.
               window.dispatchEvent(new Event('cockpit:tasks'));

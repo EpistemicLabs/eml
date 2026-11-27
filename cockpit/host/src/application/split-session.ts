@@ -3,6 +3,7 @@ import type { BrainSpace } from '../brain-space.js'
 import { planSplit, type SplitRefusal, type SplitRelation, type SplitWhen } from '../domain/split.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
 import type { DeliveryOutcome } from '../domain/session-delivery.js'
+import { retryHelps } from './task-lease.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 
 /**
@@ -135,7 +136,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
       if (holder) {
         const outcome = deps.deliver ? await deps.deliver(holder.sessionId, promptFor(existingTask!.id)) : 'refused'
         if (outcome !== 'delivered' && outcome !== 'resumed') {
-          const retry = outcome === 'busy' || outcome === 'running'
+          const retry = retryHelps(outcome)
           return { ok: false, refusal: 'task_held_unreachable', retry, message: `"${existingTask!.title}" is held by session "${holder.title}", which cannot take the brief right now (${outcome}). A task has one session at a time: ${retry ? 'try again in a moment' : 'open that session and paste the brief'}.` }
         }
         routedTo = holder.sessionId

@@ -107,6 +107,8 @@ const UNREACHABLE: Partial<Record<DeliveryOutcome, string>> = {
   running: 'it runs right now',
 }
 const RETRY_HELPS = new Set<DeliveryOutcome>(['busy', 'running'])
+/** Whether a holder that could not take a message may take it later (it is busy or running). */
+export const retryHelps = (outcome: DeliveryOutcome): boolean => RETRY_HELPS.has(outcome)
 
 const starting = (taskId: string, requestId: string): LeaseRefusal => ({
   code: 'TASK_STARTING', retry: true,

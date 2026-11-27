@@ -96,7 +96,7 @@ export interface SpawnOutcome {
 export const leaseRefused = ({ code, message, retry }: LeaseRefusal): SpawnOutcome => ({ status: 409, payload: { error: { code, message, retry } } })
 
 /** What routing a start on a task to its holder reads from the spawn deps. */
-export const routeDepsOf = (deps: SpawnDeps): RouteDeps => ({
+export const routeDepsOf = (deps: Pick<SpawnDeps, 'spawns' | 'ledger' | 'deliver' | 'contextTokensOf' | 'putAway'>): RouteDeps => ({
   pending: () => deps.spawns.list(), sessions: () => deps.ledger.list(), deliver: deps.deliver,
   ...(deps.contextTokensOf ? { contextTokensOf: deps.contextTokensOf } : {}), ...(deps.putAway ? { putAway: deps.putAway } : {}),
 })

@@ -4,7 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import { attachSpawnEvents, handleSpawnApi, routeDepsOf, type SpawnDeps } from './spawn-api.js'
 import { routeToTaskHolder, takenSince } from './application/task-lease.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
 import { handleTasksApi, type TasksApiDeps } from './tasks-api.js'
@@ -1023,7 +1023,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
     if (!space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } }); return true }
     // One live session per task (application/task-lease.ts): a task that has its session gets the run's prompt there,
     // as a worker of a session would; a session still starting on it, or a holder that cannot take it, refuses.
-    const lease = { pending: () => deps.spawns.list(), sessions: () => deps.bridge.ledger.list(), deliver: deps.deliver, ...deps.taskLease }
+    const lease = routeDepsOf({ spawns: deps.spawns, ledger: deps.bridge.ledger, deliver: deps.deliver, ...deps.taskLease })
     const route = await routeToTaskHolder(lease, { taskId, prompt, fromSessionId: null, from: null })
     if (route.kind === 'refused') { json(res, 409, { error: route.refusal }); return true }
     if (route.kind === 'routed') { json(res, 200, { id: route.session.sessionId, routed: true }); return true }
