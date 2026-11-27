@@ -392,8 +392,6 @@ async function main() {
     },
     canReceive: (sessionId) => sessionMessaging(providers.forSession(sessionId), ledger.get(sessionId)).supported,
     terminalRuns: (sessionId) => bridge.isRunning(sessionId),
-    runsInChat: (sessionId) => providers.forSession(sessionId)
-      .workerRunsInChat(sessionSpaceOf(spaces.resolve(ledger.get(sessionId)?.spaceId ?? null))),
     chatRuns: (sessionId) => chat.isRunning(sessionId),
     // A session that gets the cockpit's tools from its MCP server (Codex) answers with send_message from there.
     replyTool: (sessionId) => replyTool(providers.forSession(sessionId).capabilities.terminalTools.supported ? COCKPIT_MCP_SERVER : null),
@@ -697,7 +695,7 @@ async function main() {
   })
   const startWorker = new StartWorker({
     chat, terminal: bridge, log,
-    runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), sessionSpaceOf(spaces.resolve(request.spaceId ?? null)), request),
+    runsInChat: (request) => workerInChat(providers.get(request.provider ?? '') ?? providers.default(), request),
     freeMemory: () => platform.freeMemory(),
     atCap: () => cap() > 0 && running() >= cap(),
     makeRoom: () => chat.stopOneForRoom(),

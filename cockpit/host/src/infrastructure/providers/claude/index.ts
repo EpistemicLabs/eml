@@ -3,7 +3,7 @@ import * as path from 'node:path'
 import type {
   AgentProvider, IsolationContext, LaunchRequest, LaunchSpec, ProviderCapabilities, SessionAgentRuntime, SessionRef, SessionSpace, SessionSummary, TurnSignal,
 } from '../../../domain/agent-provider.js'
-import { claudeLoginStatus, invalidateAccountCache, readChatView, readPermissionMode, readRemoteControl, readRenderer, sessionToken, writeChatView } from './login.js'
+import { claudeLoginStatus, invalidateAccountCache, readPermissionMode, readRemoteControl, readRenderer, sessionToken } from './login.js'
 import { ensureProjectTrusted, writeIsolationFiles, writeLimitedMcpConfig, type IsolationFiles } from './isolation.js'
 import { CLAUDE_BIN, CLAUDE_BIN_DIR, claudeRuntime } from './runtime.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -85,12 +85,6 @@ class ClaudeProvider implements AgentProvider {
     signedIn: () => invalidateAccountCache(),
   })
 
-  /** The chat view switch, read by the browser at start for the view a new session opens in. */
-  readonly settings = {
-    read: () => ({ chatView: readChatView() }),
-    write: (patch: Record<string, unknown>) => (patch.chatView === undefined ? 'Nothing to change.' : writeChatView(patch.chatView)),
-  }
-
   /** The shared files; a space's mcp.json and settings.json are written by brain-space.ts (writeSpaceFiles). */
   prepare(ctx: IsolationContext): void {
     this.isolation = writeIsolationFiles(ctx.hookUrl, ctx.hookToken)
@@ -113,11 +107,6 @@ class ClaudeProvider implements AgentProvider {
     const configDir = this.configDirFor(runtime)
     // The project's trust flag lives in the APP's .claude.json — never the user's.
     if (configDir) ensureProjectTrusted(projectPath, configDir)
-  }
-
-  /** The chat runtime gets the launch's environment, setup-token included: a worker runs in chat in either sign-in mode. */
-  workerRunsInChat(): boolean {
-    return readChatView()
   }
 
   launch(req: LaunchRequest): LaunchSpec {

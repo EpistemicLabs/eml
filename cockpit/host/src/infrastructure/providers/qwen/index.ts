@@ -7,7 +7,7 @@ import type { ModelOption, SessionRuntimeFactory, SessionRuntimeKind } from '../
 import { COCKPIT_SKILLS_DIR, MCP_SKILLS_DIR, QWEN_CONFIG_DIR } from '../../../paths.js'
 import {
   COCKPIT_MCP_SERVER, EML_HOOK_CONFIG_ENV, EML_HOOK_OPTIONS, MCP_ENV_HEADERS, MCP_TOKEN_ENV, TASK_HOOK_OPTIONS, TURN_HOOK_OPTIONS,
-  emlHookCommand, ensureHookNode, installManagedSkills, noMessageInTerminal, shellLine, taskHookCommand, terminalOnly, turnHookCommand, withChat, writeTurnHookConfig,
+  emlHookCommand, ensureHookNode, chatCapabilities, installManagedSkills, noMessageInTerminal, shellLine, taskHookCommand, turnHookCommand, writeTurnHookConfig,
   type HookCommand,
 } from '../shared.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -49,10 +49,10 @@ import { qwenEndpointSet, qwenSandboxed, qwenSettings, readQwenApiKey, readQwenS
  * key is then readable by the model's shell commands; a keyless local
  * endpoint has no such exposure.
  *
- * A session runs in a terminal, or, once the user switches the chat view on
- * (settings.ts chatView), in the chat through Qwen Code's SDK (chat-runtime.ts):
- * the same home, hooks and MCP servers either way. With it on, workers run in
- * the chat too, and a session there can be sent a message.
+ * A session runs in the chat through Qwen Code's SDK
+ * (chat-runtime.ts), workers too, and can be sent a message
+ * there. With Settings › Advanced › Terminal fallback on, the user can open one in a
+ * terminal instead (launch below): the same home, hooks and MCP servers either way.
  *
  * Sandbox: on macOS Qwen Code's sandbox-exec profile for every mode but off. On
  * Linux none, as for Claude Code: Qwen Code's own Linux sandboxes do not fit (its
@@ -105,7 +105,7 @@ class QwenProvider implements AgentProvider {
   /** Qwen Code starts under the cockpit's id (--session-id). */
   readonly adoptsSessionId = true
   readonly settings = qwenSettings
-  private terminal = terminalOnly(this.label)
+  readonly capabilities: ProviderCapabilities = chatCapabilities(this.label)
 
   /** The cockpit's own folders a session writes to (IsolationContext), as of the last prepare. */
   private writableDirs: string[] = []
@@ -116,14 +116,9 @@ class QwenProvider implements AgentProvider {
     configuredModel: () => readQwenSettings().model,
   })
 
-  /** The chat view is the user's switch (settings.ts chatView), read each time: it holds from the next session on. */
-  get capabilities(): ProviderCapabilities {
-    return readQwenSettings().chatView ? withChat(this.terminal) : this.terminal
-  }
-
-  /** There exactly while the chat view is on. */
-  get chatRuntime(): SessionRuntimeFactory | undefined {
-    return readQwenSettings().chatView ? this.runtimes : undefined
+  /** Every session runs in the chat; the terminal is only the hidden fallback (terminal-fallback.ts). */
+  get chatRuntime(): SessionRuntimeFactory {
+    return this.runtimes
   }
 
   /** An OpenAI-compatible endpoint lists no models to Qwen Code: the one set in the settings. */
@@ -264,10 +259,6 @@ class QwenProvider implements AgentProvider {
     }
   }
 
-  /** With the chat view on, a worker runs through the SDK like a chat session the user opened, in the worker's mode (workerMode). */
-  workerRunsInChat(): boolean {
-    return readQwenSettings().chatView
-  }
 
   /** Only a session in the chat can be handed a message; one that ran in a terminal is never typed into. */
   messagingOf(session: { runtime: SessionRuntimeKind } | undefined): Capability {

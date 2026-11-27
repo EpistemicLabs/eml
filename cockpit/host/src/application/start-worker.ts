@@ -1,4 +1,4 @@
-import type { AgentProvider, SessionSpace } from '../domain/agent-provider.js'
+import type { AgentProvider } from '../domain/agent-provider.js'
 import type { SessionRuntimeKind } from '../domain/session-runtime.js'
 import { unattended, type SpawnRequest, ownStart } from '../domain/spawn-request.js'
 
@@ -11,14 +11,11 @@ export interface WorkerRunner {
 export const MIN_FREE_MEMORY = 1024 * 1024 * 1024
 
 /**
- * Whether the provider runs this worker through its chat runtime: its workers run there (workerRunsInChat), and one
- * with tool limits only where its chat holds them (capability toolLimits). A worker with limits that does not run in
- * chat does not start at all (StartWorker): a terminal would lose them.
+ * Whether the provider runs this worker through its chat runtime: every worker runs there, one with tool limits only
+ * where its chat holds them (capability toolLimits). A worker with limits that does not run in chat does not start at
+ * all (StartWorker): a terminal would lose them.
  */
-export function workerInChat(
-  provider: Pick<AgentProvider, 'workerRunsInChat' | 'capabilities'>, space: SessionSpace, request: Pick<SpawnRequest, 'toolProfile'>,
-): boolean {
-  if (!provider.workerRunsInChat(space)) return false
+export function workerInChat(provider: Pick<AgentProvider, 'capabilities'>, request: Pick<SpawnRequest, 'toolProfile'>): boolean {
   return !request.toolProfile || provider.capabilities.toolLimits.supported
 }
 

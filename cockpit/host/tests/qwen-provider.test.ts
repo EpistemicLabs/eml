@@ -40,9 +40,9 @@ describe('Qwen Code settings', () => {
   })
 
   it('keeps the endpoint in agents.json and the key in its own owner-only file, never back to the UI', () => {
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: '', model: '', chatView: false, apiKeySet: false, sandboxed: darwin })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: '', model: '', apiKeySet: false, sandboxed: darwin })
     expect(provider.settings?.write({ baseUrl: ' https://openrouter.ai/api/v1 ', model: 'qwen/qwen3.8-27b', apiKey: API_KEY })).toBeNull()
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3.8-27b', chatView: false, apiKeySet: true, sandboxed: darwin })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3.8-27b', apiKeySet: true, sandboxed: darwin })
     expect(JSON.stringify(provider.settings?.read())).not.toContain(API_KEY)
     expect(readFileSync(join(home, 'agents.json'), 'utf8')).not.toContain(API_KEY)
     const keyFile = join(home, 'qwen-api-key')
@@ -60,7 +60,8 @@ describe('Qwen Code settings', () => {
     expect(provider.settings?.write({ baseUrl: 'not a url' })).toMatch(/http\(s\) URL/)
     expect(provider.settings?.write({ permissionMode: 'yolo' })).toMatch(/one of auto, ask, off/)
     expect(provider.settings?.write({ apiKey: 'a b' })).toMatch(/without spaces/)
-    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/true or false/)
+    // The chat view switch is gone: every session runs in the chat.
+    expect(provider.settings?.write({ chatView: true })).toMatch(/unknown setting/)
     expect(provider.settings?.write({ somethingElse: true })).toMatch(/unknown setting/)
   })
 })
@@ -81,30 +82,18 @@ describe('what Qwen Code can do', () => {
     provider = createQwenProvider()
   })
 
-  it('runs in the terminal only, with the cockpit\'s tools from the host: no chat, nothing another session could send to, each with its reason', () => {
+  it('runs in the chat, with the cockpit\'s tools from the host: workers there, and a chat session can be sent a message', () => {
     expect(provider.capabilities).toEqual({
-      chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+      chat: { supported: true },
       endTurnTool: { supported: true },
-      messaging: { supported: false, reason: 'Qwen Code sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
+      messaging: { supported: true },
       terminalTools: { supported: true },
-      toolLimits: { supported: false, reason: 'Qwen Code sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.' },
+      toolLimits: { supported: false, reason: 'Qwen Code sessions cannot be limited to some tools: a worker with tool limits needs Claude Code.' },
     })
-  })
-
-  it('runs in the chat view too once the user switches it on: workers there, and a chat session can be sent a message', () => {
-    expect(provider.chatRuntime).toBeUndefined()
-    expect(provider.workerRunsInChat(space)).toBe(false)
-    expect(provider.settings?.write({ chatView: true })).toBeNull()
-    try {
-      expect(provider.capabilities.chat).toEqual({ supported: true })
-      expect(provider.chatRuntime?.workerMode).toBe('auto')
-      expect(provider.chatRuntime?.reportsTurns).toBe(true)
-      expect(provider.workerRunsInChat(space)).toBe(true)
-      expect(provider.messagingOf?.({ runtime: 'sdk' })).toEqual({ supported: true })
-      expect(provider.messagingOf?.({ runtime: 'terminal' })).toMatchObject({ supported: false })
-    } finally {
-      expect(provider.settings?.write({ chatView: false })).toBeNull()
-    }
+    expect(provider.chatRuntime.workerMode).toBe('auto')
+    expect(provider.chatRuntime.reportsTurns).toBe(true)
+    expect(provider.messagingOf?.({ runtime: 'sdk' })).toEqual({ supported: true })
+    expect(provider.messagingOf?.({ runtime: 'terminal' })).toMatchObject({ supported: false })
   })
 
   it('reads the last reply from a Stop hook\'s own field only', () => {

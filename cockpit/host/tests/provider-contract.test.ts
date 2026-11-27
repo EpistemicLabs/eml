@@ -272,10 +272,9 @@ describe.each(ADAPTERS)('provider contract: $id', (adapter) => {
       const capability = capabilities[id]
       if (!capability.supported) expect(capability.reason.trim(), id).not.toBe('')
     }
-    // Without the chat view a worker cannot run in it.
-    if (!capabilities.chat.supported) expect(provider.workerRunsInChat(space)).toBe(false)
-    // A chat is its runtime: one without the other could not be opened, or would never be.
-    expect(provider.chatRuntime !== undefined).toBe(capabilities.chat.supported)
+    // Every session runs in the chat: a terminal is only the hidden fallback.
+    expect(capabilities.chat.supported).toBe(true)
+    expect(provider.chatRuntime).toBeDefined()
     // The end_turn tool has to come from somewhere: the chat runtime, or the host's endpoint for terminal sessions.
     if (capabilities.endTurnTool.supported) expect(capabilities.chat.supported || capabilities.terminalTools.supported).toBe(true)
   })

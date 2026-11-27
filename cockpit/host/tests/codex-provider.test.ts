@@ -234,7 +234,7 @@ describe('Codex provider', () => {
   it('follows the user\'s permission settings — except where nobody is watching', () => {
     const sandboxed = ['--no-daemon', '--no-alt-screen', '--ask-for-approval', 'on-request', '--sandbox', 'workspace-write']
     const network = ['--config', 'sandbox_workspace_write.network_access=true']
-    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false, chatView: false, reasoningEffort: 'default' })
+    expect(provider.settings?.read()).toEqual({ permissionMode: 'auto', sandboxNetwork: false, reasoningEffort: 'default' })
 
     expect(provider.settings?.write({ permissionMode: 'ask' })).toBeNull()
     expect(launchArgs(false)).toEqual([...sandboxed, '--config', 'approvals_reviewer="user"'])
@@ -286,52 +286,34 @@ describe('Codex provider', () => {
     expect(hook('SessionStart')).toBeNull()
   })
 
-  it('runs in the terminal only, with the cockpit\'s tools from the host: no chat, nothing another session could send to, each with its reason', () => {
+  it('runs in the chat, with the cockpit\'s tools from the host, a chat runtime and messages; no tool limits', () => {
     expect(provider.capabilities).toEqual({
-      chat: { supported: false, reason: 'The chat view runs Claude Code sessions only. This session stays in the terminal.' },
+      chat: { supported: true },
       endTurnTool: { supported: true },
-      messaging: { supported: false, reason: 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' },
+      messaging: { supported: true },
       terminalTools: { supported: true },
-      toolLimits: { supported: false, reason: 'Codex sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.' },
+      toolLimits: { supported: false, reason: 'Codex sessions cannot be limited to some tools: a worker with tool limits needs Claude Code.' },
     })
+    expect(provider.chatRuntime.workerMode).toBe('auto')
   })
 
-  it('runs in the chat view too once the user switches it on, and only then has a chat runtime, runs workers there and takes messages', () => {
-    const terminal = provider.capabilities
-    expect(provider.chatRuntime).toBeUndefined()
-    expect(provider.workerRunsInChat(space)).toBe(false)
-    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/true or false/)
-    expect(provider.settings?.write({ chatView: true })).toBeNull()
+  it('ignores an old chat view switch: the setting is gone, a stored key changes nothing', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ codexChatView: false }))
     try {
-      expect(provider.settings?.read()).toMatchObject({ chatView: true })
-      // The tools from the host's endpoint, in the chat as well; still no tool limits.
-      expect(provider.capabilities).toEqual({ ...terminal, chat: { supported: true }, messaging: { supported: true } })
-      expect(provider.chatRuntime?.workerMode).toBe('auto')
-      expect(provider.workerRunsInChat(space)).toBe(true)
+      expect(provider.capabilities.chat).toEqual({ supported: true })
+      expect(provider.settings?.read()).not.toHaveProperty('chatView')
+      expect(provider.settings?.write({ chatView: true })).toMatch(/unknown setting/)
     } finally {
-      expect(provider.settings?.write({ chatView: false })).toBeNull()
+      writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
     }
-    expect(provider.capabilities).toEqual(terminal)
-    expect(provider.chatRuntime).toBeUndefined()
-    expect(provider.workerRunsInChat(space)).toBe(false)
   })
 
-  it('takes a message per session: with the chat view on, a session in the chat or not started yet, never one that ran in a terminal', () => {
-    const reason = 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.'
-    const off = { supported: false, reason }
-    // Chat view off: no session, wherever it ran.
-    for (const session of [undefined, { runtime: 'sdk' as const }, { runtime: 'terminal' as const }]) {
-      expect(sessionMessaging(provider, session)).toEqual(off)
-    }
-    provider.settings?.write({ chatView: true })
-    try {
-      expect(sessionMessaging(provider, { runtime: 'sdk' })).toEqual({ supported: true })
-      expect(sessionMessaging(provider, undefined)).toEqual({ supported: true })
-      // An old terminal session in a mixed ledger keeps the terminal's refusal.
-      expect(sessionMessaging(provider, { runtime: 'terminal' })).toEqual(off)
-    } finally {
-      provider.settings?.write({ chatView: false })
-    }
+  it('takes a message per session: one in the chat or not started yet, never one that ran in a terminal', () => {
+    const off = { supported: false, reason: 'Codex sessions can send to and list other sessions, but cannot receive a message while they run in a terminal.' }
+    expect(sessionMessaging(provider, { runtime: 'sdk' })).toEqual({ supported: true })
+    expect(sessionMessaging(provider, undefined)).toEqual({ supported: true })
+    // An old terminal session in a mixed ledger keeps the terminal's refusal.
+    expect(sessionMessaging(provider, { runtime: 'terminal' })).toEqual(off)
   })
 
   it('reads the last reply from a Stop hook\'s own field only', () => {

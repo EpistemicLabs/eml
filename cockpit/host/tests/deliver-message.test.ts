@@ -8,7 +8,6 @@ function setup(patch: Partial<DeliverMessageDeps> = {}) {
     find: () => ({ sessionId: 's1', wakeable: false }),
     canReceive: () => true,
     terminalRuns: () => false,
-    runsInChat: () => true,
     chatRuns: () => false,
     sameReach: () => true,
     deliver: async (_id, text) => { sent.push(text); return 'resumed' },
@@ -70,11 +69,6 @@ describe('deliverMessage', () => {
     expect(sent).toEqual([])
   })
 
-  it('a stopped session that cannot run in chat is refused; a running one is not', async () => {
-    expect(await deliverMessage(setup({ runsInChat: () => false }).deps, request)).toBe('refused')
-    expect(await deliverMessage(setup({ runsInChat: () => false, chatRuns: () => true }).deps, request)).toBe('resumed')
-  })
-
   it('a session that cannot be handed a message where it ran is refused, running or stopped, and gets nothing', async () => {
     // A Codex session that ran in a terminal: never typed into, and not moved to the chat for a message.
     for (const patch of [{}, { terminalRuns: () => true }, { chatRuns: () => true }]) {
@@ -117,10 +111,6 @@ describe('deliverMessage', () => {
 
     it('without the hook the reach does not matter', async () => {
       expect(await deliverMessage(setup({ sameReach: () => false }).deps, request)).toBe('resumed')
-    })
-
-    it('a stopped session that cannot run in chat is still refused', async () => {
-      expect(await deliverMessage(setup({ runsInChat: () => false }).deps, stoppedOnly)).toBe('refused')
     })
   })
 })

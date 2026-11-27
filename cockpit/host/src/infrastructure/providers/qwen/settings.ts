@@ -24,9 +24,6 @@ import { platform } from '../../platform/index.js'
  *     ask             every file edit or shell command comes to the user (on
  *                     macOS in the sandbox).
  *     off             no sandbox and no questions.
- *   chatView          off (default): Qwen Code sessions run in the terminal only.
- *                     on: they can run in the chat view too, through Qwen Code's
- *                     SDK (chat-runtime.ts), and workers run there.
  *
  * The sandbox is Qwen Code's sandbox-exec profile, so macOS only. On Linux a
  * session runs as Claude Code's do: without one, its classifier deciding in
@@ -44,13 +41,11 @@ export interface QwenSettings {
   permissionMode: QwenPermissionMode
   baseUrl: string
   model: string
-  chatView: boolean
 }
 
 const MODE_KEY = 'qwenPermissionMode'
 const BASE_URL_KEY = 'qwenBaseUrl'
 const MODEL_KEY = 'qwenModel'
-const CHAT_KEY = 'qwenChatView'
 
 /** Whether sessions run in Qwen Code's sandbox (sandbox-exec, macOS) when their mode is not off. */
 export const qwenSandboxed = (os: string = platform.os): boolean => os === 'darwin'
@@ -64,7 +59,6 @@ export function readQwenSettings(): QwenSettings {
     permissionMode: isMode(stored[MODE_KEY]) ? stored[MODE_KEY] : 'auto',
     baseUrl: typeof stored[BASE_URL_KEY] === 'string' ? stored[BASE_URL_KEY] : '',
     model: typeof stored[MODEL_KEY] === 'string' ? stored[MODEL_KEY] : '',
-    chatView: stored[CHAT_KEY] === true,
   }
 }
 
@@ -121,9 +115,6 @@ export const qwenSettings: AgentSettings = {
       } else if (key === 'model') {
         if (typeof value !== 'string') return 'model must be a string'
         next[MODEL_KEY] = value.trim()
-      } else if (key === 'chatView') {
-        if (typeof value !== 'boolean') return 'chatView must be true or false'
-        next[CHAT_KEY] = value
       } else if (key === 'apiKey') {
         // An empty string removes the key.
         if (typeof value !== 'string' || /\s/.test(value.trim())) return 'apiKey must be a string without spaces'

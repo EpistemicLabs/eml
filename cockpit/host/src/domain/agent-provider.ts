@@ -310,8 +310,8 @@ export interface AgentProvider {
   readonly adoptsSessionId: boolean
   /** What this provider's sessions can do; the host and the UI read it instead of asking which provider it is. */
   readonly capabilities: ProviderCapabilities
-  /** The provider's sessions in the chat view (`capabilities.chat`); absent for a provider without one. */
-  readonly chatRuntime?: SessionRuntimeFactory
+  /** The provider's sessions in the chat, where every session runs; a terminal is only the fallback (terminal-fallback.ts). */
+  readonly chatRuntime: SessionRuntimeFactory
   /**
    * The models a new chat of this provider can start with, asked without a session (the launchers' agent picker,
    * GET /api/providers/models). Resolves, never rejects: empty when it cannot say. Absent: the provider lists its
@@ -328,8 +328,6 @@ export interface AgentProvider {
   prepare(ctx: IsolationContext): void
   /** Let sessions open this folder without the provider's trust prompt. Idempotent. */
   trustProject(projectPath: string, space?: SessionSpace): void
-  /** Whether a worker of this space runs through the chat runtime rather than a terminal. */
-  workerRunsInChat(space: SessionSpace): boolean
   /**
    * Whether this one session can be handed a message, by where it ran last (the ledger's runtime; undefined: a
    * session not started yet). Absent: as `capabilities.messaging` says for every session of the provider.

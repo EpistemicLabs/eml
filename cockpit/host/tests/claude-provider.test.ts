@@ -112,7 +112,6 @@ describe('Claude Code provider', () => {
     writeFileSync(join(home, 'claude-login'), `${fakeToken}\n`, { mode: 0o600 })
     writeFileSync(join(home, 'agents.json'), JSON.stringify({ loginMode: 'token' }))
     try {
-      expect(provider.workerRunsInChat(space)).toBe(true)
       const launch = provider.launch({ sessionId: 'tok-1', address: 'eml-tok1', space, providerSessionId: null, resume: false, initialPrompt: null, unattended: false })
       expect(launch.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
       expect(claudeStartOptions({ env: launch.env, launch, space }).env.CLAUDE_CODE_OAUTH_TOKEN).toBe(fakeToken)
@@ -122,14 +121,11 @@ describe('Claude Code provider', () => {
     }
   })
 
-  it('runs workers in chat and tells the browser so, until the chat view is switched off', () => {
-    writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
-    expect(provider.workerRunsInChat(space)).toBe(true)
-    expect(provider.settings?.read()).toEqual({ chatView: true })
-    expect(provider.settings?.write({ chatView: false })).toBeNull()
-    expect(provider.workerRunsInChat(space)).toBe(false)
-    expect(provider.settings?.read()).toEqual({ chatView: false })
-    expect(provider.settings?.write({ chatView: 'yes' })).toMatch(/on or off/)
+  it('runs in the chat whatever an old chat view switch says, and has no settings of its own', () => {
+    writeFileSync(join(home, 'agents.json'), JSON.stringify({ chatView: false }))
+    expect(provider.capabilities.chat).toEqual({ supported: true })
+    expect(provider.chatRuntime).toBeDefined()
+    expect(provider.settings).toBeUndefined()
     writeFileSync(join(home, 'agents.json'), JSON.stringify({}))
   })
 

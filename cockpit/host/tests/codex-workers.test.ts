@@ -42,10 +42,7 @@ describe('Codex workers', () => {
       sessionAddress: (await import('../src/session-address.js')).sessionAddress,
     }
   })
-  afterEach(() => { codex.settings?.write({ chatView: false }) })
   afterAll(() => rmSync(home, { recursive: true, force: true }))
-
-  const chatView = (on: boolean) => expect(codex.settings?.write({ chatView: on })).toBeNull()
 
   /** StartWorker as the host wires it (index.ts): the request's provider decides through workerInChat. */
   const starter = () => {
@@ -53,22 +50,15 @@ describe('Codex workers', () => {
     const worker = new mods.StartWorker({
       chat: { startWorker: () => { started.push('chat'); return null } },
       terminal: { startWorker: () => { started.push('terminal'); return null } },
-      runsInChat: (asked) => mods.workerInChat(codex, space, asked),
+      runsInChat: (asked) => mods.workerInChat(codex, asked),
       freeMemory: () => mods.MIN_FREE_MEMORY,
       log: () => {},
     })
     return { worker, started }
   }
 
-  it('run in the chat with the chat view on, in a terminal without it', () => {
-    expect(mods.workerInChat(codex, space, request)).toBe(false)
-    const terminal = starter()
-    expect(terminal.worker.forPane(request)).toBe('terminal')
-    expect(terminal.worker.withoutPane(request)).toBeNull()
-    expect(terminal.started).toEqual(['terminal'])
-
-    chatView(true)
-    expect(mods.workerInChat(codex, space, request)).toBe(true)
+  it('run in the chat', () => {
+    expect(mods.workerInChat(codex, request)).toBe(true)
     const chat = starter()
     // A session's worker, a job's run, a task run: each starts on the host in the chat, a pane only joins.
     for (const origin of [{}, { fromSessionId: null, origin: 'job' as const }, { fromSessionId: null, origin: 'runner' as const }]) {
@@ -80,15 +70,12 @@ describe('Codex workers', () => {
     expect(chat.worker.forPane({ ...request, fromSessionId: null })).toBe('terminal')
   })
 
-  it('with tool limits stay refused, chat view or not: Codex cannot hold them', () => {
-    for (const on of [false, true]) {
-      chatView(on)
-      expect(mods.workerInChat(codex, space, limited)).toBe(false)
-      const { worker, started } = starter()
-      expect(worker.forPane(limited)).toBeNull()
-      expect(worker.withoutPane(limited)).toBe('a tool profile needs the chat runtime')
-      expect(started).toEqual([])
-    }
+  it('with tool limits stay refused: Codex cannot hold them', () => {
+    expect(mods.workerInChat(codex, limited)).toBe(false)
+    const { worker, started } = starter()
+    expect(worker.forPane(limited)).toBeNull()
+    expect(worker.withoutPane(limited)).toBe('a tool profile needs the chat runtime')
+    expect(started).toEqual([])
   })
 
   describe('requested by a session', () => {
@@ -104,12 +91,8 @@ describe('Codex workers', () => {
       return { deps, spawns }
     }
 
-    it('get an address once they run in the chat, none in a terminal', async () => {
+    it('get an address: they run in the chat', async () => {
       const { deps } = setup()
-      const terminal = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'do it', provider: 'codex', fromSession: 'requester' })
-      expect(terminal.status).toBe(202)
-      expect(terminal.payload).not.toHaveProperty('address')
-      chatView(true)
       const chat = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'do it', provider: 'codex', fromSession: 'requester' })
       expect(chat.status).toBe(202)
       const { id, address } = chat.payload as { id: string; address?: string }
@@ -119,14 +102,11 @@ describe('Codex workers', () => {
       expect(own.payload).not.toHaveProperty('address')
     })
 
-    it('with tool limits are refused with the reason, chat view or not', async () => {
-      for (const on of [false, true]) {
-        chatView(on)
-        const { deps, spawns } = setup()
-        const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'do it', provider: 'codex', fromSession: 'requester', deniedTools: ['Bash'] })
-        expect(out).toEqual({ status: 400, payload: { error: { code: 'TOOLS_NEED_CHAT', message: 'Codex sessions cannot be limited to some tools: a worker with tool limits needs Claude Code in the chat view.' } } })
-        expect(spawns.list()).toEqual([])
-      }
+    it('with tool limits are refused with the reason', async () => {
+      const { deps, spawns } = setup()
+      const out = await mods.requestSpawn(deps, { project: 'bp-eml', prompt: 'do it', provider: 'codex', fromSession: 'requester', deniedTools: ['Bash'] })
+      expect(out).toEqual({ status: 400, payload: { error: { code: 'TOOLS_NEED_CHAT', message: 'Codex sessions cannot be limited to some tools: a worker with tool limits needs Claude Code.' } } })
+      expect(spawns.list()).toEqual([])
     })
   })
 })

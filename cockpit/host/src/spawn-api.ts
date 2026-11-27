@@ -8,7 +8,7 @@ import type { MessageRequest } from './application/deliver-message.js'
 import type { DeliveryOutcome } from './domain/session-delivery.js'
 import { brainIdFromProjectId, projectIdForBrain } from './project-registry.js'
 import { sessionAddress } from './session-address.js'
-import { sessionSpaceOf, type BrainSpace, type BrainSpaces } from './brain-space.js'
+import { type BrainSpace, type BrainSpaces } from './brain-space.js'
 import { parseToolProfile } from './domain/tool-profile.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -144,7 +144,7 @@ async function queueSpawn(deps: SpawnDeps, body: Record<string, unknown>): Promi
   const toolProfile = parseToolProfile(body)
   if (toolProfile === 'invalid') return fail(400, 'INVALID_TOOLS', 'deniedTools and mcpServers are lists of names')
   const chosen = provider ?? deps.providers.default()
-  if (toolProfile && !workerInChat(chosen, sessionSpaceOf(space), { toolProfile })) {
+  if (toolProfile && !workerInChat(chosen, { toolProfile })) {
     const limits = chosen.capabilities.toolLimits
     return fail(400, 'TOOLS_NEED_CHAT', limits.supported ? 'Tool limits need the chat runtime, which this provider or sign-in does not use' : limits.reason)
   }
@@ -201,7 +201,7 @@ async function queueSpawn(deps: SpawnDeps, body: Record<string, unknown>): Promi
   // The request id becomes the worker's session id (the page opens the pane
   // under it), so the requester learns the worker's address before it runs.
   // Where it will run decides it for a provider that takes messages in the chat only (Codex).
-  const runtime = (unattended(request) || ownStart(request)) && workerInChat(chosen, sessionSpaceOf(space), request) ? 'sdk' : 'terminal'
+  const runtime = (unattended(request) || ownStart(request)) && workerInChat(chosen, request) ? 'sdk' : 'terminal'
   const messaging = sessionMessaging(chosen, { runtime }).supported
   return { status: 202, payload: { id: request.id, projectId, queued: true, ...(messaging ? { address: sessionAddress(request.id, projectId) } : {}), ...(givenTask ? { taskId: givenTask } : {}) } }
 }
