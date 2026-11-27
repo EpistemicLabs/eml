@@ -3,11 +3,11 @@
 // task-run). The run is a worker pane (addWorkerPane) on the desk the user
 // picks; its first message names the task. The host ledger records the task id,
 // so a running run shows here and a task has at most one run.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Play, SquareTerminal } from "lucide-react";
 import { useWritable } from "@/stores/useTeamStore";
 import { useActiveSpace } from "@/stores/useSpaceStore";
-import { startTaskSession } from "@/lib/task-board";
+import { newOpId, startTaskSession } from "@/lib/task-board";
 import { tellStartProblem } from "@/components/command-palette/openTask";
 
 import { BrainCard } from "@/components/brain/ui";
@@ -76,6 +76,9 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
   const [error, setError] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string>(defaultProject?.projectId ?? "");
   const [extra, setExtra] = useState("");
+  // A run without a desk names its operation: Start again before the host answered, or after no answer, sends the
+  // same id, and the host does it once. A started run ends it; the next run is a new one.
+  const runOpId = useRef<string | null>(null);
 
   if (engram.status !== "planned" && engram.status !== "active") return null;
 
@@ -111,10 +114,11 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
     if (deskId === NO_DESK) {
       // Runs on the host; the request goes to the active space (the Tasks view switched to the task's).
       setError(null);
+      runOpId.current ??= newOpId();
       void fetch("/api/tasks/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, prompt: runPrompt(engram, extra), title, taskId: engram.id }),
+        body: JSON.stringify({ opId: runOpId.current, projectId, prompt: runPrompt(engram, extra), title, taskId: engram.id }),
       }).then(async (res) => {
         // A task with a session starting, or one whose session cannot take the run, is refused with the host's reason.
         if (!res.ok) {
@@ -122,6 +126,7 @@ export function TaskRunCard({ engram, projects, onStarted, background = false }:
           setError(body?.error?.message ?? `The run could not start (HTTP ${res.status}).`);
           return;
         }
+        runOpId.current = null;
         setOpen(false);
         setExtra("");
         if (!background) onStarted?.();

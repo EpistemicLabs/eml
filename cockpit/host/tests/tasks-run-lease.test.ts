@@ -33,6 +33,7 @@ describe('a task run without a desk', () => {
     const { BrainSpaces } = await import('../src/brain-space.js')
     const { TurnTracker } = await import('../src/turn-state.js')
     const { createHostServer } = await import('../src/http.js')
+    const { createRecentOperations, RECENT_OPERATIONS } = await import('../src/application/recent-operations.js')
     ledger = new SessionLedger()
     spawns = new SpawnQueue()
     const space = {
@@ -50,6 +51,7 @@ describe('a task run without a desk', () => {
       hookToken: 'hook-token',
       turnHookConfig: '',
       deliver: async (request: { target: string; text: string }) => { delivered.push(request); return outcome },
+      runOperations: createRecentOperations({ ...RECENT_OPERATIONS, now: () => Date.now() }),
       taskLease: {
         contextTokensOf: (sessionId: string) => contextTokens.get(sessionId) ?? null,
         putAway: async (sessionId: string) => { putAway.push(sessionId); ledger.archive(sessionId); return null },
@@ -66,10 +68,10 @@ describe('a task run without a desk', () => {
   })
   beforeEach(() => { delivered.length = 0; outcome = 'delivered'; putAway.length = 0 })
 
-  const run = async (taskId: string, prompt = 'Advance it') => {
+  const run = async (taskId: string, prompt = 'Advance it', opId?: string) => {
     const res = await fetch(`${base}/api/tasks/run`, {
       method: 'POST', headers: { 'content-type': 'application/json', origin: ORIGIN },
-      body: JSON.stringify({ projectId: 'bp-eml', prompt, title: 'Task', taskId }),
+      body: JSON.stringify({ projectId: 'bp-eml', prompt, title: 'Task', taskId, ...(opId ? { opId } : {}) }),
     })
     return { status: res.status, body: await res.json() as Record<string, unknown> }
   }
@@ -90,6 +92,18 @@ describe('a task run without a desk', () => {
     expect(out).toEqual({ status: 200, body: { id: 'task-session', routed: true } })
     expect(delivered).toEqual([expect.objectContaining({ target: 'task-session', text: 'Advance it' })])
     expect(spawns.list().some((r) => r.taskId === 'held-task')).toBe(false)
+  })
+
+  it('gives the prompt once for one Start, however often the page sends it', async () => {
+    ledger.recordSpawn('again-session', null, 'bp-eml', 'claude', false, 'again-task')
+    const opId = '3c9d2a1e-5b7f-4c8d-9e0a-1b2c3d4e5f60'
+    const first = await run('again-task', 'Advance it', opId)
+    const again = await run('again-task', 'Advance it', opId)
+    expect(again).toEqual(first)
+    expect(first).toEqual({ status: 200, body: { id: 'again-session', routed: true } })
+    expect(delivered).toHaveLength(1)
+    await run('again-task', 'Advance it', '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d')
+    expect(delivered).toHaveLength(2)
   })
 
   it('refuses when the holding session cannot take it, saying whether a retry helps', async () => {

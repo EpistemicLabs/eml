@@ -28,6 +28,7 @@ import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
 import { taskLeaseHookups } from './application/task-lease.js'
+import { createRecentOperations, RECENT_OPERATIONS } from './application/recent-operations.js'
 import { StartWorker, workerInChat } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -82,7 +83,7 @@ import { sessionsOnTask } from './domain/firing-order.js'
 import { createTaskRecords } from './application/task-record.js'
 import { editTaskSchedule } from './application/task-schedule-write.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
-import { resolveProject } from './spawn-api.js'
+import { resolveProject, type SpawnOutcome } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
@@ -600,7 +601,11 @@ async function main() {
     if (!brain) return { error: `space ${space.name} has no agent` }
     return createWorkerTask({ brain, owner, agent: space.agent ?? null, holds: workerHolds }, input)
   }
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, ...taskLease.spawn, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
+  // A spawn or a task run the client sends again under its opId is done once (application/recent-operations.ts);
+  // POST /api/spawn and the inbox share theirs, as cockpit-spawn falls back from one to the other.
+  const spawnOperations = createRecentOperations<SpawnOutcome>({ ...RECENT_OPERATIONS, now: () => Date.now() })
+  const runOperations = createRecentOperations<{ status: number; payload: unknown }>({ ...RECENT_OPERATIONS, now: () => Date.now() })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, ...taskLease.spawn, operations: spawnOperations, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -1249,7 +1254,7 @@ async function main() {
 
   const hostDeps: HostDeps =
     { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
-      taskLease: taskLease.spawn, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
+      taskLease: taskLease.spawn, spawnOperations, runOperations, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {

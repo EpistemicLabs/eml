@@ -13,6 +13,7 @@ import { parseToolProfile } from './domain/tool-profile.js'
 import type { SessionLedger } from './session-ledger.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
 import { routeToTaskHolder, takenSince, type LeaseRefusal, type RouteDeps } from './application/task-lease.js'
+import { operationId, type RecentOperations } from './application/recent-operations.js'
 
 /**
  * Worker spawns (skill spawn-session → cockpit-spawn → here):
@@ -21,7 +22,8 @@ import { routeToTaskHolder, takenSince, type LeaseRefusal, type RouteDeps } from
  *                                Body: project, prompt, title?, provider?, fromSession?,
  *                                task? (the brain task it works on), step? (its task is a new step of the requester's)
  *                                or newTask? { title, in?, text? } (the host creates that task first, in project `in`
- *                                or else the worker's)
+ *                                or else the worker's), opId? (the same id again answers the first outcome without
+ *                                starting or delivering again, application/recent-operations.ts)
  *   <home>/spawn-inbox           the same request as a file, for sessions whose
  *                                sandbox has no network (spawn-inbox.ts)
  *   POST /api/spawns/<id>/claim  from the cockpit page (same-origin guarded in
@@ -60,6 +62,8 @@ export interface SpawnDeps {
   putAway?: (sessionId: string) => Promise<string | null>
   /** Why a queued request must not start any more (domain/task-lease.ts staleRunnerRequest), or null when it may. */
   stale?: (request: SpawnRequest) => string | null
+  /** The outcomes of recent spawns by their opId, shared by POST /api/spawn and the inbox; without it each one runs. */
+  operations?: RecentOperations<SpawnOutcome>
 }
 
 const MAX_PROMPT = 50_000
@@ -104,8 +108,15 @@ export const routeDepsOf = (deps: Pick<SpawnDeps, 'spawns' | 'ledger' | 'deliver
 /**
  * Queue a worker request from a session — the one rule for both ways a request
  * arrives (POST /api/spawn, the spawn inbox). The caller has checked the token.
+ * A request naming an operation (`opId`) the host saw lately gets that one's outcome: nothing starts or is delivered again.
  */
 export async function requestSpawn(deps: SpawnDeps, body: Record<string, unknown>): Promise<SpawnOutcome> {
+  const opId = operationId(body)
+  if (!deps.operations || !opId) return queueSpawn(deps, body)
+  return deps.operations.once(`${typeof body.fromSession === 'string' ? body.fromSession : ''}:${opId}`, () => queueSpawn(deps, body))
+}
+
+async function queueSpawn(deps: SpawnDeps, body: Record<string, unknown>): Promise<SpawnOutcome> {
   const fail = (status: number, code: string, message: string): SpawnOutcome => ({ status, payload: { error: { code, message } } })
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   const project = typeof body.project === 'string' ? body.project.trim() : ''

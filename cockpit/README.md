@@ -292,7 +292,9 @@ eml-cockpit agent sync-skills <id>     # copy the listed skills in again
   starts no worker: the prompt goes to that session as a message (`routed: true`), and a holder that cannot take it
   refuses the spawn, naming it; one with a very long context is put away and the worker starts in its place. A task run
   without a desk (`POST /api/tasks/run`) follows the same rule. Each refusal says whether a retry can help (`retry`). A
-  split onto such a task sends that session the brief and opens it.
+  split onto such a task sends that session the brief and opens it. A spawn and a task run name their operation
+  (`opId`): sent again within 10 minutes (Start clicked again, `cockpit-spawn` falling back to the inbox), the host
+  answers what the first did and delivers nothing twice (`application/recent-operations.ts`).
 - **Messages:** `POST /api/sessions/<id or address>/message` delivers to a session and resumes it if stopped
   (`application/deliver-message.ts`); a session in a terminal answers busy. Whether a session can be sent a message
   is read per session (`sessionMessaging`): a Codex session only once it runs in the chat, never one that ran in a terminal. A `PreToolUse` hook (`send-message-hook.ts`) sends `SendMessage` calls for a

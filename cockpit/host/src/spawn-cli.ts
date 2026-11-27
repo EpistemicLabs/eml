@@ -24,7 +24,11 @@
  *
  * A task has one live session at a time: with --task on a task that already has its session, no worker starts; the
  * prompt goes to that session as a message, and the CLI says so and prints that session's address.
+ *
+ * The request names its operation (opId): sent again on the inbox after a fetch error the host did answer, it is not
+ * done twice (application/recent-operations.ts).
  */
+import { randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import { fail, requestHost } from './host-request.js'
 import { spawnAnswerLines, type SpawnAnswer } from './spawn-answer.js'
@@ -48,7 +52,9 @@ async function main(): Promise<void> {
   }
   if (!prompt?.trim()) fail(CLI, '--prompt-file or --prompt is required')
 
+  // One id for this request on both ways it may go (HTTP, then the inbox after a fetch error): the host does it once.
   const answer = await requestHost<SpawnAnswer>(CLI, { method: 'POST', path: '/api/spawn' }, {
+    opId: randomUUID(),
     project,
     prompt,
     title: arg('title'),

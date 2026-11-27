@@ -116,6 +116,21 @@ describe('spawning a worker with a task', () => {
       expect(String(delivered[0].from)).toContain('lord')
     })
 
+    it('gives the prompt once for one operation id, however often it arrives (a CLI retry, the inbox after HTTP)', async () => {
+      const { createRecentOperations, RECENT_OPERATIONS } = await import('../src/application/recent-operations.js')
+      const { spawns, deps, delivered } = held({ operations: createRecentOperations({ ...RECENT_OPERATIONS, now: () => Date.now() }) })
+      const body = { project: 'bp-eml', prompt: 'add the tracking link', fromSession: 'lord', task: 'held-task', opId: '7f0c2f4e-8d0b-4f7e-9a51-0d8c3a1b2c3d' }
+      const first = await mods.requestSpawn(deps, body)
+      const again = await mods.requestSpawn(deps, { ...body })
+      expect(again).toEqual(first)
+      expect(delivered).toHaveLength(1)
+      // Another operation, or none, is a new start.
+      await mods.requestSpawn(deps, { ...body, opId: '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9' })
+      await mods.requestSpawn(deps, { ...body, opId: undefined })
+      expect(delivered).toHaveLength(3)
+      expect(spawns.list()).toEqual([])
+    })
+
     it('refuses, naming the session, when that session cannot take the message', async () => {
       for (const outcome of ['busy', 'refused']) {
         const { spawns, deps, setOutcome } = held()
