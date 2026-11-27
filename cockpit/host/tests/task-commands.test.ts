@@ -1226,6 +1226,79 @@ describe('done on a do wait', () => {
     expect(w.commands.pending()).toEqual([])
   })
 
+  it('wakes nobody when the wait was taken off between the read and the write: only the call that took it off wakes', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [question, ask] }, 'active')])
+    // the owner's other device answers the same step while this call is on its way to the write
+    const get = w.deps.brain(null as never)!.get
+    let reads = 0
+    ;(w.deps.brain(null as never) as { get: typeof get }).get = async (path: string, query?: Record<string, unknown>) => {
+      const t = await get(path, query) as { id: string }
+      if (path === '/engram/t1' && ++reads === 2) w.byId.get('t1')!.properties.waits = [question]
+      return reads === 2 ? { ...t, properties: { ...w.byId.get('t1')!.properties } } : t
+    }
+    const r = await done(w, 't1', 'w-do', 'op-race')
+    expect(r).toMatchObject({ ok: true, command: { state: 'applied' } })
+    if (r.ok) expect(r.command.continued).toBeUndefined()
+    expect(w.posts).toEqual([])
+    expect(w.tried).toEqual([])
+    expect(w.started).toEqual([])
+  })
+
+  it('a retry with the same opId while the first call still runs gets its answer and does not run Done twice', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')])
+    const [a, b] = await Promise.all([done(w, 't1', 'w-do', 'op-twice'), done(w, 't1', 'w-do', 'op-twice')])
+    expect(a).toEqual(b)
+    expect(a).toMatchObject({ ok: true, command: { state: 'applied', continued: { sessionId: 's-ask', how: 'delivered' } } })
+    expect(w.posts).toHaveLength(1)
+    expect(w.tried).toEqual([{ sessionId: 's-ask', text: MESSAGE }])
+  })
+
+  it('a brain write that fails answers no_brain, wakes nobody and keeps the Done pending; the retry finishes it once', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')])
+    const brain = w.deps.brain(null as never) as { post: (path: string, body: Record<string, unknown>) => Promise<unknown> }
+    const post = brain.post
+    brain.post = async () => { throw new Error('the brain does not answer') }
+    expect(await done(w, 't1', 'w-do', 'op-fail')).toEqual({ ok: false, refusal: 'no_brain', message: 'The task could not be written (the brain does not answer); try again.' })
+    expect(w.byId.get('t1')!.properties.waits).toEqual([ask])
+    expect(w.tried).toEqual([])
+    expect(w.store.get('op-fail')).toMatchObject({ kind: 'done', state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } } })
+    brain.post = post
+    expect(await done(w, 't1', 'w-do', 'op-fail')).toMatchObject({ ok: true, command: { state: 'applied', continued: { how: 'delivered' } } })
+    expect(w.byId.get('t1')!.properties.waits).toBeUndefined()
+    expect(w.tried).toHaveLength(1)
+  })
+
+  it('after a crash between taking the wait off and saving, a retry with the same opId (or the tick) still wakes the agent, once', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')])
+    // what the first call left: its pending command, and the wait gone from the task with its journal line
+    w.store.put({
+      opId: 'op-crash', kind: 'done', spaceId: 'main', taskId: 't1', waitId: 'w-do', createdAt: new Date(w.clock.now).toISOString(), undoUntil: new Date(w.clock.now).toISOString(),
+      state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
+    }, w.clock.now)
+    const t = w.byId.get('t1')!
+    delete t.properties.waits
+    ;(t as { entries?: unknown[] }).entries = [{ kind: 'note', at: new Date(w.clock.now + 5).toISOString(), text: 'lasse marked done: Sign the contract.' }]
+    w.later(10)
+    expect(await done(w, 't1', 'w-do', 'op-crash')).toMatchObject({ ok: true, command: { state: 'applied', continued: { sessionId: 's-ask', how: 'delivered' } } })
+    expect(w.posts).toEqual([])
+    expect(w.tried).toEqual([{ sessionId: 's-ask', text: MESSAGE }])
+    await w.commands.tick()
+    expect(w.tried).toHaveLength(1)
+  })
+
+  it('the tick finishes a Done left pending', async () => {
+    const w = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')])
+    w.store.put({
+      opId: 'op-left', kind: 'done', spaceId: 'main', taskId: 't1', waitId: 'w-do', createdAt: new Date(w.clock.now).toISOString(), undoUntil: new Date(w.clock.now).toISOString(),
+      state: 'pending', done: { wait: { who: 'lasse', why: 'Sign the contract', session_id: 's-ask', delegated: true } },
+    }, w.clock.now)
+    w.later(1)
+    await w.commands.tick()
+    expect(w.store.get('op-left')).toMatchObject({ state: 'applied', continued: { how: 'delivered' } })
+    expect(w.byId.get('t1')!.properties.waits).toBeUndefined()
+    expect(w.tried).toHaveLength(1)
+  })
+
   it('falls back to the task\'s newest session when the asking one cannot take it, else starts one on the task', async () => {
     const newest = doneWorld([owned('t1', { delegate: 'atlas', waits: [ask] }, 'active')], { takes: ['s-newest'] })
     expect(await done(newest, 't1', 'w-do')).toMatchObject({ ok: true, command: { continued: { sessionId: 's-newest', how: 'delivered' } } })

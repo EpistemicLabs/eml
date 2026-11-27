@@ -14,6 +14,7 @@ import { ownerOf, ownersFor } from '../domain/task-owner.js'
 import { COCKPIT_HOME } from '../paths.js'
 import type { SplitRelation, SplitWhen } from '../domain/split.js'
 import { trackWaits } from './task-waits.js'
+import { journaledSince } from './task-router.js'
 import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '../domain/task-waits.js'
 
 /**
@@ -85,6 +86,14 @@ export interface CommandInput {
   waitId?: string
 }
 
+/** Done: the do wait as it was when the owner chose Done, and whether the task names an agent to wake. */
+export interface DoneWait {
+  who: string
+  why?: string
+  session_id?: string
+  delegated: boolean
+}
+
 /** A decision or note that closed with the task: a reopen lists it for the chat, which brings it back on the owner's yes. */
 export interface ReopenItem { id: string; type: string; title: string | null }
 
@@ -131,6 +140,8 @@ export interface TaskCommand extends CommandInput {
   reopened?: { items: ReopenItem[]; closedSteps: number }
   /** Where a reopen's message went: the session that got it, or the one started with it. Done: where its wake went. */
   continued?: { sessionId: string | null; how: 'delivered' | 'started' | 'failed' }
+  /** Done: the wait it takes off, and whether this command took it off (a retry after a crash wakes the agent then). */
+  done?: { wait: DoneWait; removed?: boolean }
   /** The task a follow-up made, and whether it is linked to the one it follows (a retry skips what is done). */
   followUp?: { taskId: string; linked?: boolean; journaled?: boolean }
   error?: string
@@ -500,8 +511,39 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
     return 'reopened'
   }
 
-  const submit = async (input: CommandInput): Promise<Submitted> => {
+  /**
+   * Done carried out now, from its command; a failure leaves the command pending, for a retry with the same opId or
+   * the next tick.
+   */
+  const runDone = async (brain: Pick<EmlApi, 'get' | 'post'>, command: TaskCommand): Promise<Submitted> => {
+    try {
+      return { ok: true, command: await finishDone(brain, command) }
+    } catch (err) {
+      deps.log(`[commands] ${command.opId.slice(0, 8)} done failed: ${(err as Error).message}`)
+      return { ok: false, refusal: 'no_brain', message: `The task could not be written (${(err as Error).message}); try again.` }
+    }
+  }
+
+  /** The operations under way, by opId: a retry that comes while the first call runs gets that call's answer. */
+  const inFlight = new Map<string, Promise<Submitted>>()
+  const once = (opId: string, work: () => Promise<Submitted>): Promise<Submitted> => {
+    const running = inFlight.get(opId)
+    if (running) return running
+    const run = work().finally(() => inFlight.delete(opId))
+    inFlight.set(opId, run)
+    return run
+  }
+
+  const submit = (input: CommandInput): Promise<Submitted> => once(input.opId, () => submitOnce(input))
+
+  const submitOnce = async (input: CommandInput): Promise<Submitted> => {
     const existing = deps.store.get(input.opId)
+    // A Done that did not finish (a crash, a brain that did not answer) goes on where it stopped.
+    if (existing?.kind === 'done' && existing.state === 'pending') {
+      const space = deps.space(existing.spaceId)
+      const brain = space ? deps.brain(space) : null
+      return brain ? runDone(brain, existing) : { ok: false, refusal: 'no_brain' }
+    }
     if (existing) return { ok: true, command: existing }
     const space = deps.space(input.spaceId)
     if (!space) return { ok: false, refusal: 'unknown_space' }
@@ -589,14 +631,12 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       if (!OPEN.has(task.status)) return { ok: false, refusal: 'task_closed' }
       const wait = waitsOf(task.properties).find((w) => w.id === input.waitId && w.kind === 'do' && (!deps.viewer || w.who === deps.viewer))
       if (!wait) return { ok: false, refusal: 'unknown_wait', message: 'That step is not open on the task any more.' }
-      try {
-        const continued = await markDone(brain, input.spaceId, task, wait)
-        deps.log(`[commands] ${input.opId.slice(0, 8)} done: task ${task.id.slice(0, 8)}, ${continued ? `agent woken (${continued.how})` : 'nobody to wake'}`)
-        return { ok: true, command: save({ ...base, undoUntil: base.createdAt, state: 'applied', ...(continued ? { continued } : {}) }) }
-      } catch (err) {
-        deps.log(`[commands] ${input.opId.slice(0, 8)} done failed: ${(err as Error).message}`)
-        return { ok: false, refusal: 'no_brain', message: `The task could not be written (${(err as Error).message}); try again.` }
-      }
+      // Recorded before anything is written: a retry with the same opId, or the tick, finishes it after a crash.
+      const command = save({
+        ...base, undoUntil: base.createdAt,
+        done: { wait: { who: wait.who, ...(wait.why ? { why: wait.why } : {}), ...(wait.session_id ? { session_id: wait.session_id } : {}), delegated: Boolean(task.properties?.delegate) } },
+      })
+      return runDone(brain, command)
     }
 
     if (SCHEDULE_CONTROLS.includes(input.kind)) {
@@ -702,23 +742,40 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
   }
 
   /**
-   * Done on a do wait: the wait goes with the journal line "<owner> marked done: <what>", then the task's agent is
-   * woken with that text: the session that asked for the step, else the task's newest, else a new one. A do wait no
-   * session asked for (a person's own reminder) on a task nobody is delegated wakes nobody. The check-back stays.
+   * Done on a do wait, step by step from its command, so a retry or the tick after a crash goes on where it stopped:
+   * the wait goes with the journal line "<owner> marked done: <what>", then the task's agent is woken with that text
+   * (the session that asked for the step, else the task's newest, else a new one). Only a command that took the wait
+   * off wakes anyone: one someone else took off meanwhile wakes nobody. A do wait no session asked for (a person's own
+   * reminder) on a task nobody is delegated wakes nobody. The check-back stays.
    */
-  const markDone = async (brain: Pick<EmlApi, 'get' | 'post'>, spaceId: string, task: BrainTask, wait: { id: string; who: string; why?: string; session_id?: string }) => {
-    const what = wait.why?.trim() || 'the step'
-    const said = `${wait.who} marked done: ${what}`
-    await trackWaits(brain, task.id, (fresh) => {
-      const waits = waitsOf(fresh.properties)
-      const left = waits.filter((w) => w.id !== wait.id)
-      return left.length === waits.length ? null : { ...waitsBody(left), text: `${said}.` }
-    })
-    deps.changed(spaceId)
-    if (!wait.session_id && !task.properties?.delegate) return null
+  const finishDone = async (brain: Pick<EmlApi, 'get' | 'post'>, command: TaskCommand): Promise<TaskCommand> => {
+    const { wait } = command.done!
+    const said = `${wait.who} marked done: ${wait.why?.trim() || 'the step'}`
+    let current = command
+    if (!current.done!.removed) {
+      const { task, patch } = await trackWaits(brain, current.taskId!, (fresh) => {
+        const waits = waitsOf(fresh.properties)
+        const left = waits.filter((w) => w.id !== current.waitId)
+        return left.length === waits.length ? null : { ...waitsBody(left), text: `${said}.` }
+      })
+      // Gone without this write: taken off by this command before a crash (its journal line says so), or by someone else.
+      const ours = patch !== null || journaledSince(task as { entries?: Array<{ kind?: string; at?: string; text?: string | null }> }, `${said}.`, current.createdAt)
+      if (!ours) {
+        deps.log(`[commands] ${current.opId.slice(0, 8)} done: the step was taken off meanwhile, nobody to wake`)
+        return save({ ...current, state: 'applied' })
+      }
+      current = save({ ...current, done: { ...current.done!, removed: true } })
+    }
+    if (!wait.session_id && !wait.delegated) {
+      deps.log(`[commands] ${current.opId.slice(0, 8)} done: task ${current.taskId!.slice(0, 8)}, nobody to wake`)
+      return save({ ...current, state: 'applied' })
+    }
     const message = `${said}. See where the task stands and go on.`
-    if (wait.session_id && deps.deliver && await deps.deliver(wait.session_id, message).catch(() => false)) return { sessionId: wait.session_id, how: 'delivered' as const }
-    return continueIn(spaceId, task.id, message)
+    const continued = wait.session_id && deps.deliver && await deps.deliver(wait.session_id, message).catch(() => false)
+      ? { sessionId: wait.session_id, how: 'delivered' as const }
+      : await continueIn(current.spaceId, current.taskId!, message)
+    deps.log(`[commands] ${current.opId.slice(0, 8)} done: task ${current.taskId!.slice(0, 8)}, agent woken (${continued.how})`)
+    return save({ ...current, state: 'applied', continued })
   }
 
   /** A reopened task's message: to its newest session (resumed when stopped), or a new session started with it. */
@@ -924,7 +981,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       const run = async () => {
         const now = deps.now()
         // A session's split or sort pending here is one that failed part-way: its retry resumes it, not the tick.
-        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) await apply(command)
+        for (const command of deps.store.commands().filter((c) => c.state === 'pending' && c.kind !== 'split' && c.kind !== 'sort' && Date.parse(c.undoUntil) < now)) {
+          // A Done left pending (a crash, a brain that did not answer) goes on, unless a call carries it out right now.
+          if (command.kind === 'done') await submit({ opId: command.opId, kind: 'done', spaceId: command.spaceId })
+          else await apply(command)
+        }
         await releaseTogether(now)
       }
       const current = run().finally(() => { if (ticking === current) ticking = null })
