@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import * as paneStore from '@/stores/usePaneStore';
 import { readSettings } from '@/components/settings/utils/settingsStorage';
-import { chatInitFrame, clearChatStart, peekChatStart, rememberModels } from './chat-start';
+import { chatInitFrame, clearChatStart, peekChatStart } from './chat-start';
 
 import { receiveEvent, resetChat, resumePoint, setConnection, setProblem, setSwitching, setLimits, setTerminalBusy, setToolServerSignIn, setToolServers, showSentMessage, type SessionLimits } from './chat-store';
 import type { ChatEvent, ToolServer } from './chat-state';
@@ -112,7 +112,6 @@ export function useChatSocket(paneId: string, projectId: string, sessionId: stri
         if (frame.type === 'event' && frame.event && typeof frame.seq === 'number') {
           setSwitching(sessionId, null);
           receiveEvent(sessionId, frame.seq, frame.event);
-          if (frame.event.kind === 'capabilities') rememberModels(frame.event.models);
         } else if (frame.type === 'reset' && typeof frame.epoch === 'number') {
           resetChat(sessionId, frame.epoch);
           for (const waiting of waitingRef.current) if (waiting.type === 'send') showSentMessage(sessionId, waiting.id as string, waiting.text as string);

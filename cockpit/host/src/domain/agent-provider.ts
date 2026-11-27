@@ -1,4 +1,4 @@
-import type { SessionRuntimeFactory, SessionRuntimeKind } from './session-runtime.js'
+import type { ModelOption, SessionRuntimeFactory, SessionRuntimeKind } from './session-runtime.js'
 import type { ToolProfile, McpServerSpec } from './tool-profile.js'
 
 /**
@@ -312,6 +312,12 @@ export interface AgentProvider {
   readonly capabilities: ProviderCapabilities
   /** The provider's sessions in the chat view (`capabilities.chat`); absent for a provider without one. */
   readonly chatRuntime?: SessionRuntimeFactory
+  /**
+   * The models a new chat of this provider can start with, asked without a session (the launchers' agent picker,
+   * GET /api/providers/models). Resolves, never rejects: empty when it cannot say. Absent: the provider lists its
+   * models only from a running chat, and the host offers the ones its last chat reported (application/chat-models.ts).
+   */
+  chatModels?(): Promise<ModelOption[]>
   readonly runtime: AgentRuntime
   readonly auth: AgentAuth
   /** A sign-in without a terminal; absent for a provider that signs in some other way (Qwen: an endpoint). */

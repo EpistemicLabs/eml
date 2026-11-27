@@ -55,7 +55,8 @@ export const spawnAccountServer: SpawnAccountServer = () => spawn(codexRuntime.b
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 
-async function open(spawnServer: SpawnAccountServer): Promise<AppServerClient> {
+/** An app-server of its own, initialized; the caller closes it. */
+export async function openAccountServer(spawnServer: SpawnAccountServer): Promise<AppServerClient> {
   const client = new AppServerClient(spawnServer)
   try {
     await client.request('initialize', { clientInfo: CLIENT })
@@ -69,7 +70,7 @@ async function open(spawnServer: SpawnAccountServer): Promise<AppServerClient> {
 
 /** What Codex says of its sign-in, from a process of its own. */
 export async function readCodexAccount(spawnServer: SpawnAccountServer = spawnAccountServer, timeoutMs = READ_TIMEOUT_MS): Promise<CodexAccount> {
-  const client = await open(spawnServer)
+  const client = await openAccountServer(spawnServer)
   let timer: NodeJS.Timeout | undefined
   try {
     const answer = await Promise.race([
@@ -113,7 +114,7 @@ export class CodexSignIn implements AgentSignIn {
   async start(): Promise<SignInAttempt> {
     if (this.current) await this.cancel(this.current.attempt.id)
     this.finished = null
-    const client = await open(this.deps.spawn ?? spawnAccountServer)
+    const client = await openAccountServer(this.deps.spawn ?? spawnAccountServer)
     let started: LoginAccountResponse
     try {
       started = await client.request('account/login/start', { type: 'chatgptDeviceCode' }) as LoginAccountResponse

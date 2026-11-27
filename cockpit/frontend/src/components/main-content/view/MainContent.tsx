@@ -24,7 +24,8 @@ import { FilePane } from '../../media/FilePane';
 import { useSwitchBlocked } from '../../chat/chat-store';
 import { LimitsBadge } from '../../chat/LimitsBadge';
 import type { MainContentProps } from '../types/types';
-import { addPaneNextTo, consumePendingShellCommand, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { addPaneNextTo, consumePendingShellCommand, newCliSessionId, newSessionView, getSessionView, peekPendingShellCommand, usePane, type PaneView } from '@/stores/usePaneStore';
+import { queueChatStart } from '@/components/chat/chat-start';
 import { useTurnStore } from '@/stores/useTurnStateStore';
 import { cn } from '@/lib/utils';
 import { PLUGIN_DEFS, useViewEnabled } from '@/lib/pane-views';
@@ -105,11 +106,19 @@ function MainContent({
   // this pane resolves to (a pane opened from a sidebar session may carry no
   // projectId itself — its project comes from the session's owner), else the
   // store's fallbacks (this pane's id → desk default → a sibling's project).
-  const handleAddPane = (view: PaneView, provider?: LLMProvider) => {
+  // A new chat the agent picker chose (MainContentTabSwitcher): its id minted here, so its model waits for the chat's socket.
+  const handleAddPane = (view: PaneView, provider?: LLMProvider, model?: string | null) => {
+    const project = selectedProject ? { projectId: selectedProject.projectId } : {};
+    if (view === 'chat' && provider) {
+      const sessionId = newCliSessionId();
+      queueChatStart(sessionId, { provider, prompt: null, model: model ?? null });
+      addPaneNextTo(paneId, { paneView: 'chat', sessionId, provider, ...project });
+      return;
+    }
     addPaneNextTo(paneId, {
       paneView: view === 'terminal' ? newSessionView(provider) : view,
       ...(provider ? { provider } : {}),
-      ...(selectedProject ? { projectId: selectedProject.projectId } : {}),
+      ...project,
     });
   };
 

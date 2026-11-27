@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { WebSocket, type RawData } from 'ws'
 import { sessionMessaging, type AgentProvider, type ProviderId, type TurnState } from './domain/agent-provider.js'
 import type {
-  EventStore, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
+  EventStore, ModelOption, PermissionAnswer, RunningCommand, RuntimeEvent, SessionRuntime, SessionRuntimeFactory, SessionRuntimeStart, WorkflowWait,
 } from './domain/session-runtime.js'
 import type { SessionHandoff } from './application/session-handoff.js'
 import type { ProviderRegistry } from './infrastructure/providers/registry.js'
@@ -90,7 +90,7 @@ const WS_MAX_BUFFERED = 16 * 1024 * 1024
 const MAX_IMAGES = 10
 const SAFE_ID = /^[a-zA-Z0-9_.\-:]+$/
 // A model id may carry a variant: `opus[1m]`.
-const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
+export const SAFE_MODEL = /^[a-zA-Z0-9_.\-:[\]]+$/
 
 // The provider a new chat runs with when its view names none.
 const DEFAULT_CHAT_PROVIDER: ProviderId = 'claude'
@@ -258,6 +258,8 @@ export interface ChatContext {
    * call: one that gets it from an MCP server (Codex) is told its name there. Absent: built in.
    */
   endTurnTool?: (sessionId: string) => EndTurnAccess
+  /** A chat of this provider offered these models (its capabilities): the launchers' picker offers them before a session runs (reported-models.ts). */
+  modelsOffered?: (provider: ProviderId, models: ModelOption[]) => void
 }
 
 type ClientMessage = {
@@ -840,6 +842,7 @@ export class ChatBridge {
         if (request.wakeable) this.ctx.ledger.setWakeable(sessionId)
         if (request.toolProfile) this.ctx.ledger.setToolProfile(sessionId, request.toolProfile)
         if (request.jobId) this.ctx.ledger.setJobId(sessionId, request.jobId)
+        if (request.model && SAFE_MODEL.test(request.model)) this.ctx.ledger.setChatSettings(sessionId, { model: request.model })
         this.startRuntime(entry, provider, space, false)
         // Working from here on: its first hook comes only once the agent CLI has booted. A runtime that reports its
         // turns says it with the message below.
@@ -1111,6 +1114,9 @@ export class ChatBridge {
     switch (event.kind) {
       case 'settings':
         if (event.mode) this.ctx.ledger.setChatSettings(entry.sessionId, { mode: event.mode })
+        break
+      case 'capabilities':
+        this.ctx.modelsOffered?.(entry.provider, event.models)
         break
       case 'conversation':
         // The ledger's alone: resume and the stored conversation go by it, and no view reads it.

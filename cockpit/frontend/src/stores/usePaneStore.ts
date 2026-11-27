@@ -990,7 +990,10 @@ export function getSessionView(sessionId: string): PaneView | undefined {
 // background worker spawns (addWorkerPane) deliberately do not.
 
 export type OpenTarget =
-  /** An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default. */
+  /**
+   * An existing session; or a fresh one when sessionId is left out — with `provider`, or the cockpit's default.
+   * `provider` with a sessionId: a new chat a launcher minted the id for (chat-start.ts queueChatStart).
+   */
   | { surface: 'terminal'; projectId: string | null; sessionId?: string; provider?: LLMProvider; chat?: boolean }
   | { surface: 'note'; projectId: string | null; noteId: string }
   /** A file from the media viewer, pinned as a pane of its own. */
@@ -1108,7 +1111,8 @@ export function openInPane(target: OpenTarget): string {
 
   const items: Partial<PaneState> =
     target.surface === 'terminal'
-      ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.sessionId ? undefined : target.provider }
+      // A known session keeps its own agent; a new one names it, also one whose id a launcher minted.
+      ? { sessionId: target.sessionId ?? newCliSessionId(), provider: target.provider }
       : target.surface === 'note'
         ? { noteId: target.noteId }
         : target.surface === 'file'
@@ -1380,10 +1384,12 @@ export function consumePendingShellCommand(paneId: string): string | null {
  * terminal's first message waits in the pending queue like a worker's; a chat's goes
  * with its init (components/chat/chat-start.ts). Returns the new session's id.
  */
-export function startSessionInPane(paneId: string, opts: { projectId: string; view: 'chat' | 'terminal'; prompt?: string | null; sessionId?: string }): string {
+export function startSessionInPane(paneId: string, opts: { projectId: string; view: 'chat' | 'terminal'; prompt?: string | null; sessionId?: string; provider?: string | null }): string {
   setTopView('desks');
   const sessionId = opts.sessionId ?? newCliSessionId();
-  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId, paneView: opts.view, title: undefined, provider: undefined }));
+  // The agent the launcher's picker chose: the pane opens as that agent's chat (chatProviderOfPane).
+  const provider = (opts.provider ?? undefined) as LLMProvider | undefined;
+  const { desks } = mapPaneInDesks(paneId, (pane) => ({ ...pane, projectId: opts.projectId, sessionId, paneView: opts.view, title: undefined, provider }));
   setSnapshot({ ...snapshot, desks, sessionViews: { ...snapshot.sessionViews, [sessionId]: opts.view } });
   if (opts.view === 'terminal' && opts.prompt) enqueuePendingShellCommand(paneId, opts.prompt);
   activatePane(paneId);

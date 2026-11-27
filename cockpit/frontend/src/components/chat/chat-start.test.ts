@@ -25,9 +25,14 @@ describe('chatInitFrame', () => {
   });
 
   it('brings the launcher\'s first message and model, and asks to wait for the terminal', () => {
-    expect(frame({ wait: true, start: { prompt: 'Fix the import', model: 'gpt-6-luna' }, provider: 'codex' }))
+    expect(frame({ wait: true, start: { provider: null, prompt: 'Fix the import', model: 'gpt-6-luna' }, provider: 'codex' }))
       .toMatchObject({ whenIdle: true, prompt: 'Fix the import', model: 'gpt-6-luna', provider: 'codex' });
-    expect(frame({ start: { prompt: null, model: null } })).not.toHaveProperty('prompt');
+    expect(frame({ start: { provider: null, prompt: null, model: null } })).not.toHaveProperty('prompt');
+  });
+
+  it('names the agent the launcher\'s picker chose before the pane\'s', () => {
+    expect(frame({ start: { provider: 'newcomer', prompt: null, model: 'nc-1' }, provider: 'claude' }))
+      .toMatchObject({ provider: 'newcomer', model: 'nc-1' });
   });
 });
 

@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Brain, ChevronDown, Folder, Plus, X } from 'lucide-react';
+import { Bot, Brain, ChevronDown, Folder, Plus, X } from 'lucide-react';
 
+import { AgentPicker, useAgentChoice } from '@/components/agent-picker/AgentPicker';
+import { queueChatStart } from '@/components/chat/chat-start';
 import { SPACE_HEADER } from '@/lib/space-fetch';
 import { SESSIONS_CHANGED_EVENT } from '@/lib/session-actions';
 import { cn } from '@/lib/utils';
 import { installedApp, MOD } from '@/components/top-bar/shortcuts';
 import { FIELD, FOCUS } from '@/shared/view/ui';
-import { openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
+import { newCliSessionId, openSessionInSpace, useActiveSpaceId } from '@/stores/usePaneStore';
 import { paneSpaceKey, useSpaces, type SpaceInfo } from '@/stores/useSpaceStore';
-import type { Project } from '@/types/app';
+import type { LLMProvider, Project } from '@/types/app';
 
 const LAST_PROJECT_KEY = 'cockpit-new-session-project';
 
@@ -37,9 +39,9 @@ function writeLastProject(spaceId: string, projectId: string): void {
 }
 
 /**
- * Start a session by hand, from any view: the agent you're in, the project you used
- * last. Without a prompt it opens an empty session in a pane; with one it runs on the
- * host, in a pane or in the background.
+ * Start a session by hand, from any view: the space you're in, the project you used
+ * last, the agent and model in the picker (components/agent-picker). Without a prompt it
+ * opens a new chat in a pane; with one it runs on the host, in a pane or in the background.
  */
 export function SidebarNewSession({ onError }: { onError: (message: string) => void }) {
   const spaces = useSpaces();
@@ -63,6 +65,7 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
   const [projectId, setProjectId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [starting, setStarting] = useState(false);
+  const agents = useAgentChoice();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const space: SpaceInfo | undefined = spaces.find((candidate) => candidate.id === spaceId)
@@ -92,8 +95,14 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
     writeLastProject(space.id, projectId);
     const text = prompt.trim();
     const key = paneSpaceKey(space);
+    const choice = agents.choice;
     if (!text) {
-      openSessionInSpace(key, { surface: 'terminal', projectId });
+      if (choice) {
+        // A new chat of the chosen agent: its id minted here, so its model waits for the chat's socket.
+        const sessionId = newCliSessionId();
+        queueChatStart(sessionId, { provider: choice.provider, prompt: null, model: choice.model });
+        openSessionInSpace(key, { surface: 'terminal', projectId, sessionId, provider: choice.provider as LLMProvider, chat: true });
+      } else openSessionInSpace(key, { surface: 'terminal', projectId });
       close();
       return;
     }
@@ -102,7 +111,7 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
       const response = await fetch('/api/sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, prompt: text, spaceId: space.main ? undefined : space.id }),
+        body: JSON.stringify({ projectId, prompt: text, spaceId: space.main ? undefined : space.id, ...(choice ? { provider: choice.provider, model: choice.model } : {}) }),
       });
       const body = (await response.json().catch(() => null)) as { id?: string; error?: { message?: string } } | null;
       if (!response.ok || !body?.id) {
@@ -170,6 +179,11 @@ export function SidebarNewSession({ onError }: { onError: (message: string) => v
             {projects.map((project) => <option key={project.projectId} value={project.projectId}>{project.displayName}</option>)}
           </select>
         </PickField>
+        {agents.choice && (
+          <PickField icon={<Bot aria-hidden className="size-3.5 text-muted-foreground" strokeWidth={1.8} />}>
+            <AgentPicker groups={agents.groups} choice={agents.choice} onChoose={agents.choose} className={cn(PICK, 'w-full appearance-none truncate pr-6 pl-7')} />
+          </PickField>
+        )}
         <textarea
           autoFocus
           rows={2}

@@ -16,7 +16,7 @@ export type SessionView = 'terminal' | 'chat';
  * the task board none, so there only the terminal/chat switch shows.
  */
 export interface SessionChatToolbar {
-  onAddPane?: (view: PaneView, provider?: LLMProvider) => void;
+  onAddPane?: (view: PaneView, provider?: LLMProvider, model?: string | null) => void;
   onClosePane?: () => void;
   isMainPane?: boolean;
   onToggleMainPane?: () => void;

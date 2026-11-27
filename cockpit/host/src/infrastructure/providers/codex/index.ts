@@ -10,9 +10,10 @@ import {
   type HookCommand,
 } from '../shared.js'
 import type { Capability, ProviderCapabilities } from '../../../domain/agent-provider.js'
-import type { SessionRuntimeFactory, SessionRuntimeKind } from '../../../domain/session-runtime.js'
+import type { ModelOption, SessionRuntimeFactory, SessionRuntimeKind } from '../../../domain/session-runtime.js'
 import { createCodexChatRuntimes } from './chat-runtime.js'
 import { CodexSignIn, readCodexAccount, type CodexAccount } from './account.js'
+import { CodexModels } from './models.js'
 import { platform } from '../../platform/index.js'
 import { readRolloutSummary } from './session-summary.js'
 import { asAgentRuntime } from '../managed-runtime.js'
@@ -184,7 +185,15 @@ class CodexProvider implements AgentProvider {
 
   readonly auth = {
     signedIn: async () => (await this.account())?.signedIn === true,
-    invalidate: () => { this.accountCache = null },
+    // Another account may offer other models.
+    invalidate: () => { this.accountCache = null; this.models.invalidate() },
+  }
+
+  /** The models `model/list` offers, from an app-server of its own and kept a while (models.ts). */
+  private models = new CodexModels({ version: () => codexRuntime.currentVersion() })
+
+  chatModels(): Promise<ModelOption[]> {
+    return this.models.get()
   }
 
   /** The device-code sign-in through app-server, from Settings › Models (account.ts). */
