@@ -38,6 +38,35 @@ describe('the task run card', () => {
     expect(panes.addWorkerPane).not.toHaveBeenCalled();
   });
 
+  it('says why the host refused a run without a desk, in the host\'s words', async () => {
+    const message = 'Task t1 already has a session starting (r0); a task has one session at a time.';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'TASK_STARTING', message, retry: true } }), { status: 409 })));
+    render(<TaskRunCard engram={engram} projects={projects} background />);
+    fireEvent.click(screen.getByText('Advance task'));
+    fireEvent.click(screen.getByText('Start run'));
+    await waitFor(() => expect(screen.getByText(message)).toBeTruthy());
+  });
+
+  it('names one operation per run without a desk: Start again after no answer sends the same id, the next run a new one', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ id: 'r1' }), { status: 202 }));
+    fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetch);
+    render(<TaskRunCard engram={engram} projects={projects} background />);
+    fireEvent.click(screen.getByText('Advance task'));
+    fireEvent.click(screen.getByText('Start run'));
+    await waitFor(() => expect(screen.getByText(/did not answer/)).toBeTruthy());
+    fireEvent.click(screen.getByText('Start run'));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Start run')).toBeNull());
+    fireEvent.click(screen.getByText('Advance task'));
+    fireEvent.click(screen.getByText('Start run'));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    const opIds = fetch.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).opId);
+    expect(opIds[0]).toEqual(expect.any(String));
+    expect(opIds[1]).toBe(opIds[0]);
+    expect(opIds[2]).not.toBe(opIds[0]);
+  });
+
   it('opens on the current desk by default elsewhere: the host starts it with the task bound', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ sessionId: 's1' }), { status: 202 }));
     vi.stubGlobal('fetch', fetch);

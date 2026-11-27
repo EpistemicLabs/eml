@@ -38,8 +38,22 @@ export interface SplitInput {
 }
 
 export type SplitAnswer =
-  | { ok: true; opId: string; undoUntil: string; taskId?: string; sessionId?: string }
+  /** `routed`: the existing task already had its session; the brief went there and `sessionId` is that session. */
+  | { ok: true; opId: string; undoUntil: string; taskId?: string; sessionId?: string; routed?: boolean }
   | { ok: false; message: string };
+
+/**
+ * The session the page opens itself after a split: the one the existing task already had, which got the brief
+ * (`routed`). A session the split started opens from the queue like any other, so it needs nothing here.
+ */
+export function sessionToOpen(answer: { sessionId?: string; routed?: boolean }): string | null {
+  return answer.routed && answer.sessionId ? answer.sessionId : null;
+}
+
+/** Whether Undo of a split closes its session's pane: a session the existing task already had keeps running. */
+export function closesPaneOnUndo(mark: { sessionId?: string; routed?: boolean }): boolean {
+  return Boolean(mark.sessionId) && !mark.routed;
+}
 
 const errorMessage = (body: Record<string, unknown>, status: number) =>
   ((body.error ?? {}) as { message?: string }).message ?? `The cockpit refused (HTTP ${status}).`;
@@ -76,7 +90,7 @@ export async function splitOff(sessionId: string, input: SplitInput, opId = cryp
     });
     const body = await res.json().catch(() => ({})) as Record<string, unknown>;
     if (!res.ok) return { ok: false, message: errorMessage(body, res.status) };
-    return { ok: true, ...(body as { opId: string; undoUntil: string; taskId?: string; sessionId?: string }) };
+    return { ok: true, ...(body as { opId: string; undoUntil: string; taskId?: string; sessionId?: string; routed?: boolean }) };
   } catch {
     return { ok: false, message: 'The cockpit did not answer.' };
   }

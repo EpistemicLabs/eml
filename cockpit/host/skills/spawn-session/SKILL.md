@@ -83,6 +83,14 @@ node "$COCKPIT_SPAWN_JS" --project <project> --prompt-file <file> --title "<shor
   a new step of your own task — only when the work is part of your task. Without any of them,
   the worker gets a task of its own and its task notes that you started it.
 
+A task has one live session at a time. With `--task` on a task that already has
+its session, no worker starts: your prompt goes to that session as a message,
+and the output says so and names its address. Treat it like a worker you
+messaged (subscribe with `notify_when_idle`, answer its questions). When that
+session cannot take a message right now, or a session is just starting on the
+task, the spawn fails and the error names the session that holds the task. A
+worker on your own task fails too: use `--step` or `--new-task` for that.
+
 For a worker that can be messaged, the output ends with `Worker address: <address>`.
 
 If `COCKPIT_SPAWN_JS` is not set, this session is not running in the cockpit —

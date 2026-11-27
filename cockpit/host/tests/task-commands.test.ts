@@ -402,6 +402,27 @@ describe('work on it now ends (B2)', () => {
     expect(w.posts).toHaveLength(1)
   })
 
+  it('work on it now and take over revoke a runner request still queued for the task, before the write', async () => {
+    const base = together()
+    const superseded: Array<[string, number]> = []
+    const commands = createTaskCommands({ ...base.deps, supersedeRunner: (taskId) => superseded.push([taskId, base.posts.length]) })
+    await commands.submit({ opId: 'op-now', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: workOnItNow })
+    expect(superseded).toEqual([['t1', 0]])
+    // Delegate now leaves a queued request alone: it is what the runner is to start.
+    await commands.submit({ opId: 'op-del', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(superseded).toHaveLength(1)
+  })
+
+  it('a hand-over undone after a request was queued says so', async () => {
+    const w = together()
+    const since = new Date(w.clock.now).toISOString()
+    await w.commands.submit({ opId: 'op-u', kind: 'hand_over', spaceId: 'main', taskId: 't1', handOver: { mode: 'now', delegate: 'atlas', checkpoint: 'after' } })
+    expect(w.commands.undoneSince('t1', since)).toBe(false)
+    await w.commands.undo('op-u')
+    expect(w.commands.undoneSince('t1', since)).toBe(true)
+    expect(w.commands.undoneSince('t1', new Date(w.clock.now + 1).toISOString())).toBe(false)
+  })
+
   it('take over opens the task\'s own session: no desk needed, the delegation goes, and it lasts while that session is open', async () => {
     const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-19T09:00:00.000Z' }
     const base = together({ delegate: 'atlas', delegation }, 'active')

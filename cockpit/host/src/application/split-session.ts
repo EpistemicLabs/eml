@@ -2,6 +2,8 @@ import type { EmlApi } from '@engramprotocol/mcp-server'
 import type { BrainSpace } from '../brain-space.js'
 import { planSplit, type SplitRefusal, type SplitRelation, type SplitWhen } from '../domain/split.js'
 import type { TaskCommand, TaskCommandStore } from './task-commands.js'
+import type { DeliveryOutcome } from '../domain/session-delivery.js'
+import { retryHelps } from './task-lease.js'
 import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js'
 
 /**
@@ -10,6 +12,10 @@ import { ownersFor, projectScope, type OwnedTask } from '../domain/task-owner.js
  * the pane can open; Undo stays open for SPLIT_UNDO_MS, drops the new task (invalidated) and ends the
  * new session. The command lives in the task commands' file, under its operation id, so a retry does
  * the work once and the one undo route serves it.
+ *
+ * A task has one live session at a time (domain/task-lease.ts): a split onto an existing task that a session holds
+ * starts none. The brief goes to that session as a message and the page opens it (`routed`); Undo then leaves that
+ * session alone. A holder that cannot take the message, or a session still starting on the task, refuses the split.
  */
 
 export const SPLIT_UNDO_MS = 5 * 60 * 1000
@@ -44,6 +50,13 @@ export interface SplitSessionDeps {
   /** Queue the new session for a pane next to the one it came from; returns its session id. */
   spawn(input: { fromSessionId: string; projectId: string; title: string; prompt: string; taskId: string | null; space: BrainSpace }): string
   endSession(sessionId: string): Promise<void>
+  /**
+   * Who holds the task's lease (domain/task-lease.ts): a session (its id and name), a request still starting
+   * (`pending`), or null. Without it a split onto an existing task always starts a session.
+   */
+  holderOf?(taskId: string): { sessionId: string; title: string } | { pending: string } | null
+  /** Give the holding session the split's first message, resuming it when stopped (application/deliver-message.ts). */
+  deliver?(sessionId: string, text: string): Promise<DeliveryOutcome>
   changed(): void
   now(): number
   log(line: string): void
@@ -53,7 +66,7 @@ export interface SplitSessionDeps {
 
 export type SplitAnswer =
   | { ok: true; command: TaskCommand }
-  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'unknown_task' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight'; message?: string }
+  | { ok: false; refusal: SplitRefusal | 'unknown_session' | 'unknown_project' | 'unknown_task' | 'no_brain' | 'unknown_command' | 'undo_expired' | 'in_flight' | 'task_starting' | 'task_held_by_you' | 'task_held'; message?: string; retry?: boolean }
 
 /** The first message of the new session: the brief, not the chat it came from. */
 export function splitPrompt(input: { title: string; brief: string; fromTitle: string; taskId: string | null; existing?: boolean }): string {
@@ -113,6 +126,21 @@ export function createSplitSession(deps: SplitSessionDeps) {
       if (!planned.ok) return planned
       const { plan } = planned
       if ((plan.task || plan.journal.source || plan.journal.existing) && !brain) return { ok: false, refusal: 'no_brain' }
+      const promptFor = (taskId: string | null) => splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId, existing: Boolean(existingTask) })
+      // Onto a task a session holds: that session gets the brief instead of a new one, all before anything is written,
+      // so a refusal leaves nothing behind and a retry with the same operation starts over.
+      const holder = existingTask && plan.spawn && !existing?.split?.spawnedSessionId ? deps.holderOf?.(existingTask.id) ?? null : null
+      if (holder && 'pending' in holder) return { ok: false, refusal: 'task_starting', retry: true, message: `A session is starting on "${existingTask!.title}" right now (${holder.pending}); a task has one session at a time. Try again once it runs.` }
+      if (holder && holder.sessionId === input.sessionId) return { ok: false, refusal: 'task_held_by_you', retry: false, message: `This session already works on "${existingTask!.title}": carry on here.` }
+      let routedTo: string | null = null
+      if (holder) {
+        const outcome = deps.deliver ? await deps.deliver(holder.sessionId, promptFor(existingTask!.id)) : 'refused'
+        if (outcome !== 'delivered' && outcome !== 'resumed') {
+          const retry = retryHelps(outcome)
+          return { ok: false, refusal: 'task_held', retry, message: `"${existingTask!.title}" is held by session "${holder.title}", which cannot take the brief right now (${outcome}). A task has one session at a time: ${retry ? 'try again in a moment' : 'open that session and paste the brief'}.` }
+        }
+        routedTo = holder.sessionId
+      }
 
       const started = deps.now()
       let command: TaskCommand = existing ?? {
@@ -123,7 +151,7 @@ export function createSplitSession(deps: SplitSessionDeps) {
         command = { ...command, state, split: { ...command.split!, ...patch } }
         deps.store.put(command, deps.now())
       }
-      record({})
+      record(routedTo ? { spawnedSessionId: routedTo, routed: true } : {})
       const done = command.split!
 
       let createdTaskId = done.createdTaskId
@@ -148,19 +176,20 @@ export function createSplitSession(deps: SplitSessionDeps) {
         record({ journaled: { ...command.split!.journaled, source: true } })
       }
       let spawnedSessionId = command.split!.spawnedSessionId
+      const prompt = promptFor(createdTaskId ?? existingTask?.id ?? null)
       if (plan.spawn && !spawnedSessionId) {
         spawnedSessionId = deps.spawn({
           fromSessionId: input.sessionId,
           projectId: input.projectId,
           title: input.title.trim(),
-          prompt: splitPrompt({ title: input.title.trim(), brief: input.brief, fromTitle: facts.title, taskId: createdTaskId ?? existingTask?.id ?? null, existing: Boolean(existingTask) }),
+          prompt,
           taskId: createdTaskId ?? existingTask?.id ?? null,
           space,
         })
       }
       record({ spawnedSessionId }, 'applied')
       deps.changed()
-      deps.log(`[split] ${input.opId.slice(0, 8)} ${input.relation}/${input.when} from ${input.sessionId.slice(0, 8)}${createdTaskId ? ` task ${createdTaskId.slice(0, 8)}` : ''}${spawnedSessionId ? ` session ${spawnedSessionId.slice(0, 8)}` : ''}`)
+      deps.log(`[split] ${input.opId.slice(0, 8)} ${input.relation}/${input.when} from ${input.sessionId.slice(0, 8)}${createdTaskId ? ` task ${createdTaskId.slice(0, 8)}` : ''}${spawnedSessionId ? ` ${command.split!.routed ? 'to its session' : 'session'} ${spawnedSessionId.slice(0, 8)}` : ''}`)
       return { ok: true, command }
     },
 
@@ -173,8 +202,9 @@ export function createSplitSession(deps: SplitSessionDeps) {
       const command = deps.store.get(opId)
       if (!command || command.kind !== 'split' || !command.split || command.state === 'undone') return { ok: false, refusal: 'unknown_command' }
       if (deps.now() > Date.parse(command.undoUntil)) return { ok: false, refusal: 'undo_expired' }
-      const { createdTaskId, spawnedSessionId, sourceTaskId, title } = command.split
-      if (spawnedSessionId) await deps.endSession(spawnedSessionId)
+      const { createdTaskId, spawnedSessionId, sourceTaskId, title, routed } = command.split
+      // A session the brief went to was the task's before the split: it stays.
+      if (spawnedSessionId && !routed) await deps.endSession(spawnedSessionId)
       const facts = deps.session(command.split.sessionId)
       const brain = deps.brain(deps.space(facts?.spaceId ?? null))
       if ((createdTaskId || sourceTaskId) && !brain) return { ok: false, refusal: 'no_brain' }

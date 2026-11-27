@@ -27,6 +27,8 @@ import { readRemoteAccess } from './remote-access.js'
 import { ChatBridge, IDLE_STOP, type TurnEndFacts } from './chat-bridge.js'
 import { terminalBusyState } from './domain/session-lifecycle.js'
 import { sessionsBlockRunner } from './domain/runner-busy.js'
+import { taskLeaseHookups } from './application/task-lease.js'
+import { createRecentOperations, RECENT_OPERATIONS } from './application/recent-operations.js'
 import { StartWorker, workerInChat } from './application/start-worker.js'
 import { deliverMessage, type MessageRequest } from './application/deliver-message.js'
 import { interruptedWorkers, recoverWorkers } from './application/recover-workers.js'
@@ -81,7 +83,7 @@ import { sessionsOnTask } from './domain/firing-order.js'
 import { createTaskRecords } from './application/task-record.js'
 import { editTaskSchedule } from './application/task-schedule-write.js'
 import { Jobs, type JobAnswer, type JobCaller } from './application/jobs.js'
-import { resolveProject } from './spawn-api.js'
+import { resolveProject, type SpawnOutcome } from './spawn-api.js'
 import { ensureJobTokens, jobSpaceIdsOf } from './job-contract-api.js'
 import { channelJobFacts, isChannelJob, withChannelTools } from './application/channel-job-launch.js'
 import { lendJobTool, type JobSessions } from './application/lend-job-tool.js'
@@ -401,6 +403,9 @@ async function main() {
     },
     deliver: (sessionId, text, opts) => chat.deliver(sessionId, text, opts),
   }, request)
+  // The host's own message for a session (no sender), and whether the session has it now.
+  const delivered = (sessionId: string, text: string, reminder = false) =>
+    deliver({ target: sessionId, text, from: null, caller: 'session', ...(reminder ? { reminder: true } : {}) }).then((outcome) => outcome === 'delivered' || outcome === 'resumed')
   // Task system: every session works on a brain task (application/session-task.ts).
   const taskBrain = (space: BrainSpace) => {
     const agent = boundAgent({ agents }, space)
@@ -446,11 +451,13 @@ async function main() {
   // The owner's own idle session from before Delegate now does not hold it up (domain/runner-busy.ts).
   // The task board asks the same two checks, so it names the reason the runner skips a task.
   // A working run of a session this cockpit does not have holds it too: someone works on it elsewhere (domain/runs.ts).
+  // A request still queued for the task holds it too (domain/task-lease.ts): the runner never queues a second one.
   const runnerBusy = (taskId: string, runs: readonly RunFacts[] = []) => {
     const own = ledger.list().filter((e) => e.taskId === taskId)
     return sessionsBlockRunner(
       own.map((e) => ({ createdAt: e.createdAt, archived: Boolean(e.archivedAt), working: turns.get(e.sessionId)?.state === 'working' })),
       taskCommands?.delegatedAt(taskId) ?? null,
+      spawns.pendingFor(taskId) !== null,
     ) || runsBlockRunner(runs, new Set(own.map((e) => e.sessionId)), Date.now())
   }
   // An undoable hand-over, or Work on it now: the owner works with the agent, which never goes on alone.
@@ -465,18 +472,41 @@ async function main() {
     .map((e) => ({ sessionId: e.sessionId, working: turns.get(e.sessionId)?.state === 'working', commands: turns.get(e.sessionId)?.commands ?? [] }))
   // The task's own open session (domain/own-session.ts): Delegate continues it, Take over opens it. Its context is read
   // from the provider's summary for that one session only.
+  const contextTokensOf = (sessionId: string) => {
+    const entry = ledger.get(sessionId)
+    const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
+    return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
+  }
   const continueSession = createContinueSession({
     ledger,
-    contextTokensOf: (sessionId) => {
-      const entry = ledger.get(sessionId)
-      const projectPath = entry?.projectId ? spaces.resolve(entry.spaceId).registry.get(entry.projectId)?.path ?? null : null
-      return providers.forSession(sessionId).summary(bridge.sessionRef(sessionId, projectPath)).contextTokens
-    },
+    contextTokensOf,
     startFresh: (taskId) => taskCommands?.startFresh(taskId) ?? false,
     deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }),
     runStarted: () => runRecords.poke(),
     now: () => Date.now(),
   })
+  // One live session per task (application/task-lease.ts): the fencing of queued requests, a split's holder, put-away.
+  const taskLease = taskLeaseHookups({
+    pending: () => spawns.list(),
+    sessions: () => ledger.list(),
+    commands: () => taskCommands,
+    working: (sessionId) => turns.get(sessionId)?.state === 'working',
+    end: (sessionId, reason) => endAndPutAway(sessionId, reason),
+    answered: (sessionId) => { void taskRouter.answered(sessionId) },
+    revokeRunnerFor: (taskId, why) => { spawns.revokeRunnerFor(taskId, why) },
+    deliver,
+    contextTokensOf,
+  })
+  spawns.on('revoked', (id: string, why: string) => log(`[spawn] revoked ${id}: ${why}`))
+  // Stop a session and put it away (a split undone, a task's session replaced by a new one).
+  const endAndPutAway = async (sessionId: string, reason: string) => {
+    bridge.killSession(sessionId)
+    await chat.end(sessionId, reason)
+    ledger.setTurnInFlight(sessionId, false)
+    turns.forget(sessionId)
+    sessionGone(sessionId)
+    ledger.archive(sessionId)
+  }
   const taskRunner = createTaskRunner({
     spaces, brain: taskBrain, me: owner, log,
     busy: runnerBusy,
@@ -520,7 +550,7 @@ async function main() {
     working: (sessionId) => turns.get(sessionId)?.state === 'working',
     watched: (sessionId) => chat.sessionState(sessionId) === 'running' || bridge.sessionState(sessionId) === 'running',
     seen: (sessionId, since) => (ledger.get(sessionId)?.readAt ?? '') >= since,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session', reminder: true }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => delivered(sessionId, text, true),
     waiting: (sessionId) => flagged(sessionId),
     // Like a finished worker: one the user pinned or put on the desk stays.
     quiet: (sessionId) => {
@@ -571,7 +601,11 @@ async function main() {
     if (!brain) return { error: `space ${space.name} has no agent` }
     return createWorkerTask({ brain, owner, agent: space.agent ?? null, holds: workerHolds }, input)
   }
-  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
+  // A spawn or a task run the client sends again under its opId is done once (application/recent-operations.ts);
+  // POST /api/spawn and the inbox share theirs, as cockpit-spawn falls back from one to the other.
+  const spawnOperations = createRecentOperations<SpawnOutcome>({ ...RECENT_OPERATIONS, now: () => Date.now() })
+  const runOperations = createRecentOperations<{ status: number; payload: unknown }>({ ...RECENT_OPERATIONS, now: () => Date.now() })
+  watchSpawnInbox({ spawns, spawnToken, spaces, ledger, providers, deliver, sessionNamed, createTask, ...taskLease.spawn, operations: spawnOperations, jobs: { jobs: { handle: (caller, input) => scheduleTool.handle(caller, input) }, callerOf: (id) => jobCaller(id) } })
   // A conversation runs in one process, in the terminal or the chat view (session-handoff.ts).
   const handoff = (): SessionHandoff => sessionHandoff
   const bridge = new PtyBridge({
@@ -1040,7 +1074,8 @@ async function main() {
     // Send in a closed task's chat: the message goes to its newest session, or starts one when it has none.
     newestSessionOn: (taskId) => ledger.list().filter((e) => e.taskId === taskId)
       .sort((a, b) => Date.parse(b.lastAttached ?? b.createdAt) - Date.parse(a.lastAttached ?? a.createdAt))[0]?.sessionId ?? null,
-    deliver: (sessionId, text) => deliver({ target: sessionId, text, from: null, caller: 'session' }).then((outcome) => outcome === 'delivered' || outcome === 'resumed'),
+    deliver: (sessionId, text) => delivered(sessionId, text),
+    supersedeRunner: taskLease.supersedeRunner,
     startOnTask: async (spaceId, taskId, prompt) => {
       const started = await startOnTask({ spaceId, taskId, prompt })
       return started.ok ? started.sessionId : null
@@ -1186,14 +1221,9 @@ async function main() {
       ...(taskId ? { taskId } : {}),
       ...(space.main ? {} : { spaceId: space.id }),
     }).id,
-    endSession: async (sessionId) => {
-      bridge.killSession(sessionId)
-      await chat.end(sessionId, 'split undone')
-      ledger.setTurnInFlight(sessionId, false)
-      turns.forget(sessionId)
-      sessionGone(sessionId)
-      ledger.archive(sessionId)
-    },
+    endSession: (sessionId) => endAndPutAway(sessionId, 'split undone'),
+    // Onto a task that has its session: the brief goes there (application/task-lease.ts).
+    ...taskLease.split,
     changed: () => { void taskBoard.refresh().catch(() => {}) },
     now: () => Date.now(),
     log,
@@ -1224,7 +1254,7 @@ async function main() {
 
   const hostDeps: HostDeps =
     { spaces, bridge, chat, turns, time, providers, reportedModels, memoryUnavailable: memory.unavailable, hookToken, turnHookConfig: CLAUDE_TURN_HOOK_CONFIG, spawns, workers: startWorker, spawnToken, outsideToken: loadMessageToken(MESSAGE_TOKEN_FILE), deliver, hygiene, agents, brainMcp, mcpUrl, hooksUrl, cockpitMcp, sessionGone, sessionTask, sessionNamed, turnEnded: terminalTurnDone, answered: (sessionId: string) => { void taskRouter.answered(sessionId) }, userWrote: (sessionId: string) => userWrote(sessionId), turnStarted: (sessionId: string) => terminalTurns.forget(sessionId), createTask, timeZone: () => userTimeZone(), cycles,
-      tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
+      taskLease: taskLease.spawn, spawnOperations, runOperations, tasks: { board: taskBoard, commands: taskCommands, split: splitSession, brief: splitBrief, sort: sortSession, records: taskRecords, startOnTask, migration: taskStateMigration },
       jobs: { tool: scheduleTool, zones: jobStore, spawnToken, callerOf: jobCaller },
       channelBridge: bridgeFiles(),
       replyTexts: async (sessionId) => {
@@ -1263,7 +1293,7 @@ async function main() {
   }).then((recovered) => { if (recovered > 0) log(`[worker] ${recovered} worker(s) continue after the restart`) })
   // A worker no tab takes starts without a pane (worker-start.ts).
   const workers = new WorkerStarter({
-    spawns, log,
+    spawns, log, stale: taskLease.spawn.stale,
     bridge: {
       startWorker: (request) => startWorker.withoutPane(request),
       hasRoom: () => startWorker.hasRoom(),

@@ -17,6 +17,8 @@ import { IDLE_MS } from './domain/session-lifecycle.js'
  * the cap allows and none is quiet enough to make room.
  * An ended worker stays in the sidebar, resumable with a click.
  * The host's own requests (no requesting session) always wait for a tab.
+ * Right before a request becomes a process it is checked once more (`stale`): a task runner request whose task
+ * someone took over meanwhile is revoked instead of started (domain/task-lease.ts staleRunnerRequest).
  */
 
 export const GRACE_MS = 15_000
@@ -35,6 +37,8 @@ export interface WorkerStartDeps {
   /** The turn state of a session (turn-state.ts) and since when it holds. */
   turnOf: WorkerTurnOf
   log: (line: string) => void
+  /** Why a queued request must not start any more (fencing, domain/task-lease.ts), or null when it may. */
+  stale?: (request: SpawnRequest) => string | null
   graceMs?: number
   /** How long a quiet worker keeps its process; read at every sweep. */
   idleMs?: () => number
@@ -78,6 +82,12 @@ export class WorkerStarter {
       .filter((request) => !request.open || noTabs || this.now() - Date.parse(request.createdAt) >= this.graceMs)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     for (const request of due) {
+      const stale = this.deps.stale?.(request) ?? null
+      if (stale) {
+        // The queue's 'revoked' event carries why; the host logs it there.
+        this.deps.spawns.revoke(request.id, stale)
+        continue
+      }
       if (!this.deps.bridge.hasRoom()) {
         this.deps.log(`[worker] no room (little free memory, or the running cap with every session busy); ${request.id} waits`)
         return

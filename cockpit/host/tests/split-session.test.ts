@@ -4,14 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSplitSession, SPLIT_UNDO_MS, type SessionFacts, type SplitInput } from '../src/application/split-session.js'
 import { TaskCommandStore } from '../src/application/task-commands.js'
+import type { DeliveryOutcome } from '../src/domain/session-delivery.js'
 
 const noTask: SessionFacts = { spaceId: null, title: 'Session review', taskId: null }
 
-function setup(opts: { session?: SessionFacts | null; failOnce?: string } = {}) {
+type Holder = { sessionId: string; title: string } | { pending: string } | null
+
+function setup(opts: { session?: SessionFacts | null; failOnce?: string; holder?: Holder; outcome?: DeliveryOutcome } = {}) {
   let failing = opts.failOnce
   const posts: Array<[string, Record<string, unknown>]> = []
   const spawned: Array<Record<string, unknown>> = []
   const ended: string[] = []
+  const delivered: Array<[string, string]> = []
   const clock = { now: Date.parse('2026-11-22T10:00:00Z') }
   const space = { id: 'main', name: 'Main', shared: false }
   const brain = {
@@ -35,12 +39,16 @@ function setup(opts: { session?: SessionFacts | null; failOnce?: string } = {}) 
     brainProject: (_s, projectId) => (projectId === 'p-ui' ? 'ui' : projectId === 'p-folder' ? null : undefined),
     spawn: (input) => { spawned.push({ ...input, space: undefined }); return 's-new' },
     endSession: async (id) => { ended.push(id) },
+    ...(opts.holder !== undefined ? {
+      holderOf: () => opts.holder ?? null,
+      deliver: async (id: string, text: string) => { delivered.push([id, text]); return opts.outcome ?? 'delivered' },
+    } : {}),
     changed: () => {},
     now: () => clock.now,
     log: () => {},
     me: 'lasse',
   })
-  return { split, posts, spawned, ended, clock }
+  return { split, posts, spawned, ended, delivered, clock }
 }
 
 const input = (patch: Partial<SplitInput> = {}): SplitInput => ({
@@ -142,5 +150,53 @@ describe('splitting off from a session', () => {
   it('refuses an existing task that is closed or unknown', async () => {
     expect(await setup().split.submit(input({ existingTaskId: 't-closed' }))).toEqual({ ok: false, refusal: 'unknown_task' })
     expect(await setup().split.submit(input({ existingTaskId: 'nope' }))).toEqual({ ok: false, refusal: 'unknown_task' })
+  })
+
+  it('onto an existing task that has its session: the brief goes there, no session starts, and Undo leaves it running', async () => {
+    const { split, spawned, delivered, ended } = setup({ holder: { sessionId: 's-task', title: 'Mail job' } })
+    const answer = await split.submit(input({ existingTaskId: 't-open' }))
+    expect(answer.ok && answer.command.split).toMatchObject({ existingTaskId: 't-open', spawnedSessionId: 's-task', routed: true })
+    expect(spawned).toEqual([])
+    expect(delivered.map(([id]) => id)).toEqual(['s-task'])
+    expect(delivered[0][1]).toContain('Goal: open files in the cockpit.')
+    await split.undo('op-1')
+    expect(ended).toEqual([])
+  })
+
+  it('onto an existing task whose session cannot take the brief: refused, naming it, with nothing written; a retry helps only while it is busy', async () => {
+    for (const [outcome, retry] of [['busy', true], ['running', true], ['refused', false], ['unknown', false]] as const) {
+      const held = setup({ holder: { sessionId: 's-task', title: 'Mail job' }, outcome })
+      const answer = await held.split.submit(input({ existingTaskId: 't-open' }))
+      expect(answer).toMatchObject({ ok: false, refusal: 'task_held', retry })
+      expect(!answer.ok && answer.message).toContain('Mail job')
+      expect(held.posts).toEqual([])
+      expect(held.spawned).toEqual([])
+      // Nothing recorded either: a retry with the same operation starts over and tries the session again.
+      await held.split.submit(input({ existingTaskId: 't-open' }))
+      expect(held.delivered).toHaveLength(2)
+    }
+  })
+
+  it('onto an existing task with a session still starting, or that this session holds itself: refused before anything is written', async () => {
+    const starting = setup({ holder: { pending: 'req-1' } })
+    const answer = await starting.split.submit(input({ existingTaskId: 't-open' }))
+    expect(answer).toMatchObject({ ok: false, refusal: 'task_starting', retry: true })
+    expect(!answer.ok && answer.message).toContain('req-1')
+    expect(starting.posts).toEqual([])
+    expect(starting.spawned).toEqual([])
+    const mine = setup({ holder: { sessionId: 's1', title: 'Session review' } })
+    expect(await mine.split.submit(input({ existingTaskId: 't-open' }))).toMatchObject({ ok: false, refusal: 'task_held_by_you', retry: false })
+    expect(mine.posts).toEqual([])
+    expect(mine.delivered).toEqual([])
+  })
+
+  it('onto an existing task nobody holds, or into a new task: a session starts on it', async () => {
+    const free = setup({ holder: null })
+    await free.split.submit(input({ existingTaskId: 't-open' }))
+    expect(free.spawned).toHaveLength(1)
+    const fresh = setup({ holder: { sessionId: 's-task', title: 'Mail job' } })
+    await fresh.split.submit(input())
+    expect(fresh.spawned).toHaveLength(1)
+    expect(fresh.delivered).toEqual([])
   })
 })

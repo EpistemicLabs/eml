@@ -4,7 +4,9 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
-import { attachSpawnEvents, handleSpawnApi, type SpawnDeps } from './spawn-api.js'
+import { attachSpawnEvents, handleSpawnApi, routeDepsOf, type SpawnDeps } from './spawn-api.js'
+import { routeToTaskHolder, takenSince } from './application/task-lease.js'
+import { operationId, type RecentOperations } from './application/recent-operations.js'
 import { handleJobsApi, type JobsApiDeps } from './jobs-api.js'
 import { handleTasksApi, type TasksApiDeps } from './tasks-api.js'
 import { handlePushApi, type PushApiDeps } from './push-api.js'
@@ -151,6 +153,12 @@ export interface HostDeps {
   sessionTask?: SessionTask
   sessionNamed?: SpawnDeps['sessionNamed']
   createTask?: SpawnDeps['createTask']
+  /** One live session per task (domain/task-lease.ts): what a spawn on a held task and the claim's fencing read. */
+  taskLease?: Pick<SpawnDeps, 'contextTokensOf' | 'putAway' | 'stale'>
+  /** The outcomes of recent spawns by their opId (spawn-api.ts requestSpawn), shared with the spawn inbox. */
+  spawnOperations?: SpawnDeps['operations']
+  /** The outcomes of recent task runs from the page by their opId (POST /api/tasks/run); without it each one runs. */
+  runOperations?: RecentOperations<{ status: number; payload: unknown }>
   /** The user's time zone (jobs): a project lead's day. */
   timeZone?: () => string
   /** Weekly cycles (application/cycles.ts). */
@@ -787,13 +795,34 @@ function filesApiOf(deps: HostDeps): { deps: FilesDeps; recent: ReturnType<typeo
   return api
 }
 
+/** A task run without a desk (POST /api/tasks/run): its answer, from the request body. */
+async function runTask(deps: HostDeps, space: BrainSpace | null, body: Record<string, unknown>): Promise<{ status: number; payload: unknown }> {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const projectId = str(body.projectId), prompt = str(body.prompt), taskId = str(body.taskId)
+  if (!space || !projectId || !prompt || !taskId) return { status: 400, payload: { error: { code: 'INVALID_RUN', message: 'projectId, prompt and taskId are required' } } }
+  if (!space.registry.get(projectId)) return { status: 404, payload: { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } } }
+  // One live session per task (application/task-lease.ts): a task that has its session gets the run's prompt there,
+  // as a worker of a session would; a session still starting on it, or a holder that cannot take it, refuses.
+  const lease = routeDepsOf({ spawns: deps.spawns, ledger: deps.bridge.ledger, deliver: deps.deliver, ...deps.taskLease })
+  const route = await routeToTaskHolder(lease, { taskId, prompt, fromSessionId: null, from: null })
+  if (route.kind === 'refused') return { status: 409, payload: { error: route.refusal } }
+  if (route.kind === 'routed') return { status: 200, payload: { id: route.session.sessionId, routed: true } }
+  const taken = takenSince(lease, taskId, route.replaced)
+  if (taken) return { status: 409, payload: { error: taken } }
+  const request = deps.spawns.add({
+    projectId, prompt, title: str(body.title), fromSessionId: null, origin: 'runner', taskId,
+    ...(space.main ? {} : { spaceId: space.id }),
+  })
+  return { status: 202, payload: { id: request.id } }
+}
+
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, deps: HostDeps): Promise<boolean> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const method = req.method ?? 'GET'
   const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
   if (parts[0] !== 'api') return false
   const [, resource, id] = parts
-  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask }, url.pathname, method, json, readJson)) return true
+  if (await handleSpawnApi(req, res, { workers: deps.workers, outsideToken: deps.outsideToken, deliver: deps.deliver, spawns: deps.spawns, spawnToken: deps.spawnToken, spaces: deps.spaces, ledger: deps.bridge.ledger, providers: deps.providers, sessionNamed: deps.sessionNamed, createTask: deps.createTask, operations: deps.spawnOperations, ...deps.taskLease }, url.pathname, method, json, readJson)) return true
   // The home's agents and the agent upgrade's leftovers (agents-api.ts).
   if (await handleAgentsApi(req, res, { agents: deps.agents, spaces: deps.spaces }, url.pathname, method, json, readJson)) return true
   if (deps.jobs && await handleJobsApi(req, res, deps.jobs, url.pathname, method, json, readJson)) return true
@@ -1011,18 +1040,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, de
 
   // A task run without a desk (task-run.tsx, "No desk"): the page asks, the host starts it unattended
   // like a runner step; it shows next to its task and in Your turn when it asks. Page Origin only.
+  // One Start names one operation (`opId`): the same id again answers what the first did (application/recent-operations.ts).
   if (resource === 'tasks' && id === 'run' && method === 'POST') {
     const space = deps.spaces.fromHeader(req.headers['x-cockpit-space'])
     const body = await readJson(req)
-    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null)
-    const projectId = str(body.projectId), prompt = str(body.prompt), taskId = str(body.taskId)
-    if (!space || !projectId || !prompt || !taskId) { json(res, 400, { error: { code: 'INVALID_RUN', message: 'projectId, prompt and taskId are required' } }); return true }
-    if (!space.registry.get(projectId)) { json(res, 404, { error: { code: 'NO_SUCH_PROJECT', message: `No project ${projectId} in this space` } }); return true }
-    const request = deps.spawns.add({
-      projectId, prompt, title: str(body.title), fromSessionId: null, origin: 'runner', taskId,
-      ...(space.main ? {} : { spaceId: space.id }),
-    })
-    json(res, 202, { id: request.id })
+    const run = () => runTask(deps, space, body)
+    const opId = operationId(body)
+    const answer = await (deps.runOperations && opId ? deps.runOperations.once(`${space?.id ?? ''}:${opId}`, run) : run())
+    json(res, answer.status, answer.payload)
     return true
   }
 
