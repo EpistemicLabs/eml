@@ -535,6 +535,43 @@ describe('the task board', () => {
     expect(model.tasks.find((t) => t.id === 'asked-and-handed')).toMatchObject({ turn: 'waiting_on_others', waitingOn: { who: 'kim' } })
   })
 
+  it('keeps a main task whose open steps are all covered out of Needs you and the Inbox, with its review held back', async () => {
+    const review = { id: 'p1', who: 'lasse', kind: 'review', why: 'Review: goal reached', since: '2026-11-19T08:00:00.000Z', session_id: 'p1' }
+    const { board } = setup({
+      main: [
+        mine('parent', { delegate: 'atlas', checkpoint: 'after', display_title: 'Move Acme to the new service', waits: [review] }),
+        { ...mine('step-a', { delegate: 'atlas', checkpoint: 'after', display_title: 'Delete the legacy service' }), parent_id: 'parent' },
+        { ...mine('step-b', { delegate: 'atlas', checkpoint: 'after', display_title: 'Tell the customer' }), parent_id: 'parent' },
+        { ...mine('old', { delegate: 'atlas' }, 'resolved'), parent_id: 'parent' },
+      ],
+      working: ['step-b'],
+      jobs: { 'step-a': '2026-12-04T03:00:00.000Z' },
+    })
+    const model = await board.refresh()
+    const parent = model.tasks.find((t) => t.id === 'parent')!
+    expect(parent).toMatchObject({ turn: 'agent_scheduled', group: 'steps', coverage: { ok: true, how: 'steps' } })
+    expect(parent.steps).toEqual({ covered: true, open: [
+      { id: 'step-b', name: 'Tell the customer', how: 'working', who: 'atlas' },
+      { id: 'step-a', name: 'Delete the legacy service', how: 'checks_back', at: '2026-12-04T03:00:00.000Z', who: 'atlas' },
+    ] })
+    expect(model.inbox).toEqual([])
+    expect(model.counts.needsYou).toBe(0)
+    expect(board.stepsOf('parent')).toEqual({ open: 2, covered: true })
+    expect(board.stepsOf('step-a')).toBeNull()
+  })
+
+  it('leaves a main task where it was when one step has nobody on it, and puts a stalled step in its owner\'s Inbox', async () => {
+    const { board } = setup({
+      main: [
+        mine('parent', { delegate: 'atlas', checkpoint: 'after' }),
+        { ...mine('quiet', { display_title: 'Wait for the supplier', waits: [{ id: 'w', who: 'outside:Kim', kind: 'outside', why: 'reply', since: '2026-11-17T08:00:00.000Z' }] }), parent_id: 'parent', updated_at: '2026-11-17T08:00:00.000Z' },
+      ],
+    })
+    const model = await board.refresh()
+    expect(model.tasks.find((t) => t.id === 'parent')).toMatchObject({ turn: 'needs_you', group: 'nobody', steps: { covered: false } })
+    expect(model.inbox).toMatchObject([{ kind: 'stalled', taskId: 'quiet', parentId: 'parent', title: 'Wait for the supplier' }])
+  })
+
   it('puts the tasks of every space on the board and in the counts, a shared one too', async () => {
     const { board } = setup({ main: [], other: [mine('portfolio', {}, 'planned')] })
     const model = await board.refresh()

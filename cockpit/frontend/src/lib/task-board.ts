@@ -10,11 +10,11 @@ import type { Hue } from '@/shared/view/ui/hue';
 import type { RunningCommand } from '@/stores/useTurnStateStore';
 
 export type Turn = 'needs_you' | 'review' | 'agent_working' | 'agent_scheduled' | 'waiting_on_others' | 'parked' | 'done';
-export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale';
+export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'steps' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale';
 export type NobodyReason = 'stopped' | 'idle' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped';
 export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idle' | 'nofollow' | 'stopped' | 'owner' | 'mine';
 export type Coverage =
-  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
+  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked' | 'steps'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number };
 
 /**
@@ -41,6 +41,19 @@ function waitText(task: Pick<BoardTask, 'waitingOn' | 'owner'>, fallback = 'some
   const w = task.waitingOn;
   if (keptOutside(w, [task.owner])) return w?.why?.replace(/\.$/, '') || 'waiting on someone outside';
   return `waiting on ${w?.who ?? fallback}`;
+}
+
+/**
+ * One open step of a main task and what covers it (host domain/step-cover.ts StepCover): an agent works on it, it
+ * checks back at a time, the runner starts it, it waits on someone, its wait is parked, the owner has a row on it, or
+ * it waits on steps of its own. `how` null: nothing covers it, or it stalled.
+ */
+export interface StepCover {
+  id: string;
+  name: string;
+  how: 'working' | 'checks_back' | 'runner' | 'waits' | 'parked' | 'asked' | 'steps' | null;
+  at?: string;
+  who?: string;
 }
 
 /** Where a step another task waits for stands (host StepState). */
@@ -127,6 +140,11 @@ export interface BoardTask {
   blocked?: 'superseded' | 'parent_closed';
   /** A replaced task: the task that replaced it, where its work and its sessions go on. */
   replacedBy?: string;
+  /**
+   * Its open steps, covered first, and whether every one is covered: then it waits on them (group steps). While any is
+   * open, Looks good is not offered. Missing when it has none, or from an older host.
+   */
+  steps?: { open: StepCover[]; covered: boolean };
 }
 
 /** A decision or note that closed with a task (host task-commands ReopenItem). */
@@ -197,9 +215,10 @@ export interface InboxItem {
   key: string;
   /**
    * `stopped`: an agent failed or went silent, and only the viewer can get it going again. `do`: a step the viewer
-   * takes themselves ("Your move"): an agent asked for it, or a reminder they set fired.
+   * takes themselves ("Your move"): an agent asked for it, or a reminder they set fired. `stalled`: a step of one of
+   * the viewer's main tasks that nothing moves (taskId is the step, parentId its main task); it clears when it moves.
    */
-  kind: 'question' | 'review' | 'stopped' | 'do';
+  kind: 'question' | 'review' | 'stopped' | 'do' | 'stalled';
   space: string;
   title: string;
   text: string;
@@ -215,6 +234,8 @@ export interface InboxItem {
   checkBack?: CheckBack;
   /** The task has repeating times: Looks good approves one run instead of closing the task. */
   repeating?: true;
+  /** A stalled step: its main task. */
+  parentId?: string;
 }
 
 /** A closed ancestor of a task with a session, which the board's lists leave out (host Board.lineage). */
@@ -485,6 +506,9 @@ export const rescheduleWake = (task: Pick<BoardTask, 'id' | 'spaceId'>, at: stri
 /** The owner did the step a do wait asks for: the wait goes and the task's agent is woken; its check-back stays. */
 export const markDone = (item: Pick<InboxItem, 'taskId' | 'space' | 'waitId'>, opId = newOpId()) =>
   post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? '')}/done`, { opId, spaceId: item.space, waitId: item.waitId ?? '' });
+/** The owner saw a review or a question: the ask goes, the task stays open and nobody is woken. Acts at once. */
+export const gotIt = (item: Pick<InboxItem, 'taskId' | 'space' | 'waitId'>, opId = newOpId()) =>
+  post(`/api/v1/tasks/${encodeURIComponent(item.taskId ?? '')}/got-it`, { opId, spaceId: item.space, waitId: item.waitId ?? '' });
 /** Removing this repeating time would end the task's schedule: it is the only one and no wake-up is set. */
 export const isLastTime = (schedule: TaskSchedule | undefined, cron: string): boolean =>
   !schedule?.at && (schedule?.crons ?? []).every((c) => c === cron);
@@ -689,6 +713,7 @@ export const GROUP_META: Record<TurnGroup, { name: string; hue: Hue }> = {
   own: { name: 'Your own tasks', hue: 'mark' },
   parent: { name: 'Waits for its parent', hue: 'stopped' },
   nobody: { name: 'Nobody on it', hue: 'stopped' },
+  steps: { name: 'Waiting on its steps', hue: 'scheduled' },
   failed: { name: 'Agent stopped', hue: 'stopped' },
   mission: { name: 'Missions: until the goal is reached', hue: 'scheduled' },
   routine: { name: 'Routines', hue: 'scheduled' },
@@ -877,6 +902,29 @@ export function runnerLine(task: Pick<BoardTask, 'runner' | 'delegate'>): string
   return null;
 }
 
+/** What covers one open step, in words: "Atlas working", "checks back Fri 4 Dec 10:00", "waits on Kim". */
+export function stepCoverText(step: StepCover, now: number): string {
+  if (step.how === 'working') return `${agentName(step.who)} working`;
+  if (step.how === 'checks_back') return step.at ? `${isDue(step.at, now) ? `due since ${when(step.at, now)}` : `checks back ${when(step.at, now)}`}` : 'checks back later';
+  if (step.how === 'runner') return `${agentName(step.who)} next in line`;
+  if (step.how === 'waits') return `waits on ${step.who?.replace(/^outside:/i, '') ?? 'someone'}`;
+  if (step.how === 'parked') return 'parked';
+  if (step.how === 'asked') return 'waits for you';
+  if (step.how === 'steps') return 'waits on its own steps';
+  return 'nobody on it';
+}
+
+/** A main task's open steps, in words: "Waiting on step Delete the legacy service · Atlas working (and 1 more)". */
+export function stepsLine(task: Pick<BoardTask, 'steps'>, now: number): string {
+  const first = task.steps?.open[0];
+  if (!first) return 'Waiting on its steps';
+  const more = (task.steps?.open.length ?? 1) - 1;
+  return `Waiting on step ${first.name} · ${stepCoverText(first, now)}${more > 0 ? ` (and ${more} more)` : ''}`;
+}
+
+/** The task has open steps: it cannot be closed, so Looks good is not offered. */
+export const hasOpenSteps = (task: Pick<BoardTask, 'steps'> | undefined): boolean => (task?.steps?.open.length ?? 0) > 0;
+
 /** The line under a card's title: what is going on, in words. */
 export function cardLine(task: BoardTask, now: number): string {
   const agent = agentName(task.delegate);
@@ -894,6 +942,7 @@ export function cardLine(task: BoardTask, now: number): string {
   if (task.group === 'asked') return task.waitingOn?.why || `${agent} asked you something.`;
   if (task.group === 'parent') return runnerLine(task) ?? 'Starts when its parent task is active.';
   if (task.group === 'blocked') return runnerLine(task) ?? `${agent} waits before it starts.`;
+  if (task.group === 'steps') return `${stepsLine(task, now)}.`;
   if (task.turn === 'waiting_on_others') {
     const waits = sentence(waitText(task, task.owner));
     return task.nextRunAt ? `${waits}; ${runs('checks back')}.` : `${waits}.`;
@@ -1002,7 +1051,7 @@ export function repeatsText(schedule: TaskSchedule | undefined, zone: string = u
  * urgent says why it sits where it is — an undo window, a question to answer, a stop, a wait for its parent.
  */
 export function statusOrTurn(task: BoardTask, now: number): string {
-  const urgent = task.pending || task.group === 'asked' || task.reason || task.group === 'parent' || task.group === 'blocked';
+  const urgent = task.pending || task.group === 'asked' || task.reason || task.group === 'parent' || task.group === 'blocked' || task.group === 'steps';
   return !urgent && task.statusLine ? task.statusLine.now : cardLine(task, now);
 }
 
@@ -1029,7 +1078,7 @@ export interface Column {
 }
 
 const NEEDS_YOU_GROUPS: readonly TurnGroup[] = ['asked', 'failed', 'own', 'parent', 'nobody'];
-const SCHEDULED_GROUPS: readonly TurnGroup[] = ['mission', 'routine', 'at_time', 'runner', 'blocked'];
+const SCHEDULED_GROUPS: readonly TurnGroup[] = ['steps', 'mission', 'routine', 'at_time', 'runner', 'blocked'];
 const WORKING_GROUPS: readonly TurnGroup[] = ['stale'];
 const latest = (t: BoardTask) => t.waitingOn?.since ?? t.updatedAt ?? '';
 
@@ -1068,6 +1117,7 @@ export function coverageText(task: BoardTask, now: number): string {
     if (c.how === 'parked') return c.at ? `parked · back ${when(c.at, now)}` : 'parked until you bring it back';
     if (c.how === 'checks_back') return `${waitText(task)} · ${agent} ${isDue(c.at, now) ? `due since ${when(c.at, now)}` : `checks ${when(c.at, now)}`}`;
     if (c.how === 'at_time') return `${agent} · ${isDue(c.at, now) ? `due since ${when(c.at, now)}` : when(c.at, now)}`;
+    if (c.how === 'steps') return stepsLine(task, now);
     const b = task.runner;
     if (b?.kind === 'depends') return `${agent} · after ${b.step?.turn === 'review' ? 'your review of ' : ''}${quoted(b.title)}`;
     if (b?.kind === 'cap') return `${agent} · waits for a free slot (${b.running} of ${b.max} run)`;
@@ -1281,7 +1331,10 @@ export function panelActions(task: BoardTask, hasSession: boolean): PanelAction[
 function actionsFor(task: BoardTask, hasSession: boolean): PanelAction[] {
   // Asked: the answer goes into the chat. With its session gone, work on it or run the agent again (the question goes along).
   if (task.group === 'asked') return hasSession ? [] : ['together', 'run_now'];
-  if (task.turn === 'review') return ['looks_good'];
+  // Open steps: it cannot be closed yet (the host refuses it at the click), so Looks good is not offered.
+  if (task.turn === 'review') return hasOpenSteps(task) ? [] : ['looks_good'];
+  // Waiting on its steps: they move it; the owner can still work on it.
+  if (task.group === 'steps') return workAction(task);
   if (task.handTo) return ['hand_to', 'schedule', ...workAction(task)];
   if (task.turn === 'agent_working' && task.group !== 'stale') return workAction(task);
   if (task.turn === 'parked') return [];

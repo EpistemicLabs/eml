@@ -9,6 +9,7 @@ import { childrenOf, parentOf } from '../domain/task-relations.js'
 import { projectIdForBrain } from '../project-registry.js'
 import { CHECKPOINT_STOP } from '../domain/turn-end.js'
 import type { ResumeOutcome } from './continue-session.js'
+import type { StepsDone } from './steps-done.js'
 
 /**
  * The runner (note task-system-phase-1-build-plan, M3): in every space it
@@ -78,6 +79,8 @@ export interface TaskRunnerDeps {
   ownSession?(taskId: string): string | null
   /** A session of the task was continued for this request already (application/continue-session.ts continuedFor). */
   continuedFor?(taskId: string, requestedAt: string): boolean
+  /** After a space's steps: bring back the main tasks whose last step closed (application/steps-done.ts). */
+  stepsDone?: Pick<StepsDone, 'check'>
   /**
    * Give that session the step's start prompt and start its run for this request: continued, retry next tick (it is
    * busy: nothing starts beside it), or fall back to a new session (it cannot be reached).
@@ -235,6 +238,7 @@ export function createTaskRunner(deps: TaskRunnerDeps): TaskRunner {
       started.set(group, started.get(group)! + 1)
       deps.log(`[runner] ${continued ? `continued step ${step.id.slice(0, 8)} in session ${own!.slice(0, 8)}` : `started step ${step.id.slice(0, 8)}`} (checkpoint ${step.properties?.checkpoint})`)
     }
+    await deps.stepsDone?.check(space, brain)
   }
 
   const tickOnce = async () => {

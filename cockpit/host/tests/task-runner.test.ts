@@ -63,6 +63,17 @@ describe('task runner', () => {
     return { started, brain, logs, runner }
   }
 
+  it('asks after each space\'s steps whether a main task\'s last step closed (steps done)', async () => {
+    const checked: string[] = []
+    const brain = brainOf([])
+    const runner = mod.createTaskRunner({
+      spaces: { list: () => [{ id: 'a', shared: false, name: 'A' }, { id: 'b', shared: true, name: 'B' }] as never }, brain: () => brain, me: 'lasse', log: () => {},
+      start: () => null, stepsDone: { check: async (space) => { checked.push(space.id) } },
+    })
+    await runner.tick()
+    expect(checked).toEqual(['a', 'b'])
+  })
+
   it('continues the task\'s own session with the start prompt instead of starting a new one, once per request', async () => {
     const list: T[] = [{ id: 'solo', status: 'active', checkpoint: 'after', delegate: 'atlas', delegation: { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-25T10:00:00.000Z' } }]
     const resumed: Array<{ sessionId: string; id: string; question?: string }> = []

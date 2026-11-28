@@ -9,7 +9,7 @@ import { useAllSessions } from '@/components/sidebar/useAllSessions';
 import type { ProjectsBySpace } from '@/hooks/useProjectsState';
 import { projectIdOfBrain } from '@/lib/project-lead';
 import { markSessionRead, restoreSessionRead } from '@/lib/session-actions';
-import { agentName, type Board, type BoardTask, type InboxItem, changeRecord, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, markDone, removeWake, repeats, rescheduleWake, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, pauseSchedule, removeTime, resumeSchedule, reviewDone, runNow, type ScheduleAction, scheduleDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, type InboxItem, changeRecord, closeTask, closedAsTask, type ContinueHow, continueTask, endSchedule, followUpTask, gotIt, markDone, removeWake, repeats, rescheduleWake, reopenTask, type CommandAnswer, handOver, type HandOverInput, type HandOverMode, pauseSchedule, removeTime, resumeSchedule, reviewDone, runNow, type ScheduleAction, scheduleDone, snooze, snoozeTimes, takeOver, takeOverDone, taskName, undo, useTaskBoard } from '@/lib/task-board';
 import { durationMs } from '@/lib/time';
 import { useTimeZone } from '@/lib/time-zone';
 import { answerTime, readBefore, unreadAnswers, unreadFoldOpen } from '@/lib/unread-answers';
@@ -217,6 +217,11 @@ export function TaskBoard({ projects, projectActions }: { projects?: ProjectsByS
       const by = a.item.checkBack?.by && a.item.checkBack.by !== board?.viewer ? a.item.checkBack.by : undefined;
       const agent = t?.delegate ?? by;
       say(answer.ok ? `Marked done: ${agent ? agentName(agent) : 'the agent'} is told.` : answer.message);
+    } else if (a.kind === 'got_it') {
+      // Got it acts at once: the ask goes, the task stays open and falls back to where it stands.
+      const answer = await gotIt(a.item);
+      void refetch();
+      say(answer.ok ? 'Got it: the ask is off, the task stays open.' : answer.message);
     } else {
       await park(a.item, a.until);
     }

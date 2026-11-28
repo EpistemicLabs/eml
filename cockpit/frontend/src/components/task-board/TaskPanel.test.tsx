@@ -257,6 +257,13 @@ describe('the task panel', () => {
       expect(screen.queryByRole('button', { name: 'More task actions' })).toBeNull();
     });
 
+    it('has no Done and no Looks good while the task has open steps: it waits on them', () => {
+      show(task({ id: 'p', delegate: 'atlas', turn: 'agent_scheduled', group: 'steps', coverage: { ok: true, how: 'steps' }, steps: { covered: true, open: [{ id: 'a', name: 'Delete the legacy service', how: 'working', who: 'atlas' }] } }));
+      expect(screen.queryByRole('button', { name: /Looks good/ })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'More task actions' }));
+      expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Not needed']);
+    });
+
     it('has only End schedule and close while its schedule is on, in review and with a paused job too', () => {
       const next = new Date(NOW + DAY_MS).toISOString();
       const { onReview, onDrop, onEndSchedule } = show(task({ id: 's', turn: 'agent_scheduled', group: 'routine', delegate: 'atlas', nextRunAt: next, hasSchedule: true }));

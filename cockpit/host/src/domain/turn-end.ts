@@ -64,7 +64,15 @@ export interface TurnContext {
   checkpoint?: string
   /** The task has a next run from its schedule: a step for someone else counts without a check (deriveTurn). */
   nextRun?: boolean
+  /**
+   * The task's open steps (domain/step-cover.ts), as the board last read them: with every one covered the task waits on
+   * them, which counts in place of a check; while any is open a review it asks is held back.
+   */
+  steps?: { open: number; covered: boolean }
 }
+
+/** Every open step of the task is covered: it waits on them, and that brings it back up as a check would. */
+export const waitsOnSteps = (ctx: Pick<TurnContext, 'steps'>): boolean => (ctx.steps?.open ?? 0) > 0 && ctx.steps!.covered === true
 
 export interface TurnWait {
   who: string
@@ -314,7 +322,7 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
     }
     // A step for anyone but the owner counts only with something that brings it back up: the agent's check, or the
     // next run of the task's schedule. Without either it is no step, from a call and from a block alike.
-    if (wake.kind !== 'set' && !ctx.nextRun) return { status: 'done', wait: null, wake }
+    if (wake.kind !== 'set' && !ctx.nextRun && !waitsOnSteps(ctx)) return { status: 'done', wait: null, wake }
     // Another member or agent is waited on like someone outside: the task stays its owner's, and nobody else's Inbox gets it.
     if (who.kind === 'member' || who.kind === 'outside') return { status: 'done', wait: wait(who.name, 'outside', ask.what || call.result, ask.due), wake }
   }
@@ -327,11 +335,12 @@ export function deriveTurn(call: EndTurn, ctx: TurnContext): DerivedTurn {
  * a next run (when): the owner sees theirs in the Inbox, nothing else brings a wait on someone else back up.
  * `nextRun`: the task has a next run from its schedule once the call is applied (a wake-up the call kept counts).
  */
-export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; ctx: Pick<TurnContext, 'owner' | 'agent' | 'members'>; nextRun?: boolean }): Array<'call' | 'next' | 'when'> {
+export function missingOf(call: EndTurn | null, facts: { taskOpen: boolean; ctx: Pick<TurnContext, 'owner' | 'agent' | 'members' | 'steps'>; nextRun?: boolean }): Array<'call' | 'next' | 'when'> {
   if (!call) return ['call']
   if (call.failed || call.questions?.length) return []
   const { ask, check } = askAndCheckOf(call, facts.ctx)
-  const checks = (check !== undefined && check !== 'none') || facts.nextRun === true
+  // Covered open steps bring the task back when the last one closes (application/steps-done.ts), as a check would.
+  const checks = (check !== undefined && check !== 'none') || facts.nextRun === true || waitsOnSteps(facts.ctx)
   if (ask && whoOf(ask.who, facts.ctx).kind === 'owner') return []
   if (ask) return checks ? [] : ['when']
   return facts.taskOpen && !checks ? ['next'] : []
@@ -370,7 +379,11 @@ const OTHERS_NEED_CHECK = 'An ask for anyone but the user needs a check, or a ne
 /** What a check does to the task's wake-up, and what leaving it out does. */
 const CHECK_KEEPS = 'It replaces the task\'s wake-up. Leave check out to keep the wake-up the task has; "none" removes it. An ask never removes it: the user\'s move and your check-back stand side by side'
 /** What an open task needs from a call. */
-const OPEN_NEEDS = 'While the task is open, a call needs an ask, questions, failed or a check, unless the task has a next run from its schedule'
+/** A task that waits on its steps needs no check: said in the tool's description and in the task's rules. */
+export const STEPS_COVER = 'waits on open steps that are each covered (an agent works on it, it has a wake-up or schedule, the runner starts it, or it waits on someone): then say in result which step it waits on'
+/** No review while steps are open: said in the tool's description and in the task's rules. */
+export const STEPS_HOLD_REVIEW = 'While the task has open steps, ask no review: the cockpit holds it back and asks the user itself once the last step closes'
+const OPEN_NEEDS = `While the task is open, a call needs an ask, questions, failed or a check, unless the task has a next run from its schedule or ${STEPS_COVER}. ${STEPS_HOLD_REVIEW}`
 /** Said once, with the next step: an agent that waits for nothing has no reason to stop. */
 const KEEP_WORKING = 'If the next step is yours and you wait for nothing, do not end the turn: keep working.'
 const VISIBLE = 'as visible text'
@@ -492,14 +505,23 @@ const NOW_REPLY = `Now write your reply ${VISIBLE}.`
  * removed, and `checkFix` what helps; `checkTime`: the zone check.when was read in and the instant the task's wake-up
  * was saved for; `nextRun`: the task has a next run from its schedule.
  */
-export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null; checkFix?: CheckFix; checkTime?: CheckTime | null; nextRun?: boolean; state?: string | null } = {}): string {
+export function endTurnAnswer(call: EndTurn, derived: DerivedTurn, opts: { missing?: readonly Missing[]; checkProblem?: string | null; checkFix?: CheckFix; checkTime?: CheckTime | null; nextRun?: boolean; state?: string | null; steps?: { open: number; covered: boolean } } = {}): string {
   const missing = opts.missing ?? []
   const problem = !opts.checkProblem ? ''
     : derived.wake.kind === 'set' ? checkNotSet(derived.wake.when, opts.checkProblem, opts.checkFix ?? 'time')
       : derived.wake.kind === 'remove' ? removeFailed(opts.checkProblem) : ''
   // The opening says nobody has a move: the task being open is all that is left to add.
   const lacking = !derived.wait && missing.includes('next') ? `The task is still open. ${CALL_WITH_NEXT}` : missingText(missing)
-  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }, opts.checkTime, opts.nextRun), problem, lacking, opts.state ?? '', NOW_REPLY].filter(Boolean).join(' ')
+  return [recorded(call, derived, { step: missing.length > 0, check: problem !== '' }, opts.checkTime, opts.nextRun), problem, lacking, stepsLine(derived, opts.steps), opts.state ?? '', NOW_REPLY].filter(Boolean).join(' ')
+}
+
+/** What the task's open steps do to the call: a review held back, or the steps that bring it back. */
+function stepsLine(derived: DerivedTurn, steps: { open: number; covered: boolean } | undefined): string {
+  if (!steps || steps.open === 0) return ''
+  const n = `${steps.open} open step${steps.open === 1 ? '' : 's'}`
+  if (derived.wait?.kind === 'review') return `The task has ${n}: the cockpit holds this review back and asks ${derived.wait.who} itself once the last step closes.`
+  if (!derived.wait && steps.covered) return `It waits on its ${n}: the task comes back once the last one closes.`
+  return ''
 }
 
 /** The older tool's answer: what was recorded, then the reply that is still to come. */

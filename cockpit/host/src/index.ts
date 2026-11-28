@@ -54,6 +54,7 @@ import { brainIdFromProjectId } from './project-registry.js'
 import { createTaskRouter } from './application/task-router.js'
 import { createFollowReplacement } from './application/follow-replacement.js'
 import { createTurnContexts, endTurnAccess } from './application/turn-context.js'
+import { createStepsDone } from './application/steps-done.js'
 import { createTurnWake } from './application/turn-wake.js'
 import { resultOfTurn } from './domain/turn-end.js'
 import { createTaskRunner, stepPrompt } from './application/task-runner.js'
@@ -423,7 +424,8 @@ async function main() {
   })
   // The router: whose turn it is after a session's turn, written into its task (application/task-router.ts).
   // Whom an end_turn call is read against: this member, the space's agent, its users and agents (application/turn-context.ts).
-  const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner })
+  // Covered open steps count in place of a check: the board last read them (application/task-board.ts stepsOf).
+  const turnContexts = createTurnContexts({ ledger, spaces, brain: taskBrain, owner, stepsOf: (taskId) => taskBoard.stepsOf(taskId) })
   // A session whose task another task replaced goes on there (application/follow-replacement.ts). The turns, the
   // context reads and the lease are made further down; these are only called once sessions run.
   const followReplacement = createFollowReplacement({
@@ -536,6 +538,8 @@ async function main() {
     ownSession: (taskId) => continueSession.toContinue(taskId),
     continuedFor: (taskId, requestedAt) => continueSession.continuedFor(taskId, requestedAt),
     resume: (sessionId, step) => continueSession.resume(sessionId, step),
+    // A main task whose last step closed comes back to its owner for review (application/steps-done.ts).
+    stepsDone: createStepsDone({ me: owner, working: (taskId) => liveFactsOf(taskSessions(taskId), [], null, Date.now()).working, now: () => Date.now(), log }),
   })
   taskRunner.every(RUNNER_TICK_MS)
   // Agent session or the user's conversation, by the session's task as it stands now (application/session-kind.ts).

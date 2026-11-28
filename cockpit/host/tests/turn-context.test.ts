@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Capability, ProviderCapabilities } from '../src/domain/agent-provider.js'
 import { createTurnContexts, endTurnAccess, hasEndTurnTool, turnContextOf } from '../src/application/turn-context.js'
 
-function setup(opts: { agent?: string | null; task?: Record<string, unknown> | null; fail?: () => boolean } = {}) {
+function setup(opts: { agent?: string | null; task?: Record<string, unknown> | null; fail?: () => boolean; steps?: { open: number; covered: boolean } | null } = {}) {
   const gets: string[] = []
   let now = 0
   const brain = {
@@ -19,6 +19,7 @@ function setup(opts: { agent?: string | null; task?: Record<string, unknown> | n
   const contexts = createTurnContexts({
     ledger: { get: (id: string) => (id === 's1' ? { spaceId: 'team', taskId: 't1' } : id === 's2' ? { spaceId: 'team', taskId: null } : undefined) as never },
     spaces: { resolve: () => space as never }, brain: () => brain as never, owner: 'kim', now: () => now,
+    ...(opts.steps !== undefined ? { stepsOf: (taskId: string) => (taskId === 't1' ? opts.steps! : null) } : {}),
   })
   return { contexts, gets, space, tick: (ms: number) => { now += ms } }
 }
@@ -30,6 +31,12 @@ describe('turn context', () => {
       ctx: { owner: 'kim', agent: 'nova', members: ['kim', 'sam', 'nova', 'echo'], checkpoint: 'before' },
       task: { id: 't1', name: 'Refund from Acme', open: true },
     })
+  })
+
+  it('carries the task\'s open steps from the board, and none when it has none', async () => {
+    const task = { id: 't1', status: 'active', title: 'refund' }
+    expect((await setup({ task, steps: { open: 2, covered: true } }).contexts.of('s1')).ctx.steps).toEqual({ open: 2, covered: true })
+    expect((await setup({ task, steps: null }).contexts.of('s1')).ctx).not.toHaveProperty('steps')
   })
 
   it('a session without a task, or whose task cannot be read, has none; a closed task is not open', async () => {

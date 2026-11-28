@@ -62,6 +62,8 @@ export interface TurnContextDeps {
   brain(space: BrainSpace): Pick<EmlApi, 'get'> | null
   /** This cockpit's member (config handle). */
   owner: string
+  /** The task's open steps and whether each is covered, from the task board (TaskBoard.stepsOf); null for none. */
+  stepsOf?: (taskId: string) => { open: number; covered: boolean } | null
   now?: () => number
 }
 
@@ -108,8 +110,9 @@ export function createTurnContexts(deps: TurnContextDeps): TurnContexts {
       if (!brain) return { ctx: turnContextOf(who), task: null }
       const task = await brain.get(`/engram/${encodeURIComponent(entry!.taskId!)}`).catch(() => null) as Task | null
       if (!task?.id) return { ctx: turnContextOf(who), task: null }
+      const steps = deps.stepsOf?.(task.id) ?? null
       return {
-        ctx: turnContextOf({ ...who, checkpoint: task.properties?.checkpoint }),
+        ctx: { ...turnContextOf({ ...who, checkpoint: task.properties?.checkpoint }), ...(steps ? { steps } : {}) },
         task: { id: task.id, name: task.properties?.display_title ?? task.title ?? task.id, open: task.status === 'planned' || task.status === 'active' },
       }
     },

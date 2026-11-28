@@ -19,7 +19,7 @@ export type WaitKind = 'question' | 'go' | 'review' | 'stopped' | 'do' | 'outsid
 export const WAIT_KINDS: readonly WaitKind[] = ['question', 'go', 'review', 'stopped', 'do', 'outside']
 
 /** Groups inside Needs you and Agent scheduled, in the order the board shows them. */
-export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale'
+export type TurnGroup = 'asked' | 'failed' | 'own' | 'parent' | 'nobody' | 'steps' | 'mission' | 'routine' | 'at_time' | 'runner' | 'blocked' | 'stale'
 
 export type NobodyReason = 'stopped' | 'idle' | 'no_checkpoint' | 'not_handed_over' | 'no_owner' | 'no_project' | 'step_dropped'
 
@@ -56,6 +56,11 @@ export interface TaskFacts {
    * would. Left out, the task counts as next in line.
    */
   runner?: RunnerBlock | null
+  /**
+   * Its open steps (domain/step-cover.ts stepsSummary): how many, and whether every one is covered. While it has open
+   * steps a review asked of the viewer is held back; with all of them covered it waits on its steps.
+   */
+  steps?: { open: number; covered: boolean }
 }
 
 /** What the host knows about a task right now. */
@@ -120,16 +125,23 @@ export function turnOf(task: TaskFacts, live: LiveFacts, viewer: string, now: nu
   // Parked (decision task-parking-is-a-snoozed-wait): its wait is snoozed, and the most urgent wait is only parked when
   // every wait is. It is parked for every viewer, until its date; nothing runs meanwhile. Past the date it comes back.
   if (w?.snoozed_until && isParked(w, now)) return { turn: 'parked' }
-  const kind = w ? waitKind(w) : null
-  if (w && w.who === viewer && kind === 'review') return { turn: 'review' }
+  const openSteps = (task.steps?.open ?? 0) > 0
+  // A review asked while steps are open is held back: the task comes back for review once the last step closes
+  // (application/steps-done.ts).
+  const held = openSteps && !!w && w.who === viewer && waitKind(w) === 'review'
+  const wait = held ? undefined : w
+  const kind = wait ? waitKind(wait) : null
+  if (wait && wait.who === viewer && kind === 'review') return { turn: 'review' }
   if (live.working) return { turn: 'agent_working' }
-  const mine = isViewersMove(w, viewer)
+  const mine = isViewersMove(wait, viewer)
   if (live.stale && !mine) return { turn: 'agent_working', group: 'stale' }
   // A failed run is its own group in Needs you: the agent stopped and someone has to run it again or change the plan.
   if (mine) return kind === 'stopped' ? { turn: 'needs_you', group: 'failed', reason: 'stopped' } : { turn: 'needs_you', group: 'asked' }
+  // Nothing on it waits on the viewer, and every open step is covered: it waits on its steps.
+  if (openSteps && task.steps!.covered) return { turn: 'agent_scheduled', group: 'steps' }
   // Someone outside has the next move: a job of its delegate checks back on it, or it waits.
   if (kind === 'outside') return task.delegate && live.nextRunAt ? { turn: 'agent_scheduled', group: scheduledGroup(live) } : { turn: 'waiting_on_others' }
-  if (w && w.who) return { turn: 'waiting_on_others' }
+  if (wait && wait.who) return { turn: 'waiting_on_others' }
   if (task.delegate) {
     if (live.nextRunAt) return { turn: 'agent_scheduled', group: scheduledGroup(live) }
     if (!task.checkpoint) return { turn: 'needs_you', group: 'nobody', reason: 'no_checkpoint' }
@@ -173,7 +185,7 @@ export type CoverageGroup = 'ask' | 'review' | 'due' | 'high' | 'blocked' | 'idl
 export const COVERAGE_GROUPS: readonly CoverageGroup[] = ['ask', 'review', 'due', 'high', 'blocked', 'idle', 'nofollow', 'stopped', 'owner', 'mine']
 
 export type Coverage =
-  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked'; at?: string }
+  | { ok: true; how: 'working' | 'at_time' | 'checks_back' | 'runner' | 'parked' | 'steps'; at?: string }
   | { ok: false; group: CoverageGroup; reason?: NobodyReason | 'parent' | 'steps_wait'; steps?: number }
 
 export const DUE_SOON_DAYS = 14
@@ -189,6 +201,7 @@ export function coverageOf(task: TaskFacts, live: LiveFacts, viewer: string, now
   const t = turnOf(task, live, viewer, now)
   if (t?.turn === 'parked') return { ok: true, how: 'parked', ...(task.waitingOn?.snoozed_until && task.waitingOn.snoozed_until !== 'open' ? { at: task.waitingOn.snoozed_until } : {}) }
   if (live.working) return { ok: true, how: 'working' }
+  if (t?.group === 'steps') return { ok: true, how: 'steps' }
   if (t?.group === 'asked') return { ok: false, group: 'ask' }
   if (t?.turn === 'review') return { ok: false, group: 'review' }
   if (t?.reason === 'stopped' || t?.reason === 'idle') return { ok: false, group: 'stopped', reason: t.reason }

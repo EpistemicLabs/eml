@@ -46,6 +46,12 @@ describe('recording an end_turn call', () => {
     expect((await recordEndTurn(setup().deps, 's1', { result: 'Sent', next: { who: 'outside:acme', what: 'answer' } })).missing).toEqual(['when'])
   })
 
+  it('a task waiting on covered open steps needs no check, and the answer gets its steps', async () => {
+    const steps = { open: 2, covered: true }
+    const recorded = await recordEndTurn(setup({ turnOf: async () => ({ ctx: { ...ctx, steps }, task: { id: 't1', name: 'Move Acme', open: true } }) }).deps, 's1', { result: 'Waits on step Delete the legacy service' })
+    expect(recorded).toMatchObject({ missing: [], steps })
+  })
+
   it('refuses a call whose check time has passed, and keeps nothing', async () => {
     const { deps, kept, checks } = setup()
     await expect(recordEndTurn(deps, 's1', { result: 'Sent', check: { when: '2020-01-01T10:00', why: 'look' } })).rejects.toThrow('check.when "2020-01-01T10:00" has passed (read in UTC); name a time that is still to come')

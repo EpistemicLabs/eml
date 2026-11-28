@@ -667,3 +667,29 @@ describe('asks and check-backs', () => {
     expect(cardLine(after, NOW)).toBe('Waits for your move on “Sign offer”.');
   });
 });
+
+describe('waiting on its steps', () => {
+  const steps = (open: NonNullable<BoardTask['steps']>['open']) => ({ covered: true, open });
+  const waiting = (open: NonNullable<BoardTask['steps']>['open']) => task({ delegate: 'atlas', turn: 'agent_scheduled', group: 'steps', coverage: { ok: true, how: 'steps' }, steps: steps(open), statusLine: { now: 'Moved the data.' } as BoardTask['statusLine'] });
+
+  it('says which step it waits on and what covers it, on the card and in Plan', () => {
+    const working = waiting([{ id: 'a', name: 'Delete the legacy service', how: 'working', who: 'atlas' }, { id: 'b', name: 'Tell Acme', how: 'waits', who: 'outside:Kim' }]);
+    expect(cardLine(working, NOW)).toBe('Waiting on step Delete the legacy service · Atlas working (and 1 more).');
+    expect(statusOrTurn(working, NOW)).toBe('Waiting on step Delete the legacy service · Atlas working (and 1 more).');
+    expect(coverageText(working, NOW)).toBe('Waiting on step Delete the legacy service · Atlas working (and 1 more)');
+    expect(cardLine(waiting([{ id: 'a', name: 'Check the service', how: 'checks_back', at: local(20, 9), who: 'atlas' }]), NOW)).toBe('Waiting on step Check the service · checks back tomorrow 09:00.');
+    expect(cardLine(waiting([{ id: 'b', name: 'Tell Acme', how: 'waits', who: 'outside:Kim' }]), NOW)).toBe('Waiting on step Tell Acme · waits on Kim.');
+  });
+
+  it('is its own group in Agent scheduled, first', () => {
+    const cols = columns([waiting([{ id: 'a', name: 'A', how: 'runner', who: 'atlas' }]), task({ id: 'r', delegate: 'atlas', turn: 'agent_scheduled', group: 'runner', coverage: { ok: true, how: 'runner' } })]);
+    expect(cols.find((c) => c.turn === 'agent_scheduled')!.groups.map((g) => g.group)).toEqual(['steps', 'runner']);
+  });
+
+  it('offers no Looks good while steps are open; waiting on them, only working on it', () => {
+    const open = steps([{ id: 'a', name: 'A', how: 'working', who: 'atlas' }]);
+    expect(panelActions(task({ turn: 'review', group: undefined, steps: open }), true)).toEqual([]);
+    expect(panelActions(task({ turn: 'review', group: undefined }), true)).toEqual(['looks_good']);
+    expect(panelActions(waiting(open.open), false)).toEqual(['together']);
+  });
+});

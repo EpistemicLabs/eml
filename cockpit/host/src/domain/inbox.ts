@@ -1,5 +1,6 @@
 import { waitKind } from './task-turn.js'
 import { isParked, type Wait } from './task-waits.js'
+import type { Stall } from './step-cover.js'
 
 /**
  * The Inbox holds what waits for the viewer to answer or look at: a question or a go an agent
@@ -18,9 +19,13 @@ import { isParked, type Wait } from './task-waits.js'
  * check-back stand side by side. `repeating` says the
  * task has repeating times: then Looks good approves one run, without them it closes the task and
  * ends the wake-up.
+ *
+ * Waiting on its steps: a review asked of a task with open
+ * steps is held back, no item, until the last step closes. A step that stalled (domain/step-cover.ts stallOf) is an
+ * item of its own on the owner of its main task, derived like the others: it clears itself when the step moves.
  */
 
-export type InboxKind = 'question' | 'review' | 'stopped' | 'do'
+export type InboxKind = 'question' | 'review' | 'stopped' | 'do' | 'stalled'
 
 /** The task's wake-up as an item shows it: when, and who it is for. */
 export interface CheckBack {
@@ -38,6 +43,17 @@ export interface InboxTask {
   wake?: CheckBack | null
   /** The task has repeating times. */
   repeating?: boolean
+  /** The task has open steps: a review asked of it is held back until the last one closes. */
+  holdReviews?: boolean
+}
+
+/** A main task's stalled steps, for its owner. */
+export interface StallTask {
+  /** The main task. */
+  id: string
+  space: string
+  owner?: string
+  stalls: Stall[]
 }
 
 export interface Snooze {
@@ -64,19 +80,48 @@ export interface InboxItem {
   checkBack?: CheckBack
   /** The task has repeating times: Looks good approves one run instead of closing it. */
   repeating?: true
+  /** A stalled step: the main task it is a step of (taskId is the step). */
+  parentId?: string
 }
 
 export function itemKey(item: { taskId: string; since?: string }): string {
   return `task:${item.taskId}@${item.since ?? ''}`
 }
 
-export function inboxItems(tasks: InboxTask[], viewer: string, snoozes: Snooze[], now: number): { live: InboxItem[]; snoozed: InboxItem[] } {
-  const items: InboxItem[] = []
+/** How long ago a moment was, in hours or days, for a stall's text. */
+function ago(since: string, now: number): string {
+  const hours = Math.max(1, Math.floor((now - Date.parse(since)) / 3_600_000))
+  return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} days`
+}
+
+/** The text of a stall item. */
+export function stallText(stall: Stall, now: number): string {
+  if (stall.why === 'due') return `Step ${stall.name} stalled: it was due ${stall.due!.slice(0, 10)} and is still open.`
+  return `Step ${stall.name} stalled: nothing happened on it for ${ago(stall.since, now)}, and nothing will start it.`
+}
+
+/** One item per stalled step, for the owner of its main task. */
+export function stallItems(tasks: readonly StallTask[], viewer: string, now: number): InboxItem[] {
+  return tasks.filter((t) => t.owner === viewer).flatMap((t) => t.stalls.map((stall) => ({
+    key: `stall:${stall.stepId}@${stall.since}`,
+    kind: 'stalled' as const,
+    space: t.space,
+    title: stall.name,
+    text: stallText(stall, now),
+    since: stall.since,
+    taskId: stall.stepId,
+    parentId: t.id,
+  })))
+}
+
+export function inboxItems(tasks: InboxTask[], viewer: string, snoozes: Snooze[], now: number, stalls: readonly StallTask[] = []): { live: InboxItem[]; snoozed: InboxItem[] } {
+  const items: InboxItem[] = [...stallItems(stalls, viewer, now)]
   const parkedUntil = new Map<string, string>()
   for (const t of tasks) for (const w of t.waits) {
     if (w.who !== viewer) continue
     const kind = waitKind(w)
     if (kind === 'outside') continue
+    if (kind === 'review' && t.holdReviews) continue
     const since = w.since ?? ''
     if (isParked(w, now)) parkedUntil.set(itemKey({ taskId: t.id, since }), w.snoozed_until!)
     items.push({

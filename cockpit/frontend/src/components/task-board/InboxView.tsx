@@ -6,7 +6,7 @@ import { Clock } from 'lucide-react';
 
 import type { AllSession } from '@/components/sidebar/allSessions';
 import { projectNameOf } from '@/lib/open-task';
-import { askDueLabel, type Board, type BoardTask, checkBackText, fyi, type InboxItem, looksGoodLabel, originName, repeats, readable, taskName, when } from '@/lib/task-board';
+import { askDueLabel, type Board, type BoardTask, checkBackText, fyi, hasOpenSteps, type InboxItem, looksGoodLabel, originName, repeats, readable, taskName, when } from '@/lib/task-board';
 import { dayNumber, formatInZone, userTimeZone } from '@/lib/time-zone';
 import { cn } from '@/lib/utils';
 import { Chip, FOCUS, LABEL, MINI } from '@/shared/view/ui';
@@ -31,7 +31,9 @@ export type InboxAction =
   | { kind: 'snooze'; item: InboxItem; until: 'tomorrow' | 'monday' | 'open' | 'now' }
   | { kind: 'review'; item: InboxItem }
   /** The viewer did the step a do item asks for: acts at once, the task's agent is woken. */
-  | { kind: 'done'; item: InboxItem };
+  | { kind: 'done'; item: InboxItem }
+  /** The viewer saw a review or a question: the ask goes, the task stays open, nobody is woken. Acts at once. */
+  | { kind: 'got_it'; item: InboxItem };
 
 /** The day heading an item goes under: Today, Yesterday, else the date, on the user's calendar. */
 export const dayOf = (iso: string, now: number) => {
@@ -45,6 +47,7 @@ const KIND: Record<InboxItem['kind'], { label: string; hue: 'you' | 'review' | '
   do: { label: 'Your move', hue: 'you' },
   review: { label: 'review', hue: 'review' },
   stopped: { label: 'stopped', hue: 'stopped' },
+  stalled: { label: 'step stalled', hue: 'stopped' },
 };
 /** A kind this build does not know (a newer host) reads as a question: it is the viewer's turn either way. */
 const kindOf = (item: InboxItem) => KIND[item.kind] ?? KIND.question;
@@ -141,10 +144,14 @@ function Item({ item, task, project, from, viewer, now, compact, current, onOpen
       <span className={cn('col-start-2 flex flex-wrap justify-start gap-1.5', !compact && '@3xl:col-start-auto @3xl:self-center @3xl:justify-end')}>
         {item.kind === 'do' && item.waitId && <button type="button" className={MINI} title="You did it: the agent is told and goes on." onClick={() => onAction({ kind: 'done', item })}>Done</button>}
         {item.kind === 'do' && <button type="button" className={MINI} onClick={() => onOpen(item)}>Open chat</button>}
-        {item.kind === 'review' && <button type="button" className={MINI} title={reviewTitle(item, task)} onClick={() => onAction({ kind: 'review', item })}>{looksGoodLabel(item, viewer)}</button>}
-        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Park until tomorrow</button>
-        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Park until Monday</button>
-        <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'open' })}>Park, no date</button>
+        {item.kind === 'review' && !hasOpenSteps(task) && <button type="button" className={MINI} title={reviewTitle(item, task)} onClick={() => onAction({ kind: 'review', item })}>{looksGoodLabel(item, viewer)}</button>}
+        {(item.kind === 'review' || item.kind === 'question') && item.waitId && <button type="button" className={MINI} title="You saw it: the ask goes, the task stays open." onClick={() => onAction({ kind: 'got_it', item })}>Got it</button>}
+        {/* A stalled step is derived from the step itself: it clears once the step moves, so there is nothing to park. */}
+        {item.kind === 'stalled' ? <button type="button" className={MINI} onClick={() => onOpen(item)}>Open step</button> : <>
+          <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'tomorrow' })}>Park until tomorrow</button>
+          <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'monday' })}>Park until Monday</button>
+          <button type="button" className={MINI} onClick={() => onAction({ kind: 'snooze', item, until: 'open' })}>Park, no date</button>
+        </>}
       </span>
     </div>
   );
