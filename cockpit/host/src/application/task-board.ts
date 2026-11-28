@@ -621,14 +621,19 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         })
       }
 
-      const spaceTasks: BoardTask[] = []
-      for (const row of rows) {
+      // Each row is worked out once, by evaluate.
+      interface Evaluated { facts: TaskFacts; live: LiveFacts; schedule: ScheduleFields | null; turn: ReturnType<typeof turnOf> }
+      const evaluated = new Map<string, Promise<Evaluated>>()
+      const evaluate = (row: Row): Promise<Evaluated> => {
+        const known = evaluated.get(row.id)
+        if (known) return known
+        const work = evaluateRow(row)
+        evaluated.set(row.id, work)
+        return work
+      }
+      const evaluateRow = async (row: Row): Promise<Evaluated> => {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
-        if (CLOSED_STATUSES.has(row.status)) {
-          slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now, replacedBy.get(row.id) ?? null))
-          if (row.status === 'superseded') continue
-        }
         const facts: TaskFacts = {
           status: row.status,
           owner: props.assignee_ids?.[0],
@@ -647,7 +652,18 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         }
         const schedule = scheduleOfRow(row)
         const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], nextRunOfRow(row, now), now), schedule }
-        const turn = turnOf(facts, live, deps.viewer, now)
+        return { facts, live, schedule, turn: turnOf(facts, live, deps.viewer, now) }
+      }
+
+      const spaceTasks: BoardTask[] = []
+      for (const row of rows) {
+        const props = row.properties ?? {}
+        const sessions = deps.sessionsOn(row.id)
+        if (CLOSED_STATUSES.has(row.status)) {
+          slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now, replacedBy.get(row.id) ?? null))
+          if (row.status === 'superseded') continue
+        }
+        const { facts, live, schedule, turn } = await evaluate(row)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
         const command = commandOf(row.id)
