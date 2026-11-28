@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -217,6 +217,21 @@ describe('a session following its replaced task (host)', () => {
     expect(await follow.follow('s1')).toEqual({ kind: 'moved', from: 'old', to: 'new' })
     expect(brain.journal('new')).toHaveLength(1)
     expect(brain.journal('old')).toHaveLength(1)
+  })
+
+  it('checks a session the sweep found settled only once, while the router still checks it at each turn end', async () => {
+    const { ledger, brain, follow, logs } = setup({ tasks: [{ id: 'old', status: 'superseded', relations: [supersedes('done', 'old')] }, { id: 'done', status: 'resolved' }] })
+    ledger.recordSpawn('s1', null, 'bp-eml', 'claude', true, 'old')
+    const reads = () => logs.filter((l) => l.includes('stays on replaced task')).length
+    follow.sweep(['old'])
+    await vi.waitFor(() => expect(reads()).toBe(1))
+    follow.sweep(['old'])
+    follow.sweep(['old'])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(reads()).toBe(1)
+    expect(await follow.follow('s1')).toEqual({ kind: 'stays' })
+    expect(reads()).toBe(2)
+    expect(brain.posts).toEqual([])
   })
 
   it('sweeps every live session on the replaced tasks the board read', async () => {
