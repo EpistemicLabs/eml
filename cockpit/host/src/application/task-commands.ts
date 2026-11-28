@@ -35,6 +35,10 @@ import { reviewsOn, SNOOZED_OPEN, waitsBody, withoutWaits, type WaitRef } from '
  * refused, and End schedule clears its schedule and closes it. A task with a wake-up alone (an agent's check-back, a
  * reminder) closes like any other: Looks good and Close close it and end the wake-up with it, and the journal says so.
  *
+ * Got it on a review or a question: the owner saw it. The wait goes and the journal says "<owner> got it: <what>";
+ * the task is not closed and no agent is woken: it falls back to where its other facts put it (waiting on its steps,
+ * its check-back, nobody on it). It acts at once, like Done.
+ *
  * Done on a do wait ("Your move"): the owner did their step. The wait
  * goes, the journal says "<owner> marked done: <what>", and the task's agent is woken now with that text (the session
  * that asked, else the task's newest, else a new one). The task's check-back stays. It acts at once, like the
@@ -55,13 +59,13 @@ const KEEP_MS = 7 * 24 * 60 * 60 * 1000
 export const TOGETHER_GRACE_MS = 10 * 60 * 1000
 
 /** 'split' and 'sort' are a session's, not the board's: application/split-session.ts and sort-session.ts carry them out. */
-export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'end_schedule' | 'pause_schedule' | 'resume_schedule' | 'run_now' | 'remove_time' | 'remove_wake' | 'reschedule_wake' | 'done' | 'reopen' | 'follow_up' | 'split' | 'sort'
+export type CommandKind = 'hand_over' | 'review' | 'snooze' | 'close' | 'end_schedule' | 'pause_schedule' | 'resume_schedule' | 'run_now' | 'remove_time' | 'remove_wake' | 'reschedule_wake' | 'done' | 'got_it' | 'reopen' | 'follow_up' | 'split' | 'sort'
 
 /** The schedule's controls on the task: they act at once, without an undo window. */
 const SCHEDULE_CONTROLS: readonly CommandKind[] = ['pause_schedule', 'resume_schedule', 'run_now', 'remove_time', 'remove_wake', 'reschedule_wake']
 
-/** What acts at once and has no undo window: the schedule's controls and Done. */
-const AT_ONCE: readonly CommandKind[] = [...SCHEDULE_CONTROLS, 'done']
+/** What acts at once and has no undo window: the schedule's controls, Done and Got it. */
+const AT_ONCE: readonly CommandKind[] = [...SCHEDULE_CONTROLS, 'done', 'got_it']
 
 /** The longest message a closed task's chat takes for Send or As follow-up. */
 export const MESSAGE_MAX = 20_000
@@ -82,7 +86,7 @@ export interface CommandInput {
   cron?: string
   /** Reschedule the wake-up: its new time (an instant, ISO). */
   at?: string
-  /** Done: the id of the do wait the owner did (the Inbox item's waitId). */
+  /** Done: the id of the do wait the owner did (the Inbox item's waitId). Got it: the review or question they saw. */
   waitId?: string
 }
 
@@ -579,8 +583,11 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
       // A routine stays open: the review approves that run, so what would stop a close does not stop it. A wake-up alone
       // ends with the task.
       if (isRoutine(task)) return { ok: true, command: save({ ...base, runOnly: true, approves }) }
-      const bound = await brain.get('/list', { task_id: task.id, binding: 'task', status: 'active', limit: 1 }).catch(() => null) as { engrams?: unknown[] } | null
-      if ((bound?.engrams ?? []).length > 0) return { ok: false, refusal: 'bound_items', message: 'Decisions or notes are bound to this task: close it in the chat, which asks which of them stay.' }
+      // What would refuse the close refuses Looks good at the click, as Close does: not after the undo window, when the
+      // board already showed it done.
+      const withRelations = await brain.get(`/engram/${input.taskId}`, { with_relations: 'true' }).catch(() => null) as BrainTaskWithRelations | null
+      const refused = await closeRefusal(brain, withRelations ?? task)
+      if (refused) return refused
       return { ok: true, command: save({ ...base, approves }) }
     }
 
@@ -637,6 +644,29 @@ export function createTaskCommands(deps: TaskCommandsDeps) {
         done: { wait: { who: wait.who, ...(wait.why ? { why: wait.why } : {}), ...(wait.session_id ? { session_id: wait.session_id } : {}), delegated: Boolean(task.properties?.delegate) } },
       })
       return runDone(brain, command)
+    }
+
+    if (input.kind === 'got_it') {
+      if (!input.taskId || !input.waitId) return { ok: false, refusal: 'invalid', message: 'Name the task and the ask (waitId) you saw.' }
+      const task = await taskOf(brain, input.taskId)
+      if (!task) return { ok: false, refusal: 'unknown_task' }
+      if (!OPEN.has(task.status)) return { ok: false, refusal: 'task_closed' }
+      const seen = (w: { id: string; who: string; kind?: string }) => w.id === input.waitId && (!deps.viewer || w.who === deps.viewer) && (w.kind === 'review' || w.kind === 'question' || w.kind === undefined)
+      const wait = waitsOf(task.properties).find(seen)
+      if (!wait) return { ok: false, refusal: 'unknown_wait', message: 'That ask is not open on the task any more.' }
+      const said = `${wait.who} got it: ${wait.why?.trim().replace(/\.$/, '') || 'the ask'}.`
+      try {
+        const { patch } = await trackWaits(brain, task.id, (fresh) => {
+          const waits = waitsOf(fresh.properties)
+          const left = waits.filter((w) => !seen(w))
+          return left.length === waits.length ? null : { ...waitsBody(left), text: said }
+        })
+        deps.log(`[commands] ${input.opId.slice(0, 8)} got it: task ${task.id.slice(0, 8)}${patch ? '' : ', the ask was taken off meanwhile'}`)
+      } catch (err) {
+        deps.log(`[commands] ${input.opId.slice(0, 8)} got it failed: ${(err as Error).message}`)
+        return { ok: false, refusal: 'no_brain', message: `The task could not be written (${(err as Error).message}); try again.` }
+      }
+      return { ok: true, command: save({ ...base, undoUntil: base.createdAt, state: 'applied' }) }
     }
 
     if (SCHEDULE_CONTROLS.includes(input.kind)) {

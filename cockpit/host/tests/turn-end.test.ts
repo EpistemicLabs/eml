@@ -507,6 +507,16 @@ describe('the texts', () => {
     expect(withRun(call)).toBe(`Recorded: done, nobody has to act. ${REPLY}`)
   })
 
+  it('a task waiting on covered open steps needs no check, and a review asked during open steps is said to be held back', () => {
+    const covered = { ...ctx, steps: { open: 2, covered: true } }
+    expect(missingOf(call, { taskOpen: true, ctx: covered })).toEqual([])
+    expect(missingOf({ ...call, ask: { who: 'outside:Acme', what: 'Answers.' } }, { taskOpen: true, ctx: covered })).toEqual([])
+    expect(missingOf(call, { taskOpen: true, ctx: { ...ctx, steps: { open: 2, covered: false } } })).toEqual(['next'])
+    expect(answer(call, { missing: [], steps: covered.steps }, covered)).toBe(`Recorded: done, nobody has to act. It waits on its 2 open steps: the task comes back once the last one closes. ${REPLY}`)
+    const review: EndTurn = { ...call, ask: { who: 'kim', what: 'Read it.' } }
+    expect(answer(review, { missing: [], steps: { open: 1, covered: false } }, covered)).toBe(`Recorded: review for kim. The task has 1 open step: the cockpit holds this review back and asks kim itself once the last step closes. ${REPLY}`)
+  })
+
   it('says what helps when a check could not be set: another time, the same call again, or nothing', () => {
     const own: EndTurn = { ...call, check: { when: WHEN, why: 'look' } }
     const withFix = (checkFix: 'time' | 'again' | 'none') => answer(own, { checkProblem: 'the reason', checkFix })
@@ -558,7 +568,7 @@ describe('the texts', () => {
     expect(END_TURN_DESCRIPTION).toContain('due: when the step is due, as YYYY-MM-DD or YYYY-MM-DDTHH:MM.')
     expect(END_TURN_DESCRIPTION.split('\n').at(-1)).toBe('The answer says what the task holds after the call: its asks, its check, its repeating times and its next run. Check it against what you meant.')
     // An agent that waits for nothing has no reason to stop: said with what an open task needs, once.
-    expect(END_TURN_DESCRIPTION.split('\n')[5]).toBe('While the task is open, a call needs an ask, questions, failed or a check, unless the task has a next run from its schedule. If the next step is yours and you wait for nothing, do not end the turn: keep working.')
+    expect(END_TURN_DESCRIPTION.split('\n')[5]).toBe('While the task is open, a call needs an ask, questions, failed or a check, unless the task has a next run from its schedule or waits on open steps that are each covered (an agent works on it, it has a wake-up or schedule, the runner starts it, or it waits on someone): then say in result which step it waits on. While the task has open steps, ask no review: the cockpit holds it back and asks the user itself once the last step closes. If the next step is yours and you wait for nothing, do not end the turn: keep working.')
     expect(END_TURN_DESCRIPTION.match(/keep working/g)).toHaveLength(1)
     // The older next is no field of the tool any more.
     expect(END_TURN_DESCRIPTION).not.toMatch(/^next:|next\.(?:who|when)/m)

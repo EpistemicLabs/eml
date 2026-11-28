@@ -327,6 +327,8 @@ export interface EndTurnRecorded {
   checkTime?: CheckTime
   /** The task has a next run from its schedule: it needs no time from the agent. */
   nextRun?: boolean
+  /** The task's open steps and whether each is covered (TurnContext.steps), when it has any. */
+  steps?: { open: number; covered: boolean }
   /** What the task holds after the call, in words (domain/turn-state-echo.ts); absent when the task could not be read. */
   state?: string
 }

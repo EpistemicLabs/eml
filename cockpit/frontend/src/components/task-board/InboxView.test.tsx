@@ -112,3 +112,30 @@ describe('Looks good on a review', () => {
     expect(within(row('Draft is ready')).getByRole('button', { name: 'Looks good' }).getAttribute('title')).toBeNull();
   });
 });
+
+describe('Got it, and a stalled step', () => {
+  it('offers Got it on a review and a question: it names the wait, the task stays open', () => {
+    const { onAction } = show(board([item({ kind: 'review', text: 'Review: the brief', key: 'r' }), item({ kind: 'question', text: 'Which list?', key: 'q', waitId: 's2' })]));
+    fireEvent.click(within(row('Review: the brief')).getByRole('button', { name: 'Got it' }));
+    expect(onAction).toHaveBeenCalledWith({ kind: 'got_it', item: expect.objectContaining({ waitId: 's1' }) });
+    fireEvent.click(within(row('Which list?')).getByRole('button', { name: 'Got it' }));
+    expect(onAction).toHaveBeenCalledWith({ kind: 'got_it', item: expect.objectContaining({ waitId: 's2' }) });
+    expect(within(row('Review: the brief')).getByRole('button', { name: /Looks good/ })).toBeTruthy();
+  });
+
+  it('offers no Looks good on a review of a task with open steps, and no Got it on a do item', () => {
+    const open = task({ turn: 'review', steps: { covered: true, open: [{ id: 'a', name: 'Delete the legacy service', how: 'working', who: 'nova' }] } });
+    show(board([item({ kind: 'review', text: 'Review: the brief' }), item({ key: 'd', text: 'Sign it' })], [open]));
+    expect(within(row('Review: the brief')).queryByRole('button', { name: /Looks good/ })).toBeNull();
+    expect(within(row('Sign it')).queryByRole('button', { name: 'Got it' })).toBeNull();
+  });
+
+  it('shows a stalled step with Open step and nothing to park', () => {
+    const { onOpen } = show(board([item({ kind: 'stalled', key: 'stall:a@x', title: 'Delete the legacy service', text: 'Step Delete the legacy service stalled: nothing happened on it for 26 h, and nothing will start it.', taskId: 'a', parentId: 'offer', waitId: undefined, sessionId: undefined })]));
+    const r = within(row('Step Delete the legacy service stalled: nothing happened on it for 26 h, and nothing will start it.'));
+    expect(r.getByText('step stalled')).toBeTruthy();
+    expect(r.queryByRole('button', { name: /Park/ })).toBeNull();
+    fireEvent.click(r.getByRole('button', { name: 'Open step' }));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'a' }));
+  });
+});

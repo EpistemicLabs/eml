@@ -79,6 +79,7 @@ export async function recordEndTurn(deps: RecordEndTurnDeps, sessionId: string, 
     missing: missingOf(call, { taskOpen, ctx, ...(wake?.nextRun ? { nextRun: true } : {}) }),
     ...check,
     ...(wake?.nextRun ? { nextRun: true } : {}),
+    ...(ctx.steps ? { steps: ctx.steps } : {}),
     ...(state ? { state } : {}),
   }
 }

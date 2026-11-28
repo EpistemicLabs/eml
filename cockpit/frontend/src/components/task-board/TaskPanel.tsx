@@ -14,7 +14,7 @@ import type { AllSession } from '@/components/sidebar/allSessions';
 import { sessionDisplayName } from '@/components/sidebar/utils';
 import { useEngramPanel } from '@/lib/engram-panel';
 import { useEngram } from '@/lib/queries';
-import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hueOf, repeats, type ScheduleAction, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
+import { agentName, type Board, type BoardTask, cardLine, earlierRunLine, panelActions, SESSION_ORDER, sessionState, waitingLine, CLOSED_STATUSES, closedAsTask, type ContinueHow, continueMode, dueLabel, type HandOverMode, hasOpenSteps, hueOf, repeats, type ScheduleAction, originName, readable, taskName, TURN_META, when } from '@/lib/task-board';
 import { cn } from '@/lib/utils';
 import { commandsNote } from '@/lib/working-now';
 import { BUTTON, Chip, FIELD, FOCUS, HUE, LABEL, LINK, Menu, type MenuItem, PRIMARY } from '@/shared/view/ui';
@@ -129,7 +129,7 @@ export function TaskPanel({ task, board, now, sessions, spaces, sessionId, onClo
   const menu: MenuItem[] = closed ? [] : scheduled ? [
     { label: 'End schedule and close', onSelect: () => onEndSchedule(task) },
   ] : [
-    ...(review ? [] : [{ label: 'Done', onSelect: () => onReview(task) }]),
+    ...(review || hasOpenSteps(task) ? [] : [{ label: 'Done', onSelect: () => onReview(task) }]),
     { label: 'Not needed', onSelect: () => onDrop(task), destructive: true },
   ];
 

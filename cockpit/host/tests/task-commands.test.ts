@@ -292,6 +292,45 @@ describe('looks good, snooze, close', () => {
   })
 })
 
+describe('Looks good on a task with open steps', () => {
+  it('is refused at the click, not after the undo window, as Close is', async () => {
+    const steps = { relations: [{ source_id: 's1', target_id: 'p1', relation: 'part_of' }] }
+    const review = { id: 'r1', who: 'lasse', kind: 'review', why: 'Review: done', since: '2026-11-19T08:00:00.000Z' }
+    const w = world([{ ...owned('p1', { delegate: 'atlas', waits: [review] }, 'active'), ...steps }, owned('s1', {}, 'active')])
+    expect(await w.commands.submit({ opId: 'op-r', kind: 'review', spaceId: 'main', taskId: 'p1' })).toMatchObject({ ok: false, refusal: 'open_steps' })
+    expect(w.store.get('op-r')).toBeUndefined()
+    w.byId.get('s1')!.status = 'resolved'
+    expect(await w.commands.submit({ opId: 'op-r2', kind: 'review', spaceId: 'main', taskId: 'p1' })).toMatchObject({ ok: true, command: { state: 'pending' } })
+  })
+})
+
+describe('Got it', () => {
+  const review = { id: 's1', who: 'lasse', kind: 'review', why: 'Review: brief written.', since: '2026-11-19T08:00:00.000Z', session_id: 's1' }
+  const question = { id: 's2', who: 'lasse', kind: 'question', why: 'Which list?', since: '2026-11-19T08:30:00.000Z', session_id: 's2' }
+  const outside = { id: 'kim', who: 'kim', kind: 'outside', why: 'reply', since: '2026-11-19T07:00:00.000Z' }
+
+  it('takes off the review at once, without closing the task or waking anyone, and says so in the journal', async () => {
+    const w = world([owned('t1', { delegate: 'atlas', waits: [review, question, outside] }, 'active')])
+    const r = await w.commands.submit({ opId: 'op-g', kind: 'got_it', spaceId: 'main', taskId: 't1', waitId: 's1' })
+    expect(r).toMatchObject({ ok: true, command: { kind: 'got_it', state: 'applied' } })
+    expect(w.byId.get('t1')!.status).toBe('active')
+    expect(w.byId.get('t1')!.properties.waits).toEqual([question, outside])
+    expect(w.posts.at(-1)!.body.text).toBe('lasse got it: Review: brief written.')
+    // The same opId again does nothing more.
+    await w.commands.submit({ opId: 'op-g', kind: 'got_it', spaceId: 'main', taskId: 't1', waitId: 's1' })
+    expect(w.posts.filter((p) => p.path === '/task/t1/track')).toHaveLength(1)
+  })
+
+  it('takes off a question too; refuses a do or outside wait, an unknown one and a closed task', async () => {
+    const w = world([owned('t1', { waits: [question, outside, { id: 'd', who: 'lasse', kind: 'do', why: 'Sign' }] }, 'active'), owned('done', { waits: [review] }, 'resolved')])
+    expect(await w.commands.submit({ opId: 'op-q', kind: 'got_it', spaceId: 'main', taskId: 't1', waitId: 's2' })).toMatchObject({ ok: true })
+    expect(await w.commands.submit({ opId: 'op-d', kind: 'got_it', spaceId: 'main', taskId: 't1', waitId: 'd' })).toMatchObject({ ok: false, refusal: 'unknown_wait' })
+    expect(await w.commands.submit({ opId: 'op-o', kind: 'got_it', spaceId: 'main', taskId: 't1', waitId: 'kim' })).toMatchObject({ ok: false, refusal: 'unknown_wait' })
+    expect(await w.commands.submit({ opId: 'op-c', kind: 'got_it', spaceId: 'main', taskId: 'done', waitId: 's1' })).toMatchObject({ ok: false, refusal: 'task_closed' })
+    expect(await w.commands.submit({ opId: 'op-i', kind: 'got_it', spaceId: 'main', taskId: 't1' })).toMatchObject({ ok: false, refusal: 'invalid' })
+  })
+})
+
 describe('reopen', () => {
   it('a reopen drops a delegation request, so nothing starts without a new Delegate now (v0.23)', async () => {
     const delegation = { agent: 'atlas', checkpoint: 'after', requested_at: '2026-11-19T09:00:00.000Z' }

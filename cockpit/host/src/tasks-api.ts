@@ -47,6 +47,9 @@ import type { TaskStateMigration } from './application/task-state-migration.js'
  *   POST /api/v1/tasks/<id>/done                    { opId, spaceId, waitId }: the owner did the step a do wait asks for ("Your
  *                                                     move"): the wait goes, the journal says so, and the task's agent is woken now;
  *                                                     refused (unknown_wait) when the step is not open. At once, no undo window
+ *   POST /api/v1/tasks/<id>/got-it                  { opId, spaceId, waitId }: the owner saw a review or a question: the wait goes,
+ *                                                     the journal says so, the task stays open and no agent is woken; refused
+ *                                                     (unknown_wait) when the ask is not open. At once, no undo window
  *   GET  /api/v1/tasks/<id>/record?spaceId          what this cockpit keeps for the task (domain/job.ts): { record, runs, held, running };
  *                                                     record null when it keeps nothing
  *   POST /api/v1/tasks/<id>/record/approve          { spaceId }: the user's OK for new channel addresses
@@ -396,7 +399,7 @@ export async function handleTasksApi(
     return true
   }
 
-  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|pause-schedule|resume-schedule|run-now|remove-time|remove-wake|reschedule-wake|done|reopen|follow-up)$/.exec(pathname)
+  const task = /^\/api\/v1\/tasks\/([^/]+)\/(hand-over|review|snooze|close|end-schedule|pause-schedule|resume-schedule|run-now|remove-time|remove-wake|reschedule-wake|done|got-it|reopen|follow-up)$/.exec(pathname)
   if (task && method === 'POST') {
     const body = await readJson(req)
     const base = { opId: str(body.opId) ?? randomUUID(), spaceId: str(body.spaceId) ?? '' }
@@ -432,6 +435,10 @@ export async function handleTasksApi(
         const waitId = str(body.waitId)
         if (!waitId) { refuse(json, res, 'invalid', 'waitId is required: the step that is done'); return true }
         input = { ...base, kind: 'done', taskId, waitId }
+      } else if (verb === 'got-it') {
+        const waitId = str(body.waitId)
+        if (!waitId) { refuse(json, res, 'invalid', 'waitId is required: the ask you saw'); return true }
+        input = { ...base, kind: 'got_it', taskId, waitId }
       } else if (verb === 'reopen') {
         const reason = str(body.reason)?.trim().slice(0, 500)
         const message = typeof body.message === 'string' ? body.message : undefined

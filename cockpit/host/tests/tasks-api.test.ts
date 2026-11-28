@@ -25,7 +25,8 @@ const deps = {
       if (input.taskId === 'daily' && input.kind === 'close') return { ok: false, refusal: 'scheduled' }
       if (input.taskId === 'plain' && input.kind === 'end_schedule') return { ok: false, refusal: 'not_scheduled' }
       if (input.taskId === 'plain' && (input.kind === 'remove_wake' || input.kind === 'reschedule_wake')) return { ok: false, refusal: 'not_scheduled', message: 'It has no wake-up.' }
-      if (input.kind === 'done' && input.waitId === 'w-gone') return { ok: false, refusal: 'unknown_wait' }
+      if ((input.kind === 'done' || input.kind === 'got_it') && input.waitId === 'w-gone') return { ok: false, refusal: 'unknown_wait' }
+      if (input.kind === 'got_it') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z' } }
       if (input.kind === 'done' && input.waitId === 'w-woke') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z', continued: { sessionId: 's-ask', how: 'delivered' } } }
       // Done and the wake-up's controls act at once: applied, with no undo window
       if (input.kind === 'done' || input.kind === 'remove_wake' || input.kind === 'reschedule_wake') return { ok: true, command: { ...input, state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z', createdAt: '2026-11-19T10:00:00.000Z' } }
@@ -169,6 +170,17 @@ describe('task board routes', () => {
       .toEqual({ status: 409, body: { error: { code: 'scheduled', message: 'Its repeating times are still on: use End schedule and close.', retry: false } } })
     expect(await post('/api/v1/tasks/plain/end-schedule', { opId: 'op-p', spaceId: 'main' }))
       .toEqual({ status: 409, body: { error: { code: 'not_scheduled', message: 'It has no schedule to end: close it instead.', retry: false } } })
+  })
+
+  it('takes Got it on a review or a question with the wait\'s id; an ask that is not open is a conflict, and the id is required', async () => {
+    expect(await post('/api/v1/tasks/contract/got-it', { opId: 'op-got', spaceId: 'main', waitId: 'w-review' }))
+      .toEqual({ status: 202, body: { opId: 'op-got', state: 'applied', undoUntil: '2026-11-19T10:00:00.000Z' } })
+    expect(submitted.at(-1)).toEqual({ opId: 'op-got', spaceId: 'main', kind: 'got_it', taskId: 'contract', waitId: 'w-review' })
+    expect((await post('/api/v1/tasks/contract/got-it', { opId: 'op-got-gone', spaceId: 'main', waitId: 'w-gone' })).status).toBe(409)
+    const before = submitted.length
+    expect(await post('/api/v1/tasks/contract/got-it', { opId: 'op-got-none', spaceId: 'main' }))
+      .toEqual({ status: 400, body: { error: { code: 'invalid', message: 'waitId is required: the ask you saw', retry: false } } })
+    expect(submitted).toHaveLength(before)
   })
 
   it('takes Done on a do wait with the wait\'s id; a step that is not open is a conflict, and the id is required', async () => {

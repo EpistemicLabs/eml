@@ -51,6 +51,28 @@ describe('whose turn a task is', () => {
     expect(turn(t as Partial<TaskFacts>, l as Partial<LiveFacts>)).toEqual(expected)
   })
 
+  describe('waiting on its steps', () => {
+    const covered = { open: 2, covered: true }
+    it('waits on its steps when every open step is covered and nothing waits on the owner', () => {
+      expect(turn({ delegate: 'atlas', checkpoint: 'after', steps: covered })).toEqual({ turn: 'agent_scheduled', group: 'steps' })
+      expect(turn({ steps: covered })).toEqual({ turn: 'agent_scheduled', group: 'steps' })
+      expect(coverageOf(task({ steps: covered }), live(), 'lasse', NOW)).toEqual({ ok: true, how: 'steps' })
+    })
+    it('holds back a review asked while steps are open, covered or not', () => {
+      const review = { who: 'lasse', kind: 'review', why: 'Review: done' }
+      expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: review, steps: covered })).toEqual({ turn: 'agent_scheduled', group: 'steps' })
+      expect(turn({ delegate: 'atlas', checkpoint: 'after', waitingOn: review, steps: { open: 1, covered: false } })).toEqual({ turn: 'needs_you', group: 'nobody', reason: 'stopped' })
+      expect(turn({ waitingOn: review, steps: { open: 0, covered: true } })).toEqual({ turn: 'review' })
+    })
+    it('a question on the owner still comes first, and a working session still shows', () => {
+      expect(turn({ waitingOn: { who: 'lasse', kind: 'question' }, steps: covered })).toEqual({ turn: 'needs_you', group: 'asked' })
+      expect(turn({ steps: covered }, { working: true })).toEqual({ turn: 'agent_working' })
+    })
+    it('stays as it is when one open step is not covered', () => {
+      expect(turn({ delegate: 'atlas', checkpoint: 'after', steps: { open: 2, covered: false } }, { sessions: 1 })).toEqual({ turn: 'needs_you', group: 'nobody', reason: 'idle' })
+    })
+  })
+
   it('a review stays a review while a session is open on it', () => {
     expect(turn({ waitingOn: { who: 'lasse', kind: 'review' } }, { working: true })).toEqual({ turn: 'review' })
   })

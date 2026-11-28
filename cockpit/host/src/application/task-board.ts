@@ -8,7 +8,8 @@ import { lastStartsOf, requestOpen, type DelegationFields, type ScheduleFields }
 import { runComingAt, scheduleOf, type ScheduleFacts } from '../domain/task-schedule.js'
 import { JOB_LIMITS } from '../domain/job.js'
 import { reviewsOn, urgentWaitOf, waitsOf, withoutWaits } from '../domain/task-waits.js'
-import { inboxItems, type InboxItem, type Snooze } from '../domain/inbox.js'
+import { inboxItems, type InboxItem, type Snooze, type StallTask } from '../domain/inbox.js'
+import { stepsSummary, type StepCover, type StepFacts, type StepsSummary } from '../domain/step-cover.js'
 import { statusLine, type StatusLine } from '../domain/status-line.js'
 import { taskNameOf } from '../domain/task-title.js'
 import type { TaskWaitsSeen } from '../domain/session-attention.js'
@@ -106,6 +107,11 @@ export interface BoardTask {
   reopenedWith?: ReopenItem[]
   /** Background shells its sessions here started that still run, oldest first: their session goes on when they end. */
   commands?: RunningCommand[]
+  /**
+   * Its open steps (domain/step-cover.ts): each with what covers it, covered first. With all of them covered it waits on
+   * its steps (group steps); while any is open, Looks good is not offered and a review asked of it is held back.
+   */
+  steps?: { open: StepCover[]; covered: boolean }
 }
 
 /** Where a step another task waits for stands, as the board shows it. */
@@ -257,6 +263,13 @@ const RESOLVED_LIMIT = 50
 /** How many dropped (invalidated) and replaced (superseded) tasks per space the board keeps for Reopen and ⌘K. */
 const CLOSED_LIMIT = 50
 const CLOSED_STATUSES = new Set(['resolved', 'invalidated', 'superseded'])
+const OPEN_STATUSES = new Set(['planned', 'active'])
+
+/** The newest of a task's last update and its open runs' last activity: when something last happened on it. */
+function lastActivityOf(updatedAt: string | undefined, runs: readonly RunFacts[]): string | null {
+  const times = [updatedAt, ...runs.map((r) => r.last_activity_at ?? r.started_at)].filter((t): t is string => typeof t === 'string' && Number.isFinite(Date.parse(t)))
+  return times.length ? times.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null
+}
 /** The most closed tasks of one project a page may ask for at once. */
 const CLOSED_MAX = 500
 /** How far up a tree the board follows closed ancestors that its lists leave out. */
@@ -359,6 +372,8 @@ interface SpaceSlice {
   closed: ClosedTask[]
   lineage: LineageTask[]
   inboxTasks: Parameters<typeof inboxItems>[0]
+  /** Main tasks with stalled steps, for their owners' Inbox. */
+  stallTasks: StallTask[]
   /** Per task it read, open or closed: whether it is open and the sessions its waits came from (TaskBoard.waitsSeen). */
   waits: Map<string, { open: boolean; sessions: ReadonlySet<string> }>
   /** When the build that read `waits` started (ISO): a wait written later may be missing from it. */
@@ -553,11 +568,12 @@ export function createTaskBoard(deps: TaskBoardDeps) {
     const commandOf = (taskId: string) => pending.filter((c) => c.taskId === taskId).at(-1)
     const board: Board = { at: new Date(now).toISOString(), viewer: deps.viewer, spaces: [], projects: [], tasks: [], closed: [], lineage: [], inbox: [], snoozed: [], events: [], counts: { needsYou: 0, inbox: 0 } }
     const inboxTasks: Parameters<typeof inboxItems>[0] = []
+    const stallTasks: StallTask[] = []
 
     /** One space from its brain. Throws BrainUnreachable when a read got no answer: half a space would read as tasks gone. */
     const buildSpace = async (space: BrainSpace, brain: Pick<EmlApi, 'get'>): Promise<SpaceSlice> => {
       const agents = (await objects(brain, 'agent')).map((a) => String(a.id))
-      const slice: SpaceSlice = { space: { id: space.id, name: space.name, agents }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
+      const slice: SpaceSlice = { space: { id: space.id, name: space.name, agents }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], stallTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
       for (const p of await objects(brain, 'project')) {
         slice.projects.push({ spaceId: space.id, id: String(p.id), name: String(p.name ?? p.id), goal: typeof p.goal === 'string' ? p.goal : null })
       }
@@ -621,17 +637,23 @@ export function createTaskBoard(deps: TaskBoardDeps) {
         })
       }
 
-      // Each row is worked out once, by evaluate.
-      interface Evaluated { facts: TaskFacts; live: LiveFacts; schedule: ScheduleFields | null; turn: ReturnType<typeof turnOf> }
+      // A main task's turn reads its open steps' turns (domain/step-cover.ts): each row is worked out once, its steps
+      // before it. A loop in the parent links (bad data) ends at the step already on the path: it counts as not covered.
+      const openSteps = new Map<string, Row[]>()
+      for (const r of rows) {
+        if (!r.parent_id || !OPEN_STATUSES.has(r.status)) continue
+        openSteps.set(r.parent_id, [...(openSteps.get(r.parent_id) ?? []), r])
+      }
+      interface Evaluated { facts: TaskFacts; live: LiveFacts; schedule: ScheduleFields | null; turn: ReturnType<typeof turnOf>; steps: StepsSummary | null }
       const evaluated = new Map<string, Promise<Evaluated>>()
-      const evaluate = (row: Row): Promise<Evaluated> => {
+      const evaluate = (row: Row, path: ReadonlySet<string> = new Set()): Promise<Evaluated> => {
         const known = evaluated.get(row.id)
         if (known) return known
-        const work = evaluateRow(row)
+        const work = evaluateRow(row, new Set([...path, row.id]))
         evaluated.set(row.id, work)
         return work
       }
-      const evaluateRow = async (row: Row): Promise<Evaluated> => {
+      const evaluateRow = async (row: Row, path: ReadonlySet<string>): Promise<Evaluated> => {
         const props = row.properties ?? {}
         const sessions = deps.sessionsOn(row.id)
         const facts: TaskFacts = {
@@ -650,9 +672,26 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           facts.requested = true
           facts.runner = await blockOf(row)
         }
+        const children = OPEN_STATUSES.has(row.status) ? openSteps.get(row.id) ?? [] : []
+        const stepFacts: StepFacts[] = []
+        for (const child of children) {
+          // A step already on the path (a loop in the links) is not covered.
+          const step = path.has(child.id) ? null : await evaluate(child, path)
+          stepFacts.push({
+            id: child.id, name: child.properties?.display_title ?? child.title ?? child.id,
+            turn: step?.turn ?? { turn: 'needs_you', group: 'nobody' },
+            ...(child.properties?.delegate ? { delegate: child.properties.delegate } : {}),
+            ...(step?.facts.waitingOn ? { waitingOn: step.facts.waitingOn } : {}),
+            nextRunAt: step?.live.nextRunAt ?? null,
+            ...(child.properties?.due_date ? { due: child.properties.due_date } : {}),
+            lastActivity: lastActivityOf(child.updated_at, runs.get(child.id) ?? []),
+          })
+        }
+        const steps = stepsSummary(stepFacts, now)
+        if (steps) facts.steps = { open: steps.open.length, covered: steps.covered }
         const schedule = scheduleOfRow(row)
         const live: LiveFacts = { ...liveFactsOf(sessions, runs.get(row.id) ?? [], nextRunOfRow(row, now), now), schedule }
-        return { facts, live, schedule, turn: turnOf(facts, live, deps.viewer, now) }
+        return { facts, live, schedule, steps, turn: turnOf(facts, live, deps.viewer, now) }
       }
 
       const spaceTasks: BoardTask[] = []
@@ -663,7 +702,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
           slice.closed.push(closedTaskOf(row, space, isOpen, commandOf(row.id), now, replacedBy.get(row.id) ?? null))
           if (row.status === 'superseded') continue
         }
-        const { facts, live, schedule, turn } = await evaluate(row)
+        const { facts, live, schedule, turn, steps } = await evaluate(row)
         if (turn === null) continue
         const stepsWaiting = rows.filter((r) => r.parent_id === row.id && r.status === 'planned').length
         const command = commandOf(row.id)
@@ -729,13 +768,16 @@ export function createTaskBoard(deps: TaskBoardDeps) {
             const commands = CLOSED_STATUSES.has(row.status) ? [] : sessions.flatMap((s) => s.commands ?? []).sort((a, b) => a.since.localeCompare(b.since))
             return commands.length ? { commands } : {}
           })(),
+          ...(steps ? { steps: { open: steps.open, covered: steps.covered } } : {}),
         })
         if (row.status !== 'resolved') {
           slice.inboxTasks.push({
             id: row.id, space: space.id, title: props.display_title ?? row.title ?? row.id, waits: waitsOf(props),
             ...(schedule?.at ? { wake: { at: schedule.at, by: schedule.by ?? null } } : {}),
             ...(schedule?.crons?.length ? { repeating: true } : {}),
+            ...(steps ? { holdReviews: true } : {}),
           })
+          if (steps?.stalls.length) slice.stallTasks.push({ id: row.id, space: space.id, ...(facts.owner ? { owner: facts.owner } : {}), stalls: steps.stalls })
         }
       }
       // A wait on a step names where that step stands, read from the step's own card.
@@ -758,7 +800,7 @@ export function createTaskBoard(deps: TaskBoardDeps) {
 
     for (const space of deps.spaces()) {
       const brain = deps.brain(space)
-      let slice: SpaceSlice = { space: { id: space.id, name: space.name, agents: [] }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
+      let slice: SpaceSlice = { space: { id: space.id, name: space.name, agents: [] }, projects: [], tasks: [], closed: [], lineage: [], inboxTasks: [], stallTasks: [], waits: new Map(), readAt: new Date(now).toISOString() }
       if (brain) {
         try {
           slice = await buildSpace(space, brain)
@@ -779,10 +821,11 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       board.closed.push(...slice.closed)
       board.lineage.push(...slice.lineage)
       inboxTasks.push(...slice.inboxTasks)
+      stallTasks.push(...(slice.stallTasks ?? []))
     }
     for (const id of [...slices.keys()]) if (!board.spaces.some((sp) => sp.id === id)) slices.delete(id)
 
-    const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now)
+    const inbox = inboxItems(inboxTasks, deps.viewer, deps.snoozes(), now, stallTasks)
     board.inbox = inbox.live
     board.snoozed = inbox.snoozed
     board.counts = { needsYou: board.tasks.filter((t) => t.turn === 'needs_you').length, inbox: inbox.live.length }
@@ -904,6 +947,15 @@ export function createTaskBoard(deps: TaskBoardDeps) {
       const slice = space ? slices.get(space.id) : undefined
       const task = slice?.waits.get(taskId)
       return slice && task ? { ...task, at: slice.readAt } : null
+    },
+
+    /**
+     * The task's open steps and whether every one is covered, from the last board; null when it has none or the board
+     * holds no such task. An end_turn call reads it: a turn that waits on covered steps needs no check.
+     */
+    stepsOf(taskId: string): { open: number; covered: boolean } | null {
+      const steps = current?.tasks.find((t) => t.id === taskId)?.steps
+      return steps ? { open: steps.open.length, covered: steps.covered } : null
     },
 
     /** Whether the task is handed to an agent (it names a delegate), from the last board; null when it holds no such task. */

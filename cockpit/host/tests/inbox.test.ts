@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { inboxItems, itemKey, type InboxTask } from '../src/domain/inbox.js'
+import { inboxItems, itemKey, stallText, type InboxTask } from '../src/domain/inbox.js'
 
 const NOW = Date.parse('2026-11-19T10:00:00Z')
 type W = Omit<InboxTask['waits'][number], 'id'>
@@ -24,6 +24,22 @@ describe('the Inbox', () => {
     ])
     expect(live[3]).toMatchObject({ text: 'No activity for 1 h', sessionId: 's9', key: 'task:stopped@2026-11-18T06:00:00Z' })
     expect(live[0]).toMatchObject({ text: 'Which list?', sessionId: 's1', since: '2026-11-19T09:00:00Z' })
+  })
+
+  it('holds back a review on a task with open steps; its question stays', () => {
+    const parent = { ...t('parent', { who: 'lasse', kind: 'review', why: 'Review: done', since: '2026-11-19T09:00:00Z' }, { who: 'lasse', kind: 'question', why: 'Which?', since: '2026-11-19T08:00:00Z', session_id: 's2' }), holdReviews: true }
+    expect(inboxItems([parent], 'lasse', [], NOW).live.map((i) => i.kind)).toEqual(['question'])
+  })
+
+  it('puts one row per stalled step on the owner of its main task, opening the step', () => {
+    const stalls = [{ id: 'parent', space: 'main', owner: 'lasse', stalls: [{ stepId: 'step', name: 'Delete the legacy service', since: '2026-11-18T08:00:00Z', why: 'idle' as const }] }]
+    const { live } = inboxItems([], 'lasse', [], NOW, stalls)
+    expect(live).toEqual([{
+      key: 'stall:step@2026-11-18T08:00:00Z', kind: 'stalled', space: 'main', title: 'Delete the legacy service', since: '2026-11-18T08:00:00Z', taskId: 'step', parentId: 'parent',
+      text: 'Step Delete the legacy service stalled: nothing happened on it for 26 h, and nothing will start it.',
+    }])
+    expect(inboxItems([], 'dominik', [], NOW, stalls).live).toEqual([])
+    expect(stallText({ stepId: 's', name: 'X', since: '2026-11-01T00:00:00Z', why: 'due', due: '2026-11-18' }, NOW)).toBe('Step X stalled: it was due 2026-11-18 and is still open.')
   })
 
   it('leaves out an outside wait that names the viewer: someone outside has the next move', () => {
