@@ -53,6 +53,17 @@ describe('Qwen Code\'s SDK messages as chat events', () => {
     expect(mapped).toContainEqual({ kind: 'settings', model: 'mock-model', mode: 'default' })
   })
 
+  it('a turn that thinks first shows its answer once, under the block it streamed (no message_start for the answer)', () => {
+    const one = new QwenEventMapper()
+    const events = fixture('thinking-then-text.jsonl').flatMap((message) => one.map(message as never))
+    const blocks = (kind: 'text' | 'thinking') => [...new Set(events.flatMap((event) => (
+      (event.kind === kind || event.kind === `${kind}_delta`) && 'blockId' in event ? [event.blockId] : [])))]
+    expect(blocks('text')).toHaveLength(1)
+    expect(blocks('thinking')).toHaveLength(1)
+    expect(events.filter((event) => event.kind === 'text')).toEqual([{ kind: 'text', blockId: blocks('text')[0], text: 'Hallo Dominik' }])
+    expect(events.filter((event) => event.kind === 'thinking')).toEqual([{ kind: 'thinking', blockId: blocks('thinking')[0], text: 'The user greets me, so I greet back.' }])
+  })
+
   it('a turn stopped by the user ends as interrupted', () => {
     const one = new QwenEventMapper()
     one.noteInterrupt()

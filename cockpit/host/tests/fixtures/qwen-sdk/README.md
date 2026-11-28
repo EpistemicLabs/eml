@@ -9,3 +9,7 @@ and `/qwen`.
   fields the runtime reads.
 - `chat.jsonl`: the same session's chat file (`QWEN_HOME/projects/<project>/chats/<id>.jsonl`), plus a resumed turn
   that ran `touch made-by-agent.txt` after an approval.
+- `thinking-then-text.jsonl`: a turn that thinks before it answers, written by hand in the shape Qwen Code 0.28.6's
+  `StreamJsonOutputAdapter` emits it: a message holds one block type, so the switch from thinking to text finalises
+  message A and starts message B under a new id, but `message_start` goes out only once per turn, so B's text is
+  streamed without one and its assistant message names B.
