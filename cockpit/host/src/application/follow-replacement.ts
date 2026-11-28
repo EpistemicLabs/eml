@@ -69,6 +69,10 @@ export function createFollowReplacement(deps: FollowReplacementDeps): FollowRepl
   // One follow or hand-over per session at a time; a follow asked for while one runs gets its answer.
   const tails = new Map<string, Promise<unknown>>()
   const following = new Map<string, Promise<FollowOutcome>>()
+  // What the sweep found settled: a session that stays on its replaced task (no single open replacement) or waits for
+  // the replacement's holder, per task. The board builds every few seconds, and that answer does not change by
+  // itself; the router still checks again at each turn end.
+  const settled = new Map<string, string>()
   const serial = <T>(sessionId: string, work: () => Promise<T>): Promise<T> => {
     const run = (tails.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(work)
     const tail = run.catch(() => {})
@@ -177,7 +181,11 @@ export function createFollowReplacement(deps: FollowReplacementDeps): FollowRepl
       if (replacedTaskIds.length === 0) return
       const replaced = new Set(replacedTaskIds)
       for (const entry of deps.ledger.list()) {
-        if (entry.taskId && replaced.has(entry.taskId) && !entry.archivedAt && !entry.jobId) void follow(entry.sessionId)
+        const taskId = entry.taskId
+        if (!taskId || !replaced.has(taskId) || entry.archivedAt || entry.jobId || settled.get(entry.sessionId) === taskId) continue
+        void follow(entry.sessionId).then((outcome) => {
+          if (outcome.kind === 'stays' || outcome.kind === 'held') settled.set(entry.sessionId, taskId)
+        })
       }
     },
   }
