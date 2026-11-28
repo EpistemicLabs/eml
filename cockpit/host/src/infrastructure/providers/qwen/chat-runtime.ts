@@ -199,9 +199,15 @@ export class QwenEventMapper {
     return []
   }
 
-  /** The id a complete block takes: the oldest streamed block of its type, else a new one (no deltas came). */
+  /**
+   * The id a complete block takes: the oldest streamed block of its type in its message, else the
+   * oldest of its type in the turn, else a new one (no deltas came). Qwen Code starts a new message
+   * when the block type changes (thinking → text) without a `message_start` for it, so that
+   * message's blocks were streamed under the id of the one before.
+   */
   private claim(messageId: string, type: string): string {
-    const index = this.open.findIndex((block) => block.messageId === messageId && block.type === type)
+    let index = this.open.findIndex((block) => block.messageId === messageId && block.type === type)
+    if (index < 0) index = this.open.findIndex((block) => block.type === type)
     if (index < 0) return `${messageId}:final:${++this.counter}`
     const [block] = this.open.splice(index, 1)
     return block.blockId
